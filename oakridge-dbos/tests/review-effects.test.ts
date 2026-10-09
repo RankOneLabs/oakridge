@@ -55,9 +55,13 @@ test("run cancellation revokes a never-dispatched selection without manufacturin
 });
 
 test("production replay sends persisted HTTP bytes despite changed launch rendering input", async () => {
-  const requests: Array<{ body: string; path: string }> = [];
+  const puts: Array<{ body: string; path: string }> = [];
+  const lookups: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
-    if (request.method === "PUT") { requests.push({ body: await request.text(), path: new URL(request.url).pathname }); return Response.json({ kind: "attached", session: { sid: "one-session", status: "live" } }); }
+    if (request.method === "PUT") { puts.push({ body: await request.text(), path: new URL(request.url).pathname }); return Response.json({ kind: "attached", session: { sid: "one-session", status: "live" } }); }
+    // A null reference on stop resolves by GET lookup rather than a second PUT (it must never
+    // re-render or re-send launch bytes), so the stub answers that lookup with the same session.
+    if (request.method === "GET") { lookups.push(new URL(request.url).pathname); return Response.json({ kind: "attached", session: { sid: "one-session", status: "live" } }); }
     return Response.json({ stopped: true });
   } });
   try {
@@ -68,8 +72,10 @@ test("production replay sends persisted HTTP bytes despite changed launch render
         input: { schema: "launch", data: { kind: "record", fields: [], dictionary: [] } } } };
       expect(await provider.start(changed)).toMatchObject({ kind: "acknowledged" });
       expect(await provider.stop(changed, null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
-      expect(requests.map((request) => request.body)).toEqual([invocation.bytes, invocation.bytes]);
-      expect(new Set(requests.map((request) => request.path)).size).toBe(1);
+      // Exactly one PUT, carrying the originally pinned bytes — stop never re-renders or re-sends.
+      expect(puts.map((request) => request.body)).toEqual([invocation.bytes]);
+      // The lookup that resolves the null reference asks about the same session key the start used.
+      expect(lookups).toEqual(puts.map((request) => request.path));
     });
   } finally { server.stop(true); }
 });
