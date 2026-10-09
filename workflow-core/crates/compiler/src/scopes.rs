@@ -160,6 +160,13 @@ pub fn compile_scope(
                 "targets must be direct references without a path",
             ));
         }
+        if command.targets.iter().any(|e| !reads_observation(e)) {
+            return Err(error(
+                DomainErrorKind::InvalidAssignment,
+                command.key.to_string(),
+                "targets must reference an observed root, not input, state or trigger",
+            ));
+        }
         check_prefill(bundle, owner, command, &context)?;
         if targets.iter().any(|e| {
             let shape = schema(bundle, &e.schema);
@@ -314,6 +321,12 @@ fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
 }
 fn is_whole_reference(expression: &Expression) -> bool {
     matches!(expression, Expression::Reference { path, .. } if path.is_empty())
+}
+/// Input, state and trigger travel beside the snapshot's observations, so a
+/// projection cannot resolve a target revision from them.
+fn reads_observation(expression: &Expression) -> bool {
+    matches!(expression, Expression::Reference { root, .. }
+        if !matches!(root, ReferenceRoot::Input | ReferenceRoot::State | ReferenceRoot::Trigger | ReferenceRoot::Item))
 }
 /// Prefill roots are the observed outputs and resources a projection reads.
 fn is_observed_root(root: &ReferenceRoot) -> bool {

@@ -1496,3 +1496,12 @@ fn command_prefill_rejects_the_trigger_root() {
         DomainErrorKind::InvalidAssignment,
     );
 }
+#[test]
+fn command_targets_reject_an_unobserved_root() {
+    let mut value = review_target();
+    value["scopes"][0]["commands"][3]["targets"] =
+        json!([{"kind":"reference","root":{"kind":"trigger"},"path":[]}]);
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    let error = compile(&source, &source.operations).unwrap_err();
+    assert!(error.detail.contains("observed root"), "{}", error.detail);
+}
