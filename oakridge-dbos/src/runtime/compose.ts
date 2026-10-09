@@ -18,6 +18,7 @@ import type { OutputPublication } from "../storage/commit";
 import type { EffectProvider } from "../effects/provider";
 import type { PullRequestReader } from "./github-pull-requests";
 import { createEffectProvider } from "../effects/operations/production-provider";
+import { asKbblCredential, type KbblCredential } from "../adapters/kbbl";
 import { selectApplicationVersion } from "../workflows/engine-version";
 import { DEFAULT_WORKFLOW_TIMING, ensureRunWorkflow, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, wakeRun, type WorkflowTiming } from "../workflows/topology";
 
@@ -68,6 +69,53 @@ function forgeRepositories({ bundle, input }: ProviderCapabilityInput): readonly
   if (root) visit(root.input_schema, input, 0);
   return [...found.values()];
 }
+const LOOPBACK_KBBL_HOSTNAMES: ReadonlySet<string> = new Set(["127.0.0.1", "::1", "localhost", "[::1]"]);
+
+/**
+ * Whether a kbbl base URL's host is loopback. Rolled locally rather than
+ * imported from kbbl's own `isLoopbackHost` (kbbl/core/server/auth.ts):
+ * the two packages stay independent, and this is a dozen lines that do not
+ * change. Covers the full 127.0.0.0/8 range, not just 127.0.0.1.
+ */
+export function isLoopbackKbblUrl(url: string): boolean {
+  let hostname: string;
+  try { hostname = new URL(url).hostname.toLowerCase(); }
+  catch { return false; }
+  if (LOOPBACK_KBBL_HOSTNAMES.has(hostname)) return true;
+  const parts = hostname.split(".");
+  // Every octet must be a bare 0-255 integer, or a hostname like
+  // "127.attacker.co.uk" (four dot-separated parts, first is "127") would
+  // pass as loopback and bypass the no-credential fail-fast guard below.
+  return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+/**
+ * Confirms the configured service credential is one kbbl actually accepts,
+ * before any run is launched against it. Hits a non-GET control route kbbl's
+ * `verifyControlCredentials` authenticates (kbbl/core/server/auth.ts): the
+ * cookie-establishment endpoint never routes through that function, and a
+ * GET lookup is exempted by the control-auth middleware entirely, so neither
+ * would prove the credential is honored. `startup-probe` is not a valid
+ * session id, so an authenticated request reaches kbbl's `isValidSid` check
+ * (acp-per-sid.ts) and gets back exactly `400 {error: "invalid sid"}` — the
+ * one response that can only be produced *after* the credential was
+ * accepted. Anything else (401/403 rejection, a 404/5xx from a wrong base URL
+ * or a kbbl that is not running, a redirect) fails startup: accepting any
+ * non-401/403 status as success would let a misconfigured or unreachable
+ * kbbl through without ever confirming the credential at all.
+ */
+export async function probeKbblCredential(base_url: string, credential: KbblCredential): Promise<void> {
+  const response = await fetch(`${base_url.replace(/\/$/, "")}/sessions/startup-probe`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${credential}` },
+  });
+  if (response.status === 400) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    if (body?.error === "invalid sid") return;
+  }
+  throw new Error(`kbbl did not accept the configured OAKRIDGE_KBBL_SERVICE_TOKEN (probe returned ${response.status}) at ${base_url}`);
+}
+
 export function githubProviderCapabilities(token: string, http: typeof fetch = fetch, kbbl_base_url = process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788"): ProviderCapabilities {
   return {
     async probe(kind) {
@@ -145,11 +193,24 @@ export async function createProductionComposition(options: ProductionOptions): P
   let launch_attempted = false;
   try {
   await verifyEffectEncryption(db);
-  const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch,
-    options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788");
+  const kbbl_base_url = options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788";
+  const kbbl_service_token = process.env.OAKRIDGE_KBBL_SERVICE_TOKEN?.trim() || undefined;
+  // The substantive protection: refuse to run unauthenticated against a kbbl
+  // that is not this process's own loopback — independent of whether the
+  // probe below ever runs.
+  if (!isLoopbackKbblUrl(kbbl_base_url) && !kbbl_service_token) {
+    throw new Error(`OAKRIDGE_KBBL_SERVICE_TOKEN is required when KBBL_BASE_URL is non-loopback (${kbbl_base_url})`);
+  }
+  const kbbl_credential = asKbblCredential(kbbl_service_token ?? "");
+  const provider_capabilities = options.provider_capabilities ?? githubProviderCapabilities(process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "", fetch, kbbl_base_url);
   const mutations = createMutationService(db, core, provider_capabilities);
   const repositories = authorityRepositories(db);
-  const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
+  const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url, credential: kbbl_credential, pull_requests: options.pull_requests });
+  // Keyed off the resolved provider and credential, not off `options`: most
+  // tests inject `options.effect_provider` and never reach
+  // `createEffectProvider`, so a probe wired in unconditionally would make
+  // every one of them attempt network IO against a kbbl that is not running.
+  if (!options.effect_provider && kbbl_service_token) await probeKbblCredential(kbbl_base_url, kbbl_credential);
   const application_version = options.application_version ?? selectApplicationVersion(options.core_binary);
   registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
   DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });

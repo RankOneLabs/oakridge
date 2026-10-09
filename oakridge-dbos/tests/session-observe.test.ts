@@ -4,6 +4,7 @@ import { CoreClient } from "../src/core-client/client";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { resolveObserve } from "../src/effects/outcomes";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
+import { asKbblCredential } from "../src/adapters/kbbl";
 import type { ExternalHandle, InvocationId, StableInvocation } from "../src/effects/provider";
 import type { SqlExecutor } from "../src/storage/sql-executor";
 
@@ -18,7 +19,7 @@ async function withObserver(bundle: DefinitionBundle, reply: () => unknown,
   try {
     let selected_scope = "";
     const db = { query: async () => [{ source: bundle, scope_key: selected_scope, scope_id: "scope", run_id: "run" }] } as unknown as SqlExecutor;
-    const provider = createEffectProvider({ db, core: started.value, kbbl_base_url: server.url.href });
+    const provider = createEffectProvider({ db, core: started.value, kbbl_base_url: server.url.href, credential: asKbblCredential("test-token") });
     await use(async (scope_key, worker_key) => {
       const scope = bundle.scopes.find((item) => item.key === scope_key)!;
       const worker = scope.workers.find((item) => item.key === worker_key)!;

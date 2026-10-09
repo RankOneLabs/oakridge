@@ -2,7 +2,8 @@ import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
-import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
+import { isLoopbackHost, isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
+import type { BrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -46,6 +47,33 @@ export function parseFallbackRefreshMs(raw: string | undefined): number | undefi
   if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS)
     throw new Error(`OAKRIDGE_FALLBACK_REFRESH_MS must be a positive number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}, got: ${raw}`);
   return value;
+}
+
+/**
+ * Whether a request is trusted enough to receive the injected core control
+ * token. Checked independently of `browserControlToken`/`isValidControlRequest`
+ * above: that check only runs in token mode, so a tokenless (loopback or
+ * insecure-non-loopback) bind previously injected operator authority for a
+ * request from any origin at all. A header that is present and foreign
+ * refuses the request; an absent header (same-process calls, direct loopback
+ * tools) is not itself foreign.
+ */
+export function isTrustedOperatorRequest(request: Pick<Request, "headers">, policy: BrowserWritePolicy): boolean {
+  const origin = request.headers.get("origin");
+  if (origin !== null && !policy.allowed_origins.has(origin)) return false;
+  const host = request.headers.get("host");
+  if (host !== null) {
+    // A bracketed IPv6 Host ("[::1]:8788") splits on ":" into "[", "", "1]",
+    // "8788" — take everything inside the brackets instead, or an IPv6
+    // loopback bind would refuse to inject the token for its own PWA.
+    const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : (host.split(":")[0] ?? host);
+    const hostTrusted = isLoopbackHost(hostname) || [...policy.allowed_origins].some((allowed) => {
+      try { return new URL(allowed).hostname === hostname; }
+      catch { return false; }
+    });
+    if (!hostTrusted) return false;
+  }
+  return true;
 }
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
@@ -111,7 +139,12 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // by occupying the header. The PWA cookie likewise stays local to kbbl; a
     // verified browser credential is replaced here by the control token the
     // backend would have accepted directly.
-    if (route?.authority === "operator" && deps.coreControlToken)
+    //
+    // Gated by isTrustedOperatorRequest in every mode, not only when
+    // browserControlToken is configured: a tokenless (loopback or
+    // insecure-non-loopback) bind otherwise injected operator authority for a
+    // request from any origin at all.
+    if (route?.authority === "operator" && deps.coreControlToken && isTrustedOperatorRequest(c.req.raw, write_policy))
       forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
 
     let body: ArrayBuffer | undefined;

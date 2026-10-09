@@ -241,6 +241,36 @@ describe("makeControlAuthMiddleware — token mode", () => {
   });
 });
 
+describe("makeControlAuthMiddleware — service token", () => {
+  const TOKEN = "test-secret-token";
+  const SERVICE_TOKEN = "dbos-service-token";
+  const app = buildApp({ mode: "token", token: TOKEN, serviceToken: SERVICE_TOKEN });
+
+  test("POST with the service token as a Bearer header succeeds", async () => {
+    const res = await app.request("/write", {
+      method: "POST",
+      headers: { authorization: `Bearer ${SERVICE_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("the primary control token still works once a service token is configured", async () => {
+    const res = await app.request("/write", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("the service token presented as a cookie value is rejected, not accepted", async () => {
+    const res = await app.request("/write", {
+      method: "POST",
+      headers: { cookie: `kbbl_ctrl=${SERVICE_TOKEN}`, origin: "http://localhost" },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 // ---- makeCookieHandler -------------------------------------------------------
 
 describe("makeCookieHandler — loopback mode", () => {
@@ -292,5 +322,30 @@ describe("makeCookieHandler — token mode", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Path=/");
+  });
+});
+
+describe("makeCookieHandler — Secure attribute", () => {
+  const TOKEN = "test-secret-token";
+  const policy: AuthPolicy = { mode: "token", token: TOKEN };
+
+  test("omits Secure over plain HTTP", async () => {
+    const app = new Hono();
+    app.post("/auth/cookie", makeCookieHandler(policy));
+    const res = await app.request("http://localhost/auth/cookie", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.headers.get("set-cookie")).not.toContain("Secure");
+  });
+
+  test("sets Secure over HTTPS", async () => {
+    const app = new Hono();
+    app.post("/auth/cookie", makeCookieHandler(policy));
+    const res = await app.request("https://operator.example/auth/cookie", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.headers.get("set-cookie")).toContain("Secure");
   });
 });
