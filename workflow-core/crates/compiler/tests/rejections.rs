@@ -1132,7 +1132,10 @@ fn operator_edit_trigger_must_name_a_declared_command() {
     let mut value = fixture();
     value["scopes"][0]["outputs"][0]["operator_edit_trigger"] = json!("undeclared");
     let source: DefinitionBundle = serde_json::from_value(value).unwrap();
-    assert_eq!(compile(&source, &source.operations).unwrap_err().kind, DomainErrorKind::UndeclaredTrigger);
+    assert_eq!(
+        compile(&source, &source.operations).unwrap_err().kind,
+        DomainErrorKind::UndeclaredTrigger
+    );
 }
 #[test]
 fn collection_projection_cannot_read_an_undeclared_output() {
