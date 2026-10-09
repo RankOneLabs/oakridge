@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 import { DEFAULT_WORKFLOW_TIMING } from "../src/workflows/topology";
 import { runOps } from "../src/ops";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { sealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 
 // Recovery forks onto the running engine version, which hashes the core binary.
 const core_dir = mkdtempSync(resolve(tmpdir(), "oakridge-ops-core-"));
@@ -32,21 +34,36 @@ test("ops lists, inspects and forks an errored workflow", async () => {
   const shutdown = spyOn(DBOS, "shutdown").mockImplementation(async () => undefined);
   const list = spyOn(DBOS, "listWorkflows").mockImplementation(async () => [{ workflowID: "effect-1", status: "PENDING" }] as never);
   const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () =>
-    ({ workflowID: "effect-1", workflowName: "oakridgeEffectWorkflow", status: "ERROR" }) as never);
+    ({ workflowID: "effect-1", workflowName: "oakridgeEffectWorkflow", status: "ERROR", input: ["effect-1"] }) as never);
   const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () =>
     [{ functionID: 2, error: null }, { functionID: 3, error: new Error("lost db") }] as never);
   const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({ workflowID: "effect-fork" }) as never);
+  // A fork's timeout now comes from the intent's stamped deadline_epoch_ms,
+  // not the SDK's own status.timeoutMS, so this stub supplies the authority
+  // row recoveredEffectTimeoutMS reads through readIntent.
+  let deadline_epoch_ms: number | null = null;
+  const connect = spyOn(PgPostgresExecutor, "connect").mockImplementation(() => ({
+    async query(sql: string) {
+      if (!sql.includes("SELECT * FROM authority.effect_intent")) return [];
+      if (deadline_epoch_ms === null) return [];
+      return [{ id: "effect-1", run_id: "run-1", scope_id: "scope-1", execution_id: null, effect_key: "key",
+        status: "pending", dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms, version: 0,
+        payload: sealEffectPayload({ action: "start", handle: null,
+          invocation: { id: "effect-1", execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload) }];
+    },
+    async close() {},
+  } as never));
   try {
     expect(await runOps(["workflows", "list"], "postgres://test")).toEqual([{ workflowID: "effect-1", status: "PENDING" }]);
     expect(await runOps(["workflows", "inspect", "effect-1"], "postgres://test")).toMatchObject({ status: { status: "ERROR" } });
     expect(await runOps(["workflows", "recover", "effect-1"], "postgres://test")).toMatchObject({ workflowID: "effect-fork", startStep: 3 });
     expect(fork).toHaveBeenCalledWith("effect-1", 3, expect.objectContaining({ applicationVersion: expect.any(String), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }));
-    status.mockImplementation(async () => ({ workflowID: "effect-1", workflowName: "oakridgeEffectWorkflow",
-      status: "ERROR", timeoutMS: 500 } as never));
+    deadline_epoch_ms = Date.now() + 500;
     await runOps(["workflows", "recover", "effect-1"], "postgres://test");
-    expect(fork).toHaveBeenLastCalledWith("effect-1", 3, expect.objectContaining({ timeoutMS: 500 }));
+    const last_timeout = (fork.mock.calls.at(-1)?.[2] as { timeoutMS: number }).timeoutMS;
+    expect(Math.abs(last_timeout - 500)).toBeLessThan(250);
   } finally {
-    config.mockRestore(); launch.mockRestore(); shutdown.mockRestore(); list.mockRestore(); status.mockRestore(); steps.mockRestore(); fork.mockRestore();
+    config.mockRestore(); launch.mockRestore(); shutdown.mockRestore(); list.mockRestore(); status.mockRestore(); steps.mockRestore(); fork.mockRestore(); connect.mockRestore();
   }
 });
 

@@ -1,4 +1,5 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import { readIntent } from "./effects/intents";
 import { migrateEmptyDatabase } from "./storage/migrate";
 import { claimRunGeneration, currentRunGeneration } from "./storage/run-lifecycle";
 import { PgPostgresExecutor } from "./storage/sql-executor";
@@ -14,6 +15,17 @@ function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];
+
+/** Remaining time to the intent's stamped absolute deadline, or the default if never stamped. */
+async function recoveredEffectTimeoutMS(database_url: string, intent_id: unknown): Promise<number> {
+  if (typeof intent_id !== "string") throw new Error("effect workflow has no intent identity");
+  const db = PgPostgresExecutor.connect(database_url);
+  try {
+    const intent = await readIntent(db, intent_id);
+    const deadline_epoch_ms = intent?.deadline_epoch_ms ?? null;
+    return deadline_epoch_ms === null ? DEFAULT_WORKFLOW_TIMING.execution_deadline_ms : Math.max(0, deadline_epoch_ms - Date.now());
+  } finally { await db.close(); }
+}
 
 export async function runOps(args: readonly string[], database_url: string | undefined = process.env.DBOS_SYSTEM_DATABASE_URL): Promise<unknown> {
   const command = (args[0] === "--" ? args.slice(1) : args) as OpsCommand;
@@ -63,10 +75,16 @@ export async function runOps(args: readonly string[], database_url: string | und
         start_step: startStep, application_version });
       recovered_workflow_id = newWorkflowID;
     } else {
+      // A forked effect must not outlive its stamped absolute deadline: that
+      // deadline is never refreshed, but status.timeoutMS is the original
+      // allotment and would hand the fork a fresh clock, extending how long
+      // the intent is owed.
+      const effect_timeout_ms = status.workflowName === "oakridgeEffectWorkflow"
+        ? await recoveredEffectTimeoutMS(database_url, status.input?.[0])
+        : null;
       const forked = await DBOS.forkWorkflow(workflow_id!, startStep,
         { applicationVersion: application_version,
-          ...(status.workflowName === "oakridgeEffectWorkflow"
-            ? { timeoutMS: status.timeoutMS ?? DEFAULT_WORKFLOW_TIMING.execution_deadline_ms } : {}) });
+          ...(effect_timeout_ms !== null ? { timeoutMS: effect_timeout_ms } : {}) });
       recovered_workflow_id = forked.workflowID;
     }
     if (runGeneration) {
