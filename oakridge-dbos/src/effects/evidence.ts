@@ -21,7 +21,7 @@ export async function deliverEvidence(db: TransactionalSqlExecutor, mutations: M
   if (!accepted) return { kind: "deferred", detail: result.value.detail };
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [run_id]);
-    await tx.query("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{evidence_delivered}','true'),version=version+1 WHERE id=$1 AND payload->'evidence'=$2::jsonb", [intent.id, JSON.stringify(evidence)]);
+    await tx.query("UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{evidence_delivered}','true'),updated_at=now(),version=version+1 WHERE id=$1 AND payload->'evidence'=$2::jsonb", [intent.id, JSON.stringify(evidence)]);
   });
   return { kind: "delivered" };
 }

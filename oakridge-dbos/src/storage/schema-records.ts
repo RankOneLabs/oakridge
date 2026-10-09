@@ -1,8 +1,8 @@
 import type * as Rows from "./generated-records";
-import type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+import type { CollaborationDeliveryId, CollaborationMessageId, CollaborationThreadId, ExecutionId, OperatorEventId, PoolId, ProjectId, RevisionId, ReviewItemId, RunId, RunTransitionId, ScopeId } from "../domain/primitives";
 import type { Materialization } from "../core-client/generated-contracts";
 
-export type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+export type { CollaborationDeliveryId, CollaborationMessageId, CollaborationThreadId, ExecutionId, OperatorEventId, PoolId, ProjectId, RevisionId, ReviewItemId, RunId, RunTransitionId, ScopeId } from "../domain/primitives";
 export type { ChildCollectionMember, CommitReceipt } from "./json-column-types";
 
 /**
@@ -22,8 +22,13 @@ export type Version = number;
 export interface VersionedRecord { readonly id: string; readonly version: Version }
 
 export type DefinitionBundleRecord = Readonly<Rows.DefinitionBundle>;
+export type OperatorEventRecord = Branded<Rows.OperatorEvent, { id: OperatorEventId; run_id: RunId; scope_id: ScopeId }>;
+export type CollaborationThreadRecord = Branded<Rows.CollaborationThread, { id: CollaborationThreadId; run_id: RunId; scope_id: ScopeId; revision_id: RevisionId }>;
+export type CollaborationMessageRecord = Branded<Rows.CollaborationMessage, { id: CollaborationMessageId; thread_id: CollaborationThreadId }>;
+export type ReviewItemRecord = Branded<Rows.ReviewItem, { id: ReviewItemId; run_id: RunId; scope_id: ScopeId; revision_id: RevisionId }>;
+export type CollaborationDeliveryRecord = Branded<Rows.CollaborationDelivery, { id: CollaborationDeliveryId; thread_id: CollaborationThreadId; target_execution_id: ExecutionId }>;
 export type PromptContentRecord = Readonly<Rows.PromptContent>;
-export type RunRecord = Branded<Rows.Run, { id: RunId }>;
+export type RunRecord = Branded<Rows.Run, { id: RunId; project_id: ProjectId }>;
 export type LaunchReceiptRecord = Branded<Rows.LaunchReceipt, { run_id: RunId; root_scope_id: ScopeId }>;
 export type ScopeInstanceRecord = Branded<Rows.ScopeInstance, { id: ScopeId; run_id: RunId; parent_id: ScopeId }>;
 export type ScopeExportRecord = Branded<Rows.ScopeExport, { run_id: RunId; scope_id: ScopeId }>;
@@ -40,6 +45,11 @@ export type CapacityPoolRecord = Branded<Rows.CapacityPool, { id: PoolId; run_id
 export type CapacityReservationRecord = Branded<Rows.CapacityReservation, { run_id: RunId; pool_id: PoolId; scope_id: ScopeId }>;
 export type ResourceBindingRecord = Branded<Rows.ResourceBinding, { run_id: RunId; scope_id: ScopeId }>;
 export type ProjectRecord = Branded<Rows.Project, { id: ProjectId }>;
+
+/** Authorship follows immutable revision evidence and its publishing transition. */
+export type RevisionAuthorship =
+  | { readonly kind: "agent"; readonly execution_id: ExecutionId }
+  | { readonly kind: "operator"; readonly transition_id: RunTransitionId; readonly request_id: string };
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
 export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;

@@ -4,7 +4,7 @@
 /* tslint:disable */
 /* eslint-disable */
 
-import { CheckedValue, ChildCollectionMembers, DefinitionBundleSource, CompiledBundle, EffectIntentPayload, CommitReceipt, ForgeRepository, DecisionOutcome } from "./json-column-types";
+import { CheckedValue, ChildCollectionMembers, CollaborationTranscript, DefinitionBundleSource, CompiledBundle, AuthoringModel, EffectIntentPayload, CommitReceipt, OperatorEventPayload, ForgeRepository, SessionPolicy, DecisionOutcome } from "./json-column-types";
 
 
 export type Json = unknown;
@@ -23,6 +23,7 @@ export interface ArtifactRevision {
   body: CheckedValue;
   predecessor_id: string | null;
   version: number;
+  created_at: Date;
 }
 export interface ArtifactRevisionInput {
   id: string;
@@ -35,10 +36,11 @@ export interface ArtifactRevisionInput {
   body: CheckedValue;
   predecessor_id?: string | null;
   version?: number;
+  created_at?: Date;
 }
 const artifact_revision = {
   tableName: 'artifact_revision',
-  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'output_key', 'collection_key', 'body', 'predecessor_id', 'version'],
+  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'output_key', 'collection_key', 'body', 'predecessor_id', 'version', 'created_at'],
   requiredForInsert: ['id', 'run_id', 'scope_id', 'output_key', 'body'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -127,6 +129,102 @@ const child_collection = {
   $input: null as unknown as ChildCollectionInput
 } as const;
 
+// Table collaboration_delivery
+export interface CollaborationDelivery {
+  id: string;
+  thread_id: string;
+  request_key: string;
+  target_execution_id: string | null;
+  /** @type {CollaborationTranscript} */
+  transcript: CollaborationTranscript;
+  status: string;
+  detail: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+export interface CollaborationDeliveryInput {
+  id: string;
+  thread_id: string;
+  request_key: string;
+  target_execution_id?: string | null;
+  /** @type {CollaborationTranscript} */
+  transcript: CollaborationTranscript;
+  status: string;
+  detail?: string | null;
+  created_at?: Date;
+  updated_at?: Date;
+}
+const collaboration_delivery = {
+  tableName: 'collaboration_delivery',
+  columns: ['id', 'thread_id', 'request_key', 'target_execution_id', 'transcript', 'status', 'detail', 'created_at', 'updated_at'],
+  requiredForInsert: ['id', 'thread_id', 'request_key', 'transcript', 'status'],
+  primaryKey: 'id',
+  foreignKeys: {
+    thread_id: { table: 'collaboration_thread', column: 'id', $type: null as unknown as CollaborationThread },
+    target_execution_id: { table: 'execution', column: 'id', $type: null as unknown as Execution },
+  },
+  $type: null as unknown as CollaborationDelivery,
+  $input: null as unknown as CollaborationDeliveryInput
+} as const;
+
+// Table collaboration_message
+export interface CollaborationMessage {
+  id: string;
+  thread_id: string;
+  body: string;
+  author: string;
+  created_at: Date;
+}
+export interface CollaborationMessageInput {
+  id: string;
+  thread_id: string;
+  body: string;
+  author: string;
+  created_at?: Date;
+}
+const collaboration_message = {
+  tableName: 'collaboration_message',
+  columns: ['id', 'thread_id', 'body', 'author', 'created_at'],
+  requiredForInsert: ['id', 'thread_id', 'body', 'author'],
+  primaryKey: 'id',
+  foreignKeys: { thread_id: { table: 'collaboration_thread', column: 'id', $type: null as unknown as CollaborationThread }, },
+  $type: null as unknown as CollaborationMessage,
+  $input: null as unknown as CollaborationMessageInput
+} as const;
+
+// Table collaboration_thread
+export interface CollaborationThread {
+  id: string;
+  run_id: string;
+  scope_id: string;
+  output_key: string;
+  collection_key: string;
+  revision_id: string;
+  anchor: string | null;
+  status: string;
+  created_at: Date;
+}
+export interface CollaborationThreadInput {
+  id: string;
+  run_id: string;
+  scope_id: string;
+  output_key: string;
+  collection_key?: string;
+  revision_id: string;
+  anchor?: string | null;
+  status: string;
+  created_at?: Date;
+}
+const collaboration_thread = {
+  tableName: 'collaboration_thread',
+  columns: ['id', 'run_id', 'scope_id', 'output_key', 'collection_key', 'revision_id', 'anchor', 'status', 'created_at'],
+  requiredForInsert: ['id', 'run_id', 'scope_id', 'output_key', 'revision_id', 'status'],
+  primaryKey: 'id',
+  foreignKeys: {},
+  $type: null as unknown as CollaborationThread,
+  $input: null as unknown as CollaborationThreadInput
+} as const;
+
 // Table definition_bundle
 export interface DefinitionBundle {
   id: string;
@@ -136,6 +234,9 @@ export interface DefinitionBundle {
   /** @type {CompiledBundle} */
   checked_program: CompiledBundle;
   version: number;
+  created_at: Date;
+  /** @type {AuthoringModel} */
+  authoring: AuthoringModel | null;
   archived_at: Date | null;
 }
 export interface DefinitionBundleInput {
@@ -146,11 +247,14 @@ export interface DefinitionBundleInput {
   /** @type {CompiledBundle} */
   checked_program: CompiledBundle;
   version?: number;
+  created_at?: Date;
+  /** @type {AuthoringModel} */
+  authoring?: AuthoringModel | null;
   archived_at?: Date | null;
 }
 const definition_bundle = {
   tableName: 'definition_bundle',
-  columns: ['id', 'digest', 'source', 'checked_program', 'version', 'archived_at'],
+  columns: ['id', 'digest', 'source', 'checked_program', 'version', 'created_at', 'authoring', 'archived_at'],
   requiredForInsert: ['id', 'digest', 'source', 'checked_program'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -168,6 +272,7 @@ export interface EffectIntent {
   /** @type {EffectIntentPayload} */
   payload: EffectIntentPayload;
   status: effect_status;
+  updated_at: Date;
   version: number;
 }
 export interface EffectIntentInput {
@@ -179,11 +284,12 @@ export interface EffectIntentInput {
   /** @type {EffectIntentPayload} */
   payload: EffectIntentPayload;
   status?: effect_status;
+  updated_at?: Date;
   version?: number;
 }
 const effect_intent = {
   tableName: 'effect_intent',
-  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'effect_key', 'payload', 'status', 'version'],
+  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'effect_key', 'payload', 'status', 'updated_at', 'version'],
   requiredForInsert: ['id', 'run_id', 'scope_id', 'effect_key', 'payload'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -201,6 +307,8 @@ export interface Execution {
   status: execution_status;
   /** @type {CheckedValue} */
   result: CheckedValue | null;
+  created_at: Date;
+  completed_at: Date | null;
   publication_secret_hash: string | null;
   version: number;
 }
@@ -213,12 +321,14 @@ export interface ExecutionInput {
   status: execution_status;
   /** @type {CheckedValue} */
   result?: CheckedValue | null;
+  created_at?: Date;
+  completed_at?: Date | null;
   publication_secret_hash?: string | null;
   version?: number;
 }
 const execution = {
   tableName: 'execution',
-  columns: ['id', 'run_id', 'scope_id', 'worker_key', 'generation', 'status', 'result', 'publication_secret_hash', 'version'],
+  columns: ['id', 'run_id', 'scope_id', 'worker_key', 'generation', 'status', 'result', 'created_at', 'completed_at', 'publication_secret_hash', 'version'],
   requiredForInsert: ['id', 'run_id', 'scope_id', 'worker_key', 'generation', 'status'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -341,6 +451,35 @@ const launch_receipt = {
   $input: null as unknown as LaunchReceiptInput
 } as const;
 
+// Table operator_event
+export interface OperatorEvent {
+  id: string;
+  run_id: string | null;
+  scope_id: string | null;
+  /** @type {OperatorEventPayload} */
+  payload: OperatorEventPayload;
+  commit_txid: number;
+  created_at: Date;
+}
+export interface OperatorEventInput {
+  id: string;
+  run_id?: string | null;
+  scope_id?: string | null;
+  /** @type {OperatorEventPayload} */
+  payload: OperatorEventPayload;
+  commit_txid?: number;
+  created_at?: Date;
+}
+const operator_event = {
+  tableName: 'operator_event',
+  columns: ['id', 'run_id', 'scope_id', 'payload', 'commit_txid', 'created_at'],
+  requiredForInsert: ['id', 'payload'],
+  primaryKey: 'id',
+  foreignKeys: {},
+  $type: null as unknown as OperatorEvent,
+  $input: null as unknown as OperatorEventInput
+} as const;
+
 // Table output_slot
 export interface OutputSlot {
   id: string;
@@ -378,6 +517,8 @@ export interface Project {
   /** @type {ForgeRepository} */
   forge_repository: ForgeRepository | null;
   integration_branch: string | null;
+  /** @type {SessionPolicy} */
+  session_policy: SessionPolicy | null;
   created_at: Date;
 }
 export interface ProjectInput {
@@ -387,11 +528,13 @@ export interface ProjectInput {
   /** @type {ForgeRepository} */
   forge_repository?: ForgeRepository | null;
   integration_branch?: string | null;
+  /** @type {SessionPolicy} */
+  session_policy?: SessionPolicy | null;
   created_at?: Date;
 }
 const project = {
   tableName: 'project',
-  columns: ['id', 'name', 'repo_dir', 'forge_repository', 'integration_branch', 'created_at'],
+  columns: ['id', 'name', 'repo_dir', 'forge_repository', 'integration_branch', 'session_policy', 'created_at'],
   requiredForInsert: ['id', 'name', 'repo_dir'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -447,10 +590,50 @@ const resource_binding = {
   $input: null as unknown as ResourceBindingInput
 } as const;
 
+// Table review_item
+export interface ReviewItem {
+  id: string;
+  run_id: string;
+  scope_id: string;
+  output_key: string;
+  collection_key: string;
+  revision_id: string;
+  anchor: string;
+  claim: string;
+  reality: string;
+  status: string;
+  resolution: string | null;
+  created_at: Date;
+}
+export interface ReviewItemInput {
+  id: string;
+  run_id: string;
+  scope_id: string;
+  output_key: string;
+  collection_key?: string;
+  revision_id: string;
+  anchor: string;
+  claim: string;
+  reality: string;
+  status: string;
+  resolution?: string | null;
+  created_at?: Date;
+}
+const review_item = {
+  tableName: 'review_item',
+  columns: ['id', 'run_id', 'scope_id', 'output_key', 'collection_key', 'revision_id', 'anchor', 'claim', 'reality', 'status', 'resolution', 'created_at'],
+  requiredForInsert: ['id', 'run_id', 'scope_id', 'output_key', 'revision_id', 'anchor', 'claim', 'reality', 'status'],
+  primaryKey: 'id',
+  foreignKeys: {},
+  $type: null as unknown as ReviewItem,
+  $input: null as unknown as ReviewItemInput
+} as const;
+
 // Table run
 export interface Run {
   id: string;
   definition_bundle_id: string;
+  project_id: string | null;
   created_at: Date;
   version: number;
   current_generation: number;
@@ -460,6 +643,7 @@ export interface Run {
 export interface RunInput {
   id: string;
   definition_bundle_id: string;
+  project_id?: string | null;
   created_at?: Date;
   version?: number;
   current_generation?: number;
@@ -468,10 +652,13 @@ export interface RunInput {
 }
 const run = {
   tableName: 'run',
-  columns: ['id', 'definition_bundle_id', 'created_at', 'version', 'current_generation', 'current_cursor', 'archived_at'],
+  columns: ['id', 'definition_bundle_id', 'project_id', 'created_at', 'version', 'current_generation', 'current_cursor', 'archived_at'],
   requiredForInsert: ['id', 'definition_bundle_id'],
   primaryKey: 'id',
-  foreignKeys: { definition_bundle_id: { table: 'definition_bundle', column: 'id', $type: null as unknown as DefinitionBundle }, },
+  foreignKeys: {
+    definition_bundle_id: { table: 'definition_bundle', column: 'id', $type: null as unknown as DefinitionBundle },
+    project_id: { table: 'project', column: 'id', $type: null as unknown as Project },
+  },
   $type: null as unknown as Run,
   $input: null as unknown as RunInput
 } as const;
@@ -599,6 +786,18 @@ export interface TableTypes {
     select: ChildCollection;
     input: ChildCollectionInput;
   };
+  collaboration_delivery: {
+    select: CollaborationDelivery;
+    input: CollaborationDeliveryInput;
+  };
+  collaboration_message: {
+    select: CollaborationMessage;
+    input: CollaborationMessageInput;
+  };
+  collaboration_thread: {
+    select: CollaborationThread;
+    input: CollaborationThreadInput;
+  };
   definition_bundle: {
     select: DefinitionBundle;
     input: DefinitionBundleInput;
@@ -627,6 +826,10 @@ export interface TableTypes {
     select: LaunchReceipt;
     input: LaunchReceiptInput;
   };
+  operator_event: {
+    select: OperatorEvent;
+    input: OperatorEventInput;
+  };
   output_slot: {
     select: OutputSlot;
     input: OutputSlotInput;
@@ -642,6 +845,10 @@ export interface TableTypes {
   resource_binding: {
     select: ResourceBinding;
     input: ResourceBindingInput;
+  };
+  review_item: {
+    select: ReviewItem;
+    input: ReviewItemInput;
   };
   run: {
     select: Run;
@@ -666,6 +873,9 @@ export const tables = {
   capacity_pool,
   capacity_reservation,
   child_collection,
+  collaboration_delivery,
+  collaboration_message,
+  collaboration_thread,
   definition_bundle,
   effect_intent,
   execution,
@@ -673,10 +883,12 @@ export const tables = {
   fact,
   ingress_receipt,
   launch_receipt,
+  operator_event,
   output_slot,
   project,
   prompt_content,
   resource_binding,
+  review_item,
   run,
   scope_export,
   scope_instance,
