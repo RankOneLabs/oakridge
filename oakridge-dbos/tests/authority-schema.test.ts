@@ -17,13 +17,13 @@ test("baseline creates constrained authority relations and accepts a matching se
     await db.query("CREATE SCHEMA dbos; CREATE TABLE dbos.system_state (id integer)", []);
     await migrateEmptyDatabase(db);
     const tables = await db.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema='authority' ORDER BY table_name", []);
-    expect(tables.map((row) => row.table_name)).toEqual(["artifact_revision", "capacity_pool", "capacity_reservation", "child_collection", "definition_bundle", "effect_intent", "execution", "execution_selection", "fact", "ingress_receipt", "launch_receipt", "output_slot", "project", "prompt_content", "resource_binding", "run", "schema_baseline", "scope_export", "scope_instance", "transition"]);
+    expect(tables.map((row) => row.table_name)).toEqual(["artifact_revision", "capacity_pool", "capacity_reservation", "child_collection", "collaboration_delivery", "collaboration_message", "collaboration_thread", "definition_bundle", "effect_intent", "execution", "execution_selection", "fact", "ingress_receipt", "launch_receipt", "operator_event", "output_slot", "project", "prompt_content", "resource_binding", "review_item", "run", "schema_baseline", "scope_export", "scope_instance", "transition"]);
     const indexes = await db.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE schemaname='authority'", []);
-    for (const name of ["artifact_revision_scope_idx", "effect_intent_status_idx", "fact_scope_idx", "transition_scope_idx", "execution_selection_execution_idx", "transition_scope_created_idx", "transition_commit_idx", "fact_scope_key_idx"])
+    for (const name of ["artifact_revision_scope_idx", "effect_intent_status_idx", "effect_intent_session_id_idx", "fact_scope_idx", "transition_scope_idx", "execution_selection_execution_idx", "transition_scope_created_idx", "transition_commit_idx", "operator_event_commit_idx", "fact_scope_key_idx"])
       expect(indexes.some((row) => row.indexname === name)).toBe(true);
     const constraints = await db.query<{ table_name: string; type: string; definition: string }>(`SELECT c.conrelid::regclass::text AS table_name,c.contype AS type,pg_get_constraintdef(c.oid) AS definition
       FROM pg_constraint c WHERE c.connamespace='authority'::regnamespace`, []);
-    const statuses = await db.query<{ table_name: string; udt_name: string }>("SELECT table_name,udt_name FROM information_schema.columns WHERE table_schema='authority' AND column_name='status' ORDER BY table_name", []);
+    const statuses = await db.query<{ table_name: string; udt_name: string }>("SELECT table_name,udt_name FROM information_schema.columns WHERE table_schema='authority' AND table_name IN ('effect_intent','execution') AND column_name='status' ORDER BY table_name", []);
     expect(statuses).toEqual([{ table_name: "effect_intent", udt_name: "effect_status" }, { table_name: "execution", udt_name: "execution_status" }]);
     for (const name of ["scope_export", "child_collection", "execution_selection", "execution", "artifact_revision", "output_slot", "fact", "transition", "ingress_receipt", "effect_intent", "capacity_reservation", "resource_binding"])
       expect(constraints.some((row) => row.table_name === `authority.${name}` && row.type === "f" && row.definition.includes("FOREIGN KEY (run_id, scope_id)"))).toBe(true);
@@ -34,6 +34,8 @@ test("baseline creates constrained authority relations and accepts a matching se
     expect(columns.some((row) => row.table_name === "artifact_revision" && row.column_name === "collection_key" && row.is_nullable === "NO" && row.column_default === "''::text")).toBe(true);
     for (const name of ["fact", "ingress_receipt"]) expect(columns.some((row) => row.table_name === name && row.column_name === "version")).toBe(false);
     expect(columns.some((row) => row.table_name === "execution" && row.column_name === "publication_secret_hash")).toBe(true);
+    for (const [table_name, column_name] of [["artifact_revision", "created_at"], ["execution", "created_at"], ["execution", "completed_at"], ["effect_intent", "updated_at"], ["operator_event", "commit_txid"], ["operator_event", "payload"], ["run", "project_id"], ["project", "session_policy"], ["definition_bundle", "authoring"], ["collaboration_delivery", "transcript"]])
+      expect(columns.some((row) => row.table_name === table_name && row.column_name === column_name)).toBe(true);
     // Stored prompt text must hash to its digest; a mislabeled row is refused.
     await db.query("INSERT INTO authority.prompt_content (content_digest,content) VALUES ($1,$2)", [createHash("sha256").update("prompt").digest("hex"), "prompt"]);
     await expect(db.query("INSERT INTO authority.prompt_content (content_digest,content) VALUES ($1,$2)", [createHash("sha256").update("prompt").digest("hex").replace(/^./, "0"), "other"])).rejects.toMatchObject({ code: "23514" });

@@ -170,6 +170,8 @@ export interface OperatorProject {
   /** @type {ForgeRepository} */
   forge_repository: OperatorForgeRepository | null;
   integration_branch: string | null;
+  /** @type {SessionPolicy} */
+  session_policy: OperatorSessionPolicy | null;
   created_at: string;
 }
 
@@ -187,7 +189,7 @@ export type OperatorFactDefinition = { readonly "key": string; readonly "payload
 
 export type OperatorExportDefinition = { readonly "key": string; readonly "schema": string };
 
-export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "key": string; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
+export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "key": string; readonly "operator_edit_trigger"?: string | null; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
 
 export type OperatorCapacityPool = { readonly "key": string; readonly "limit": number };
 
@@ -222,6 +224,8 @@ export interface OperatorExecution {
   status: OperatorExecutionStatus;
   /** @type {CheckedValue} */
   result: OperatorCheckedValue | null;
+  created_at: string;
+  completed_at: string | null;
   publication_secret_hash: string | null;
   version: number;
 }
@@ -247,6 +251,7 @@ export interface OperatorArtifactRevision {
   body: OperatorCheckedValue;
   predecessor_id: string | null;
   version: number;
+  created_at: string;
 }
 
 export type OperatorJsonPrimitive = string | number | boolean | null;
@@ -260,6 +265,8 @@ export type OperatorActionSelection = { readonly "action": string; readonly "wor
 export type OperatorMaterialization = { readonly "children": (OperatorMaterializedChild)[] };
 
 export type OperatorSqlVersion = OperatorVersion | string;
+
+export type OperatorSessionPolicy = OperatorJsonValue;
 
 export type OperatorSchemaField = { readonly "key": string; readonly "required": boolean; readonly "schema": string };
 

@@ -113,6 +113,7 @@ const planning_feedback_exact: DecisionTree = {
 };
 
 const planning_retry: DecisionTree = { kind: "apply", id: "planning_retry", mutations: [], actions: [{ worker: "author", action: "retry" }], outcome: null };
+const planning_operator_edit: DecisionTree = { kind: "apply", id: "planning_operator_edit", mutations: [], actions: [], outcome: null };
 
 const planning_cancel: DecisionTree = {
   kind: "apply",
@@ -147,6 +148,7 @@ export const planning_dispatch: DecisionTree = {
     { variant: "submitted", node: planning_review },
     { variant: "accept", node: planning_exact },
     { variant: "request_changes", node: planning_feedback_exact },
+    { variant: "operator_edit", node: planning_operator_edit },
     { variant: "retry", node: planning_retry },
     { variant: "cancel", node: planning_cancel },
     { variant: "abandon", node: planning_abandon },

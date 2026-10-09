@@ -45,6 +45,7 @@ const implementation_wait: DecisionTree = {
   reason: "awaiting declared work or operator review",
   attention: { label: "Awaiting work or review", trigger: "accept_build" }
 };
+const implementation_operator_edit: DecisionTree = { kind: "apply", id: "implementation_operator_edit", mutations: [], actions: [], outcome: null };
 
 export const implementation_dispatch: DecisionTree = {
   kind: "match",
@@ -56,6 +57,7 @@ export const implementation_dispatch: DecisionTree = {
     { variant: "build_submitted", node: build_pair_complete },
     { variant: "accept_build", node: build_open_pr },
     { variant: "request_build_changes", node: feedback_open_pr },
+    { variant: "operator_edit", node: implementation_operator_edit },
     { variant: "retry_build", node: retry_retained_exact },
     { variant: "assessment_submitted", node: assessment_submission_context },
     { variant: "accept_assessment", node: assessment_accept_context },

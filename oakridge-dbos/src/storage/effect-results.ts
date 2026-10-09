@@ -29,7 +29,7 @@ export async function claimStartAttempt(db: TransactionalSqlExecutor, intent_id:
         'has_uncertain_start',coalesce((payload->>'has_uncertain_start')::boolean,false)
           OR coalesce((payload->>'start_in_flight')::boolean,false)
           OR (NOT (payload ? 'start_in_flight') AND coalesce((payload->>'has_dispatched')::boolean,false))),
-        version=version+1
+        updated_at=now(),version=version+1
       WHERE id=$1 AND payload->>'action'='start' AND status='pending'
         AND coalesce((payload->>'start_attempts')::bigint,0) < (payload->'invocation'->'selection'->'definition'->>'max_attempts')::bigint
       RETURNING payload`, [intent_id]);
@@ -50,7 +50,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
   return db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [owner[0]!.run_id]);
     const rows = await tx.query<WrittenRow>(`UPDATE authority.effect_intent SET payload=$2,
-      status=CASE WHEN status='revoked' AND $3::authority.effect_status<>'cleanup_confirmed' THEN status ELSE $3::authority.effect_status END, version=version+1
+      status=CASE WHEN status='revoked' AND $3::authority.effect_status<>'cleanup_confirmed' THEN status ELSE $3::authority.effect_status END, updated_at=now(), version=version+1
       WHERE id=$1 RETURNING status,scope_id,execution_id,effect_key`, [intent_id, JSON.stringify(sealEffectPayload(payload)), status]);
     const written = rows[0];
     if (!written) return null;
@@ -61,7 +61,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
     }
     // A stop recorded while this start was in flight copied a null handle; give it the one just learned.
     if (payload.action === "start" && payload.handle !== null) {
-      await tx.query(`UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{handle}',$3::jsonb),version=version+1
+      await tx.query(`UPDATE authority.effect_intent SET payload=jsonb_set(payload,'{handle}',$3::jsonb),updated_at=now(),version=version+1
         WHERE scope_id=$1 AND effect_key=$2 AND payload->>'action'='stop' AND jsonb_typeof(payload->'handle')='null'
           AND status<>'cleanup_confirmed'`, [written.scope_id, `${written.effect_key}:stop`, JSON.stringify(payload.handle)]);
     }
@@ -70,7 +70,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
       const facts = await tx.query<{ id: string }>(`INSERT INTO authority.fact (id,scope_id,fact_key,payload) SELECT $1,$2,$3,$4
         WHERE NOT EXISTS (SELECT 1 FROM authority.fact WHERE scope_id=$2 AND fact_key=$3) RETURNING id`, [crypto.randomUUID(), written.scope_id, payload.invocation.id, JSON.stringify(terminal_result)]);
       if (facts.length) {
-        await tx.query("UPDATE authority.execution SET result=$1,status='terminal',version=version+1 WHERE id=$2", [JSON.stringify(terminal_result), written.execution_id]);
+        await tx.query("UPDATE authority.execution SET result=$1,status='terminal',completed_at=now(),version=version+1 WHERE id=$2", [JSON.stringify(terminal_result), written.execution_id]);
         await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [written.scope_id]);
       }
     }

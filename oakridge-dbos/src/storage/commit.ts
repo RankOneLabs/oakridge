@@ -6,6 +6,7 @@ import { findReceipt, type IngressIdentity } from "./receipts";
 import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
 import { hasSameReadSet, readSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS } from "./snapshot-reader";
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
+import type { OperatorEventPayload } from "./json-column-types";
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest } from "../effects/operations/selected-request";
 import { readStoredPrompts } from "./prompt-content";
@@ -162,6 +163,19 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);
   const transition_id = crypto.randomUUID();
   await tx.query("INSERT INTO authority.transition (id,scope_id,trigger_id,decision) VALUES ($1,$2,$3,$4)", [transition_id, scope_id, source.snapshot.trigger.id, JSON.stringify(request.decision)]);
+  const occurred_at = new Date().toISOString();
+  const invalidation: OperatorEventPayload = { kind: "invalidate", run_id: source.owner.run_id, scope_id };
+  await tx.query("INSERT INTO authority.operator_event (id,run_id,scope_id,payload) VALUES ($1,$2,$3,$4)",
+    [crypto.randomUUID(), source.owner.run_id, scope_id, JSON.stringify(invalidation)]);
+  const run_event: OperatorEventPayload = { kind: "run_event", event: {
+    transition_id, run_id: source.owner.run_id, scope_id, scope_key: source.owner.scope_key,
+    decision: request.decision.kind,
+    attention: request.decision.kind === "wait" ? request.decision.attention ?? null : null,
+    is_terminal: request.decision.kind === "apply" && request.decision.outcome !== null,
+    occurred_at,
+  } };
+  await tx.query("INSERT INTO authority.operator_event (id,run_id,scope_id,payload) VALUES ($1,$2,$3,$4)",
+    [crypto.randomUUID(), source.owner.run_id, scope_id, JSON.stringify(run_event)]);
   await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [scope_id]);
   const owners = await tx.query<{ version: string | number }>("SELECT version FROM authority.scope_instance WHERE id=$1", [scope_id]);
   const receipt = { transition_id, scope_version: Number(owners[0]!.version) };
@@ -172,6 +186,8 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
 export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
+  if (request.decision.kind === "reject" && request.outputs.length) return { ok: true, value: { kind: "Rejected", reason: "invalid",
+    detail: request.decision.detail.data.kind === "string" ? request.decision.detail.data.value : "scope rejected publication" } };
   if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "read set owner differs from decision owner" } };
   try {
     const result = await db.transaction(async (tx): Promise<CommitResult> => {

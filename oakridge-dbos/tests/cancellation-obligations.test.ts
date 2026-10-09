@@ -105,9 +105,10 @@ test("a handle learned after cancellation reaches the stop recorded while the st
   if (!claimed) throw new Error("start attempt was not reserved");
   expect(await cancelRun(db, { kind: "cancel_run", run_id: "run", reason: "operator" })).toEqual({ kind: "cancelled", stop_intents: 1 });
   const handle = { kind: "kbbl_session" as const, session_id: "session-1" };
+  await db.query("UPDATE authority.effect_intent SET updated_at='2000-01-01' WHERE effect_key='ingress:0:stop'", []);
   expect(await persistEffectResult(db, { intent_id: "start", status: "acknowledged", payload: { ...claimed, handle, start_in_flight: false }, terminal_result: null })).toBe("revoked");
-  const stops = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE effect_key='ingress:0:stop'", []);
-  expect(stops[0]?.payload.handle).toEqual(handle);
+  const stops = await db.query<{ payload: EffectPayload; timestamp_refreshed: boolean }>("SELECT payload,updated_at > '2000-01-01'::timestamptz AS timestamp_refreshed FROM authority.effect_intent WHERE effect_key='ingress:0:stop'", []);
+  expect(stops[0]).toMatchObject({ payload: { handle }, timestamp_refreshed: true });
 }));
 
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {

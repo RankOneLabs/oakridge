@@ -68,6 +68,11 @@ export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): P
     if (!runs.length) return { kind: "missing" };
     const obligations = await pendingCleanupCount(tx, run_id);
     if (obligations) return { kind: "refused", obligations };
+    const threadIds = "SELECT id FROM authority.collaboration_thread WHERE run_id=$1";
+    await tx.query(`DELETE FROM authority.collaboration_delivery WHERE thread_id IN (${threadIds})`, [run_id]);
+    await tx.query(`DELETE FROM authority.collaboration_message WHERE thread_id IN (${threadIds})`, [run_id]);
+    await tx.query("DELETE FROM authority.review_item WHERE run_id=$1", [run_id]);
+    await tx.query("DELETE FROM authority.collaboration_thread WHERE run_id=$1", [run_id]);
     const scopeIds = "SELECT id FROM authority.scope_instance WHERE run_id=$1";
     for (const table of ["ingress_receipt", "effect_intent", "resource_binding", "capacity_reservation", "fact", "transition", "output_slot", "artifact_revision", "execution_selection", "execution", "scope_export", "child_collection"])
       await tx.query(`DELETE FROM authority.${table} WHERE scope_id IN (${scopeIds})`, [run_id]);

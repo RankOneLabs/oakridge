@@ -44,6 +44,16 @@ export const planning = defineScope({
       prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "plan", schema: "revision" }, []) }]
     },
     {
+      key: "operator_edit",
+      payload_schema: "unit",
+      available_in: ["review"],
+      required: true,
+      targets: [],
+      label: "Edit plan",
+      consequence: "publish a reviewed plan revision",
+      field_presentation: []
+    },
+    {
       key: "retry",
       payload_schema: "unit",
       available_in: ["working"],
@@ -82,7 +92,8 @@ export const planning = defineScope({
       policy: { kind: "append_revision" },
       producers: ["author"],
       collection_key: null,
-      publication_trigger: "submitted"
+      publication_trigger: "submitted",
+      operator_edit_trigger: "operator_edit"
     }
   ],
   workers: workers,

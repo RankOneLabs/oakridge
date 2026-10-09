@@ -71,10 +71,21 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
     const selected = await tx.query<{ execution_id: string }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND execution_id=$2", [source.owner.id, request.execution_authority]);
     if (!selected.length) return reject("validate_storage", source.owner.id, "execution generation was revoked", "generation_revoked");
   }
+  const is_operator_edit = request.operator_version !== null && scope.outputs.some((output) => output.operator_edit_trigger === source.snapshot.trigger.key);
+  if (is_operator_edit && !request.outputs.some((output) => output.execution_id === null))
+    return reject("validate_storage", source.owner.id, "operator edit requires an output publication");
+  if (is_operator_edit) {
+    const active = await tx.query<{ id: string }>(`SELECT e.id FROM authority.execution_selection s
+      JOIN authority.execution e ON e.id=s.execution_id
+      WHERE s.scope_id=$1 AND e.status='pending' LIMIT 1`, [source.owner.id]);
+    if (active.length) return reject("validate_storage", source.owner.id, "operator edit requires completed executions");
+  }
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");
-    if (definition.publication_trigger !== source.snapshot.trigger.key) return reject("validate_storage", source.owner.id, "publication trigger does not match output declaration");
+    if (output.execution_id !== null && definition.publication_trigger !== source.snapshot.trigger.key) return reject("validate_storage", source.owner.id, "publication trigger does not match output declaration");
+    if (output.execution_id === null && request.operator_version !== null && definition.operator_edit_trigger !== source.snapshot.trigger.key)
+      return reject("validate_storage", source.owner.id, "operator edit trigger does not match output declaration");
     if (definition.collection_key) {
       const shape = bundle.schemas.find((schema) => schema.key === definition.schema)?.shape;
       const index = shape?.kind === "record" ? shape.fields.findIndex((field) => field.key === definition.collection_key) : -1;
@@ -90,7 +101,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
       if (selections[0]?.execution_id !== output.execution_id || Number(selections[0]?.generation) !== Number(execution.generation)) return reject("validate_storage", source.owner.id, "execution generation was revoked", "generation_revoked");
       const contracts = await tx.query<{ payload: import("../effects/intents").EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND execution_id=$2 AND payload->>'action'='start'", [source.owner.id, output.execution_id]);
       if (!contracts.some((item) => item.payload.invocation.selection.definition.outputs.includes(output.output_key))) return reject("validate_storage", source.owner.id, "selected action does not declare this output");
-    } else if (definition.producers.length) return reject("validate_storage", source.owner.id, "producer execution required");
+    } else if (request.operator_version === null && definition.producers.length) return reject("validate_storage", source.owner.id, "producer execution required");
   }
   for (const change of request.capacity) {
     const owned = source.pools.find((item) => item.id === change.pool_id && item.run_id === source.owner.run_id);

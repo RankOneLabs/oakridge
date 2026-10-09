@@ -210,6 +210,19 @@ pub fn validate_bundle(
                     "publication fact requires an empty record payload",
                 ));
             }
+            if let Some(operator_trigger) = &output.operator_edit_trigger {
+                if !owner
+                    .commands
+                    .iter()
+                    .any(|command| command.key == *operator_trigger)
+                {
+                    return Err(error(
+                        DomainErrorKind::UndeclaredTrigger,
+                        operator_trigger.to_string(),
+                        "operator edit trigger must name a declared command",
+                    ));
+                }
+            }
             schema(bundle, &output.schema)?;
             unique(output.producers.iter().map(|w| w.0.as_str()), &output.key.0)?;
             if output.producers.is_empty()

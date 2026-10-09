@@ -23,6 +23,7 @@ $$;
 CREATE TABLE authority.definition_bundle (
   id text PRIMARY KEY, digest text NOT NULL UNIQUE, source jsonb NOT NULL,
   checked_program jsonb NOT NULL, version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(), authoring jsonb,
   -- Operator visibility only: an archived definition is hidden from listings and still runs.
   archived_at timestamptz
 );
@@ -31,8 +32,14 @@ CREATE TABLE authority.prompt_content (
   content_digest text PRIMARY KEY, content text NOT NULL,
   CHECK (content_digest = encode(sha256(convert_to(content, 'UTF8')), 'hex'))
 );
+CREATE TABLE authority.project (
+  id text PRIMARY KEY, name text NOT NULL UNIQUE, repo_dir text NOT NULL,
+  forge_repository jsonb, integration_branch text, session_policy jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE authority.run (
   id text PRIMARY KEY, definition_bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
+  project_id text REFERENCES authority.project(id),
   created_at timestamptz NOT NULL DEFAULT now(), version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   current_generation bigint NOT NULL DEFAULT 0 CHECK (current_generation >= 0),
   current_cursor text,
@@ -79,6 +86,7 @@ CREATE TABLE authority.execution (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   worker_key text NOT NULL, generation bigint NOT NULL CHECK (generation >= 0),
   status authority.execution_status NOT NULL, result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   UNIQUE (scope_id, worker_key, generation), UNIQUE (run_id, id),
@@ -90,7 +98,7 @@ CREATE TABLE authority.artifact_revision (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   execution_id text, output_key text NOT NULL,
   collection_key text NOT NULL DEFAULT '', body jsonb NOT NULL, predecessor_id text,
-  version bigint NOT NULL DEFAULT 0 CHECK (version >= 0), UNIQUE (run_id, id),
+  version bigint NOT NULL DEFAULT 0 CHECK (version >= 0), created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (run_id, id),
   FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
   FOREIGN KEY (run_id, execution_id) REFERENCES authority.execution(run_id, id),
   FOREIGN KEY (run_id, predecessor_id) REFERENCES authority.artifact_revision(run_id, id)
@@ -131,7 +139,7 @@ CREATE TABLE authority.ingress_receipt (
 CREATE TABLE authority.effect_intent (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   execution_id text, effect_key text NOT NULL,
-  payload jsonb NOT NULL, status authority.effect_status NOT NULL DEFAULT 'pending',
+  payload jsonb NOT NULL, status authority.effect_status NOT NULL DEFAULT 'pending', updated_at timestamptz NOT NULL DEFAULT now(),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0), UNIQUE (scope_id, effect_key),
   FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
   FOREIGN KEY (run_id, execution_id) REFERENCES authority.execution(run_id, id)
@@ -177,13 +185,47 @@ CREATE INDEX transition_scope_idx ON authority.transition(scope_id);
 CREATE INDEX transition_commit_idx ON authority.transition(commit_txid, id);
 CREATE INDEX execution_selection_execution_idx ON authority.execution_selection(execution_id);
 
--- Saved repositories an operator launches runs against. A run carries its
--- repositories in its pinned input; nothing here is read by evaluation.
-CREATE TABLE authority.project (
-  id text PRIMARY KEY, name text NOT NULL UNIQUE, repo_dir text NOT NULL,
-  forge_repository jsonb, integration_branch text,
+-- Immutable outbox: no cascading foreign keys, so frames survive source deletion.
+CREATE TABLE authority.operator_event (
+  id text PRIMARY KEY, run_id text, scope_id text, payload jsonb NOT NULL,
+  commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX operator_event_commit_idx ON authority.operator_event(commit_txid, id);
+
+CREATE TABLE authority.collaboration_thread (
+  id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
+  output_key text NOT NULL, collection_key text NOT NULL DEFAULT '', revision_id text NOT NULL,
+  anchor text, status text NOT NULL CHECK (status IN ('open','resolved')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+CREATE TABLE authority.collaboration_message (
+  id text PRIMARY KEY, thread_id text NOT NULL REFERENCES authority.collaboration_thread(id),
+  body text NOT NULL, author text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE authority.review_item (
+  id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
+  output_key text NOT NULL, collection_key text NOT NULL DEFAULT '', revision_id text NOT NULL,
+  anchor text NOT NULL, claim text NOT NULL, reality text NOT NULL,
+  status text NOT NULL CHECK (status IN ('open','resolved','waived')), resolution text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
+  FOREIGN KEY (run_id, revision_id) REFERENCES authority.artifact_revision(run_id, id)
+);
+CREATE TABLE authority.collaboration_delivery (
+  id text PRIMARY KEY, thread_id text NOT NULL REFERENCES authority.collaboration_thread(id),
+  request_key text NOT NULL, target_execution_id text REFERENCES authority.execution(id),
+  transcript jsonb NOT NULL, status text NOT NULL CHECK (status IN ('pending','delivered','failed')),
+  detail text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (thread_id, request_key)
+);
+CREATE INDEX effect_intent_session_id_idx ON authority.effect_intent ((payload->'handle'->>'session_id'));
+COMMENT ON COLUMN authority.project.session_policy IS '@type {SessionPolicy}';
+COMMENT ON COLUMN authority.definition_bundle.authoring IS '@type {AuthoringModel}';
+COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';
+COMMENT ON COLUMN authority.collaboration_delivery.transcript IS '@type {CollaborationTranscript}';
 
 -- JSON column types for the generated storage records (scripts/generate-storage-records.ts).
 -- Each @type names an export of src/storage/json-column-types.ts.

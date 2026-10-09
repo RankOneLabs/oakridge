@@ -20,8 +20,10 @@ export interface ScopeView {
 }
 export interface TransitionRow { readonly id: string; readonly decision: DecisionOutcome }
 export function selectAvailableCommands(bundle: DefinitionBundle, scope: ScopeInstanceRecord): readonly CommandDefinition[] {
-  return bundle.scopes.find((item) => item.key === scope.scope_key)?.commands.filter((item) =>
-    !scope.is_terminal && availableCommand(bundle, scope.scope_key, scope.local_state, item.key) !== null) ?? [];
+  const definition = bundle.scopes.find((item) => item.key === scope.scope_key);
+  const publication_triggers = new Set(definition?.outputs?.flatMap((output) => output.operator_edit_trigger ? [output.operator_edit_trigger] : []) ?? []);
+  return definition?.commands.filter((item) => !publication_triggers.has(item.key)
+    && !scope.is_terminal && availableCommand(bundle, scope.scope_key, scope.local_state, item.key) !== null) ?? [];
 }
 
 export function availableCommand(definition: DefinitionBundle, scope_key: string, state: CheckedValue, command_key: string): CommandDefinition | null {

@@ -29,7 +29,7 @@ export async function revokeStarts(tx: SqlExecutor, scope_ids: readonly string[]
     const decoded = { ...start, payload: unsealEffectPayload(start.payload) };
     // A definite rejection stays rejected; it still owes a stop if an earlier attempt was uncertain.
     const status = start.status === "rejected" ? "rejected" : "revoked";
-    if (start.status !== status) await tx.query("UPDATE authority.effect_intent SET status='revoked',version=version+1 WHERE id=$1", [start.id]);
+    if (start.status !== status) await tx.query("UPDATE authority.effect_intent SET status='revoked',updated_at=now(),version=version+1 WHERE id=$1", [start.id]);
     if (!requiresCleanup({ status, payload: decoded.payload })) continue;
     const stop_id = await ensureStopIntent(tx, decoded);
     if (stop_id) stop_ids.push(stop_id);
