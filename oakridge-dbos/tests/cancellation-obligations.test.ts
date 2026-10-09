@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
 import type { CheckedValue, DefinitionBundle, Invocation } from "../src/core-client/generated-contracts";
-import { deletionEligibility, pendingCleanupCount, requiresCleanup, type EffectPayload } from "../src/effects/intents";
+import { deletionEligibility, findHeldSession, pendingCleanupCount, requiresCleanup, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";
 import { cancelRun, createMutationService, deleteRun } from "../src/storage/mutation-service";
 import { claimStartAttempt, persistEffectResult } from "../src/storage/effect-results";
@@ -45,6 +45,32 @@ test("cancelling an uncertain start retains its identity in a stop intent", asyn
   expect(unsealEffectPayload(stop).invocation.id).toBe(start.invocation.id);
   expect(stop.handle).toBeNull();
 });
+
+test("findHeldSession reports the full identity for a session an acknowledged start still owns", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ('scope','run','build','unit-1','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  const held: EffectPayload = { ...start, handle: { kind: "kbbl_session", session_id: "session-1" } };
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'acknowledged')", [JSON.stringify(sealEffectPayload(held))]);
+  expect(await findHeldSession(db, "session-1")).toEqual({
+    session_id: "session-1", execution_id: "execution-1", run_id: "run", stage_instance_id: "scope", stage_key: "build", unit_id: "unit-1",
+  });
+}));
+
+test("findHeldSession reports null for a session no intent claims", async () => withDatabase(async ({ db }) => {
+  expect(await findHeldSession(db, "unclaimed-session")).toBeNull();
+}));
+
+test("findHeldSession stops reporting a hold once the start's cleanup is confirmed", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ('scope','run','build','unit-1','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  const held: EffectPayload = { ...start, handle: { kind: "kbbl_session", session_id: "session-1" } };
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'cleanup_confirmed')", [JSON.stringify(sealEffectPayload(held))]);
+  expect(await findHeldSession(db, "session-1")).toBeNull();
+}));
 
 test("deletion is refused while an external cleanup obligation remains", async () => {
   const db = { query: async (sql: string) => sql.includes("count(*)") ? [{ count: "1" }] : [] } as unknown as TransactionalSqlExecutor;

@@ -367,6 +367,8 @@ export interface SessionsRouteDeps {
    * in which case no session is ever held.
    */
   oakridgeBaseUrl?: string;
+  /** The Oakridge control credential the session-hold lookup authenticates with. */
+  oakridgeControlToken?: string;
 }
 
 /**
@@ -375,7 +377,7 @@ export interface SessionsRouteDeps {
  * session service.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { acp, manager, defaultWorkdir, oakridgeBaseUrl } = deps;
+  const { acp, manager, defaultWorkdir, oakridgeBaseUrl, oakridgeControlToken } = deps;
 
   app.put("/sessions/resumable/:sessionKey", async (c) => {
     const rawKey = c.req.param("sessionKey").trim();
@@ -716,7 +718,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     // seen the refusal and asked again.
     const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by") });
     if (authority.kind !== "operator_override") {
-      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl }));
+      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl, credential: oakridgeControlToken }));
       if (refusal) return c.json(refusal, 409);
     }
 

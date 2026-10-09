@@ -10,6 +10,8 @@ import { SESSION_HELD_CODE, isSessionHold, type SessionHold } from "../session/s
 
 export interface SessionHoldLookupDeps {
   readonly baseUrl: string | undefined;
+  /** The Oakridge control credential — the same token the proxy injects on operator routes. */
+  readonly credential?: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -24,20 +26,27 @@ const DEFAULT_TIMEOUT_MS = 2_000;
  * operator mistake, not to hand a second service veto over kbbl's own
  * lifecycle. A close that slips through when Oakridge is down is recoverable;
  * a kbbl that cannot close sessions because a backend is unhealthy is not.
+ * The fail-open stays silent to the caller, but a 404 or transport failure is
+ * still logged at error level so it is visible rather than swallowed.
  */
 export const findSessionHold = async (sessionId: string, deps: SessionHoldLookupDeps): Promise<SessionHold | null> => {
   if (!deps.baseUrl) return null;
   const request = deps.fetch ?? globalThis.fetch;
   try {
-    const response = await request(`${deps.baseUrl.replace(/\/$/, "")}/session_holds/${encodeURIComponent(sessionId)}`, {
+    const response = await request(`${deps.baseUrl.replace(/\/$/, "")}/api/session_holds/${encodeURIComponent(sessionId)}`, {
+      headers: deps.credential ? { authorization: `Bearer ${deps.credential}` } : undefined,
       signal: AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.error(`session-hold: lookup for session=${sessionId} failed (${response.status}); closing without a hold`);
+      return null;
+    }
     const body: unknown = await response.json();
     if (typeof body !== "object" || body === null) return null;
     const hold = (body as { readonly hold?: unknown }).hold;
     return isSessionHold(hold) ? hold : null;
-  } catch {
+  } catch (error) {
+    console.error(`session-hold: lookup for session=${sessionId} failed; closing without a hold`, error);
     return null;
   }
 };
