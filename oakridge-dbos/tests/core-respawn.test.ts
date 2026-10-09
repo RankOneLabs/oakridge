@@ -43,8 +43,10 @@ test("a pending request that fails on every respawn is replayed a bounded number
   try {
     const result = await client.request("compile", { bundle });
     expect(result).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
-    // A script that fails every time must not loop across respawns forever; the bound keeps it small.
-    expect(client.health.restart_count).toBeLessThan(20);
+    // A script that fails every time must not loop across respawns forever: one respawn
+    // per replay attempt (MAX_PENDING_REPLAYS), plus the respawn that discovers the bound
+    // is exhausted and settles instead of replaying again.
+    expect(client.health.restart_count).toBe(5);
   } finally {
     client.close();
     rmSync(directory, { recursive: true, force: true });
