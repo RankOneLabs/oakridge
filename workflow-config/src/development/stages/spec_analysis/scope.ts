@@ -29,7 +29,8 @@ export const spec_analysis = defineScope({
       targets: [reference({ kind: "output_revision", key: "analysis", schema: "revision" }, [])],
       label: "Accept",
       consequence: "accept",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "analysis", schema: "revision" }, []) }]
     },
     {
       key: "request_changes",
@@ -39,7 +40,8 @@ export const spec_analysis = defineScope({
       targets: [reference({ kind: "output_revision", key: "analysis", schema: "revision" }, [])],
       label: "Request Changes",
       consequence: "request changes",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "analysis", schema: "revision" }, []) }]
     },
     {
       key: "retry",

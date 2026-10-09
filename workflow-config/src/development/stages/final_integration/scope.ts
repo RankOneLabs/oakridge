@@ -39,7 +39,8 @@ export const final_integration = defineScope({
       targets: [reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, [])],
       label: "Review Pr",
       consequence: "review pr",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "confirm_merged",
@@ -49,7 +50,8 @@ export const final_integration = defineScope({
       targets: [reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, [])],
       label: "Confirm Merged",
       consequence: "confirm merged",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "cancel",

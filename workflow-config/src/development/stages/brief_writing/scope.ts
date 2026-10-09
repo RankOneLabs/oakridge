@@ -29,7 +29,8 @@ export const brief_writing = defineScope({
       targets: [reference({ kind: "output_revisions", key: "briefs", schema: "revisions" }, [])],
       label: "Accept",
       consequence: "accept",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revisions", value: reference({ kind: "output_revisions", key: "briefs", schema: "revisions" }, []) }, { key: "briefs", value: reference({ kind: "output_collection", key: "briefs", schema: "brief_bodies" }, []) }]
     },
     {
       key: "request_changes",
@@ -39,7 +40,8 @@ export const brief_writing = defineScope({
       targets: [reference({ kind: "output_revisions", key: "briefs", schema: "revisions" }, [])],
       label: "Request Changes",
       consequence: "request changes",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revisions", value: reference({ kind: "output_revisions", key: "briefs", schema: "revisions" }, []) }]
     },
     {
       key: "retry",
