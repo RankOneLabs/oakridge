@@ -471,7 +471,37 @@ test("a startup probe kbbl rejects aborts startup before DBOS.launch()", async (
     } });
     try {
       await expect(createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
-        host: "127.0.0.1", kbbl_base_url: server.url.href })).rejects.toThrow(/kbbl rejected/);
+        host: "127.0.0.1", kbbl_base_url: server.url.href })).rejects.toThrow(/did not accept/);
+    } finally { server.stop(true); }
+  })));
+
+/**
+ * A 404 (wrong base URL, or a service that is not kbbl at all) or a 5xx
+ * (kbbl down) must abort startup exactly as an explicit 401/403 does: the
+ * probe's only job is to confirm the credential was accepted, and treating
+ * "not an auth rejection" as "accepted" lets a misconfigured or unreachable
+ * kbbl through without ever proving that.
+ */
+test("a startup probe response that is not kbbl's authenticated sentinel aborts startup", async () =>
+  withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", "configured-token", () => withDatabase(async ({ url }) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("not found", { status: 404 }) });
+    try {
+      await expect(createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+        host: "127.0.0.1", kbbl_base_url: server.url.href })).rejects.toThrow(/did not accept/);
+    } finally { server.stop(true); }
+  })));
+
+test("kbbl's authenticated invalid-sid sentinel lets startup proceed", async () =>
+  withEnv("OAKRIDGE_KBBL_SERVICE_TOKEN", "configured-token", () => withDatabase(async ({ url }) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+      const path = new URL(request.url).pathname;
+      if (request.method === "DELETE" && path === "/sessions/startup-probe") return Response.json({ error: "invalid sid" }, { status: 400 });
+      return new Response(null, { status: 404 });
+    } });
+    try {
+      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+        host: "127.0.0.1", kbbl_base_url: server.url.href });
+      try { expect(composition.application_version).toBeTruthy(); } finally { await composition.close(); }
     } finally { server.stop(true); }
   })));
 

@@ -96,17 +96,24 @@ export function isLoopbackKbblUrl(url: string): boolean {
  * cookie-establishment endpoint never routes through that function, and a
  * GET lookup is exempted by the control-auth middleware entirely, so neither
  * would prove the credential is honored. `startup-probe` is not a valid
- * session id, so an authenticated request reaches kbbl's 400/404 handling
- * with no side effect; only an auth rejection (401/403) fails startup.
+ * session id, so an authenticated request reaches kbbl's `isValidSid` check
+ * (acp-per-sid.ts) and gets back exactly `400 {error: "invalid sid"}` — the
+ * one response that can only be produced *after* the credential was
+ * accepted. Anything else (401/403 rejection, a 404/5xx from a wrong base URL
+ * or a kbbl that is not running, a redirect) fails startup: accepting any
+ * non-401/403 status as success would let a misconfigured or unreachable
+ * kbbl through without ever confirming the credential at all.
  */
 export async function probeKbblCredential(base_url: string, credential: KbblCredential): Promise<void> {
   const response = await fetch(`${base_url.replace(/\/$/, "")}/sessions/startup-probe`, {
     method: "DELETE",
     headers: { authorization: `Bearer ${credential}` },
   });
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`kbbl rejected the configured OAKRIDGE_KBBL_SERVICE_TOKEN (${response.status}) at ${base_url}`);
+  if (response.status === 400) {
+    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    if (body?.error === "invalid sid") return;
   }
+  throw new Error(`kbbl did not accept the configured OAKRIDGE_KBBL_SERVICE_TOKEN (probe returned ${response.status}) at ${base_url}`);
 }
 
 export function githubProviderCapabilities(token: string, http: typeof fetch = fetch, kbbl_base_url = process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788"): ProviderCapabilities {
