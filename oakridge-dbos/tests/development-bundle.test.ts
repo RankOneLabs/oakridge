@@ -53,7 +53,7 @@ test("prompt bytes and pinned digest reproduce the generated source", async () =
   try {
     let saved: DefinitionSummary | null = null;
     const query = async (sql: string, params: unknown[]) => {
-      if (sql.startsWith("INSERT INTO authority.definition_bundle")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle }; return []; }
+      if (sql.startsWith("INSERT INTO authority.definition_bundle")) { saved = { bundle_id: params[0] as string, digest: params[1] as string, source: bundle, archived_at: null }; return []; }
       if (sql.includes("FROM authority.definition_bundle")) return saved ? [saved] : [];
       return [];
     };

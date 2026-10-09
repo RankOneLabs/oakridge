@@ -1,6 +1,6 @@
 import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
-import type { RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
+import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
 import { currentPrefill, currentTargetRevisions } from "./command-selection";
 import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "../projections/record-selectors";
@@ -73,10 +73,16 @@ export async function readRunView(db: TransactionalSqlExecutor, run_id: RunId): 
     if (!pinned) throw new Error(`pinned definition missing for ${run_id}`);
     const scopes = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=$1 ORDER BY id", [run_id]);
     return { run_id, definition_bundle_id: run.definition_bundle_id, definition_digest: pinned.digest, version: Number(run.version),
+      created_at: run.created_at, archived_at: run.archived_at,
       cursor: scopes.map((scope) => ({ scope_id: scope.id, version: Number(scope.version) })),
       scopes: scopes.map((scope) => ({ scope_id: scope.id, scope_key: scope.scope_key,
         label: pinned.source.scopes.find((item) => item.key === scope.scope_key)?.presentation.label ?? scope.scope_key,
         version: Number(scope.version), is_terminal: scope.is_terminal,
         available_commands: selectAvailableCommands(pinned.source, scope).map((item) => item.key) })) };
   }, "repeatable read");
+}
+
+/** Saved projects for the operator, by name. */
+export async function listProjects(db: TransactionalSqlExecutor): Promise<readonly ProjectRecord[]> {
+  return db.query<ProjectRecord>("SELECT * FROM authority.project ORDER BY name,id", []);
 }

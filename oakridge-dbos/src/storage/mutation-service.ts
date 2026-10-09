@@ -1,3 +1,6 @@
+import { createProject, updateProject } from "./projects";
+import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
+import { setDefinitionArchived, setRunArchived } from "./archive";
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
 import type { DefinitionSummary } from "../projections/definition-view";
 import type { CoreResult } from "../core-client/transport-errors";
@@ -9,7 +12,8 @@ import type { CoreClient } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
-import type { RunId, ScopeId } from "./schema-records";
+import type { ProjectId, ProjectRecord, RunId, ScopeId } from "./schema-records";
+import type { Result as SharedResult } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { resolveBundlePrompts, storePromptContents, type PromptContent } from "./prompt-content";
 
@@ -23,7 +27,12 @@ export interface Decision { readonly source: AuthoritySnapshot; readonly outcome
 export interface PreparedDecision { readonly request_digest: string; readonly decision: Decision; readonly target_revisions?: readonly TargetRevision[] }
 export interface MutationInput { readonly request_digest?: string; readonly execution_authority?: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly ingress_id: string; readonly trigger: Trigger; readonly operator_version: number | null; readonly outputs?: readonly OutputPublication[]; readonly prepared?: PreparedDecision }
 export interface StartedRun { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly bundle_id: string }
-export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<DefinitionSummary>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>> }
+export interface MutationService { compile(request: CompileRequest): Promise<Result<CompileResult>>; pinDefinition(request: CompileRequest): Promise<Result<DefinitionSummary>>; startRun(request: StartRunRequest): Promise<Result<StartedRun>>; startRunByDigest(request: StartPinnedRunRequest): Promise<Result<StartedRun>>; decide(input: MutationInput): Promise<Result<CommitResult>>;
+  /** Operator registry and visibility writes; none of them is read by evaluation. */
+  createProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
+  updateProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
+  setRunArchived(run_id: RunId, is_archived: boolean): Promise<boolean>;
+  setDefinitionArchived(bundle_id: string, is_archived: boolean): Promise<boolean> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
 export interface ProviderCapabilities {
   readonly probe?: (kind: string) => Promise<Result<true>>;
@@ -98,6 +107,10 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient, provider_capabilities?: ProviderCapabilities): MutationService {
   return {
     compile: (request) => compileBundle(core, request),
+    createProject: (id, draft) => createProject(db, id, draft),
+    updateProject: (id, draft) => updateProject(db, id, draft),
+    setRunArchived: (run_id, is_archived) => setRunArchived(db, run_id, is_archived),
+    setDefinitionArchived: (bundle_id, is_archived) => setDefinitionArchived(db, bundle_id, is_archived),
     async pinDefinition(request) {
       const prompts = await bundlePrompts(db, request.bundle, "pin_definition");
       if (!prompts.ok) return prompts;
@@ -116,7 +129,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           await storePromptContents(tx, prompts.value);
           await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
             [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
-          return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
+          return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source,archived_at FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
         return { ok: true, value: rows[0] };

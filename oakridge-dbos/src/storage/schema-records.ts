@@ -1,8 +1,8 @@
 import type * as Rows from "./generated-records";
-import type { ExecutionId, PoolId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+import type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
 import type { Materialization } from "../core-client/generated-contracts";
 
-export type { ExecutionId, PoolId, RevisionId, RunId, ScopeId } from "../domain/primitives";
+export type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
 export type { ChildCollectionMember, CommitReceipt } from "./json-column-types";
 
 /**
@@ -39,6 +39,7 @@ export type EffectIntentRecord = Branded<Rows.EffectIntent, { run_id: RunId; sco
 export type CapacityPoolRecord = Branded<Rows.CapacityPool, { id: PoolId; run_id: RunId }>;
 export type CapacityReservationRecord = Branded<Rows.CapacityReservation, { run_id: RunId; pool_id: PoolId; scope_id: ScopeId }>;
 export type ResourceBindingRecord = Branded<Rows.ResourceBinding, { run_id: RunId; scope_id: ScopeId }>;
+export type ProjectRecord = Branded<Rows.Project, { id: ProjectId }>;
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
 export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;

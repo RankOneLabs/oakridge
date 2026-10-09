@@ -11,3 +11,4 @@ export type { ScopeView } from "../projections/scope-view";
 export type { InboxItem, InboxPage } from "../projections/inbox";
 export type { ScopeHistory } from "./diagnostics";
 export type { CommandReceipt, ScopeCommandRequest } from "./scope-commands";
+export type { ProjectDraft, ProjectList, ProjectView } from "./projects";
