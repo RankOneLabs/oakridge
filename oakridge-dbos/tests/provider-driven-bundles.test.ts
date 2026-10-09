@@ -73,22 +73,14 @@ for (const name of names) test(`${name}: shipped bundle starts through the produ
         const created = await composition.app.request("/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input }) });
         expect(created.status).toBe(201);
         const run: { run_id: string; root_scope_id: string } = await created.json();
-        async function command(scope_id: string, key: string, payload: unknown = {}) {
-          const path = `/api/runs/${run.run_id}/scopes/${scope_id}`;
-          const view_response = await composition.app.request(path);
-          const view: { cursor: { scope_version: number }; command_targets: Record<string, unknown[]> } = await view_response.json();
-          const response = await composition.app.request(`${path}/commands`, { method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ command_key: key, payload, request_id: crypto.randomUUID(), scope_id, expected_scope_version: view.cursor.scope_version,
-              targets: view.command_targets[key] ?? [] }) });
-          if (response.status !== 202) throw new Error(`${key}: ${response.status} ${await response.text()}`);
-        }
         const first = await eventually(async () => (await db.query<ScopeInstanceRecord>(
           "SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation' LIMIT 1", [run.root_scope_id]))[0], "repository child");
         await eventually(async () => (await db.query<{ status: string }>(
           "SELECT status FROM authority.execution WHERE scope_id=$1 ORDER BY id LIMIT 1", [first.id]))[0]?.status === "terminal" ? true : null, "prepared repository");
         const analysis = await eventually(async () => (await db.query<ScopeInstanceRecord>(
           "SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='spec_analysis' LIMIT 1", [run.root_scope_id]))[0], "analysis child");
-        await command(analysis.id, "begin");
+        // The declared entry command is dispatched by the run workflow.
+        // Issuing another begin here races that automatic transition.
         await eventually(async () => (await db.query<{ status: string }>(
           "SELECT status FROM authority.execution WHERE scope_id=$1 ORDER BY id LIMIT 1", [analysis.id]))[0]?.status === "terminal" ? true : null,
           "analysis session terminal", async () => `sessions=${JSON.stringify([...sessions])}; executions=${JSON.stringify(await db.query("SELECT id,status FROM authority.execution WHERE scope_id=$1", [analysis.id]))}; intents=${JSON.stringify(await db.query("SELECT id,status FROM authority.effect_intent WHERE scope_id=$1", [analysis.id]))}`);
