@@ -14,7 +14,8 @@ test("run bodies keep child dispatch and scope lookup in durable DBOS operations
   const wake_body = topology.split("async function wakeRunOf(")[1]?.split("const runOfScopeStep")[0];
   expect(wake_body).toBeDefined();
   expect(wake_body).not.toContain(".db.query");
-  const run_body = topology.split("export const runWorkflow =")[1]?.split("// ------------------------------------------------------------- entry")[0];
+  const run_body = topology.split("export async function dispatchChild(")[1]?.split("// ------------------------------------------------------------- entry")[0];
+  expect(run_body).toBeDefined();
   expect(run_body).not.toContain(".db.query");
 });
 
