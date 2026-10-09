@@ -148,6 +148,14 @@ CREATE TABLE authority.effect_intent (
   FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
   FOREIGN KEY (run_id, execution_id) REFERENCES authority.execution(run_id, id)
 );
+CREATE FUNCTION authority.touch_effect_intent_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := clock_timestamp();
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER touch_effect_intent_updated_at BEFORE UPDATE ON authority.effect_intent
+  FOR EACH ROW EXECUTE FUNCTION authority.touch_effect_intent_updated_at();
 CREATE TABLE authority.capacity_pool (
   id text PRIMARY KEY, run_id text NOT NULL REFERENCES authority.run(id),
   pool_key text NOT NULL, capacity integer NOT NULL CHECK (capacity >= 0),
