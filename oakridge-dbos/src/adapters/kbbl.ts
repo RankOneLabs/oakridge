@@ -305,26 +305,45 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   async stop_pinned(input: PinnedSessionStop): Promise<ProviderResult<{ readonly stopped: true }>> {
     let reference = input.reference;
     if (!reference) {
-      const reconciled = await this.start_pinned(input.request);
-      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
-      reference = reconciled.value;
+      const resolved = await this.resolveForStop(input.request.session_key);
+      if (resolved === "never_started") return { kind: "acknowledged", value: { stopped: true } };
+      if (resolved.kind === "executor_unavailable") return { kind: "transiently_unavailable", detail: resolved.detail };
+      reference = resolved;
     }
     const stopped = await this.cancel_or_fence(input.execution_id, reference);
     return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail } : { kind: "acknowledged", value: { stopped: true } };
   }
 
-  /** An uncertain start is reconciled by its original identity before stop. */
+  /** An unresolved reference is looked up by its original identity before stop — never re-started. */
   async stop_selected(request: ExecutionRequest, invocation_id: InvocationId, reference: ExternalExecutionReference | null): Promise<ProviderResult<{ readonly stopped: true }>> {
     let known = reference;
     if (!known) {
-      const reconciled = await this.start_selected(request, invocation_id);
-      if (reconciled.kind === "permanently_rejected") return { kind: "uncertain", detail: `cannot prove cleanup: ${reconciled.code}: ${reconciled.detail}` };
-      if (reconciled.kind !== "acknowledged") return { kind: "uncertain", detail: reconciled.detail };
-      known = reconciled.value;
+      const session_key = sessionKeyFor(invocation_id as unknown as ExecutorOperationId, this.options.executor_function_identity);
+      const resolved = await this.resolveForStop(session_key);
+      if (resolved === "never_started") return { kind: "acknowledged", value: { stopped: true } };
+      if (resolved.kind === "executor_unavailable") return { kind: "transiently_unavailable", detail: resolved.detail };
+      known = resolved;
     }
     const stopped = await this.cancel_or_fence(request.execution_id, known);
     return stopped?.kind === "executor_unavailable" ? { kind: "transiently_unavailable", detail: stopped.detail }
       : { kind: "acknowledged", value: { stopped: true } };
+  }
+
+  /**
+   * Resolves a null reference by read-only lookup rather than re-running
+   * start_*: re-starting here would create the very session the stop is
+   * trying to end. A 404 means the session was never claimed, so cleanup is
+   * trivially satisfied; any other failure is retried rather than acknowledged.
+   */
+  private async resolveForStop(session_key: string): Promise<ExternalExecutionReference | "never_started" | ExecutorUnavailable> {
+    let response: Response;
+    try { response = await this.kbbl_request(`/sessions/resumable/${encodeURIComponent(session_key)}`); }
+    catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
+    if (response.status === 404) return "never_started";
+    if (classify_kbbl_status(response.status) !== "ok") return { kind: "executor_unavailable", operation: "start_or_attach", detail: `kbbl session lookup failed (${response.status})` };
+    const ensured = parseEnsureResponse(await response.json());
+    return { kind: "kbbl_session", session_id: ensured.session.sid,
+      ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
   }
 
   async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference | ExecutorUnavailable> {

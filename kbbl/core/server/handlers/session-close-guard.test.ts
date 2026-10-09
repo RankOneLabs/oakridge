@@ -19,19 +19,17 @@ import { mountSessionsRoutes } from "./sessions";
 import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
 import { ok, type FenceContext } from "../../acp/types";
+import { RECORDED_SESSION_HOLD } from "../../session/session-hold.fixture";
 
-const SID = "db26174d-21e2-40f4-af40-fc359c4e9604";
-const HOLDER = "012c6027-4a21-4ec4-aadd-244ebf3236a9:0";
-
-const hold = {
-  session_id: SID,
-  execution_id: HOLDER,
-  execution_workflow_id: "oakridge-run:9e868912:attempt:initial:stage:spec_analyzer:unit:0",
-  run_id: "9e868912-4944-4687-8316-0c2f6470bc3c",
-  stage_instance_id: "012c6027-4a21-4ec4-aadd-244ebf3236a9",
-  stage_key: "spec_analyzer",
-  unit_id: "0",
-};
+/**
+ * The exact body GET /api/session_holds/:sid returns — a value imported
+ * from the shared fixture, not hand-rolled, so a change to SessionHold's
+ * field set fails this suite too rather than drifting unnoticed.
+ */
+const hold = RECORDED_SESSION_HOLD;
+const SID = hold.session_id;
+const HOLDER = hold.execution_id;
+const CONTROL_TOKEN = "oakridge-control-secret";
 
 interface Closed {
   readonly aborted: string[];
@@ -51,10 +49,13 @@ afterEach(() => {
 
 /**
  * A kbbl whose Oakridge reports the session as held by `HOLDER`, with a
- * session that records whether it was actually closed.
+ * session that records whether it was actually closed. The stub also records
+ * every Authorization header it was sent, so a test can prove the control
+ * credential actually travels with the lookup.
  */
-const guardedApp = (): { app: Hono; closed: Closed } => {
+const guardedApp = (): { app: Hono; closed: Closed; authorizations: Array<string | null> } => {
   const closed: Closed = { aborted: [], fences: [] };
+  const authorizations: Array<string | null> = [];
   const acp = {
     getSession: (sid: string) => ({ sid, status: "idle" }),
     closeSession: async (sid: string, fence?: FenceContext) => {
@@ -65,8 +66,10 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
   } as unknown as AcpSessionService;
 
   const oakridge = new Hono();
-  oakridge.get("/session_holds/:sid", (c) =>
-    c.req.param("sid") === SID ? c.json({ held: true, hold }) : c.json({ held: false, hold: null }));
+  oakridge.get("/api/session_holds/:sid", (c) => {
+    authorizations.push(c.req.header("authorization") ?? null);
+    return c.req.param("sid") === SID ? c.json({ held: true, hold }) : c.json({ held: false, hold: null });
+  });
   const oakridgeServer = Bun.serve({ port: 0, fetch: oakridge.fetch });
   stubs.push(oakridgeServer);
 
@@ -76,16 +79,19 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
     manager: {} as unknown as SessionManager,
     defaultWorkdir: "/tmp/kbbl-test",
     oakridgeBaseUrl: `http://127.0.0.1:${oakridgeServer.port}`,
+    oakridgeControlToken: CONTROL_TOKEN,
   });
-  return { app, closed };
+  return { app, closed, authorizations };
 };
 
 test("an operator close is refused while a live unit still depends on the session", async () => {
-  const { app, closed } = guardedApp();
+  const { app, closed, authorizations } = guardedApp();
   const response = await app.fetch(new Request(`http://kbbl/sessions/${SID}`, { method: "DELETE" }));
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ code: "session_held_by_execution" });
   expect(closed.aborted).toEqual([]);
+  // The lookup authenticates with Oakridge's control credential, not kbbl's own.
+  expect(authorizations).toEqual([`Bearer ${CONTROL_TOKEN}`]);
 });
 
 /**

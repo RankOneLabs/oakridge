@@ -15,6 +15,7 @@ import type { RunPage } from "../projections/run-view";
 import { invocationInput } from "../effects/operations/selected-request";
 import { decisionRejectedBody, MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, DecisionRejectedError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { findHeldSession } from "../effects/intents";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -106,6 +107,10 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     try { return Response.json(await readInbox(deps.db, { run_id: c.req.query("run_id") as RunId | undefined, cursor, limit })); }
     catch (cause) { return fault(cause); }
   });
+  app.get("/api/session_holds/:sid", async (c) => { try {
+    const held = await findHeldSession(deps.db, c.req.param("sid"));
+    return Response.json(held ? { held: true, hold: held } : { held: false, hold: null });
+  } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id", async (c) => { try {
     const view = await readRunView(deps.db, c.req.param("run_id") as RunId);
     return view ? c.json(view) : response({ ok: false, error: new MissingEntityError("run not found") });

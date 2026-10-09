@@ -4,7 +4,7 @@
  * operator's later approval lands on a workflow that already returned. kbbl
  * asks before honouring a close.
  */
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 
 import type { SessionHold } from "../session/session-hold";
 import {
@@ -12,7 +12,7 @@ import {
 } from "./session-hold";
 
 const hold: SessionHold = {
-  session_id: "session-1", execution_id: "stage-1:0", execution_workflow_id: "root:stage:plan_writer:unit:0",
+  session_id: "session-1", execution_id: "stage-1:0",
   run_id: "run-1", stage_instance_id: "stage-1", stage_key: "plan_writer", unit_id: "0",
 };
 
@@ -34,7 +34,17 @@ test("the lookup asks about the session it was given, escaped", async () => {
     return new Response(JSON.stringify({ held: false, hold: null }), { status: 200, headers: { "content-type": "application/json" } });
   }) as unknown as typeof globalThis.fetch;
   await findSessionHold("a/b c", { baseUrl: "http://oakridge/", fetch });
-  expect(requested).toBe("http://oakridge/session_holds/a%2Fb%20c");
+  expect(requested).toBe("http://oakridge/api/session_holds/a%2Fb%20c");
+});
+
+test("the lookup carries the Oakridge control credential", async () => {
+  const headers: Array<string | null> = [];
+  const fetch = (async (_input: string | URL, init?: RequestInit) => {
+    headers.push(new Headers(init?.headers).get("authorization"));
+    return new Response(JSON.stringify({ held: false, hold: null }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof globalThis.fetch;
+  await findSessionHold("session-1", { baseUrl: "http://oakridge", credential: "control-secret", fetch });
+  expect(headers).toEqual(["Bearer control-secret"]);
 });
 
 /**
@@ -48,6 +58,27 @@ test("an unreachable, erroring, or unconfigured backend never blocks a close", a
   expect(await findSessionHold("session-1", { baseUrl: "http://oakridge", fetch: throwing })).toBeNull();
   expect(await findSessionHold("session-1", { baseUrl: "http://oakridge", fetch: respondWith({ error: "boom" }, 500) })).toBeNull();
   expect(await findSessionHold("session-1", { baseUrl: undefined })).toBeNull();
+});
+
+/**
+ * The fail-open above must not also be silent: a 404 or transport failure is
+ * the guard not doing its job, and that has to show up in the logs rather
+ * than vanish behind "no hold."
+ */
+let errorSpy: ReturnType<typeof mock>;
+beforeEach(() => { errorSpy = mock(() => {}); console.error = errorSpy as unknown as typeof console.error; });
+afterEach(() => { mock.restore(); });
+
+test("a 404 from the lookup is logged at error level, not swallowed silently", async () => {
+  expect(await findSessionHold("session-1", { baseUrl: "http://oakridge", fetch: respondWith({ error: "not found" }, 404) })).toBeNull();
+  expect(errorSpy).toHaveBeenCalledTimes(1);
+  expect(String(errorSpy.mock.calls[0]?.[0])).toContain("session-1");
+});
+
+test("a transport failure from the lookup is logged at error level, not swallowed silently", async () => {
+  const throwing = (async () => { throw new Error("connection refused"); }) as unknown as typeof globalThis.fetch;
+  expect(await findSessionHold("session-1", { baseUrl: "http://oakridge", fetch: throwing })).toBeNull();
+  expect(errorSpy).toHaveBeenCalledTimes(1);
 });
 
 test("a malformed hold is treated as no hold rather than trusted", async () => {

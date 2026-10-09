@@ -23,7 +23,6 @@
 export interface SessionHold {
   readonly session_id: string;
   readonly execution_id: string;
-  readonly execution_workflow_id: string;
   readonly run_id: string;
   readonly stage_instance_id: string;
   readonly stage_key: string;
@@ -38,7 +37,7 @@ export interface SessionHold {
 export const isSessionHold = (value: unknown): value is SessionHold => {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
-  return ["session_id", "execution_id", "execution_workflow_id", "run_id", "stage_instance_id", "stage_key", "unit_id"]
+  return ["session_id", "execution_id", "run_id", "stage_instance_id", "stage_key", "unit_id"]
     .every((field) => typeof candidate[field] === "string");
 };
 

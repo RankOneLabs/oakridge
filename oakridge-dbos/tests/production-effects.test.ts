@@ -24,6 +24,7 @@ import type { MutationService } from "../src/storage/mutation-service";
 import { redactingView } from "../src/projections/serialization-view";
 import { sealEffectPayload, unsealEffectPayload, verifyEffectEncryption } from "../src/storage/effect-secret";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+import { RECORDED_SESSION_HOLD } from "../../kbbl/core/session/session-hold.fixture";
 
 process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 
@@ -145,6 +146,33 @@ test("run and definition pages expose stable next cursors and refuse malformed c
     expect((await app.request(`${path}?cursor=invalid`)).status).toBe(400);
   }
 });
+
+/**
+ * The exact body kbbl's `isSessionHold` must accept, built from the shared
+ * `RECORDED_SESSION_HOLD` fixture both sides import — a change to the
+ * field set fails `session-close-guard.test.ts` too, rather than drifting
+ * unnoticed behind a comment promising two hand-synced copies agree.
+ */
+test("GET /api/session_holds/:sid returns the body kbbl's isSessionHold accepts", async () => withDatabase(async ({ db }) => {
+  const { session_id, execution_id, run_id, stage_instance_id, stage_key, unit_id } = RECORDED_SESSION_HOLD;
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ($1,'bundle')", [run_id]);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,'{}','{}')",
+    [stage_instance_id, run_id, stage_key, unit_id]);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ($1,$2,'agent',1,'pending')", [execution_id, stage_instance_id]);
+  const held = sealEffectPayload({ action: "start", handle: { kind: "kbbl_session", session_id },
+    invocation: { id: "invocation-1", execution_id, selection: {}, bytes: "unused" } } as unknown as EffectPayload);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start',$1,$2,'ingress:0',$3,'acknowledged')",
+    [stage_instance_id, execution_id, JSON.stringify(held)]);
+
+  const app = new Hono();
+  installDefinitionApi(app, { db, core: {} as CoreClient, mutations: {} as MutationService, wake: async () => undefined });
+  const response = await app.request(`/api/session_holds/${session_id}`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ held: true, hold: RECORDED_SESSION_HOLD });
+
+  expect(await (await app.request("/api/session_holds/no-such-session")).json()).toEqual({ held: false, hold: null });
+}));
 
 test("every table write rejects non-JSON bodies and unlisted browser origins on both paths", async () => {
   const previous = process.env.OAKRIDGE_ALLOWED_ORIGINS;

@@ -367,6 +367,8 @@ export interface SessionsRouteDeps {
    * in which case no session is ever held.
    */
   oakridgeBaseUrl?: string;
+  /** The Oakridge control credential the session-hold lookup authenticates with. */
+  oakridgeControlToken?: string;
 }
 
 /**
@@ -375,7 +377,7 @@ export interface SessionsRouteDeps {
  * session service.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { acp, manager, defaultWorkdir, oakridgeBaseUrl } = deps;
+  const { acp, manager, defaultWorkdir, oakridgeBaseUrl, oakridgeControlToken } = deps;
 
   app.put("/sessions/resumable/:sessionKey", async (c) => {
     const rawKey = c.req.param("sessionKey").trim();
@@ -444,6 +446,20 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           : "attached";
     const response: ResumableEnsureResponse = { kind, session: toLegacySnapshot(snapshot) };
     return c.json(response, kind === "started" ? 201 : 200);
+  });
+
+  // Read-only lookup for a resumable key that must resolve a session
+  // without ever claiming or starting one — the cleanup path (§10.6, step 1
+  // of this cohort): re-running the PUT to resolve an uncertain stop would
+  // start the very session the stop is trying to end.
+  app.get("/sessions/resumable/:sessionKey", async (c) => {
+    const rawKey = c.req.param("sessionKey").trim();
+    if (rawKey.length === 0 || rawKey.length > 300) return c.json({ error: "session key must be 1-300 characters" }, 400);
+    const snapshot = acp.getByResumableKey(rawKey);
+    if (!snapshot) return c.json({ error: "session key has never been claimed" }, 404);
+    const kind = toLegacyStatus(snapshot.status) === "ended" ? "terminal" : "attached";
+    const response: ResumableEnsureResponse = { kind, session: toLegacySnapshot(snapshot) };
+    return c.json(response);
   });
 
   // Escape hatch for a key whose session can no longer make progress
@@ -702,7 +718,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     // seen the refusal and asked again.
     const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by") });
     if (authority.kind !== "operator_override") {
-      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl }));
+      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl, credential: oakridgeControlToken }));
       if (refusal) return c.json(refusal, 409);
     }
 

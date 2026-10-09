@@ -18,6 +18,7 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { method: "DELETE", path: "/runs/:run_id", authority: "operator" },
   { method: "POST", path: "/runs/:run_id/scopes/:scope_id/decide", authority: "operator", raw_ingress: true },
   { method: "GET", path: "/api/inbox", authority: "operator" },
+  { method: "GET", path: "/api/session_holds/:sid", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/definition", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/scopes/:scope_id", authority: "operator" },

@@ -418,11 +418,13 @@ test("a kbbl that reports no activity at all is polled, not failed", async () =>
   expect(attempt.kind).toBe("pending");
 });
 
-test("uncertain selected start reconciles by the same identity before cancellation", async () => {
+test("an uncertain selected start is resolved by lookup before cancellation, never by re-starting", async () => {
   const urls: string[] = [];
+  const methods: string[] = [];
   let first = true;
   const adapter = makeAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input, init) => {
     urls.push(String(input));
+    methods.push(init?.method ?? "GET");
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
     if (first) { first = false; throw new Error("response lost"); }
     return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
@@ -431,22 +433,66 @@ test("uncertain selected start reconciles by the same identity before cancellati
   expect(await adapter.stop_selected(buildRequest, invocation("selected-1"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
   expect(urls[0]).toBe(urls[1]);
   expect(urls[2]).toContain("/sessions/session-1?");
+  // The resolution step is a lookup, not a second ensure: no PUT is issued while resolving the stop.
+  expect(methods).toEqual(["PUT", "GET", "DELETE"]);
 });
 
-test("a rejected reconciliation start cannot confirm cleanup of an uncertain execution", async () => {
-  const calls: string[] = [];
+test("a lookup 404 settles cleanup of a session that was never claimed, issuing no start and no DELETE", async () => {
+  const methods: string[] = [];
   const adapter = makeAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    calls.push(init?.method ?? "GET");
-    return new Response("start refused", { status: 403 });
+    methods.push(init?.method ?? "GET");
+    return new Response(JSON.stringify({ error: "session key has never been claimed" }), { status: 404 });
   } });
   const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
     unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
     inputs: [], declared_outputs: [], expected_artifacts: [] };
-  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toMatchObject({ kind: "uncertain" });
-  expect(calls).toEqual(["PUT"]);
+  expect(await adapter.stop_selected(request, invocation("never-started"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
+  expect(methods).toEqual(["GET"]);
+});
+
+test("a 5xx or transport failure on lookup leaves cleanup pending for retry rather than acknowledging it", async () => {
+  const calls: string[] = [];
+  const adapter = makeAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
+    calls.push(init?.method ?? "GET");
+    return new Response("unavailable", { status: 503 });
+  } });
+  const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
+    unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
+    inputs: [], declared_outputs: [], expected_artifacts: [] };
+  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toEqual({ kind: "transiently_unavailable", detail: "kbbl session lookup failed (503)" });
+  expect(calls).toEqual(["GET"]);
+});
+
+test("stop_pinned resolves a null reference by lookup, never by re-running start", async () => {
+  const methods: string[] = [];
+  const adapter = makeAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (_input, init) => {
+    const method = init?.method ?? "GET";
+    methods.push(method);
+    if (method === "DELETE") return new Response(null, { status: 204 });
+    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
+  } });
+  expect(await adapter.stop_pinned({ request: { session_key: "stage-1:0:build", body: "{}" }, execution_id: "execution-1" as ExecutionId, reference: null }))
+    .toEqual({ kind: "acknowledged", value: { stopped: true } });
+  expect(methods).toEqual(["GET", "DELETE"]);
+});
+
+test("stop_pinned acknowledges cleanup of a session a lookup 404s on", async () => {
+  const adapter = makeAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () => new Response(null, { status: 404 }) });
+  expect(await adapter.stop_pinned({ request: { session_key: "stage-1:0:build", body: "{}" }, execution_id: "execution-1" as ExecutionId, reference: null }))
+    .toEqual({ kind: "acknowledged", value: { stopped: true } });
 });
 
 // ---- credential: every kbbl call carries the configured Bearer token ----
+
+test("the lookup that resolves a stop sends the configured credential as a Bearer header", async () => {
+  const headers: Array<string | null> = [];
+  const adapter = makeAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (_input, init) => {
+    headers.push((init?.headers as Headers).get("authorization"));
+    return new Response(null, { status: 404 });
+  } });
+  await adapter.stop_pinned({ request: { session_key: "stage-1:0:build", body: "{}" }, execution_id: "execution-1" as ExecutionId, reference: null });
+  expect(headers).toEqual(["Bearer test-service-token"]);
+});
 
 test("start_or_attach sends the configured credential as a Bearer header", async () => {
   const headers: Array<string | null> = [];
