@@ -390,6 +390,203 @@ fn repeated_unchanged_assignments_wait_without_committing() {
     assert!(matches!(result, DecisionOutcome::Wait { .. }), "{result:?}");
 }
 
+fn certify_case(p: &mut CheckedProgram) -> &mut CheckedTree {
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let node = &mut cases
+        .iter_mut()
+        .find(|c| c.variant == "certify")
+        .expect("certify case")
+        .node;
+    let CheckedTree::If { then, .. } = node else {
+        panic!("certify guard")
+    };
+    then
+}
+
+fn certify_snapshot(b: &DefinitionBundle, specimen: &str) -> Snapshot {
+    let mut s = snapshot(b, json!({}), "inspection", "certify");
+    s.observations
+        .push(observed_revision(b, "specimen", specimen, 3));
+    s.trigger.payload = check_value(
+        b,
+        &SchemaId::from("inspection_request"),
+        &json!({"specimen":{"brand":"artifact_revision","id":specimen}}),
+    )
+    .unwrap();
+    s
+}
+
+#[test]
+fn declared_wait_for_a_targeted_command_carries_no_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    *certify_case(&mut p) = CheckedTree::Wait {
+        id: NodeId("certify_wait".into()),
+        continuations: vec![SymbolKey::from("certify")],
+        reason: "declared wait".into(),
+        attention: AttentionMetadata {
+            label: "Awaiting certification".into(),
+            trigger: SymbolKey::from("certify"),
+        },
+    };
+    let result = evaluate(&p, &certify_snapshot(&b, "r")).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait")
+    };
+    assert_eq!(targets, None);
+}
+
+#[test]
+fn unchanged_assignment_collapse_for_a_targeted_command_carries_evaluated_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let unchanged = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("phase"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    *mutations = vec![unchanged.clone(), unchanged];
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    let result = evaluate(&p, &s).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![s.observations[0].value.clone()]));
+}
+
+#[test]
+fn mutation_free_leaf_collapse_for_a_targeted_command_carries_evaluated_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    let result = evaluate(&p, &s).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![s.observations[0].value.clone()]));
+}
+
+#[test]
+fn collapse_for_an_untargeted_command_carries_an_evaluated_empty_target_list() {
+    let b = bundle("minimal");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let result = evaluate(&p, &snapshot(&b, json!({}), "ready", "begin")).unwrap();
+    let DecisionOutcome::Wait { targets, .. } = result else {
+        panic!("expected wait, got {result:?}")
+    };
+    assert_eq!(targets, Some(vec![]));
+}
+
+#[test]
+fn collapsed_wait_targets_track_the_same_observation_apply_would_have_carried() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let first = certify_snapshot(&b, "r");
+    let DecisionOutcome::Wait {
+        targets: first_targets,
+        ..
+    } = evaluate(&p, &first).unwrap()
+    else {
+        panic!("expected wait")
+    };
+    let second = certify_snapshot(&b, "r-plus-one");
+    let DecisionOutcome::Wait {
+        targets: second_targets,
+        ..
+    } = evaluate(&p, &second).unwrap()
+    else {
+        panic!("expected wait")
+    };
+    assert_ne!(first_targets, second_targets);
+    assert_eq!(
+        first_targets,
+        Some(vec![first.observations[0].value.clone()])
+    );
+    assert_eq!(
+        second_targets,
+        Some(vec![second.observations[0].value.clone()])
+    );
+}
+
+#[test]
+fn same_snapshot_replays_byte_identical_wait_decision_with_targets() {
+    let b = bundle("exact-review-target");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = certify_case(&mut p)
+    else {
+        panic!("certify apply")
+    };
+    mutations.clear();
+    actions.clear();
+    *outcome = None;
+    let s = certify_snapshot(&b, "r");
+    assert_eq!(
+        serde_json::to_vec(&evaluate(&p, &s).unwrap()).unwrap(),
+        serde_json::to_vec(&evaluate(&p, &s).unwrap()).unwrap()
+    );
+}
+
 #[test]
 fn optional_payload_is_bound_only_inside_presence_match() {
     let mut b = bundle("minimal");
@@ -952,4 +1149,121 @@ fn snapshot_validation_is_charged_against_the_budget() {
     assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
     assert_eq!(&*error.detail, "expression budget exhausted");
     assert_eq!(&*error.operation, "evaluate");
+}
+/// A reference into State must not pay for cloning the trigger payload: with a
+/// large trigger and more than twelve non-trigger references, the development
+/// budget of 20000 is only enough if each reference is charged for what it
+/// actually reads.
+#[test]
+fn non_trigger_references_are_not_charged_for_the_trigger_payload() {
+    let mut b = bundle("minimal");
+    b.scopes[0].commands[0].payload_schema = SchemaId::from("text");
+    b.limits.evaluation_budget = 20_000;
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let state_reference = CheckedMutation::SetState {
+        value: CheckedExpression {
+            schema: SchemaId::from("position"),
+            node: CheckedExpressionNode::Reference {
+                root: ReferenceRoot::State,
+                selectors: vec![],
+            },
+        },
+    };
+    *mutations = vec![state_reference; 13];
+    actions.clear();
+    *outcome = None;
+    let owner = &b.scopes[0];
+    let large_trigger_payload = "x".repeat(400_000);
+    let s = Snapshot {
+        owner: InstanceId::from("instance"),
+        scope: owner.key.clone(),
+        version: 9,
+        input: check_value(&b, &owner.input_schema, &json!({})).unwrap(),
+        state: check_value(&b, &owner.state_schema, &json!({"kind":"ready","value":{}})).unwrap(),
+        trigger: Trigger {
+            id: TriggerId::from("command-1"),
+            key: SymbolKey::from("begin"),
+            payload: check_value(&b, &SchemaId::from("text"), &json!(large_trigger_payload))
+                .unwrap(),
+        },
+        observations: vec![],
+        timestamp_ms: 42,
+        random_seed: 7,
+    };
+    let result = evaluate(&p, &s).unwrap();
+    assert!(matches!(result, DecisionOutcome::Wait { .. }), "{result:?}");
+}
+/// Only the Trigger root pays for the wrapper, but a Trigger reference must
+/// still resolve to it: both the successful read and the checked-selector
+/// failure report the `$trigger/<scope>` schema.
+#[test]
+fn trigger_reference_resolves_to_the_trigger_wrapper_schema() {
+    let b = bundle("minimal");
+    let mut p = compile(&b, &b.operations).unwrap();
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply {
+        mutations,
+        actions,
+        outcome,
+        ..
+    } = &mut cases[0].node
+    else {
+        panic!("begin apply")
+    };
+    let trigger_reference = CheckedExpression {
+        schema: SchemaId::from("position"),
+        node: CheckedExpressionNode::Reference {
+            root: ReferenceRoot::Trigger,
+            selectors: vec![],
+        },
+    };
+    *mutations = vec![CheckedMutation::SetState {
+        value: trigger_reference,
+    }];
+    actions.clear();
+    *outcome = None;
+    let DecisionOutcome::Apply { mutations, .. } =
+        evaluate(&p, &snapshot(&b, json!({}), "ready", "begin")).unwrap()
+    else {
+        panic!("expected an apply outcome")
+    };
+    let MutationValue::SetState { value } = &mutations[0] else {
+        panic!("expected a set-state mutation")
+    };
+    assert_eq!(value.schema.to_string(), "$trigger/document");
+
+    let CheckedTree::Match { cases, .. } = &mut p.scopes[0].tree else {
+        panic!("dispatch match")
+    };
+    let CheckedTree::Apply { mutations, .. } = &mut cases[0].node else {
+        panic!("begin apply")
+    };
+    let CheckedMutation::SetState { value } = &mut mutations[0] else {
+        panic!("expected a set-state mutation")
+    };
+    let CheckedExpressionNode::Reference { selectors, .. } = &mut value.node else {
+        panic!("expected a reference expression")
+    };
+    *selectors = vec![Selector::Variant {
+        variant: "not_the_trigger_command".into(),
+    }];
+    let error = evaluate(&p, &snapshot(&b, json!({}), "ready", "begin"))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::InvalidSnapshot);
+    assert_eq!(&*error.entity_id, "$trigger/document");
 }

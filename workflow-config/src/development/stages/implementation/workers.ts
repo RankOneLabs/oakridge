@@ -1,5 +1,5 @@
 import type { WorkerDefinition } from "../../../source-contracts";
-import { optional, record, reference } from "../../../primitives/expressions";
+import { record, reference } from "../../../primitives/expressions";
 
 export const workers: WorkerDefinition[] = [
   {
@@ -16,7 +16,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["repository", "build"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "implementation", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "implementation_build_initial_v3",
@@ -36,10 +36,10 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "feedback", value: optional("optional_text", reference({ kind: "trigger" }, ["text"])) },
-              { key: "build_result", value: optional("optional_build_body", reference({ kind: "output", key: "build_result" }, [])) },
-              { key: "pr_summary", value: optional("optional_pr_body", reference({ kind: "output", key: "pr_summary" }, [])) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              { key: "feedback", value: reference({ kind: "trigger" }, ["text"]) },
+              { key: "build_result", value: reference({ kind: "output", key: "build_result" }, []) },
+              { key: "pr_summary", value: reference({ kind: "output", key: "pr_summary" }, []) }
             ])
           }
         ]),
@@ -59,7 +59,7 @@ export const workers: WorkerDefinition[] = [
           { key: "config", value: reference({ kind: "input" }, ["repository", "build"]) },
           {
             key: "context",
-            value: record("session_context", [{ key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) }])
+            value: record("session_context", [{ key: "implementation", value: reference({ kind: "input" }, []) }])
           }
         ]),
         prompt: "implementation_build_replace_pr_v3",
@@ -79,9 +79,14 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "retained_build", value: reference({ kind: "trigger" }, ["build_result"]) },
-              { key: "retained_pr", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              {
+                key: "retained",
+                value: record("retained_evidence", [
+                  { key: "build_result", value: reference({ kind: "trigger" }, ["build_result"]) },
+                  { key: "pr_summary", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+                ])
+              }
             ])
           }
         ]),
@@ -102,9 +107,14 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "retained_build", value: reference({ kind: "trigger" }, ["build_result"]) },
-              { key: "retained_pr", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              {
+                key: "retained",
+                value: record("retained_evidence", [
+                  { key: "build_result", value: reference({ kind: "trigger" }, ["build_result"]) },
+                  { key: "pr_summary", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+                ])
+              }
             ])
           }
         ]),
@@ -125,9 +135,14 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "retained_build", value: reference({ kind: "trigger" }, ["build_result"]) },
-              { key: "retained_pr", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              {
+                key: "retained",
+                value: record("retained_evidence", [
+                  { key: "build_result", value: reference({ kind: "trigger" }, ["build_result"]) },
+                  { key: "pr_summary", value: reference({ kind: "trigger" }, ["pr_summary"]) }
+                ])
+              }
             ])
           }
         ]),
@@ -148,10 +163,10 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "feedback", value: optional("optional_text", reference({ kind: "trigger" }, ["text"])) },
-              { key: "assessment", value: optional("optional_assessment_body", reference({ kind: "output", key: "assessment" }, [])) },
-              { key: "build_result", value: optional("optional_build_body", reference({ kind: "output", key: "build_result" }, [])) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              { key: "feedback", value: reference({ kind: "trigger" }, ["text"]) },
+              { key: "assessment", value: reference({ kind: "output", key: "assessment" }, []) },
+              { key: "build_result", value: reference({ kind: "output", key: "build_result" }, []) }
             ])
           }
         ]),
@@ -179,10 +194,10 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "accepted_build", value: optional("optional_build_target", reference({ kind: "trigger" }, [])) },
-              { key: "build_result", value: optional("optional_build_body", reference({ kind: "output", key: "build_result" }, [])) },
-              { key: "pr_summary", value: optional("optional_pr_body", reference({ kind: "output", key: "pr_summary" }, [])) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              { key: "accepted_build", value: reference({ kind: "trigger" }, []) },
+              { key: "build_result", value: reference({ kind: "output", key: "build_result" }, []) },
+              { key: "pr_summary", value: reference({ kind: "output", key: "pr_summary" }, []) }
             ])
           }
         ]),
@@ -203,10 +218,10 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
-              { key: "accepted_build", value: optional("optional_build_target", reference({ kind: "state" }, [])) },
-              { key: "build_result", value: optional("optional_build_body", reference({ kind: "output", key: "build_result" }, [])) },
-              { key: "pr_summary", value: optional("optional_pr_body", reference({ kind: "output", key: "pr_summary" }, [])) }
+              { key: "implementation", value: reference({ kind: "input" }, []) },
+              { key: "accepted_build", value: reference({ kind: "state" }, []) },
+              { key: "build_result", value: reference({ kind: "output", key: "build_result" }, []) },
+              { key: "pr_summary", value: reference({ kind: "output", key: "pr_summary" }, []) }
             ])
           }
         ]),
@@ -227,18 +242,18 @@ export const workers: WorkerDefinition[] = [
           {
             key: "context",
             value: record("session_context", [
-              { key: "implementation", value: optional("optional_implementation", reference({ kind: "input" }, [])) },
+              { key: "implementation", value: reference({ kind: "input" }, []) },
               {
                 key: "accepted_build",
-                value: optional("optional_build_target", record("build_target", [
+                value: record("build_target", [
                   { key: "build_result", value: reference({ kind: "trigger" }, ["build_result"]) },
                   { key: "pr_summary", value: reference({ kind: "trigger" }, ["pr_summary"]) },
                   { key: "pr_url", value: reference({ kind: "trigger" }, ["pr_url"]) },
                   { key: "head_sha", value: reference({ kind: "trigger" }, ["head_sha"]) }
-                ]))
+                ])
               },
-              { key: "assessment", value: optional("optional_assessment_body", reference({ kind: "output", key: "assessment" }, [])) },
-              { key: "feedback", value: optional("optional_text", reference({ kind: "trigger" }, ["text"])) }
+              { key: "assessment", value: reference({ kind: "output", key: "assessment" }, []) },
+              { key: "feedback", value: reference({ kind: "trigger" }, ["text"]) }
             ])
           }
         ]),

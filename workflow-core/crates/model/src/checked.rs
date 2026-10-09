@@ -396,6 +396,7 @@ pub enum DecisionOutcome {
         continuations: Vec<SymbolKey>,
         reason: String,
         attention: Option<AttentionMetadata>,
+        targets: Option<Vec<CheckedValue>>,
     },
     Reject {
         explanation: Explanation,

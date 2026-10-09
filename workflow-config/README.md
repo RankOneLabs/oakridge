@@ -10,7 +10,10 @@ The maintained source has three layers:
 
 - `src/primitives/` contains reusable constructors for schema fields, records,
   literals, references, optional values and variants. They return the existing
-  Rust source types, without introducing another configuration language.
+  Rust source types, without introducing another configuration language. An
+  optional schema may not wrap another optional schema: null decodes to `None`
+  at every level, so `Some(None)` is unrepresentable on the wire. The compiler
+  rejects a nested optional at compile time, naming the offending schema.
 - `src/development/schemas/` groups shared schemas by domain. Each directory
   under `src/development/stages/` owns a stage's declarations, worker actions
   and named decision nodes. Larger graphs are grouped by the events they handle.

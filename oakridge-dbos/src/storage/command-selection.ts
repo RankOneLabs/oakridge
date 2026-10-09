@@ -7,7 +7,10 @@ import { requestDigest } from "./receipts";
 export interface TargetRevision { readonly identity: string; readonly version: number }
 
 export function targetsMatch(command: CommandDefinition, outcome: DecisionOutcome, submitted: readonly TargetRevision[], current: readonly TargetRevision[]): boolean {
-  return outcome.kind === "apply" && outcome.targets.length === command.targets.length && submitted.length === current.length
+  if (outcome.kind === "reject") return false;
+  if (outcome.kind === "wait" && !outcome.targets) return true;
+  const targets = outcome.kind === "apply" ? outcome.targets : outcome.targets ?? [];
+  return targets.length === command.targets.length && submitted.length === current.length
     && current.length === command.targets.length && current.every((target, index) => target.identity === submitted[index]?.identity && target.version === submitted[index]?.version);
 }
 

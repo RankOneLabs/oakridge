@@ -20,7 +20,6 @@ export const implementationSchemas: Schema[] = [
     field("delegated_session_metadata", "optional_build_metadata"),
     field("known_issues", "issues")
   ]),
-  { key: "optional_build_body", shape: { kind: "optional", item: "build_body" } },
   recordSchema("assessment_finding", [
     field("criterion", "optional_text"),
     field("status", "optional_criterion_status"),
@@ -34,9 +33,7 @@ export const implementationSchemas: Schema[] = [
     field("test_evidence", "optional_tests"),
     field("recommended_next_actions", "texts")
   ]),
-  { key: "optional_assessment_body", shape: { kind: "optional", item: "assessment_body" } },
   { key: "pr_review_status", shape: { kind: "enum", variants: ["draft", "ready", "changes_requested", "approved", "merged", "closed"] } },
   { key: "optional_pr_review_status", shape: { kind: "optional", item: "pr_review_status" } },
   recordSchema("pr_body", [field("pr_url", "text"), field("branch", "ident"), field("summary", "text"), field("review_status", "optional_pr_review_status")]),
-  { key: "optional_pr_body", shape: { kind: "optional", item: "pr_body" } },
 ];

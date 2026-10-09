@@ -16,8 +16,8 @@ export async function deliverEvidence(db: TransactionalSqlExecutor, mutations: M
   const result = await mutations.decide({ run_id, scope_id: intent.scope_id as ScopeId, ingress_id: evidence.id, trigger: evidence, operator_version: null, execution_authority: intent.execution_id ?? undefined });
   if (!result.ok) return { kind: "deferred", detail: result.error.detail };
   if (result.value.kind === "snapshot_too_large") return { kind: "deferred", detail: `snapshot_too_large: ${result.value.scope} ${result.value.bytes}/${result.value.limit}` };
-  const accepted = result.value.kind === "Committed" || result.value.kind === "Replayed" || (result.value.kind === "Rejected"
-    && (result.value.reason === "owner_terminal" || result.value.reason === "generation_revoked"));
+  const accepted = result.value.kind === "Committed" || result.value.kind === "Replayed" || result.value.kind === "DecisionRejected"
+    || (result.value.kind === "Rejected" && (result.value.reason === "owner_terminal" || result.value.reason === "generation_revoked"));
   if (!accepted) return { kind: "deferred", detail: result.value.detail };
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [run_id]);

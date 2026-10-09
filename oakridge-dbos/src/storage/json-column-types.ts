@@ -15,5 +15,7 @@ export type DefinitionBundleSource = DefinitionBundle;
 
 export interface ChildCollectionMember { readonly id: ScopeId; readonly key: string; readonly depends_on: readonly string[] }
 export type ChildCollectionMembers = readonly (string | ChildCollectionMember)[];
-export interface CommitReceipt { readonly transition_id: string; readonly scope_version: number }
+export type CommitReceipt =
+  | { readonly kind: "committed"; readonly transition_id: string; readonly scope_version: number }
+  | { readonly kind: "rejected"; readonly error: string; readonly detail: CheckedValue };
 export type EffectIntentPayload = CheckedValue | EffectPayload;

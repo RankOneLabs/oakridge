@@ -3,7 +3,7 @@ import type { CheckedValue, DefinitionBundle, ScopeDefinition, Trigger } from ".
 import type { CoreClient } from "../../core-client/client";
 import type { ExecutionId, JsonValue } from "../../domain/primitives";
 import type { SqlExecutor } from "../../storage/sql-executor";
-import { KbblExecutorAdapter } from "../../adapters/kbbl";
+import { KbblExecutorAdapter, type KbblCredential } from "../../adapters/kbbl";
 import { BunGitCommandRunner } from "../../runtime/git-command-runner";
 import { GithubPullRequestReader, type PullRequestReader } from "../../runtime/github-pull-requests";
 import { RepositoryPreparationOperation } from "./repository-preparation";
@@ -17,6 +17,7 @@ export interface ProductionProviderOptions {
   readonly db: SqlExecutor;
   readonly core: CoreClient;
   readonly kbbl_base_url: string;
+  readonly credential: KbblCredential;
   readonly pull_requests?: PullRequestReader;
 }
 interface InvocationContext { readonly bundle: DefinitionBundle; readonly scope: ScopeDefinition; readonly scope_id: string; readonly run_id: string }
@@ -105,7 +106,7 @@ export function createEffectProvider(options: ProductionProviderOptions): Effect
   const repository = new RepositoryPreparationOperation(options.git ?? new BunGitCommandRunner());
   const discovery = new PullRequestObservationOperation(options.pull_requests ?? new GithubPullRequestReader({ token: process.env.OAKRIDGE_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? "" }));
   function kbbl(call: ProviderCallOptions): KbblExecutorAdapter {
-    return new KbblExecutorAdapter({ base_url: options.kbbl_base_url, executor_function_identity: "selected-v1",
+    return new KbblExecutorAdapter({ base_url: options.kbbl_base_url, executor_function_identity: "selected-v1", credential: options.credential,
       fetch: (input, init) => fetch(input, { ...init, signal: call.signal }) });
   }
   async function trackFinite(invocation: StableInvocation, call: ProviderCallOptions): Promise<ProviderResult<ExternalHandle>> {

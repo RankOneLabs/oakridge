@@ -17,7 +17,6 @@ export const reviewSchemas: Schema[] = [
   recordSchema("revision_target", [field("revision", "revision")]),
   recordSchema("feedback", [field("revision", "revision"), field("text", "text")]),
   recordSchema("build_target", [field("build_result", "revision"), field("pr_summary", "revision"), field("pr_url", "text"), field("head_sha", "ident")]),
-  { key: "optional_build_target", shape: { kind: "optional", item: "build_target" } },
   recordSchema("assessment_target", [
     field("assessment", "revision"),
     field("build_result", "revision"),

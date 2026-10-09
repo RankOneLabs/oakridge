@@ -9,7 +9,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { HTTP_ROUTES } from "../src/http/routes";
-import { hasExecutionSecret } from "../src/http/selected-publication";
+import { requireCurrentAuthority, verifyExecutionSecret, type VerifiedExecution } from "../src/http/execution-authority";
 import { installDefinitionApi, type DefinitionApiDependencies } from "../src/http/app";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
@@ -71,15 +71,21 @@ test("control auth has no early-exit token comparison", () => {
   expect(source).not.toMatch(/header\s*!==\s*`Bearer/);
 });
 
-test("an active execution accepts only its minted secret and revocation refuses it", async () => {
+test("the secret check accepts only the minted secret, independent of whether the execution is still selected", async () => {
   const secret = "worker-only-secret";
+  const db = { async query() { return [{ publication_secret_hash: createHash("sha256").update(secret).digest("hex") }]; } } as unknown as TransactionalSqlExecutor;
+  const check = (header: string) => verifyExecutionSecret(db, "run" as RunId, "scope" as ScopeId, "execution", header);
+  expect(await check(`Bearer ${secret}`)).toEqual({ execution_id: "execution", scope_id: "scope" as ScopeId, run_id: "run" as RunId } as VerifiedExecution);
+  expect(await check("Bearer operator-token")).toBeNull();
+});
+
+test("current authority refuses once the execution is no longer the live selection", async () => {
   let is_selected = true;
-  const db = { async query() { return is_selected ? [{ publication_secret_hash: createHash("sha256").update(secret).digest("hex") }] : []; } } as unknown as TransactionalSqlExecutor;
-  const check = (header: string) => hasExecutionSecret(db, "run" as RunId, "scope" as ScopeId, "execution", header);
-  expect(await check(`Bearer ${secret}`)).toBe(true);
-  expect(await check("Bearer operator-token")).toBe(false);
+  const db = { async query() { return is_selected ? [{ execution_id: "execution" }] : []; } } as unknown as TransactionalSqlExecutor;
+  const verified = { execution_id: "execution", scope_id: "scope" as ScopeId, run_id: "run" as RunId } as VerifiedExecution;
+  expect(await requireCurrentAuthority(db, verified)).toBe(true);
   is_selected = false;
-  expect(await check(`Bearer ${secret}`)).toBe(false);
+  expect(await requireCurrentAuthority(db, verified)).toBe(false);
 });
 
 test("a write without the token is rejected before it reaches a handler", async () => {

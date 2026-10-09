@@ -156,15 +156,43 @@ export const selectRemoteWorktreeBase = (baseRef: string): string => {
   return `origin/${baseRef}`;
 };
 
+/**
+ * The credential this adapter presents to kbbl on every request. Branded so a
+ * bare string cannot be passed in its place by accident, and distinct from
+ * kbbl's own browser control token: it is Bearer-only and never cookie-eligible
+ * (kbbl/core/server/auth.ts), so a leaked service token cannot be replayed as
+ * a session cookie.
+ */
+export type KbblCredential = string & { readonly __brand: "KbblCredential" };
+export const asKbblCredential = (token: string): KbblCredential => token as KbblCredential;
+
 export interface KbblExecutorAdapterOptions {
   readonly base_url: string;
   readonly executor_function_identity: string;
+  readonly credential: KbblCredential;
   readonly observe_wait_ms?: number;
   /** Silence after which a session is failed rather than polled forever. */
   readonly max_silent_ms?: number;
   /** Injectable clock, so a test can prove the bound without waiting it out. */
   readonly now?: () => number;
   readonly fetch?: FetchLike;
+}
+
+/**
+ * How the adapter treats an HTTP response status, independent of parsing its
+ * body. `pending` is meaningful only to `observe_terminal`'s 202 contract,
+ * where it is handled before this classification is otherwise consulted; a
+ * 202 is not expected from any other call, but a caller comparing against
+ * "ok" exactly (`cancel_or_fence`, `deliver_input`) would treat one as a
+ * failure rather than as `Response.ok`'s own 200-299 range does.
+ */
+export type KbblStatusClass = "ok" | "pending" | "rejected" | "unavailable";
+
+export function classify_kbbl_status(status: number): KbblStatusClass {
+  if (status === 202) return "pending";
+  if (status >= 200 && status < 300) return "ok";
+  if (status >= 400 && status < 500) return "rejected";
+  return "unavailable";
 }
 
 /**
@@ -241,6 +269,17 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     this.fetch = options.fetch ?? globalThis.fetch;
   }
 
+  /**
+   * The single funnel every kbbl call goes through. A call added without it
+   * would be a fetch that forgets the credential; routing through here is
+   * what makes that impossible rather than merely disciplined.
+   */
+  private kbbl_request(path: string, init: RequestInit = {}): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${this.options.credential}`);
+    return this.fetch(`${this.options.base_url}${path}`, { ...init, headers });
+  }
+
   /** Typed leaf operation over a pinned request and invocation identity. */
   async start_selected(request: ExecutionRequest, invocation_id: InvocationId): Promise<ProviderResult<ExternalExecutionReference>> {
     try {
@@ -296,15 +335,14 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
 
   private async start_request(request: PinnedSessionStart): Promise<ExternalExecutionReference | ExecutorUnavailable> {
     let response: Response;
-    try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
+    try { response = await this.kbbl_request(`/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: request.body,
     }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
-    if (!response.ok) {
-      if (response.status >= 400 && response.status < 500) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
-      return { kind: "executor_unavailable", operation: "start_or_attach", detail: `kbbl ensure-session failed (${response.status})` };
-    }
+    const classification = classify_kbbl_status(response.status);
+    if (classification === "rejected") throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
+    if (classification === "unavailable") return { kind: "executor_unavailable", operation: "start_or_attach", detail: `kbbl ensure-session failed (${response.status})` };
     const ensured = parseEnsureResponse(await response.json());
     return { kind: "kbbl_session", session_id: ensured.session.sid,
       ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
@@ -319,11 +357,12 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // A named failure code parks the unit for rerun and says what happened.
     if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
     const sessionId = external_reference.session_id;
-    const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
+    const path = `/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
     let response: Response;
-    try { response = await this.fetch(url); }
+    try { response = await this.kbbl_request(path); }
     catch (error) { return { kind: "executor_unavailable", operation: "observe_terminal", detail: String(error) }; }
-    if (response.status === 202) {
+    const classification = classify_kbbl_status(response.status);
+    if (classification === "pending") {
       // A session that never takes its first turn ends no other way: kbbl keeps
       // answering "not terminal", correctly, and the unit waits on a state that
       // cannot arrive. Bounding the silence is what turns that into a failure
@@ -381,18 +420,18 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // not fire on the owner's own teardown: a cancelled run reaches its agent
     // through exactly this call, so an unqualified DELETE deadlocks the run
     // against itself — uncancellable because it is still active.
-    const url = `${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
+    const path = `/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
     let response: Response;
-    try { response = await this.fetch(url, { method: "DELETE" }); }
+    try { response = await this.kbbl_request(path, { method: "DELETE" }); }
     catch (error) { return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: String(error) }; }
-    if (!response.ok && response.status !== 404) return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: `kbbl cancellation failed (${response.status})` };
+    if (response.status !== 404 && classify_kbbl_status(response.status) !== "ok") return { kind: "executor_unavailable", operation: "cancel_or_fence", detail: `kbbl cancellation failed (${response.status})` };
   }
 
   async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
     const sessionId = sessionIdOf(external_reference, execution_id);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
+    const response = await this.kbbl_request(`/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
     });
-    if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
+    if (classify_kbbl_status(response.status) !== "ok") throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
   }
 }

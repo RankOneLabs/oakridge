@@ -285,6 +285,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                     continuations: continuations.clone(),
                     reason: reason.clone(),
                     attention: Some(attention.clone()),
+                    targets: None,
                 })
             }
             CheckedTree::Reject { error, detail, .. } => {
@@ -422,6 +423,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                             continuations: vec![snapshot.trigger.key.clone()],
                             reason: "unchanged state; awaiting a new trigger".into(),
                             attention: None,
+                            targets: Some(targets.clone()),
                         });
                     }
                 }
@@ -431,6 +433,7 @@ pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<Dec
                         continuations: vec![snapshot.trigger.key.clone()],
                         reason: "mutation-free leaf; no commit required".into(),
                         attention: None,
+                        targets: Some(targets.clone()),
                     });
                 }
                 return Ok(DecisionOutcome::Apply {
