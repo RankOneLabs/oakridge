@@ -31,10 +31,11 @@ export function resolveSelectedSessionSettings(bundle: DefinitionBundle, selecti
   const other_runtime: RuntimeId = runtime === "codex" ? "claude-code" : "codex";
   const selector = isRecord(decoded.value.selector) ? decoded.value.selector : null;
   const stage_key = typeof selector?.stage_key === "string" ? selector.stage_key : scope.scope_key;
-  const cohort_key = typeof selector?.cohort_key === "string" ? selector.cohort_key : scope.collection_key === null ? null : scope.child_key;
+  const selected_cohort_key = scope.collection_key === null ? null : scope.child_key;
+  const cohort_key = typeof selector?.cohort_key === "string" ? selector.cohort_key : selected_cohort_key;
   const worker_key = typeof selector?.worker_key === "string" ? selector.worker_key : selection.selection.worker;
   const action_key = typeof selector?.action_key === "string" ? selector.action_key : selection.selection.action;
-  if (stage_key !== scope.scope_key || worker_key !== selection.selection.worker || action_key !== selection.selection.action)
+  if (stage_key !== scope.scope_key || cohort_key !== selected_cohort_key || worker_key !== selection.selection.worker || action_key !== selection.selection.action)
     return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session selector disagrees with selected action" } };
   const resolved = resolveSessionSettings(policy, { stage_key, cohort_key, worker_key, action_key,
     worker_defaults: [{ runtime, model: defaultModelForRuntime(runtime) }, { runtime: other_runtime, model: defaultModelForRuntime(other_runtime) }] });

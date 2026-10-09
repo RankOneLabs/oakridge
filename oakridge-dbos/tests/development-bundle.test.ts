@@ -135,6 +135,10 @@ test("selected child session pins policy model and effort in the provider bytes"
       config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
     expect(resolveSelectedSessionSettings(bundle, { ...selection, input: mismatched }, scope, policy))
       .toMatchObject({ ok: false, error: { detail: "session selector disagrees with selected action" } });
+    const wrong_cohort = await checked(core, "session_action", { selector: { stage_key: "implementation", cohort_key: "c01", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    expect(resolveSelectedSessionSettings(bundle, { ...selection, input: wrong_cohort }, scope, policy))
+      .toMatchObject({ ok: false, error: { detail: "session selector disagrees with selected action" } });
     if (!settings.ok) throw new Error(settings.error.detail);
     const selected = selectedInvocation("invocation" as InvocationId, "execution", selection, settings.value);
     const pinned = pinProviderRequest({ invocation: selected, bundle, prompts: new Map([[action.prompt!, "Build the cohort"]]), scope, publication_secret: "secret" });
