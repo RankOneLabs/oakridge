@@ -242,6 +242,12 @@ export class AcpSessionService {
     return row ? toSnapshot(row) : null;
   }
 
+  /** Read-only resumable lookup (§11.1 escape hatch): never claims a key. */
+  getByResumableKey(key: string): AcpSessionSnapshot | null {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    return row ? toSnapshot(row) : null;
+  }
+
   listByArtifact(artifactId: string): AcpSessionSnapshot[] {
     return this.deps.store.listByArtifact(artifactId).map(toSnapshot);
   }

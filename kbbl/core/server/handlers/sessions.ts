@@ -446,6 +446,20 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     return c.json(response, kind === "started" ? 201 : 200);
   });
 
+  // Read-only lookup for a resumable key that must resolve a session
+  // without ever claiming or starting one — the cleanup path (§10.6, step 1
+  // of this cohort): re-running the PUT to resolve an uncertain stop would
+  // start the very session the stop is trying to end.
+  app.get("/sessions/resumable/:sessionKey", async (c) => {
+    const rawKey = c.req.param("sessionKey").trim();
+    if (rawKey.length === 0 || rawKey.length > 300) return c.json({ error: "session key must be 1-300 characters" }, 400);
+    const snapshot = acp.getByResumableKey(rawKey);
+    if (!snapshot) return c.json({ error: "session key has never been claimed" }, 404);
+    const kind = toLegacyStatus(snapshot.status) === "ended" ? "terminal" : "attached";
+    const response: ResumableEnsureResponse = { kind, session: toLegacySnapshot(snapshot) };
+    return c.json(response);
+  });
+
   // Escape hatch for a key whose session can no longer make progress
   // (§10.6). Explicit, operator-driven, and never reachable by an ensure
   // retry — advancing on its own would start a second agent for work that

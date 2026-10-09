@@ -85,6 +85,34 @@ afterEach(async () => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
+describe("GET /sessions/resumable/:sessionKey lookup contract", () => {
+  test("an unclaimed key is a 404, not a start", async () => {
+    const app = makeApp(repoDir);
+    const res = await app.request("/sessions/resumable/never-claimed");
+    expect(res.status).toBe(404);
+  });
+
+  test("a claimed key resolves without mutating anything (no PUT body, same session every call)", async () => {
+    const app = makeApp(repoDir);
+    const ensured = await app.request("/sessions/resumable/lookup-key", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initial_prompt: "Build", workdir: repoDir, runtime: "claude-code" }),
+    });
+    expect(ensured.status).toBe(201);
+    const created = (await ensured.json()) as { session: { sid: string } };
+
+    const first = await app.request("/sessions/resumable/lookup-key");
+    const second = await app.request("/sessions/resumable/lookup-key");
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstBody = (await first.json()) as { session: { sid: string } };
+    const secondBody = (await second.json()) as { session: { sid: string } };
+    expect(firstBody.session.sid).toBe(created.session.sid);
+    expect(secondBody.session.sid).toBe(created.session.sid);
+  });
+});
+
 describe("POST /sessions create-session contract", () => {
   test("no model override (omitted field) is accepted; snapshot model is null", async () => {
     const app = makeApp(repoDir);
