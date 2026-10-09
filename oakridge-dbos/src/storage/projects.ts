@@ -1,7 +1,8 @@
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
 import type { ProjectId, ProjectRecord } from "./schema-records";
-import type { SqlExecutor } from "./sql-executor";
+import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { err, ok, type Result } from "../domain/primitives";
+import type { SessionPolicy } from "../domain/session-settings";
 
 const isUniqueViolation = (cause: unknown): boolean =>
   !!cause && typeof cause === "object" && "code" in cause && cause.code === "23505";
@@ -27,4 +28,21 @@ export async function updateProject(db: SqlExecutor, id: ProjectId, draft: Proje
     if (isUniqueViolation(cause)) return err({ kind: "duplicate_name", name: draft.name });
     throw cause;
   }
+}
+
+export type SessionPolicyWriteError = { readonly kind: "missing"; readonly id: ProjectId }
+  | { readonly kind: "stale_version"; readonly expected: number; readonly actual: number };
+
+/** Serialize every affected run before changing the project policy. */
+export async function setSessionPolicy(db: TransactionalSqlExecutor, id: ProjectId, policy: SessionPolicy): Promise<Result<SessionPolicy, SessionPolicyWriteError>> {
+  return db.transaction(async (tx) => {
+    const runs = await tx.query<{ id: string }>("SELECT id FROM authority.run WHERE project_id=$1 ORDER BY id", [id]);
+    for (const run of runs) await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [run.id]);
+    const current = (await tx.query<{ session_policy: SessionPolicy | null }>("SELECT session_policy FROM authority.project WHERE id=$1 FOR UPDATE", [id]))[0];
+    if (!current) return err({ kind: "missing", id });
+    const version = current.session_policy?.version ?? 0;
+    if (policy.version !== version + 1) return err({ kind: "stale_version", expected: version + 1, actual: policy.version });
+    await tx.query("UPDATE authority.project SET session_policy=$2 WHERE id=$1", [id, JSON.stringify(policy)]);
+    return ok(policy);
+  });
 }

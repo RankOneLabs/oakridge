@@ -8,7 +8,7 @@ const selection = { definition: { operation: "run", contract_version: 1, deadlin
   max_attempts: 2, outputs: [], settings: [], tools: [] }, input: { schema: "input", data: { kind: "string", value: "pinned" } },
   selection: { worker: "agent", action: "build" } } satisfies Invocation;
 const payload: EffectPayload = { action: "start", handle: null,
-  invocation: selectedInvocation("invocation" as InvocationId, "execution", selection) };
+  invocation: selectedInvocation("invocation" as InvocationId, "execution", selection, null) };
 
 test("a transient failure retries below the pinned attempt limit", () => {
   expect(resolveStart({ ...payload, start_attempts: 1 }, { kind: "transiently_unavailable", detail: "busy" }).kind).toBe("retry");

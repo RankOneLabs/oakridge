@@ -27,6 +27,7 @@ async function withObserver(bundle: DefinitionBundle, reply: () => unknown,
       const invocation: StableInvocation = {
         id: `session-${scope_key}-${worker_key}` as InvocationId,
         execution_id: "execution",
+        session_settings: null,
         selection: { selection: { worker: worker_key, action: action.key },
           definition: { contract_version: action.contract_version, deadline_ms: action.deadline_ms,
             input_schema: action.input_schema, max_attempts: action.max_attempts,

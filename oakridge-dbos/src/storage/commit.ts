@@ -4,10 +4,10 @@ import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";
 import { findReceipt, type IngressIdentity } from "./receipts";
 import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
-import { hasSameReadSet, readSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS } from "./snapshot-reader";
+import { hasSameReadSet, readRunPolicy, readSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS } from "./snapshot-reader";
 import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
-import { pinProviderRequest } from "../effects/operations/selected-request";
+import { pinProviderRequest, resolveSelectedSessionSettings } from "../effects/operations/selected-request";
 import { readStoredPrompts } from "./prompt-content";
 import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
 export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
@@ -62,9 +62,10 @@ async function lockOwners(tx: SqlExecutor, request: CommitRequest): Promise<void
     if (!(READ_RELATIONS as readonly string[]).includes(witness.relation)) fail({ kind: "Rejected", reason: "invalid", detail: `unknown read relation: ${witness.relation}` });
   }
   // Global lock order: run advisory lock first, then relation.localeCompare order,
-  // then IDs within each relation. Capacity changes take the exclusive run lock;
-  // unrelated sibling decisions share it and only lock their own subtree rows.
-  await tx.query(request.capacity.length
+  // then IDs within each relation. Capacity changes and invocation pins take
+  // the exclusive run lock; unrelated sibling transitions share it.
+  const pins_invocation = request.decision.kind === "apply" && request.decision.invocations.length > 0;
+  await tx.query(request.capacity.length || pins_invocation
     ? "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
     : "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))", [request.identity.run_id]);
   const by_relation = new Map<string, string[]>();
@@ -147,13 +148,18 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   if (request.effects.length !== invocations.length) fail({ kind: "Rejected", reason: "invalid", detail: "effects do not pair with selected invocations" });
   const prompts = await readStoredPrompts(tx, definition.source, invocations.flatMap((invocation) => invocation.prompt_key == null ? [] : [invocation.prompt_key]));
   if (!prompts.ok) fail({ kind: "Rejected", reason: "invalid", detail: `${prompts.error.entity_id}: ${prompts.error.detail}` });
+  const policy = invocations.length ? await readRunPolicy(tx, source.owner.run_id) : null;
+  if (policy && (policy.witness.id !== source.read_set.policy.id || policy.witness.version !== source.read_set.policy.version))
+    fail({ kind: "Conflict", detail: "session policy changed; refresh decision" });
   for (const [index, effect] of request.effects.entries()) {
     const id = crypto.randomUUID();
     const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
     const selection = invocations[index];
     if (!selection || !execution_id) fail({ kind: "Rejected", reason: "invalid", detail: "effect without a selected execution" });
     const publication_secret = randomBytes(32).toString("base64url");
-    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection), bundle: definition.source, prompts: prompts.value, scope: source.owner, publication_secret });
+    const settings = resolveSelectedSessionSettings(definition.source, selection, source.owner, policy!.policy);
+    if (!settings.ok) fail({ kind: "Rejected", reason: "invalid", detail: settings.error.detail });
+    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection, settings.value), bundle: definition.source, prompts: prompts.value, scope: source.owner, publication_secret });
     if (!pinned.ok) fail({ kind: "Rejected", reason: "invalid", detail: pinned.error.detail });
     await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
     const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };

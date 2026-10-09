@@ -4,6 +4,9 @@ import { createHash } from "node:crypto";
 import { repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
+import { pinProviderRequest, resolveSelectedSessionSettings } from "../src/effects/operations/selected-request";
+import { selectedInvocation, type InvocationId } from "../src/effects/provider";
+import type { RunId, ScopeId } from "../src/storage/schema-records";
 import { readAuthoredPrompt } from "../src/storage/prompt-content";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { DefinitionSummary } from "../src/projections/definition-view";
@@ -114,6 +117,28 @@ test("development prompt lookup preserves the rendered prompt bytes", () => {
   const reread = readAuthoredPrompt(resolved);
   if (!reread.ok) throw new Error(reread.error.detail);
   expect(promptWithActionInput(reread.value.content, action_input)).toBe(previous);
+});
+
+test("selected child session pins policy model and effort in the provider bytes", async () => {
+  const core = client();
+  try {
+    const action = bundle.scopes.find((scope) => scope.key === "implementation")!.workers.find((worker) => worker.key === "build")!.actions.find((item) => item.operation === "session.run")!;
+    const input = await checked(core, "session_action", { selector: { stage_key: "implementation", cohort_key: "c02", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    const selection = { definition: action, selection: { worker: "build", action: action.key }, input };
+    const scope = { id: "child" as ScopeId, run_id: "run" as RunId, scope_key: "implementation", child_key: "c02", collection_key: "cohorts" };
+    const policy = { version: 3, entries: [{ selector: { kind: "cohort" as const, stage_key: "implementation", cohort_key: "c02" },
+      settings: { runtime: null, model: "gpt-6-sol", effort: "high" } }] };
+    const settings = resolveSelectedSessionSettings(bundle, selection, scope, policy);
+    expect(settings).toMatchObject({ ok: true, value: { model: "gpt-6-sol", effort: "high", policy_version: 3 } });
+    if (!settings.ok) throw new Error(settings.error.detail);
+    const selected = selectedInvocation("invocation" as InvocationId, "execution", selection, settings.value);
+    const pinned = pinProviderRequest({ invocation: selected, bundle, prompts: new Map([[action.prompt!, "Build the cohort"]]), scope, publication_secret: "secret" });
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) throw new Error(pinned.error.detail);
+    expect(pinned.value.session_settings).toEqual(settings.value);
+    expect(JSON.parse(pinned.value.bytes)).toMatchObject({ runtime: "codex", model: "gpt-6-sol", effort: "high" });
+  } finally { core.close(); }
 });
 
 test("root selects repository preparation from the repository configuration collection", async () => {

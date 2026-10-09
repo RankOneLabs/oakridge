@@ -17,7 +17,7 @@ test("engine manifest covers workflow imports and injected service implementatio
 });
 
 test("changes in every engine dependency change the recovery version", () => {
-  const root = mkdtempSync(resolve(tmpdir(), "oakridge-engine-version-"));
+  const root = resolve(mkdtempSync(resolve(tmpdir(), "oakridge-engine-version-")), "oakridge-dbos/src");
   try {
     for (const name of ENGINE_SOURCE_MANIFEST) {
       const path = resolve(root, name);
@@ -54,7 +54,7 @@ test("changes in every engine dependency change the recovery version", () => {
       writeFileSync(resolve(root, name), "unrelated change");
     }
     expect(version()).toBe(original);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(resolve(root, "../.."), { recursive: true, force: true }); }
 });
 
 test("operator version override is retained", () => {
