@@ -11,12 +11,12 @@ import { invalidateRunLists } from "../lib/operator-invalidation";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import { OperatorHistoryPane } from "./OperatorHistoryPane";
 
-interface Props { readonly runId: string; readonly onBack: () => void }
-export function GenericOperatorRunView({ runId, onBack }: Props) {
+interface Props { readonly runId: string; readonly initialScopeId: string | null; readonly onBack: () => void }
+export function GenericOperatorRunView({ runId, initialScopeId, onBack }: Props) {
   const client = useQueryClient();
   const run = useQuery({ queryKey: queryKeys.run(runId), queryFn: () => fetchOperatorRun(runId) });
   const definition = useQuery({ queryKey: queryKeys.definition(runId), queryFn: () => fetchOperatorDefinition(runId) });
-  const [selectedScope, setSelectedScope] = useState<string | null>(null);
+  const [selectedScope, setSelectedScope] = useState<string | null>(initialScopeId);
   const rootScopeId = run.data && definition.data
     ? selectRootScopeId({ scopes: run.data.scopes, root_key: definition.data.source.root }) : null;
   const scopeId = selectedScope ?? rootScopeId;
@@ -64,6 +64,10 @@ export function GenericOperatorRunView({ runId, onBack }: Props) {
         <h4>{output.output_key}{output.collection_key && ` · ${output.collection_key}`}</h4>
         {output.current_revision ? <OperatorTypedValue value={output.current_revision.body} schemas={schemas} />
           : <p>No artifact published.</p>}
+      </section>)}
+      {data.resources.map((resource) => <section key={resource.id} data-testid="operator-resource">
+        <h4>{resource.resource_key}</h4>
+        {resource.observation ? <OperatorTypedValue value={resource.observation} schemas={schemas} /> : <p>Not observed yet.</p>}
       </section>)}
       {data.executions.map((execution) => <section key={execution.id}><h4>{execution.worker_key} · {execution.status}</h4>
         {execution.result && <OperatorTypedValue value={execution.result} schemas={schemas} />}</section>)}

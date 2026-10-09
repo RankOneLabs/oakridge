@@ -5,11 +5,11 @@ import { Button } from "../../components/atoms/Button";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 
 interface ReviewInboxViewProps {
-  readonly onSelectRun: (id: string) => void;
-  readonly onSelectArtifact: (id: string) => void;
+  /** Opens the run at the scope that needs attention, not at its root. */
+  readonly onSelectScope: (runId: string, scopeId: string) => void;
 }
 
-export function ReviewInboxView({ onSelectRun }: ReviewInboxViewProps) {
+export function ReviewInboxView({ onSelectScope }: ReviewInboxViewProps) {
   const query = useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox });
   if (!query.data) return query.error
     ? <FeedbackMessage tone="danger" testId="or-review-inbox-error">{String(query.error)}</FeedbackMessage>
@@ -23,7 +23,7 @@ export function ReviewInboxView({ onSelectRun }: ReviewInboxViewProps) {
       <h2>{item.kind === "diagnostic" ? item.detail : item.label}</h2>
       {item.kind === "command" && <p>{item.consequence}</p>}
       {item.kind === "wait" && <p>{item.reason}</p>}
-      <Button onClick={() => onSelectRun(item.run_id)}>Open run</Button>
+      <Button onClick={() => onSelectScope(item.run_id, item.scope_id)}>Open</Button>
     </section>)}
   </main>;
 }

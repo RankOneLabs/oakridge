@@ -9,5 +9,5 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }
 createRoot(container).render(<QueryClientProvider client={client}>
   {new URL(location.href).searchParams.has("launch")
     ? <OperatorLaunchView onBack={() => {}} onEdit={() => {}} onCreated={(runId) => { location.hash = `run/${runId}`; }} />
-    : <GenericOperatorRunView runId="run-1" onBack={() => {}} />}
+    : <GenericOperatorRunView runId="run-1" initialScopeId={null} onBack={() => {}} />}
 </QueryClientProvider>);

@@ -218,14 +218,14 @@ test.each(["development", "development-independent-siblings", "development-verif
         run_id: "pinned-run", scope_id: "pinned-scope", label: root.presentation.label,
         state: { schema: stringSchema.key, data: { kind: "string", value: "observed" } }, outcome: null,
         outputs: [], executions: [], commands: root.commands, cursor: { scope_version: 1, transition_id: null },
-        command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])),
+        command_targets: Object.fromEntries(root.commands.map((command) => [command.key, []])), command_prefill: {},
       });
       if (url.endsWith("/runs/pinned-run")) return Response.json({ run_id: "pinned-run", scopes: [{ scope_id: "pinned-scope", scope_key: root.key, label: root.presentation.label }] });
       throw new Error(url);
     });
     vi.stubGlobal("fetch", fetch);
     renderWithQuery(<><OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />
-      <GenericOperatorRunView runId="pinned-run" onBack={() => undefined} /></>);
+      <GenericOperatorRunView runId="pinned-run" initialScopeId={null} onBack={() => undefined} /></>);
     const lastField = inputShape.fields[inputShape.fields.length - 1];
     if (!lastField) throw new Error("root input has no fields");
     expect(await screen.findByLabelText(new RegExp(`^${lastField.key}`))).toBeTruthy();
@@ -372,7 +372,7 @@ test("switching run routes resets the selected scope before fetching the new run
       outcome: null, outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = (id: string) => <QueryClientProvider client={client}><OakridgeShell route={{ sub: "run", id, pane: null }} /></QueryClientProvider>;
+  const view = (id: string) => <QueryClientProvider client={client}><OakridgeShell route={{ sub: "run", id, scope_id: null }} /></QueryClientProvider>;
   const { rerender } = render(view("run-1"));
   await screen.findByRole("heading", { name: "run-1-root" });
   fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "run-1-child" } });
@@ -462,11 +462,11 @@ test("an accepted command refreshes the run, the run list and the inbox", async 
     if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [{ key: "empty", shape: { kind: "record", fields: [], dictionary: null } }] } });
     if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
     return Response.json({ scope_id: "s", run_id: "run-1", label: "Root", state: { schema: "empty", data: { kind: "string", value: "x" } },
-      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, cursor: { scope_version: 1 } });
+      outcome: null, outputs: [], executions: [], commands: [command], command_targets: { act: [] }, command_prefill: {}, cursor: { scope_version: 1 } });
   }));
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = invalidatedKeys(cache);
-  renderWithClient(cache, <GenericOperatorRunView runId="run-1" onBack={() => undefined} />);
+  renderWithClient(cache, <GenericOperatorRunView runId="run-1" initialScopeId={null} onBack={() => undefined} />);
   fireEvent.click(await screen.findByRole("button", { name: "Submit Act" }));
   await screen.findByText("Command accepted.");
   expectInvalidated(spy, ["operator", "run-1"], ["operator", "runs"], ["operator", "inbox"]);
