@@ -1,5 +1,6 @@
 import type { CheckedValue, Invocation, Trigger } from "../core-client/generated-contracts";
 import { INPUT_CONTRACTS } from "./provider-catalog";
+import type { SessionInvocationSettings } from "../domain/session-settings";
 
 /** The selection in the decision ledger is the source of the provider request. */
 export type InvocationId = string & { readonly __invocation_id: unique symbol };
@@ -9,6 +10,7 @@ export interface StableInvocation {
   readonly id: InvocationId;
   readonly execution_id: string;
   readonly selection: Invocation;
+  readonly session_settings: SessionInvocationSettings | null;
   /** Persisted request bytes. Recovery sends these bytes without re-rendering. */
   readonly bytes: string;
   readonly request?: ProviderRequest;
@@ -46,15 +48,15 @@ export interface EffectProvider {
   observe(invocation: StableInvocation, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<TerminalObservation>>;
 }
 
-export function selectedInvocation(id: InvocationId, execution_id: string, selection: Invocation): StableInvocation {
-  return { id, execution_id, selection, bytes: JSON.stringify({ invocation_id: id, execution_id, selection }) };
+export function selectedInvocation(id: InvocationId, execution_id: string, selection: Invocation, session_settings: SessionInvocationSettings | null): StableInvocation {
+  return { id, execution_id, selection, session_settings, bytes: JSON.stringify({ invocation_id: id, execution_id, selection, session_settings }) };
 }
 
 export function repeatInvocation(invocation: StableInvocation): StableInvocation {
   return invocation;
 }
 
-export function deliberateRetry(previous: StableInvocation, next_id: InvocationId): StableInvocation {
+export function deliberateRetry(previous: StableInvocation, next_id: InvocationId, session_settings: SessionInvocationSettings | null): StableInvocation {
   if (next_id === previous.id) throw new Error("a deliberate retry requires a new invocation identity");
-  return selectedInvocation(next_id, previous.execution_id, previous.selection);
+  return selectedInvocation(next_id, previous.execution_id, previous.selection, session_settings);
 }

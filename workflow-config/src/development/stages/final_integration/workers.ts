@@ -1,5 +1,5 @@
 import type { WorkerDefinition } from "../../../source-contracts";
-import { optional, record, reference } from "../../../primitives/expressions";
+import { literal, optional, record, reference } from "../../../primitives/expressions";
 
 export const workers: WorkerDefinition[] = [
   {
@@ -13,6 +13,12 @@ export const workers: WorkerDefinition[] = [
         contract_version: 1,
         input_schema: "session_action",
         input: record("session_action", [
+          { key: "selector", value: record("session_selector", [
+            { key: "stage_key", value: literal("ident", "final_integration") },
+            { key: "cohort_key", value: optional("optional_ident", null) },
+            { key: "worker_key", value: literal("ident", "integrator") },
+            { key: "action_key", value: literal("ident", "initial") }
+          ]) },
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",
@@ -32,6 +38,12 @@ export const workers: WorkerDefinition[] = [
         contract_version: 1,
         input_schema: "session_action",
         input: record("session_action", [
+          { key: "selector", value: record("session_selector", [
+            { key: "stage_key", value: literal("ident", "final_integration") },
+            { key: "cohort_key", value: optional("optional_ident", null) },
+            { key: "worker_key", value: literal("ident", "integrator") },
+            { key: "action_key", value: literal("ident", "retry") }
+          ]) },
           { key: "config", value: reference({ kind: "input" }, ["config"]) },
           {
             key: "context",

@@ -37,7 +37,7 @@ export const executionSchemas: Schema[] = [
     optionalField("retained_build", "optional_revision"),
     optionalField("retained_pr", "optional_revision")
   ]),
-  recordSchema("session_action", [field("config", "session_config"), field("context", "session_context")]),
+  recordSchema("session_action", [field("selector", "session_selector"), field("config", "session_config"), field("context", "session_context")]),
   {
     key: "result",
     shape: {

@@ -8,6 +8,7 @@ import { resolve } from "node:path";
  * The import-graph test checks this manifest when engine dependencies change.
  */
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
+  "../../kbbl/core/runtime.ts",
   "adapters/kbbl.ts",
   "core-client/bundle-content-hash.ts",
   "core-client/client.ts",
@@ -17,6 +18,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/transport-errors.ts",
   "domain/execution.ts",
   "domain/primitives.ts",
+  "domain/session-settings.ts",
   "effects/evidence.ts",
   "effects/intents.ts",
   "effects/operations/production-provider.ts",

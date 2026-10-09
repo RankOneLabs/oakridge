@@ -9,10 +9,39 @@ import { selectedPublicationInstructions } from "./selected-publication-contract
 import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
 import type { PromptTexts } from "../../storage/prompt-content";
+import { defaultModelForRuntime, type RuntimeId } from "../../../../kbbl/core/runtime";
+import { resolveSessionSettings, type SessionInvocationSettings, type SessionPolicy } from "../../domain/session-settings";
+import type { Invocation } from "../../core-client/generated-contracts";
 
 
 /** `prompts` holds the stored text of every prompt the decision selected; a render never reads a prompt file. */
-export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly prompts: PromptTexts; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key">; readonly publication_secret?: string }
+export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly prompts: PromptTexts; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "collection_key" | "scope_key">; readonly publication_secret?: string }
+const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
+
+/** Resolve from the action's selector and the policy read by the committing transaction. */
+export function resolveSelectedSessionSettings(bundle: DefinitionBundle, selection: Invocation, scope: ProviderRequestSelection["scope"], policy: SessionPolicy): Result<SessionInvocationSettings | null> {
+  const manifest = bundle.operations.find((item) => item.key === selection.definition.operation && item.version === selection.definition.contract_version);
+  if (manifest?.input_contract !== INPUT_CONTRACTS.session) return { ok: true, value: null };
+  const decoded = plainValue(selection.input, bundle);
+  if (!decoded.ok) return decoded;
+  if (!isRecord(decoded.value)) return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session action config missing" } };
+  const config = isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
+  if (config.runtime !== "claude-code" && config.runtime !== "codex") return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session runtime missing" } };
+  const runtime = config.runtime as RuntimeId;
+  const other_runtime: RuntimeId = runtime === "codex" ? "claude-code" : "codex";
+  const selector = isRecord(decoded.value.selector) ? decoded.value.selector : null;
+  const stage_key = typeof selector?.stage_key === "string" ? selector.stage_key : scope.scope_key;
+  const selected_cohort_key = scope.collection_key === null ? null : scope.child_key;
+  const cohort_key = typeof selector?.cohort_key === "string" ? selector.cohort_key : selected_cohort_key;
+  const worker_key = typeof selector?.worker_key === "string" ? selector.worker_key : selection.selection.worker;
+  const action_key = typeof selector?.action_key === "string" ? selector.action_key : selection.selection.action;
+  if (stage_key !== scope.scope_key || cohort_key !== selected_cohort_key || worker_key !== selection.selection.worker || action_key !== selection.selection.action)
+    return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session selector disagrees with selected action" } };
+  const resolved = resolveSessionSettings(policy, { stage_key, cohort_key, worker_key, action_key,
+    worker_defaults: [{ runtime, model: defaultModelForRuntime(runtime) }, { runtime: other_runtime, model: defaultModelForRuntime(other_runtime) }] });
+  if (!resolved.ok) return { ok: false, error: { operation: resolved.error.operation, entity_id: resolved.error.entity_id, detail: resolved.error.detail } };
+  return { ok: true, value: { runtime: resolved.value.runtime, model: resolved.value.model, effort: resolved.value.effort, policy_version: policy.version } };
+}
 /** Keep the selected action input in the pinned prompt so retries read identical context. */
 export function promptWithActionInput(prompt: string, input: JsonValue): string {
   return `${prompt}\n\n## Pinned action input\n\n${JSON.stringify(input, null, 2)}\n`;
@@ -26,7 +55,6 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
   const prompt_key = invocation.selection.prompt_key;
   const prompt_content = prompt_key == null ? null : prompts.get(prompt_key);
   if (prompt_content === undefined) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned prompt missing" } };
-  const isRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } => !!value && typeof value === "object" && !Array.isArray(value);
   const decoded_config = isRecord(decoded.value) && decoded.value.config && isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   const manifest = bundle.operations.find((item) => item.key === contract.operation && item.version === contract.contract_version);
   if (!manifest) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "pinned operation manifest missing" } };
@@ -34,6 +62,9 @@ export function pinProviderRequest(input: ProviderRequestSelection): Result<Stab
     if (!isRecord(decoded_config)) return { ok: false, error: { operation: "pin_request", entity_id: invocation.id, detail: "kbbl launch input must be a record" } };
     const request: ExecutionRequest = { execution_id: invocation.execution_id as ExecutionId, stage_instance_id: scope.id as string as StageInstanceId,
       unit_id: unit_id as UnitId, executor_type: "delegated_session", resolved_config: { ...decoded_config,
+        runtime: invocation.session_settings?.runtime ?? decoded_config.runtime,
+        model: invocation.session_settings?.model ?? null,
+        effort: invocation.session_settings?.effort ?? null,
         session_identity: { run_id: scope.run_id, stage_instance_id: scope.id, unit_id,
           cohort_id: scope.child_key, operator_role: invocation.selection.selection.worker },
         rendered_prompt: (prompt_content === null ? "" : promptWithActionInput(prompt_content, decoded.value))

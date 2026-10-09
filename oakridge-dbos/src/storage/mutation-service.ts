@@ -1,5 +1,6 @@
-import { createProject, updateProject } from "./projects";
+import { createProject, setSessionPolicy, updateProject, type SessionPolicyWriteError } from "./projects";
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
+import type { SessionPolicy } from "../domain/session-settings";
 import { setDefinitionArchived, setRunArchived } from "./archive";
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
 import type { DefinitionSummary } from "../projections/definition-view";
@@ -31,6 +32,7 @@ export interface MutationService { compile(request: CompileRequest): Promise<Res
   /** Operator registry and visibility writes; none of them is read by evaluation. */
   createProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
   updateProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
+  setSessionPolicy(id: ProjectId, policy: SessionPolicy): Promise<SharedResult<SessionPolicy, SessionPolicyWriteError>>;
   setRunArchived(run_id: RunId, is_archived: boolean): Promise<boolean>;
   setDefinitionArchived(bundle_id: string, is_archived: boolean): Promise<boolean> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
@@ -109,6 +111,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
     compile: (request) => compileBundle(core, request),
     createProject: (id, draft) => createProject(db, id, draft),
     updateProject: (id, draft) => updateProject(db, id, draft),
+    setSessionPolicy: (id, policy) => setSessionPolicy(db, id, policy),
     setRunArchived: (run_id, is_archived) => setRunArchived(db, run_id, is_archived),
     setDefinitionArchived: (bundle_id, is_archived) => setDefinitionArchived(db, bundle_id, is_archived),
     async pinDefinition(request) {
