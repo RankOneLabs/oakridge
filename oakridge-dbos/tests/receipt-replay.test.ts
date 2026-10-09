@@ -7,6 +7,8 @@ import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { requestDigest } from "../src/storage/receipts";
 import type { CheckedValue } from "../src/core-client/generated-contracts";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
+import { withDatabase } from "./effect-fixture";
+import { brief, build_body, developmentBundle, repository, runtimeFixture } from "./development-runtime-fixture";
 
 test("receipt digest is stable when nested map keys arrive in another order", () => {
   expect(requestDigest({ z: { ä: 1, a: 2 }, a: [1, { y: true, x: false }] }))
@@ -48,3 +50,22 @@ test("exact ingress replay returns its receipt after terminal state; changed dig
     await admin.end();
   }
 });
+
+test("a committed publication retried after its execution reaches terminal replays instead of 403", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    await f.fact("begin");
+    const execution = await f.selected("build");
+    const secret = await f.publicationSecret(execution);
+    const endpoint = `http://localhost/api/runs/${f.run_id}/scopes/${f.root_scope_id}/executions/${execution}/outputs/build_result`;
+    const payload = { request_id: "terminal-retry", predecessor_id: null, collection_key: "", body: build_body };
+    const publish = () => f.app.request(endpoint, { method: "PUT", headers: { "content-type": "application/json", authorization: `Bearer ${secret}` }, body: JSON.stringify(payload) });
+    const first = await publish();
+    expect(first.status).toBe(201);
+    const receipt = await first.json();
+    await db.query("UPDATE authority.execution SET status='terminal' WHERE id=$1", [execution]);
+    const retry = await publish();
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(receipt);
+  } finally { f.core.close(); }
+}));
