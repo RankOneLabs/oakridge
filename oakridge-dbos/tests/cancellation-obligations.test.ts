@@ -110,6 +110,21 @@ test("a handle learned after cancellation reaches the stop recorded while the st
   expect(stops[0]?.payload.handle).toEqual(handle);
 }));
 
+test("a terminal effect result records completion time once", async () => withDatabase(async ({ db }) => {
+  await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','scope','{}','{}')", []);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ('start','scope','execution-1','ingress:0',$1)", [JSON.stringify(sealEffectPayload(start))]);
+  const result = { intent_id: "start", status: "acknowledged" as const, payload: start, terminal_result: unit };
+  await persistEffectResult(db, result);
+  const first = (await db.query<{ status: string; completed_at: Date | null }>("SELECT status,completed_at FROM authority.execution WHERE id='execution-1'", []))[0];
+  expect(first).toMatchObject({ status: "terminal", completed_at: expect.any(Date) });
+  await persistEffectResult(db, result);
+  const replayed = (await db.query<{ completed_at: Date | null }>("SELECT completed_at FROM authority.execution WHERE id='execution-1'", []))[0];
+  expect(replayed?.completed_at).toEqual(first?.completed_at);
+}));
+
 test("selected invocation survives cancellation and blocks deletion until stop is acknowledged", async () => withDatabase(async ({ db }) => {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
   await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
