@@ -2,7 +2,7 @@ import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, d
 import { transportFailure, type CoreResult } from "./transport-errors";
 import { PROVIDER_CATALOG } from "../effects/provider-catalog";
 import { bundleContentHash } from "./bundle-content-hash";
-interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null }
+interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null; replays: number }
 interface ChildFault { readonly kind: CoreTransportKind; readonly detail: string; readonly generation: number; readonly request_id?: string }
 export interface CoreChildHealth { readonly pid: number | null; readonly uptime_ms: number | null; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
@@ -18,6 +18,8 @@ const STDERR_RING_BYTES = 16_384;
 const MIN_RESTART_INTERVAL_MS = 250;
 const MAX_RESPAWN_ATTEMPTS = 4;
 const MAX_RESPAWN_DELAY_MS = 2_000;
+/** A poisoned request must not loop across respawns forever. */
+const MAX_PENDING_REPLAYS = 4;
 function decodeStderr(bytes: Uint8Array): string {
   const decoded = new TextDecoder().decode(bytes);
   const encoded = new TextEncoder().encode(decoded);
@@ -159,7 +161,14 @@ export class CoreClient {
       try {
         this.spawn();
         this.restartCount++;
-        for (const [id, pending] of this.pending) void this.writeFrame(id, pending.frame, this.generation);
+        for (const [id, pending] of [...this.pending]) {
+          if (pending.replays >= MAX_PENDING_REPLAYS) {
+            this.settle(id, transportFailure("terminated_child", this.failureDetail("core respawn replay bound exceeded")));
+            continue;
+          }
+          pending.replays++;
+          void this.writeFrame(id, pending.frame, this.generation);
+        }
         return;
       } catch (cause) { last_error = cause; }
     }
@@ -254,7 +263,7 @@ export class CoreClient {
     } catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (new TextEncoder().encode(frame).length > MAX_FRAME_BYTES) return transportFailure("oversized_payload", "request frame exceeds maximum bytes");
     return new Promise((resolve) => {
-      this.pending.set(request_id, { resolve, frame, timeout: null });
+      this.pending.set(request_id, { resolve, frame, timeout: null, replays: 0 });
       if (this.process) void this.writeFrame(request_id, frame, this.generation);
       else this.scheduleRespawn();
     });

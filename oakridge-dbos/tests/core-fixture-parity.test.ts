@@ -163,13 +163,13 @@ test("response at the configured response boundary is accepted", () => withChild
   "IFS= read -r line\ncat response.json", async (client) => {
     expect((await client.request("compile", { bundle })).ok).toBe(true);
   }, 10_000, 64, { "response.json": `${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES)}\n` }), OVERSIZED_TEST_TIMEOUT_MS);
-test("response above configured response respawns the child", () => withChild(
+// Every respawn hits the same oversized response, so the request exhausts its bounded replay
+// count and is settled rather than looping across respawns forever.
+test("a persistently oversized response exhausts replay and fails", () => withChild(
   "IFS= read -r line\ncat response.json", async (client) => {
-    const responses = await Promise.all([client.request("compile", { bundle }),
-      client.request("compile", { bundle })]);
-    for (const response of responses) expect(response).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
-    expect(await client.request("compile", { bundle }))
-      .toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "oversized_payload" } } });
+    const result = await client.request("compile", { bundle });
+    expect(result).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    expect(client.health.restart_count).toBeGreaterThanOrEqual(1);
   }, 10_000, 64, { "response.json": `${stringResponseAtSize(CORE_MAX_RESPONSE_BYTES + 1)}\n` }), OVERSIZED_TEST_TIMEOUT_MS);
 test("safe integer endpoints round trip exactly through the real binary", async () => {
   const client = startClient();
