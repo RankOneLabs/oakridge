@@ -151,6 +151,16 @@ pub fn compile_scope(
             .iter()
             .map(|e| compile_expression(bundle, owner, e, &context, 0))
             .collect::<CoreResult<Vec<_>>>()?;
+        // Projections resolve targets and prefill from observed roots, so only a
+        // direct reference to a whole observed value is resolvable outside the core.
+        if command.targets.iter().any(|e| !is_whole_reference(e)) {
+            return Err(error(
+                DomainErrorKind::InvalidAssignment,
+                command.key.to_string(),
+                "targets must be direct references without a path",
+            ));
+        }
+        check_prefill(bundle, owner, command, &context)?;
         if targets.iter().any(|e| {
             let shape = schema(bundle, &e.schema);
             let target_shape = match shape {
@@ -290,6 +300,9 @@ fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
         for target in &command.targets {
             expression(target, &mut roots);
         }
+        for prefill in &command.prefill {
+            expression(&prefill.value, &mut roots);
+        }
     }
     for child in &owner.children {
         expression(&child.input, &mut roots);
@@ -298,4 +311,67 @@ fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
         }
     }
     roots
+}
+fn is_whole_reference(expression: &Expression) -> bool {
+    matches!(expression, Expression::Reference { path, .. } if path.is_empty())
+}
+/// Prefill roots are the observed outputs and resources a projection reads.
+fn is_observed_root(root: &ReferenceRoot) -> bool {
+    matches!(
+        root,
+        ReferenceRoot::Output { .. }
+            | ReferenceRoot::OutputCollection { .. }
+            | ReferenceRoot::OutputRevision { .. }
+            | ReferenceRoot::OutputRevisions { .. }
+            | ReferenceRoot::OptionalOutputRevision { .. }
+            | ReferenceRoot::Resource { .. }
+    )
+}
+/// Each prefilled field names a payload record field once and reads an observed
+/// root whose value is the field's schema, or an optional of it that the
+/// projection unwraps when present.
+fn check_prefill(
+    bundle: &DefinitionBundle,
+    owner: &ScopeDefinition,
+    command: &CommandDefinition,
+    context: &Context,
+) -> CoreResult<()> {
+    if command.prefill.is_empty() {
+        return Ok(());
+    }
+    let invalid = |detail: &str| {
+        error(
+            DomainErrorKind::InvalidAssignment,
+            command.key.to_string(),
+            detail,
+        )
+    };
+    let SchemaShape::Record { fields, .. } = schema(bundle, &command.payload_schema)? else {
+        return Err(invalid("prefill requires a record payload"));
+    };
+    let mut seen = BTreeSet::new();
+    for prefill in &command.prefill {
+        if !seen.insert(prefill.key.as_str()) {
+            return Err(invalid("prefill names a payload field twice"));
+        }
+        let field = fields
+            .iter()
+            .find(|field| field.key == prefill.key)
+            .ok_or_else(|| invalid("prefill names an undeclared payload field"))?;
+        let Expression::Reference { root, .. } = &prefill.value else {
+            return Err(invalid("prefill must be a direct reference"));
+        };
+        if !is_observed_root(root) {
+            return Err(invalid("prefill must read an observed output or resource"));
+        }
+        let value = compile_expression(bundle, owner, &prefill.value, context, 0)?;
+        let unwrapped = match schema(bundle, &value.schema)? {
+            SchemaShape::Optional { item } => item,
+            _ => &value.schema,
+        };
+        if value.schema != field.schema && *unwrapped != field.schema {
+            return Err(invalid("prefill value schema differs from the payload field"));
+        }
+    }
+    Ok(())
 }

@@ -1442,3 +1442,57 @@ fn declared_max_depth_may_not_exceed_the_wire_safe_ceiling() {
         error.detail
     );
 }
+fn review_target() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../fixtures/bundles/exact-review-target.json"
+    ))
+    .unwrap()
+}
+fn specimen_prefill(value: Value) -> Value {
+    json!([{ "key": "specimen", "value": value }])
+}
+fn specimen_revision() -> Value {
+    json!({"kind":"reference","root":{"kind":"output_revision","key":"specimen","schema":"revision"},"path":[]})
+}
+#[test]
+fn command_prefill_reads_the_current_output_revision() {
+    let mut value = review_target();
+    value["scopes"][0]["commands"][3]["prefill"] = specimen_prefill(specimen_revision());
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    assert!(compile(&source, &source.operations).is_ok());
+}
+#[test]
+fn command_prefill_rejects_an_undeclared_payload_field() {
+    reject(
+        review_target(),
+        |v| {
+            v["scopes"][0]["commands"][3]["prefill"] =
+                json!([{ "key": "missing", "value": specimen_revision() }])
+        },
+        DomainErrorKind::InvalidAssignment,
+    );
+}
+#[test]
+fn command_prefill_rejects_a_computed_value() {
+    reject(
+        review_target(),
+        |v| {
+            v["scopes"][0]["commands"][3]["prefill"] = specimen_prefill(
+                json!({"kind":"literal","schema":"revision","value":{"brand":"artifact_revision","id":"r"}}),
+            )
+        },
+        DomainErrorKind::InvalidAssignment,
+    );
+}
+#[test]
+fn command_prefill_rejects_the_trigger_root() {
+    reject(
+        review_target(),
+        |v| {
+            v["scopes"][0]["commands"][3]["prefill"] = specimen_prefill(
+                json!({"kind":"reference","root":{"kind":"trigger"},"path":["specimen"]}),
+            )
+        },
+        DomainErrorKind::InvalidAssignment,
+    );
+}
