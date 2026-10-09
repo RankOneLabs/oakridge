@@ -151,7 +151,10 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
         ingress_id: parsed.request_id, trigger: parsed.trigger, operator_version: parsed.expected_scope_version,
         outputs: [{ ...parsed.output, revision_id: publicationRevisionId(c.req.param("run_id"), c.req.param("scope_id"), parsed.request_id) }] };
       const prior = await findReceipt(deps.db, selectMutationIdentity(input));
-      if (prior.kind === "replay") return Response.json(publicationReceipt(parsed.request_id, prior.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
+      if (prior.kind === "replay") {
+        if (prior.receipt.kind !== "committed") return fault(new Error("decision_rejected receipt replay not yet supported"));
+        return Response.json(publicationReceipt(parsed.request_id, prior.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
+      }
       if (prior.kind === "conflict") return response({ ok: false, error: new ConflictError("request ID reused with different publication content") });
       const view = await readScopeView(deps.db, input.scope_id);
       if (!view || view.run_id !== input.run_id) return response({ ok: false, error: new MissingEntityError("scope not found in run") });

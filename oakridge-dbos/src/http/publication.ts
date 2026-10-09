@@ -1,8 +1,7 @@
 import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
 import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
-import type { OutputPublication } from "../storage/commit";
+import type { CommittedReceipt, OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";
-import type { CommitReceipt } from "../storage/schema-records";
 import { requestDigest } from "../storage/receipts";
 import { MalformedRequestError } from "./scope-commands";
 
@@ -14,11 +13,11 @@ export function publicationRevisionId(run_id: string, scope_id: string, request_
 export interface PublicationReceipt {
   readonly kind: "accepted_pending";
   readonly request_id: string;
-  readonly transition_id: CommitReceipt["transition_id"];
+  readonly transition_id: CommittedReceipt["transition_id"];
   readonly scope_version: number;
   readonly revision_id: string | null;
 }
-export function publicationReceipt(request_id: string, receipt: CommitReceipt, revision_id: string | null): PublicationReceipt {
+export function publicationReceipt(request_id: string, receipt: CommittedReceipt, revision_id: string | null): PublicationReceipt {
   return { kind: "accepted_pending", request_id, transition_id: receipt.transition_id, scope_version: receipt.scope_version, revision_id };
 }
 /** A published value must fit the evaluate frame that will later carry it; the commit measures the whole snapshot. */

@@ -85,7 +85,10 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const revision_id = publicationRevisionId(run_id, scope_id, body.request_id);
     const digest = requestDigest({ execution_id, output_key, body });
     const prior = await findReceipt(deps.db, { run_id, scope_id, ingress_id: body.request_id, request_digest: digest });
-    if (prior.kind === "replay") return c.json(publicationReceipt(body.request_id, prior.receipt, revision_id), 200);
+    if (prior.kind === "replay") {
+      if (prior.receipt.kind !== "committed") return c.json({ error: "decision_rejected receipt replay not yet supported" }, 500);
+      return c.json(publicationReceipt(body.request_id, prior.receipt, revision_id), 200);
+    }
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different publication content" }, 409);
     const owners = await deps.db.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1 AND run_id=$2", [scope_id, run_id]);
     if (!owners.length) return c.json({ error: "scope not found in run" }, 404);

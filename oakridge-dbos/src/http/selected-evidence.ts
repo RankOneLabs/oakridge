@@ -26,7 +26,10 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     const key = c.req.param("fact_key");
     const digest = requestDigest({ execution_id, key, payload: raw.payload });
     const prior = await findReceipt(deps.db, { run_id, scope_id, ingress_id: raw.request_id, request_digest: digest });
-    if (prior.kind === "replay") return c.json(publicationReceipt(raw.request_id, prior.receipt, null), 202);
+    if (prior.kind === "replay") {
+      if (prior.receipt.kind !== "committed") return c.json({ error: "decision_rejected receipt replay not yet supported" }, 500);
+      return c.json(publicationReceipt(raw.request_id, prior.receipt, null), 202);
+    }
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different evidence" }, 409);
     const rows = await deps.db.query<SelectedEvidence>(`SELECT b.source,s.scope_key,i.payload FROM authority.execution_selection x
       JOIN authority.scope_instance s ON s.id=x.scope_id JOIN authority.run r ON r.id=s.run_id

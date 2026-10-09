@@ -45,7 +45,10 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
   try {
     const request_digest = requestDigest(request);
     const prior = await findReceipt(deps.db, { run_id, scope_id: request.scope_id, ingress_id: request.request_id, request_digest });
-    if (prior.kind === "replay") return { ok: true, value: new PendingWork(request.request_id, prior.receipt.transition_id, prior.receipt.scope_version) };
+    if (prior.kind === "replay") {
+      if (prior.receipt.kind !== "committed") return { ok: false, error: new InternalFaultError("a scope command cannot replay a decision_rejected receipt") };
+      return { ok: true, value: new PendingWork(request.request_id, prior.receipt.transition_id, prior.receipt.scope_version) };
+    }
     if (prior.kind === "conflict") return { ok: false, error: new ConflictError("request ID reused with different command content") };
     const source = await readSnapshot(deps.db, request.scope_id, { id: request.request_id, key: request.command_key,
       payload: { schema: "", data: { kind: "boolean", value: false } } });

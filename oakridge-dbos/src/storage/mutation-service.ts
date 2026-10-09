@@ -188,7 +188,10 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         outputs: (input.outputs ?? []).map((output) => ({ ...output, revision_id: output.revision_id ?? crypto.randomUUID() })) };
       try {
         const prior = await findReceipt(db, identity);
-        if (prior.kind === "replay") return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
+        if (prior.kind === "replay") {
+          if (prior.receipt.kind !== "committed") return error("decide", input.scope_id, "decision_rejected receipt replay not yet supported");
+          return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
+        }
         if (prior.kind === "conflict") return { ok: true, value: { kind: "Conflict", detail: "ingress identity reused with different request content" } };
         for (let attempt = 0; attempt < 3; attempt++) {
           // Prepared sources are valid only for the first attempt. A conflict must
