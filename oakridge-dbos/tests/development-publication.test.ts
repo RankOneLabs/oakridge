@@ -10,6 +10,7 @@ import type { PublicationRequest, PublicationReceipt } from "../src/http/publica
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { CommitRequest } from "../src/storage/commit";
 import { validateStorageAuthority } from "../src/storage/storage-validator";
+import type { ScopeId } from "../src/storage/schema-records";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 
 test("publication trigger mismatches are typed HTTP rejections and storage rejects missing declarations", async () => withDatabase(async ({ db }) => {
@@ -282,10 +283,10 @@ test("an analysis review is accepted with the evidence the scope projects", asyn
   const f = await runtimeFixture(db, await developmentBundle("development"), launch);
   try {
     await f.fact("begin"); await f.advance();
-    const preparations = await db.query<{ id: string }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation'", [f.root_scope_id]);
+    const preparations = await db.query<{ id: ScopeId }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation'", [f.root_scope_id]);
     for (const preparation of preparations) await f.fact("prepared", { repository_path: "/tmp", head: "head1", push_remote_owner: repository.forge.owner }, preparation.id);
     await f.advance(); await f.advance();
-    const analysis = (await db.query<{ id: string }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND child_key='analysis'", [f.root_scope_id]))[0]!.id;
+    const analysis = (await db.query<{ id: ScopeId }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND child_key='analysis'", [f.root_scope_id]))[0]!.id;
     const published = await f.publish("analysis", { summary: "Spec", source_spec_refs: [], findings: [], requirements: [], risks: [] }, "author", analysis);
     if (published.status !== 201) throw new Error(await published.text());
     const prefill = await f.prefill("accept", analysis);
