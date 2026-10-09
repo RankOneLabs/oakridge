@@ -3,7 +3,6 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { DEFAULT_WORKFLOW_TIMING } from "../src/workflows/topology";
 import { runOps } from "../src/ops";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 
@@ -40,7 +39,7 @@ test("ops lists, inspects and forks an errored workflow", async () => {
     expect(await runOps(["workflows", "list"], "postgres://test")).toEqual([{ workflowID: "effect-1", status: "PENDING" }]);
     expect(await runOps(["workflows", "inspect", "effect-1"], "postgres://test")).toMatchObject({ status: { status: "ERROR" } });
     expect(await runOps(["workflows", "recover", "effect-1"], "postgres://test")).toMatchObject({ workflowID: "effect-fork", startStep: 3 });
-    expect(fork).toHaveBeenCalledWith("effect-1", 3, expect.objectContaining({ applicationVersion: expect.any(String), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }));
+    expect(fork).toHaveBeenCalledWith("effect-1", 3, { applicationVersion: expect.any(String) });
     status.mockImplementation(async () => ({ workflowID: "effect-1", workflowName: "oakridgeEffectWorkflow",
       status: "ERROR", timeoutMS: 500 } as never));
     await runOps(["workflows", "recover", "effect-1"], "postgres://test");

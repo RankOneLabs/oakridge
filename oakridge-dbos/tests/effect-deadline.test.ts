@@ -5,8 +5,8 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { DEFAULT_WORKFLOW_TIMING, intentWorkflowId } from "../src/workflows/topology";
 import { begin, sessionBundle, withDatabase } from "./effect-fixture";
 
-test("effect workflows have a finite execution deadline by default", () => {
-  expect(DEFAULT_WORKFLOW_TIMING.execution_deadline_ms).toBeGreaterThan(0);
+test("effect workflows carry no wall-clock deadline by default, so a working session is never cut off", () => {
+  expect(DEFAULT_WORKFLOW_TIMING.execution_deadline_ms).toBeNull();
 });
 
 test("execution_deadline_ms cancels a long-running effect and records a visible rejection", async () => withDatabase(async ({ url, db }) => {
