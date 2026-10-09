@@ -13,8 +13,8 @@ import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
 import { invocationInput } from "../effects/operations/selected-request";
-import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { decisionRejectedBody, MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
+import { commandStatus, ConflictError, DecisionRejectedError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -46,7 +46,8 @@ function definitionCursor(raw: string | null): string | null | MalformedRequestE
     return value;
   } catch { return new MalformedRequestError("invalid definitions cursor"); }
 }
-function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
+function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } | ReturnType<typeof decisionRejectedBody> {
+  if (error instanceof DecisionRejectedError) return decisionRejectedBody(error);
   return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
 }
 function response(result: CommandResult): Response {
@@ -151,7 +152,10 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
         ingress_id: parsed.request_id, trigger: parsed.trigger, operator_version: parsed.expected_scope_version,
         outputs: [{ ...parsed.output, revision_id: publicationRevisionId(c.req.param("run_id"), c.req.param("scope_id"), parsed.request_id) }] };
       const prior = await findReceipt(deps.db, selectMutationIdentity(input));
-      if (prior.kind === "replay") return Response.json(publicationReceipt(parsed.request_id, prior.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
+      if (prior.kind === "replay") {
+        if (prior.receipt.kind === "rejected") return Response.json(decisionRejectedBody(prior.receipt), { status: 422 });
+        return Response.json(publicationReceipt(parsed.request_id, prior.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
+      }
       if (prior.kind === "conflict") return response({ ok: false, error: new ConflictError("request ID reused with different publication content") });
       const view = await readScopeView(deps.db, input.scope_id);
       if (!view || view.run_id !== input.run_id) return response({ ok: false, error: new MissingEntityError("scope not found in run") });
@@ -182,6 +186,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (result.value.kind === "Conflict") return response({ ok: false, error: new ConflictError(result.value.detail) });
       if (result.value.kind === "Rejected") return response({ ok: false, error: new InvalidPayloadError(result.value.detail) });
       if (result.value.kind === "snapshot_too_large") return Response.json(result.value, { status: 413 });
+      if (result.value.kind === "DecisionRejected") return Response.json(decisionRejectedBody(result.value), { status: 422 });
       void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
       return Response.json(publicationReceipt(parsed.request_id, result.value.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
     } catch (cause) { return fault(cause); }

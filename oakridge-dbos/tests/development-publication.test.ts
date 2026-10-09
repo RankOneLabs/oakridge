@@ -195,7 +195,7 @@ test("discussion can retain an assessment with explicit unchanged evidence or pu
   } finally { f.core.close(); }
 }));
 
-test("revocation refuses the pinned publication secret", async () => withDatabase(async ({ db }) => {
+test("revocation refuses a new publication but a prior receipt still replays on the same secret", async () => withDatabase(async ({ db }) => {
   const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
   try {
     await f.fact("begin");
@@ -210,8 +210,11 @@ test("revocation refuses the pinned publication secret", async () => withDatabas
     expect(first.status).toBe(201);
     const first_revision = (await first.json()).revision_id;
     expect((await f.command("retry_build", { build_result: revision(first_revision), pr_summary: null })).status).toBe(202);
-    expect((await publish(payload)).status).toBe(403);
-    expect((await publish({ ...payload, body: { ...build_body, summary: "Changed" } })).status).toBe(403);
+    // The identical request already has a receipt, so its replay answers from that receipt rather
+    // than consulting the now-revoked selection; a genuinely new request against the same secret is refused.
+    expect((await publish(payload)).status).toBe(200);
+    expect((await publish({ ...payload, request_id: "new-after-revocation" })).status).toBe(403);
+    expect((await publish({ ...payload, body: { ...build_body, summary: "Changed" } })).status).toBe(409);
     const rows = await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id]);
     expect(rows[0]?.count).toBe("1");
   } finally { f.core.close(); }
