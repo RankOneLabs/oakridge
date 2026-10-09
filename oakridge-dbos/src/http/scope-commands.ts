@@ -1,4 +1,4 @@
-import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
 import { requestEvaluation, type MutationService } from "../storage/mutation-service";
 import { readSnapshot } from "../storage/snapshot-reader";
@@ -16,7 +16,7 @@ export interface ScopeCommandRequest {
   readonly expected_scope_version: number;
   readonly targets: readonly TargetRevision[];
 }
-export type CommandError = MalformedRequestError | InvalidPayloadError | MissingEntityError | ConflictError | TransientServiceError | InternalFaultError;
+export type CommandError = MalformedRequestError | InvalidPayloadError | MissingEntityError | ConflictError | TransientServiceError | InternalFaultError | DecisionRejectedError;
 export type CommandResult = { readonly ok: true; readonly value: PendingWork } | { readonly ok: false; readonly error: CommandError };
 
 export class MalformedRequestError { readonly kind = "malformed_request"; constructor(readonly detail: string) {} }
@@ -25,6 +25,8 @@ export class MissingEntityError { readonly kind = "missing_entity"; constructor(
 export class ConflictError { readonly kind = "conflict"; constructor(readonly detail: string) {} }
 export class TransientServiceError { readonly kind = "transient_service"; constructor(readonly detail: string) {} }
 export class InternalFaultError { readonly kind = "internal_fault"; readonly trace_id = crypto.randomUUID(); constructor(readonly detail: string) {} }
+/** An evaluator reject, fresh or replayed; the same shape the execution ingress routes answer with. */
+export class DecisionRejectedError { readonly kind = "decision_rejected"; constructor(readonly error: string, readonly detail: CheckedValue) {} }
 /** The body of an accepted command (202). */
 export interface CommandReceipt { readonly kind: "accepted_pending"; readonly request_id: string; readonly transition_id: string; readonly scope_version: number }
 export class PendingWork implements CommandReceipt { readonly kind = "accepted_pending"; constructor(readonly request_id: string, readonly transition_id: string, readonly scope_version: number) {} }
@@ -46,7 +48,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     const request_digest = requestDigest(request);
     const prior = await findReceipt(deps.db, { run_id, scope_id: request.scope_id, ingress_id: request.request_id, request_digest });
     if (prior.kind === "replay") {
-      if (prior.receipt.kind !== "committed") return { ok: false, error: new InvalidPayloadError(prior.receipt.error) };
+      if (prior.receipt.kind !== "committed") return { ok: false, error: new DecisionRejectedError(prior.receipt.error, prior.receipt.detail) };
       return { ok: true, value: new PendingWork(request.request_id, prior.receipt.transition_id, prior.receipt.scope_version) };
     }
     if (prior.kind === "conflict") return { ok: false, error: new ConflictError("request ID reused with different command content") };
@@ -79,7 +81,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     if (decided.value.kind === "Conflict") return { ok: false, error: new ConflictError(decided.value.detail) };
     if (decided.value.kind === "Rejected") return { ok: false, error: new InvalidPayloadError(decided.value.detail) };
     if (decided.value.kind === "snapshot_too_large") return { ok: false, error: new InvalidPayloadError(`snapshot_too_large: ${decided.value.scope} ${decided.value.bytes}/${decided.value.limit}`) };
-    if (decided.value.kind === "DecisionRejected") return { ok: false, error: new InvalidPayloadError(decided.value.error) };
+    if (decided.value.kind === "DecisionRejected") return { ok: false, error: new DecisionRejectedError(decided.value.error, decided.value.detail) };
     return { ok: true, value: new PendingWork(request.request_id, decided.value.receipt.transition_id, decided.value.receipt.scope_version) };
   } catch (cause) { return { ok: false, error: new InternalFaultError(String(cause)) }; }
 }
@@ -87,7 +89,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
 export function commandStatus(result: CommandResult): 202 | 400 | 404 | 409 | 422 | 500 | 503 {
   if (result.ok) return 202;
   if (result.error instanceof MalformedRequestError) return 400;
-  if (result.error instanceof InvalidPayloadError) return 422;
+  if (result.error instanceof InvalidPayloadError || result.error instanceof DecisionRejectedError) return 422;
   if (result.error instanceof MissingEntityError) return 404;
   if (result.error instanceof ConflictError) return 409;
   if (result.error instanceof TransientServiceError) return 503;

@@ -150,12 +150,12 @@ test("evidence the evaluator rejects answers 422 with the decision_rejected shap
   } finally { f.core.close(); }
 }));
 
-test("a scope command replaying a stored rejection answers the same 422 as the fresh result, not 500", async () => {
+test("a scope command replaying a stored rejection answers the same decision_rejected shape as the fresh result, not a 500", async () => {
   const request = { command_key: "k", payload: {}, request_id: "r", scope_id: "scope" as ScopeId, expected_scope_version: 0, targets: [] };
   const digest = requestDigest(request);
   const receipt = { kind: "rejected", error: "invalid_command", detail: unit };
   const db = { query: async (sql: string) => sql.includes("authority.ingress_receipt")
     ? [{ run_id: "run", scope_id: "scope", ingress_id: "r", request_digest: digest, result: receipt }] : [] } as unknown as TransactionalSqlExecutor;
   const result = await submitScopeCommand({ db, core: {} as CoreClient, mutations: {} as MutationService }, "run" as RunId, request);
-  expect(result).toMatchObject({ ok: false, error: { kind: "invalid_payload", detail: "invalid_command" } });
+  expect(result).toMatchObject({ ok: false, error: { kind: "decision_rejected", error: "invalid_command", detail: unit } });
 });

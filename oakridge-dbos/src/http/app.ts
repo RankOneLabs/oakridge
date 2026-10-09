@@ -14,7 +14,7 @@ import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
 import { invocationInput } from "../effects/operations/selected-request";
 import { decisionRejectedBody, MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { commandStatus, ConflictError, DecisionRejectedError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -46,7 +46,8 @@ function definitionCursor(raw: string | null): string | null | MalformedRequestE
     return value;
   } catch { return new MalformedRequestError("invalid definitions cursor"); }
 }
-function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
+function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } | ReturnType<typeof decisionRejectedBody> {
+  if (error instanceof DecisionRejectedError) return decisionRejectedBody(error);
   return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
 }
 function response(result: CommandResult): Response {
