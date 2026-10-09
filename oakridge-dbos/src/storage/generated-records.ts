@@ -4,7 +4,7 @@
 /* tslint:disable */
 /* eslint-disable */
 
-import { CheckedValue, ChildCollectionMembers, DefinitionBundleSource, CompiledBundle, EffectIntentPayload, CommitReceipt, DecisionOutcome } from "./json-column-types";
+import { CheckedValue, ChildCollectionMembers, DefinitionBundleSource, CompiledBundle, EffectIntentPayload, CommitReceipt, ForgeRepository, DecisionOutcome } from "./json-column-types";
 
 
 export type Json = unknown;
@@ -136,6 +136,7 @@ export interface DefinitionBundle {
   /** @type {CompiledBundle} */
   checked_program: CompiledBundle;
   version: number;
+  archived_at: Date | null;
 }
 export interface DefinitionBundleInput {
   id: string;
@@ -145,10 +146,11 @@ export interface DefinitionBundleInput {
   /** @type {CompiledBundle} */
   checked_program: CompiledBundle;
   version?: number;
+  archived_at?: Date | null;
 }
 const definition_bundle = {
   tableName: 'definition_bundle',
-  columns: ['id', 'digest', 'source', 'checked_program', 'version'],
+  columns: ['id', 'digest', 'source', 'checked_program', 'version', 'archived_at'],
   requiredForInsert: ['id', 'digest', 'source', 'checked_program'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -368,6 +370,35 @@ const output_slot = {
   $input: null as unknown as OutputSlotInput
 } as const;
 
+// Table project
+export interface Project {
+  id: string;
+  name: string;
+  repo_dir: string;
+  /** @type {ForgeRepository} */
+  forge_repository: ForgeRepository | null;
+  integration_branch: string | null;
+  created_at: Date;
+}
+export interface ProjectInput {
+  id: string;
+  name: string;
+  repo_dir: string;
+  /** @type {ForgeRepository} */
+  forge_repository?: ForgeRepository | null;
+  integration_branch?: string | null;
+  created_at?: Date;
+}
+const project = {
+  tableName: 'project',
+  columns: ['id', 'name', 'repo_dir', 'forge_repository', 'integration_branch', 'created_at'],
+  requiredForInsert: ['id', 'name', 'repo_dir'],
+  primaryKey: 'id',
+  foreignKeys: {},
+  $type: null as unknown as Project,
+  $input: null as unknown as ProjectInput
+} as const;
+
 // Table prompt_content
 export interface PromptContent {
   content_digest: string;
@@ -424,6 +455,7 @@ export interface Run {
   version: number;
   current_generation: number;
   current_cursor: string | null;
+  archived_at: Date | null;
 }
 export interface RunInput {
   id: string;
@@ -432,10 +464,11 @@ export interface RunInput {
   version?: number;
   current_generation?: number;
   current_cursor?: string | null;
+  archived_at?: Date | null;
 }
 const run = {
   tableName: 'run',
-  columns: ['id', 'definition_bundle_id', 'created_at', 'version', 'current_generation', 'current_cursor'],
+  columns: ['id', 'definition_bundle_id', 'created_at', 'version', 'current_generation', 'current_cursor', 'archived_at'],
   requiredForInsert: ['id', 'definition_bundle_id'],
   primaryKey: 'id',
   foreignKeys: { definition_bundle_id: { table: 'definition_bundle', column: 'id', $type: null as unknown as DefinitionBundle }, },
@@ -596,6 +629,10 @@ export interface TableTypes {
     select: OutputSlot;
     input: OutputSlotInput;
   };
+  project: {
+    select: Project;
+    input: ProjectInput;
+  };
   prompt_content: {
     select: PromptContent;
     input: PromptContentInput;
@@ -635,6 +672,7 @@ export const tables = {
   ingress_receipt,
   launch_receipt,
   output_slot,
+  project,
   prompt_content,
   resource_binding,
   run,
