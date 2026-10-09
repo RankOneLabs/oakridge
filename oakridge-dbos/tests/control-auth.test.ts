@@ -55,7 +55,7 @@ test("operator reads and writes require the token", () => {
 });
 
 test("the route table enumerates every registered Hono endpoint", () => {
-  const files = ["../src/http/app.ts", "../src/http/selected-publication.ts", "../src/http/selected-evidence.ts", "../src/http/projects.ts", "../src/runtime/compose.ts"];
+  const files = ["../src/http/app.ts", "../src/http/selected-publication.ts", "../src/http/selected-evidence.ts", "../src/http/projects.ts", "../src/http/events.ts", "../src/runtime/compose.ts"];
   const actual = files.flatMap((file) => [...readFileSync(new URL(file, import.meta.url), "utf8").matchAll(/app\.(get|post|put|delete)\("([^"]+)"/g)]
     .map((match) => `${match[1]?.toUpperCase()} ${match[2]}`)).sort();
   expect(actual).toEqual(HTTP_ROUTES.map((route) => `${route.method} ${route.path}`).sort());

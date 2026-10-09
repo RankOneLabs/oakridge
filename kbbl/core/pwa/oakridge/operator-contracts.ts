@@ -64,6 +64,19 @@ export interface OperatorProjectList { readonly items: readonly OperatorProjectV
 
 export type OperatorProjectView = OperatorProjectRecord;
 
+export interface OperatorRunEvent {
+  readonly transition_id: string;
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly scope_key: string;
+  readonly decision: OperatorDecisionOutcome["kind"];
+  /** Set when the scope now waits on the operator. */
+  readonly attention: OperatorAttentionMetadata | null;
+  readonly is_terminal: boolean;
+  /** ISO-8601, as the transition log recorded it. */
+  readonly occurred_at: string;
+}
+
 export interface OperatorRunScopeSummary { readonly scope_id: string; readonly scope_key: string; readonly label: string; readonly version: number; readonly is_terminal: boolean; readonly available_commands: readonly string[] }
 
 export type OperatorDefinitionBundle = { readonly "key": string; readonly "language_version": number; readonly "limits": OperatorResourceLimits; readonly "operations": (OperatorOperationManifest)[]; readonly "prompts": (OperatorPrompt)[]; readonly "root": string; readonly "schemas": (OperatorSchema)[]; readonly "scopes": (OperatorScopeDefinition)[]; readonly "version": number };
@@ -95,6 +108,8 @@ export interface OperatorScopeFactHistory { readonly id: string; readonly fact_k
 export interface OperatorForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
 
 export type OperatorProjectRecord = OperatorBranded<OperatorProject, { id: string }>;
+
+export type OperatorAttentionMetadata = { readonly "label": string; readonly "trigger": string };
 
 export type OperatorResourceLimits = { readonly "evaluation_budget": number; readonly "max_depth": number; readonly "max_list_items": number };
 
@@ -142,8 +157,6 @@ export type OperatorExplanation = { readonly "bundle_digest": string; readonly "
 export type OperatorInvocation = { readonly "definition": OperatorInvocationContract; readonly "input": OperatorCheckedValue; readonly "prompt_key"?: string | null; readonly "selection": OperatorActionSelection };
 
 export type OperatorMutationValue = { readonly "kind": "set_state"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "export"; readonly "value": OperatorCheckedValue } | { readonly "input": OperatorCheckedValue; readonly "key": string; readonly "kind": "activate_child" } | { readonly "key": string; readonly "kind": "activate_collection"; readonly "materialization": OperatorMaterialization } | { readonly "key": string; readonly "kind": "cancel_children" } | { readonly "key": string; readonly "kind": "clear_output" } | { readonly "kind": "acquire"; readonly "pool": string } | { readonly "kind": "release"; readonly "pool": string } | { readonly "kind": "revoke"; readonly "worker": string } | { readonly "kind": "stop"; readonly "worker": string } | { readonly "key": string; readonly "kind": "bind_resource"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "clear_resource" } | { readonly "kind": "observe"; readonly "resource": string };
-
-export type OperatorAttentionMetadata = { readonly "label": string; readonly "trigger": string };
 
 export interface OperatorStoredTransitionHistory<Timestamp> {
   readonly id: string; readonly trigger_id: string; readonly decision: OperatorDecisionOutcome;

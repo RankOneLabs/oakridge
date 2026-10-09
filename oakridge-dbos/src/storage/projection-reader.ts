@@ -1,5 +1,6 @@
 import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
+import type { RunEventCursor, TransitionEventRow } from "../projections/run-event";
 import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
 import { currentPrefill, currentTargetRevisions } from "./command-selection";
@@ -85,4 +86,16 @@ export async function readRunView(db: TransactionalSqlExecutor, run_id: RunId): 
 /** Saved projects for the operator, by name. */
 export async function listProjects(db: TransactionalSqlExecutor): Promise<readonly ProjectRecord[]> {
   return db.query<ProjectRecord>("SELECT * FROM authority.project ORDER BY name,id", []);
+}
+
+/** Transitions committed after the cursor, oldest first, with their scope's current terminal flag. */
+export async function readTransitionsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly TransitionEventRow[]> {
+  return db.query<TransitionEventRow>(`SELECT t.id,t.run_id,t.scope_id,s.scope_key,t.decision,s.is_terminal,to_json(t.created_at)#>>'{}' AS created_at
+    FROM authority.transition t JOIN authority.scope_instance s ON s.id=t.scope_id
+    WHERE (t.created_at,t.id)>($1::timestamptz,$2::text) ORDER BY t.created_at,t.id LIMIT $3`, [after.created_at, after.id, limit]);
+}
+/** The newest transition, so a fresh subscriber starts from now rather than replaying history. */
+export async function readLatestEventCursor(db: TransactionalSqlExecutor): Promise<RunEventCursor> {
+  const row = (await db.query<{ id: string; created_at: Date }>("SELECT id,created_at FROM authority.transition ORDER BY created_at DESC,id DESC LIMIT 1", []))[0];
+  return row ? { created_at: new Date(row.created_at).toISOString(), id: row.id } : { created_at: new Date(0).toISOString(), id: "" };
 }
