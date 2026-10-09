@@ -321,7 +321,7 @@ pub fn bounded_response(mut response: Response) -> Vec<u8> {
         Err(error) => {
             response = transport(
                 response.request_id,
-                TransportErrorKind::MalformedFrame,
+                TransportErrorKind::ResponseSerializationFailed,
                 &error.to_string(),
             );
             serde_json::to_vec(&response).expect("transport response is serializable")
@@ -410,7 +410,7 @@ mod tests {
         assert!(matches!(
             response.result,
             ResponseResult::TransportError(TransportError {
-                kind: TransportErrorKind::MalformedFrame,
+                kind: TransportErrorKind::ResponseSerializationFailed,
                 ..
             })
         ));

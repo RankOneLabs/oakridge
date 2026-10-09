@@ -128,6 +128,7 @@ pub enum TransportErrorKind {
     UnresponsiveChild,
     MismatchedRequestId,
     QueueFull,
+    ResponseSerializationFailed,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TransportError {
