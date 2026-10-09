@@ -1,7 +1,8 @@
 import { queryKeys } from "../queryKeys";
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchOperatorDefinitions, launchOperatorRun } from "../client";
+import { fetchOperatorDefinitions, fetchOperatorProjects, launchOperatorRun } from "../client";
+import { selectProjectLaunchDrafts } from "../lib/project-launch";
 import { Button } from "../../components/atoms/Button";
 
 import { randomUuid } from "../../lib/random-uuid";
@@ -30,11 +31,14 @@ function fieldText(value: unknown, schema: OperatorSchema | undefined): string {
 interface Props { readonly onBack: () => void; readonly onCreated: (runId: string) => void; readonly onEdit: () => void }
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const client = useQueryClient();
-  const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
+  const definitions = useQuery({ queryKey: queryKeys.definitionList(false), queryFn: () => fetchOperatorDefinitions(false) });
   const [stored] = useState<{ readonly pending: OperatorStartPinnedRunRequest | null; readonly error: string | null }>(() => {
     try { return { pending: readPendingLaunch(), error: null }; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
     catch (cause) { return { pending: null, error: String(cause) }; }
   });
+  // Projects load when the operator asks to start from one, not on every launch.
+  const [isPickingProject, setIsPickingProject] = useState(false);
+  const projects = useQuery({ queryKey: queryKeys.projects, queryFn: fetchOperatorProjects, enabled: isPickingProject });
   const [pending, setPending] = useState(stored.pending);
   const [isStorageUnreadable, setIsStorageUnreadable] = useState(stored.error !== null);
   const deliveryInProgress = useRef(false);
@@ -105,6 +109,19 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           && <option value={pending.digest}>{pending.digest}</option>}
         {definitions.data?.map((item) => <option key={item.digest} value={item.digest}>{item.source.key} v{item.source.version} · {item.digest}</option>)}
       </select>
+      {fields && !rawMode && pending === null && !isPickingProject
+        && <Button variant="secondary" onClick={() => setIsPickingProject(true)}>Start from project…</Button>}
+      {isPickingProject && projects.isError && <p role="alert">{String(projects.error)}</p>}
+      {isPickingProject && projects.data?.length === 0 && <p>No projects saved yet.</p>}
+      {fields && !rawMode && pending === null && isPickingProject && (projects.data?.length ?? 0) > 0 && <label className="flex flex-col gap-1">Start from project
+        <select aria-label="Start from project" value="" disabled={launching} onChange={(event) => {
+          const project = projects.data?.find((item) => item.id === event.target.value);
+          if (project && selectedDefinition) setFieldDrafts((current) => ({ ...current,
+            ...selectProjectLaunchDrafts(project, fields, selectedDefinition.source.schemas) }));
+        }}>
+          <option value="">Choose a project…</option>
+          {projects.data?.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.repo_dir}</option>)}
+        </select></label>}
       {fields && <label className="flex items-center gap-2"><input type="checkbox" checked={rawMode} disabled={pending !== null || launching}
         onChange={toggleRaw} />Raw JSON</label>}
       {(rawMode || fields === null || pending !== null) ? <>

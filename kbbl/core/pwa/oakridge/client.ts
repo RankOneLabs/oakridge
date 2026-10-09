@@ -2,14 +2,14 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt } from "./operator-contracts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt } from "./operator-contracts";
 import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
 import type { OperatorCommandSubmission } from "./lib/operator-drafts";
 
 export { selectFailureDetail } from "./lib/client-errors";
 const API = "/oakridge/api";
 
-async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${API}${path}`, { method, ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
   if (!response.ok) {
     const failure: unknown = await response.json().catch(() => null);
@@ -19,12 +19,13 @@ async function request<T>(method: "GET" | "POST", path: string, body?: unknown):
 }
 const get = <T,>(path: string): Promise<T> => request<T>("GET", path);
 const post = <T,>(path: string, body: unknown): Promise<T> => request<T>("POST", path, body);
+const put = <T,>(path: string, body: unknown): Promise<T> => request<T>("PUT", path, body);
 interface CursorPage<Item> { readonly items: readonly Item[]; readonly next_cursor: string | null }
 async function readAllPages<Item>(path: string): Promise<Item[]> {
   const items: Item[] = [];
   let next_cursor: string | null = null;
   do {
-    const page: CursorPage<Item> = await get(next_cursor === null ? path : `${path}?cursor=${encodeURIComponent(next_cursor)}`);
+    const page: CursorPage<Item> = await get(next_cursor === null ? path : `${path}${path.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(next_cursor)}`);
     items.push(...page.items);
     next_cursor = page.next_cursor;
   } while (next_cursor !== null);
@@ -38,12 +39,19 @@ export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
     served: served.fallback_refresh_ms, configured: import.meta.env.VITE_OAKRIDGE_FALLBACK_REFRESH_MS }) };
 }
 export const fetchOperatorInbox = () => readAllInboxPages(get);
-export const fetchOperatorRuns = (): Promise<OperatorRunView[]> => readAllPages("/api/runs");
+export const fetchOperatorRuns = (is_archived = false): Promise<OperatorRunView[]> => readAllPages(is_archived ? "/api/runs?archived=true" : "/api/runs");
 export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get(`/api/runs/${encodeURIComponent(runId)}`);
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
 export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
-export const fetchOperatorDefinitions = (): Promise<OperatorDefinitionSummary[]> => readAllPages("/api/definitions");
+export const fetchOperatorDefinitions = (is_archived = false): Promise<OperatorDefinitionSummary[]> => readAllPages(is_archived ? "/api/definitions?archived=true" : "/api/definitions");
+export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> =>
+  post(`/api/runs/${encodeURIComponent(runId)}/${is_archived ? "archive" : "unarchive"}`, {});
+export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boolean): Promise<unknown> =>
+  post(`/api/definitions/${encodeURIComponent(bundleId)}/${is_archived ? "archive" : "unarchive"}`, {});
+export const fetchOperatorProjects = async (): Promise<readonly OperatorProjectView[]> => (await get<OperatorProjectList>("/api/projects")).items;
+export const createOperatorProject = (draft: OperatorProjectDraft): Promise<OperatorProjectView> => post("/api/projects", draft);
+export const updateOperatorProject = (projectId: string, draft: OperatorProjectDraft): Promise<OperatorProjectView> => put(`/api/projects/${encodeURIComponent(projectId)}`, draft);
 export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
 export const launchOperatorRun = (request: OperatorStartPinnedRunRequest): Promise<OperatorStartedRun> => post("/runs", request);
 const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();

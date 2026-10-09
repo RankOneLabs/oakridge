@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { OperatorLaunchView } from "./OperatorLaunchView";
 
-vi.mock("../client", () => ({ fetchOperatorDefinitions: async () => [], launchOperatorRun: vi.fn() }));
+vi.mock("../client", () => ({ fetchOperatorDefinitions: async () => [], fetchOperatorProjects: async () => [], launchOperatorRun: vi.fn() }));
 
 const PENDING_KEY = "oakridge:operator:pending-launch";
 const renderView = () => render(<QueryClientProvider client={new QueryClient()}>

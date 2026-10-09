@@ -63,7 +63,7 @@ export type OakridgeSubRoute =
   /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
-  | { sub: "create-project" }
+  | { sub: "projects" }
   | { sub: "defs" }
   | { sub: "def"; id: string }
   | { sub: "def-new" }
@@ -157,8 +157,9 @@ export function readHashRoute(
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }
-    if (rest === "/create-project") {
-      return { view: "oakridge", route: { sub: "create-project" } };
+    // `/create-project` was the v15 project form; projects are managed on one page now.
+    if (rest === "/projects" || rest === "/create-project") {
+      return { view: "oakridge", route: { sub: "projects" } };
     }
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };

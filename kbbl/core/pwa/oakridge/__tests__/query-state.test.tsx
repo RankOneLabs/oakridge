@@ -104,7 +104,7 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   vi.stubGlobal("fetch", fetch);
   const cache = client();
   render(<QueryClientProvider client={cache}>
-    <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} />
+    <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} onProjects={() => undefined} />
     <ReviewInboxView onSelectScope={() => undefined} />
     <GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} />
     <GenericOperatorRunView runId="run-two" initialScopeId={null} onBack={() => undefined} />

@@ -9,7 +9,7 @@ import { Button } from "../../components/atoms/Button";
 interface Props { readonly cloneFromId: string | null; readonly onBack: () => void; readonly onPinned: () => void }
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
   const client = useQueryClient();
-  const definitions = useQuery({ queryKey: queryKeys.definitions, queryFn: fetchOperatorDefinitions });
+  const definitions = useQuery({ queryKey: queryKeys.definitionList(false), queryFn: () => fetchOperatorDefinitions(false) });
   const [source, setSource] = useState("");
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
