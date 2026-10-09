@@ -170,6 +170,8 @@ export interface OperatorProject {
   /** @type {ForgeRepository} */
   forge_repository: OperatorForgeRepository | null;
   integration_branch: string | null;
+  /** @type {SessionPolicy} */
+  session_policy: OperatorSessionPolicy | null;
   created_at: string;
 }
 
@@ -222,6 +224,8 @@ export interface OperatorExecution {
   status: OperatorExecutionStatus;
   /** @type {CheckedValue} */
   result: OperatorCheckedValue | null;
+  created_at: string;
+  completed_at: string | null;
   publication_secret_hash: string | null;
   version: number;
 }
@@ -246,6 +250,7 @@ export interface OperatorArtifactRevision {
   /** @type {CheckedValue} */
   body: OperatorCheckedValue;
   predecessor_id: string | null;
+  created_at: string;
   version: number;
 }
 
@@ -260,6 +265,8 @@ export type OperatorActionSelection = { readonly "action": string; readonly "wor
 export type OperatorMaterialization = { readonly "children": (OperatorMaterializedChild)[] };
 
 export type OperatorSqlVersion = OperatorVersion | string;
+
+export interface OperatorSessionPolicy { readonly version: number; readonly entries: readonly OperatorSessionPolicyEntry[] }
 
 export type OperatorSchemaField = { readonly "key": string; readonly "required": boolean; readonly "schema": string };
 
@@ -293,8 +300,25 @@ export type OperatorMaterializedChild = { readonly "depends_on": (string)[]; rea
 
 export type OperatorVersion = number;
 
+export interface OperatorSessionPolicyEntry { readonly selector: OperatorSessionScopeSelector; readonly settings: OperatorSessionSettings }
+
 export type OperatorCheckedExpressionNode = { readonly "kind": "literal"; readonly "value": OperatorCheckedValue } | { readonly "kind": "reference"; readonly "root": OperatorReferenceRoot; readonly "selectors": (OperatorSelector)[] } | { readonly "fields": (OperatorCheckedFieldExpression)[]; readonly "kind": "record" } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "list" } | { readonly "kind": "variant"; readonly "value": OperatorCheckedExpression; readonly "variant": string } | { readonly "kind": "equals"; readonly "left": OperatorCheckedExpression; readonly "right": OperatorCheckedExpression } | { readonly "kind": "is_variant"; readonly "value": OperatorCheckedExpression; readonly "variant": string } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "all" } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "any" } | { readonly "kind": "not"; readonly "value": OperatorCheckedExpression } | { readonly "kind": "map"; readonly "source": OperatorCheckedExpression; readonly "value": OperatorCheckedExpression } | { readonly "kind": "optional"; readonly "value"?: OperatorCheckedExpression | null } | { readonly "index": number; readonly "kind": "field"; readonly "value": OperatorCheckedExpression } | { readonly "key": OperatorCheckedExpression; readonly "key_field": number; readonly "kind": "filter_by"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "contains"; readonly "source": OperatorCheckedExpression; readonly "value": OperatorCheckedExpression } | { readonly "key": OperatorCheckedExpression; readonly "key_field": number; readonly "kind": "lookup"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "filter"; readonly "predicate": OperatorCheckedExpression; readonly "source": OperatorCheckedExpression } | { readonly "key_field": number; readonly "kind": "unique_by"; readonly "source": OperatorCheckedExpression } | { readonly "dependencies_field": number; readonly "key_field": number; readonly "kind": "check_collection"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "every"; readonly "predicate": OperatorCheckedExpression; readonly "source": OperatorCheckedExpression };
+
+export type OperatorSessionScopeSelector =
+  | { readonly kind: "run" }
+  | { readonly kind: "stage"; readonly stage_key: string }
+  | { readonly kind: "cohort"; readonly stage_key: string; readonly cohort_key: string }
+  | { readonly kind: "stage_worker"; readonly stage_key: string; readonly worker_key: string }
+  | { readonly kind: "stage_worker_action"; readonly stage_key: string; readonly worker_key: string; readonly action_key: string };
+
+export interface OperatorSessionSettings {
+  readonly runtime: OperatorRuntimeId | null;
+  readonly model: string | null;
+  readonly effort: string | null;
+}
 
 export type OperatorSelector = { readonly "index": number; readonly "kind": "field" } | { readonly "index": number; readonly "kind": "optional_field"; readonly "schema": string } | { readonly "kind": "optional" } | { readonly "kind": "variant"; readonly "variant": string };
 
 export type OperatorCheckedFieldExpression = { readonly "field_id": number; readonly "value": OperatorCheckedExpression };
+
+export type OperatorRuntimeId = "claude-code" | "codex";
