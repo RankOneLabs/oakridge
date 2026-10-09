@@ -12,7 +12,7 @@ import {
 } from "./session-hold";
 
 const hold: SessionHold = {
-  session_id: "session-1", execution_id: "stage-1:0", execution_workflow_id: "root:stage:plan_writer:unit:0",
+  session_id: "session-1", execution_id: "stage-1:0",
   run_id: "run-1", stage_instance_id: "stage-1", stage_key: "plan_writer", unit_id: "0",
 };
 

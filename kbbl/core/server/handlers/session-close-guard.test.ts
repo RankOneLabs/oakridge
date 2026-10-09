@@ -26,7 +26,6 @@ const HOLDER = "012c6027-4a21-4ec4-aadd-244ebf3236a9:0";
 const hold = {
   session_id: SID,
   execution_id: HOLDER,
-  execution_workflow_id: "oakridge-run:9e868912:attempt:initial:stage:spec_analyzer:unit:0",
   run_id: "9e868912-4944-4687-8316-0c2f6470bc3c",
   stage_instance_id: "012c6027-4a21-4ec4-aadd-244ebf3236a9",
   stage_key: "spec_analyzer",

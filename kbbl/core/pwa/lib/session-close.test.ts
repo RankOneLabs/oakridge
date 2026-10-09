@@ -5,7 +5,6 @@ import { selectSessionCloseRefusal } from "./session-close";
 const hold = {
   session_id: "e1a84fd7-0750-404b-a82c-9daefdfbdde1",
   execution_id: "f5aeeb42:pipefitter-tiers-spec",
-  execution_workflow_id: "oakridge-unit-rerun:f5aeeb42:pipefitter-tiers-spec",
   run_id: "69032301-a22f-4498-8948-6896e2e57302",
   stage_instance_id: "f5aeeb42-9c16-41b3-8134-4161aa36aa39",
   stage_key: "build",
