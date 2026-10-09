@@ -3,6 +3,8 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { serialChildrenRequestDeadlineMs } from "../src/runtime/advance-children";
 import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, RunInfrastructureError, dispatchChild, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep, intentWorkflowId, registerWorkflowServices, resumeActiveRuns, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { sealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 
 test("a run boundary failure retains its run and operation in the diagnostic", () => {
   const error = new RunInfrastructureError("run-1", "advance", "database unavailable");
@@ -31,7 +33,15 @@ test("serial child request time is bounded as scope count grows", () => {
 });
 
 test("a PENDING child is not dispatched again, while a missing child is started", async () => {
-  registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+  const db = { query: async (sql: string) => {
+    if (sql.includes("SELECT * FROM authority.effect_intent WHERE id=$1")) return [{ id: "intent-1", run_id: "run-1", scope_id: "scope-1",
+      execution_id: null, effect_key: "key", status: "pending", dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: null,
+      version: 0, payload: sealEffectPayload({ action: "start", handle: null,
+        invocation: { id: "intent-1", execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload) }];
+    if (sql.includes("SET deadline_epoch_ms=COALESCE")) return [{ deadline_epoch_ms: Date.now() + DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }];
+    return [];
+  } } as unknown as TransactionalSqlExecutor;
+  registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
   const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "PENDING" }) as never);
   const calls: unknown[][] = [];
   const start = spyOn(DBOS, "startWorkflow").mockImplementation(((_workflow: unknown, options: unknown) => {
@@ -43,7 +53,9 @@ test("a PENDING child is not dispatched again, while a missing child is started"
     expect(calls).toEqual([]);
     status.mockImplementation(async () => null as never);
     await dispatchChild("run-1", "intent-1", "start");
-    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }], ["intent-1"]]);
+    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1"), timeoutMS: expect.any(Number) }], ["intent-1"]]);
+    const dispatched_timeout_ms = (calls[0]?.[0] as { timeoutMS: number }).timeoutMS;
+    expect(Math.abs(dispatched_timeout_ms - DEFAULT_WORKFLOW_TIMING.execution_deadline_ms)).toBeLessThan(5_000);
   } finally { status.mockRestore(); start.mockRestore(); }
 });
 

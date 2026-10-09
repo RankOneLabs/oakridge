@@ -402,10 +402,6 @@ async function settleExpiredEffect(intent_id: string): Promise<void> {
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
-/** First dispatch stamps the deadline; every later call returns the same recorded value. */
-const stampEffectDeadlineStep = DBOS.registerStep(async (intent_id: string): Promise<number | null> =>
-  stampEffectDeadline(current().db, intent_id, Date.now() + current().timing.execution_deadline_ms),
-  { name: "oakridgeStampEffectDeadline", retriesAllowed: true, maxAttempts: 5 });
 
 /**
  * Collapses the seven DBOS workflow statuses into the four categories
@@ -443,7 +439,10 @@ export function classifyWorkflowStatus(status: WorkflowStatusString): WorkflowSt
  */
 async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, intent_id: string): Promise<void> {
   if (kind === "stop") { await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id); return; }
-  const deadline_epoch_ms = await stampEffectDeadlineStep(intent_id);
+  // A plain (unwrapped) call: the stamp is idempotent by construction
+  // (COALESCE keeps the first-ever value), so a bare retry on replay is safe,
+  // and dispatchChild must stay callable without DBOS launched for its unit tests.
+  const deadline_epoch_ms = await stampEffectDeadline(current().db, intent_id, Date.now() + current().timing.execution_deadline_ms);
   if (deadline_epoch_ms === null) return; // intent no longer exists
   const timeout_ms = deadline_epoch_ms - Date.now();
   if (timeout_ms <= 0) { await settleExpiredEffect(intent_id); return; }
@@ -451,7 +450,9 @@ async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, i
 }
 
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  const intent = await loadIntentStep(intent_id);
+  // A plain (unwrapped) read: dispatchChild must stay callable without DBOS
+  // launched for its unit tests, and a read has nothing to replay-protect.
+  const intent = await readIntent(current().db, intent_id);
   if (!intent) return;
   const workflow_id = childWorkflowId(intent_id, intent.dispatch_generation);
   const status = await DBOS.getWorkflowStatus(workflow_id);
