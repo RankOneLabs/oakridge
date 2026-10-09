@@ -128,43 +128,34 @@ fn transport(request_id: String, kind: TransportErrorKind, detail: &str) -> Resp
 
 pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
     if frame.len() > MAX_FRAME_BYTES {
-        let request_id = serde_json::from_slice::<serde_json::Value>(frame)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("request_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_default();
         return transport(
-            request_id,
+            request_id_prefix(frame),
             TransportErrorKind::OversizedPayload,
             "frame exceeds maximum bytes",
         );
     }
     let raw: serde_json::Value = match decode_unique_json(frame) {
         Ok(value) => value,
-        Err(error) if error.kind == workflow_model::DomainErrorKind::DuplicateSymbol => {
+        Err(mut error) if error.kind == workflow_model::DomainErrorKind::DuplicateSymbol => {
+            // Only recover correlation metadata; overwritten source is never compiled.
+            error.operation = serde_json::from_slice::<serde_json::Value>(frame)
+                .ok()
+                .and_then(|raw| {
+                    raw.get("operation")
+                        .and_then(serde_json::Value::as_str)
+                        .map(Box::from)
+                })
+                .unwrap_or_default();
             return Response {
                 version: PROTOCOL_VERSION,
-                // Only recover correlation metadata; overwritten source is never compiled.
-                request_id: serde_json::from_slice::<serde_json::Value>(frame)
-                    .ok()
-                    .and_then(|raw| {
-                        raw.get("request_id")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|id| !id.is_empty() && id.len() <= MAX_REQUEST_ID_BYTES)
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_default(),
+                request_id: request_id_prefix(frame),
                 truncated: false,
                 result: ResponseResult::DomainError(error),
             };
         }
         Err(error) => {
             return transport(
-                String::new(),
+                request_id_prefix(frame),
                 TransportErrorKind::MalformedFrame,
                 &error.detail,
             )
@@ -177,6 +168,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         .to_owned();
     let version = raw.get("version").and_then(serde_json::Value::as_u64);
     if request_id.len() > MAX_REQUEST_ID_BYTES {
+        // Echoing the id back would itself violate the cap this path enforces.
         return transport(
             String::new(),
             TransportErrorKind::MalformedFrame,
@@ -210,16 +202,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         .unwrap_or("");
     // `DomainError::new` cannot know which request it serves; the transport does.
     let operation_name: Box<str> = operation.into();
-    if ![
-        "compile",
-        "validate_payload",
-        "validate_value",
-        "evaluate",
-        "materialize",
-        "explain",
-    ]
-    .contains(&operation)
-    {
+    if !Operation::NAMES.contains(&operation) {
         return transport(
             request_id,
             TransportErrorKind::UnknownOperation,
@@ -228,7 +211,8 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
     }
     if let Some(source) = raw.get("input").and_then(|input| input.get("bundle")) {
         let source_bytes = serde_json::to_vec(source).unwrap_or_default();
-        if let Err(error) = decode_bundle(&source_bytes) {
+        if let Err(mut error) = decode_bundle(&source_bytes) {
+            error.operation = operation_name;
             return Response {
                 version: PROTOCOL_VERSION,
                 request_id,
@@ -328,7 +312,7 @@ pub fn bounded_response(mut response: Response) -> Vec<u8> {
         Err(error) => {
             response = transport(
                 response.request_id,
-                TransportErrorKind::MalformedFrame,
+                TransportErrorKind::ResponseSerializationFailed,
                 &error.to_string(),
             );
             serde_json::to_vec(&response).expect("transport response is serializable")
@@ -417,7 +401,7 @@ mod tests {
         assert!(matches!(
             response.result,
             ResponseResult::TransportError(TransportError {
-                kind: TransportErrorKind::MalformedFrame,
+                kind: TransportErrorKind::ResponseSerializationFailed,
                 ..
             })
         ));
@@ -791,5 +775,84 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn an_oversized_frame_still_carries_the_request_id_it_opened_with() {
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
+            evaluation_budget: 1_000_000,
+        });
+        let padding = "x".repeat(MAX_FRAME_BYTES);
+        let frame = format!(
+            r#"{{"request_id":"oversized","version":{PROTOCOL_VERSION},"operation":"compile","input":{{"pad":"{padding}"}}}}"#
+        );
+        let response = handle_frame(&mut state, frame.as_bytes());
+        assert_eq!(response.request_id, "oversized");
+        assert!(matches!(
+            response.result,
+            ResponseResult::TransportError(TransportError {
+                kind: TransportErrorKind::OversizedPayload,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_truncated_frame_still_carries_the_request_id_it_opened_with() {
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
+            evaluation_budget: 1_000_000,
+        });
+        let response = handle_frame(
+            &mut state,
+            br#"{"request_id":"truncated","version":1,"operation":"compile","inp"#,
+        );
+        assert_eq!(response.request_id, "truncated");
+        assert!(matches!(
+            response.result,
+            ResponseResult::TransportError(TransportError {
+                kind: TransportErrorKind::MalformedFrame,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_duplicate_symbol_reply_names_the_requested_operation() {
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
+            evaluation_budget: 1_000_000,
+        });
+        let frame = format!(
+            r#"{{"request_id":"dup","version":{PROTOCOL_VERSION},"operation":"validate_payload","operation":"validate_payload"}}"#
+        );
+        let response = handle_frame(&mut state, frame.as_bytes());
+        assert_eq!(response.request_id, "dup");
+        let ResponseResult::DomainError(error) = response.result else {
+            panic!("expected a domain error: {:?}", response.result);
+        };
+        assert_eq!(error.kind, DomainErrorKind::DuplicateSymbol);
+        assert_eq!(&*error.operation, "validate_payload");
+    }
+
+    #[test]
+    fn a_bundle_decode_failure_names_the_requested_operation() {
+        let mut state = CliState::new(ResourceLimits {
+            max_list_items: 10_000,
+            max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
+            evaluation_budget: 1_000_000,
+        });
+        let frame = format!(
+            r#"{{"request_id":"r","version":{PROTOCOL_VERSION},"operation":"compile","input":{{"bundle":"not a bundle","catalog":{{}}}}}}"#
+        );
+        let response = handle_frame(&mut state, frame.as_bytes());
+        let ResponseResult::DomainError(error) = response.result else {
+            panic!("expected a domain error: {:?}", response.result);
+        };
+        assert_eq!(&*error.operation, "compile");
     }
 }

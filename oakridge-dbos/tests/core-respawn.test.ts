@@ -29,3 +29,26 @@ test("a later request reopens a client after replacement spawn fails", async () 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("a pending request that fails on every respawn is replayed a bounded number of times, not forever", async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "oakridge-respawn-bound-"));
+  const script = resolve(directory, "child.sh");
+  const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
+  // Reads one line and dies every single time: every respawn replays the same poisoned request.
+  writeFileSync(script, "#!/bin/sh\nIFS= read -r line\nexit 1\n");
+  chmodSync(script, 0o700);
+  const started = CoreClient.start({ binary: script, deadlineMs: 10_000 });
+  if (!started.ok) throw new Error(started.error.detail.detail);
+  const client = started.value;
+  try {
+    const result = await client.request("compile", { bundle });
+    expect(result).toMatchObject({ ok: false, error: { kind: "transport", detail: { kind: "terminated_child" } } });
+    // A script that fails every time must not loop across respawns forever: one respawn
+    // per replay attempt (MAX_PENDING_REPLAYS), plus the respawn that discovers the bound
+    // is exhausted and settles instead of replaying again.
+    expect(client.health.restart_count).toBe(5);
+  } finally {
+    client.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 30_000);

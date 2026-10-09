@@ -2,7 +2,7 @@ import { CORE_MAX_FRAME_BYTES, CORE_MAX_RESPONSE_BYTES, CORE_PROTOCOL_VERSION, d
 import { transportFailure, type CoreResult } from "./transport-errors";
 import { PROVIDER_CATALOG } from "../effects/provider-catalog";
 import { bundleContentHash } from "./bundle-content-hash";
-interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null }
+interface Pending { readonly resolve: (result: CoreResult<Output>) => void; readonly frame: string; timeout: ReturnType<typeof setTimeout> | null; replays: number }
 interface ChildFault { readonly kind: CoreTransportKind; readonly detail: string; readonly generation: number; readonly request_id?: string }
 export interface CoreChildHealth { readonly pid: number | null; readonly uptime_ms: number | null; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
@@ -18,6 +18,18 @@ const STDERR_RING_BYTES = 16_384;
 const MIN_RESTART_INTERVAL_MS = 250;
 const MAX_RESPAWN_ATTEMPTS = 4;
 const MAX_RESPAWN_DELAY_MS = 2_000;
+/** A poisoned request must not loop across respawns forever. */
+const MAX_PENDING_REPLAYS = 4;
+/** Caps a single logged field pulled from untrusted child output. */
+const MAX_LOGGED_FIELD_CHARS = 200;
+/** A faulty-but-alive child can emit unattributed responses continuously; collapse
+ * repeats into one line per window instead of logging every one. */
+const UNATTRIBUTED_FAULT_LOG_INTERVAL_MS = 1_000;
+/** Strips newlines (which could forge extra log lines) and caps length. */
+function sanitizeLogField(value: string): string {
+  const flattened = value.replace(/[\r\n]+/g, " ");
+  return flattened.length > MAX_LOGGED_FIELD_CHARS ? `${flattened.slice(0, MAX_LOGGED_FIELD_CHARS)}…` : flattened;
+}
 function decodeStderr(bytes: Uint8Array): string {
   const decoded = new TextDecoder().decode(bytes);
   const encoded = new TextEncoder().encode(decoded);
@@ -51,6 +63,8 @@ export class CoreClient {
   private lastSpawnAt = 0;
   private spawnedAt: number | null = null;
   private stderrBytes = new Uint8Array(0);
+  private lastUnattributedFaultLogAt = 0;
+  private suppressedUnattributedFaults = 0;
   get health(): CoreChildHealth {
     return { pid: this.process?.pid ?? null, uptime_ms: this.spawnedAt === null ? null : Date.now() - this.spawnedAt,
       restart_count: this.restartCount, last_stderr_lines: decodeStderr(this.stderrBytes).trimEnd().split("\n").filter(Boolean).slice(-20) };
@@ -116,12 +130,39 @@ export class CoreClient {
     const stderr = decodeStderr(this.stderrBytes).trim();
     return stderr ? `${detail}; child stderr: ${stderr}` : detail;
   }
+  /** Rate-limited, size-bounded log for faults naming a request we no longer track:
+   * a faulty child can emit these continuously while staying alive, so one line per
+   * window (with a suppressed-count) replaces logging every occurrence verbatim. */
+  private logUnattributedFault(kind: CoreTransportKind, request_id: string, detail: string): void {
+    const now = Date.now();
+    if (now - this.lastUnattributedFaultLogAt < UNATTRIBUTED_FAULT_LOG_INTERVAL_MS) {
+      this.suppressedUnattributedFaults++;
+      return;
+    }
+    const suppressed = this.suppressedUnattributedFaults;
+    this.suppressedUnattributedFaults = 0;
+    this.lastUnattributedFaultLogAt = now;
+    const suffix = suppressed > 0 ? ` (${suppressed} more suppressed)` : "";
+    console.error(
+      `core client: dropping ${sanitizeLogField(kind)} fault for unattributed request ` +
+        `${sanitizeLogField(request_id)}: ${sanitizeLogField(detail)}${suffix}`,
+    );
+  }
   private fault({ kind, detail, generation, request_id }: ChildFault): void {
     if (generation !== this.generation || this.closed) return;
-    if (request_id !== undefined && !this.pending.has(request_id)) return;
-    // Request-local faults retain their correlation; child-wide faults have no attributed request.
-    const faulting_id = request_id ?? this.pending.keys().next().value;
-    if (faulting_id) this.settle(faulting_id, transportFailure(kind, this.failureDetail(detail)));
+    // A nonempty id names one request: settle it alone and leave the child running.
+    // An id the client no longer recognises (already settled, or never ours) is
+    // dropped with a diagnostic rather than taken out on an unrelated request.
+    if (request_id) {
+      if (!this.pending.has(request_id)) {
+        this.logUnattributedFault(kind, request_id, detail);
+        return;
+      }
+      this.settle(request_id, transportFailure(kind, this.failureDetail(detail)));
+      return;
+    }
+    // An empty or absent id names the whole child: every in-flight request waits
+    // out the respawn and is replayed against the replacement process.
     for (const pending of this.pending.values()) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.timeout = null;
@@ -150,7 +191,14 @@ export class CoreClient {
       try {
         this.spawn();
         this.restartCount++;
-        for (const [id, pending] of this.pending) void this.writeFrame(id, pending.frame, this.generation);
+        for (const [id, pending] of [...this.pending]) {
+          if (pending.replays >= MAX_PENDING_REPLAYS) {
+            this.settle(id, transportFailure("terminated_child", this.failureDetail("core respawn replay bound exceeded")));
+            continue;
+          }
+          pending.replays++;
+          void this.writeFrame(id, pending.frame, this.generation);
+        }
         return;
       } catch (cause) { last_error = cause; }
     }
@@ -162,10 +210,10 @@ export class CoreClient {
     try { raw = JSON.parse(line); }
     catch { this.fault({ kind: "malformed_frame", detail: "invalid JSON response", generation }); return; }
     const request_id = typeof raw === "object" && raw !== null && "request_id" in raw
-      && typeof raw.request_id === "string" && this.pending.has(raw.request_id) ? raw.request_id : undefined;
+      && typeof raw.request_id === "string" && raw.request_id ? raw.request_id : undefined;
     const response = decodeCoreResponse(raw);
     if (!response || response.version !== CORE_PROTOCOL_VERSION) { this.fault({ kind: "malformed_frame", detail: "response failed generated wire schema", generation, request_id }); return; }
-    if (!this.pending.has(response.request_id)) { this.fault({ kind: "mismatched_request_id", detail: response.request_id, generation }); return; }
+    if (!this.pending.has(response.request_id)) { this.fault({ kind: "mismatched_request_id", detail: response.request_id, generation, request_id: response.request_id }); return; }
     this.settle(response.request_id, resultFromResponse(response.result));
   }
   private async readResponses(child: ReturnType<typeof Bun.spawn>, generation: number): Promise<void> {
@@ -245,7 +293,7 @@ export class CoreClient {
     } catch (cause) { return transportFailure("malformed_frame", String(cause)); }
     if (new TextEncoder().encode(frame).length > MAX_FRAME_BYTES) return transportFailure("oversized_payload", "request frame exceeds maximum bytes");
     return new Promise((resolve) => {
-      this.pending.set(request_id, { resolve, frame, timeout: null });
+      this.pending.set(request_id, { resolve, frame, timeout: null, replays: 0 });
       if (this.process) void this.writeFrame(request_id, frame, this.generation);
       else this.scheduleRespawn();
     });

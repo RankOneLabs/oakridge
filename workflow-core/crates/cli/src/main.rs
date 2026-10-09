@@ -79,6 +79,9 @@ fn main() -> io::Result<()> {
         let consumed = chunk.len();
         for byte in chunk {
             if *byte == b'\n' {
+                if frame.is_empty() && !oversized {
+                    continue;
+                }
                 let response = if oversized {
                     Response {
                         version: PROTOCOL_VERSION,

@@ -102,6 +102,19 @@ pub enum Operation {
         snapshot: Snapshot,
     },
 }
+impl Operation {
+    /// Wire tag names, in declaration order. The CLI operation allowlist and
+    /// this crate's parity test both read this constant, so the enum and the
+    /// allowlist cannot drift apart.
+    pub const NAMES: [&'static str; 6] = [
+        "compile",
+        "validate_payload",
+        "validate_value",
+        "evaluate",
+        "materialize",
+        "explain",
+    ];
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Output {
@@ -128,6 +141,7 @@ pub enum TransportErrorKind {
     UnresponsiveChild,
     MismatchedRequestId,
     QueueFull,
+    ResponseSerializationFailed,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TransportError {
@@ -149,4 +163,37 @@ pub struct Response {
     pub request_id: String,
     pub truncated: bool,
     pub result: ResponseResult,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Operation;
+
+    /// The wire tag names schemars derives straight from the enum, independent
+    /// of `Operation::NAMES`. If a variant is added without updating `NAMES`,
+    /// the two sets diverge and this test fails.
+    #[test]
+    fn operation_names_matches_the_enum_s_wire_tags() {
+        let schema = schemars::schema_for!(Operation);
+        let schema = serde_json::to_value(&schema).expect("schema serializes");
+        let variants = schema
+            .get("oneOf")
+            .and_then(serde_json::Value::as_array)
+            .expect("Operation schema is a oneOf");
+        let mut derived: Vec<&str> = variants
+            .iter()
+            .map(|variant| {
+                variant
+                    .get("properties")
+                    .and_then(|properties| properties.get("operation"))
+                    .and_then(|operation| operation.get("const"))
+                    .and_then(serde_json::Value::as_str)
+                    .expect("each variant tags its operation with a const string")
+            })
+            .collect();
+        let mut expected = Operation::NAMES.to_vec();
+        derived.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(derived, expected);
+    }
 }
