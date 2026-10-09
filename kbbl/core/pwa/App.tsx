@@ -22,7 +22,7 @@ import { useOakridgeConfig } from "./oakridge/hooks/useOakridgeConfig";
 import { invalidateOperatorFrame, useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
-import { selectRunFrameNotification } from "./oakridge/lib/run-notifications";
+import { selectEventNotification } from "./oakridge/lib/run-notifications";
 
 export function App() {
   const route = useHashRoute();
@@ -41,7 +41,7 @@ export function App() {
   useOakridgeInvalidationStream(isOakridgeAvailable, oakridgeConfig.data?.fallback_refresh_ms);
   useOakridgeRunEventStream(isOakridgeAvailable, (frame) => {
     invalidateOperatorFrame(queryClient, frame);
-    const notification = selectRunFrameNotification(frame);
+    const notification = selectEventNotification(frame);
     if (notification !== null) pushToast(notification);
   });
 

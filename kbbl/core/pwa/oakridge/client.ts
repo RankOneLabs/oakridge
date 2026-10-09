@@ -45,10 +45,10 @@ export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDe
 export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
 export const fetchOperatorDefinitions = (is_archived = false): Promise<OperatorDefinitionSummary[]> => readAllPages(is_archived ? "/api/definitions?archived=true" : "/api/definitions");
-export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> =>
-  post(`/api/runs/${encodeURIComponent(runId)}/${is_archived ? "archive" : "unarchive"}`, {});
-export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boolean): Promise<unknown> =>
-  post(`/api/definitions/${encodeURIComponent(bundleId)}/${is_archived ? "archive" : "unarchive"}`, {});
+export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> => is_archived
+  ? post(`/api/runs/${encodeURIComponent(runId)}/archive`, {}) : post(`/api/runs/${encodeURIComponent(runId)}/unarchive`, {});
+export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boolean): Promise<unknown> => is_archived
+  ? post(`/api/definitions/${encodeURIComponent(bundleId)}/archive`, {}) : post(`/api/definitions/${encodeURIComponent(bundleId)}/unarchive`, {});
 export const fetchOperatorProjects = async (): Promise<readonly OperatorProjectView[]> => (await get<OperatorProjectList>("/api/projects")).items;
 export const createOperatorProject = (draft: OperatorProjectDraft): Promise<OperatorProjectView> => post("/api/projects", draft);
 export const updateOperatorProject = (projectId: string, draft: OperatorProjectDraft): Promise<OperatorProjectView> => put(`/api/projects/${encodeURIComponent(projectId)}`, draft);
