@@ -15,6 +15,11 @@ export type RunTransitionId = Brand<string, "RunTransitionId">;
 export type CohortId = Brand<string, "CohortId">;
 export type AttemptId = Brand<string, "AttemptId">;
 export type SessionId = Brand<string, "SessionId">;
+export type OperatorEventId = Brand<string, "OperatorEventId">;
+export type CollaborationThreadId = Brand<string, "CollaborationThreadId">;
+export type CollaborationMessageId = Brand<string, "CollaborationMessageId">;
+export type ReviewItemId = Brand<string, "ReviewItemId">;
+export type CollaborationDeliveryId = Brand<string, "CollaborationDeliveryId">;
 
 type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };

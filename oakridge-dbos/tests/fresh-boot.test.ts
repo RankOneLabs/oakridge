@@ -26,6 +26,8 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
   let composition: Awaited<ReturnType<typeof createProductionComposition>> | null = null;
   try {
     await migrateEmptyDatabase(db);
+    const baseline = await db.query<{ exists: string | null }>("SELECT to_regclass('authority.operator_event')::text AS exists", []);
+    expect(baseline).toEqual([{ exists: "authority.operator_event" }]);
     composition = await createProductionComposition({ database_url: url.href, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
     const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
     const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
