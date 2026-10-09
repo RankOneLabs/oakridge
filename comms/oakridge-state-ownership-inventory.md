@@ -11,18 +11,19 @@ The writer column names the mutation-service entry and the function that execute
 | Current run workflow generation and scope cursor | `claimRunGeneration`, `oakridge-dbos/src/storage/run-lifecycle.ts:93` | The run workflow's address and pending scan position survive rollover and restart. |
 | Root scope and initial state | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:171` | Initial state comes from the checked root definition. |
 | Child scope and input | `createMutationService.decide` → `commitDecision` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:126` and `oakridge-dbos/src/storage/commit.ts:135` | Child instances are created from declared child mutations. |
-| Scope state, outcome, terminal flag, version | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:115`, `oakridge-dbos/src/storage/commit.ts:149`, `oakridge-dbos/src/storage/commit.ts:174`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:74` | Scope outcome is the durable terminal projection of a decision; version also advances for a terminal execution result. |
+| Scope state, outcome, terminal flag, version | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:115`, `oakridge-dbos/src/storage/commit.ts:149`, `oakridge-dbos/src/storage/commit.ts:174`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:104` | Scope outcome is the durable terminal projection of a decision; version also advances for a terminal execution result. |
 | Launch receipt | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:181` | Idempotent run creation. |
 | Scope export | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:116` | Child consumers read the committed export. |
 | Child collection membership | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:137` | Membership is explicit; child scope rows carry the corresponding collection key. |
 | Execution selection and generation | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:119` and `oakridge-dbos/src/storage/commit.ts:147`; `cancelRun`, `oakridge-dbos/src/storage/run-lifecycle.ts:49` | Current worker selection points at an execution; generation fences predecessors. |
-| Execution identity, result, status, publication secret hash | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:146` and `oakridge-dbos/src/storage/commit.ts:167`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:73` | `execution.result` duplicates the terminal checked value stored in an invocation-keyed fact. |
+| Execution identity, result, status, publication secret hash | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:146` and `oakridge-dbos/src/storage/commit.ts:167`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:103` | `execution.result` duplicates the terminal checked value stored in an invocation-keyed fact. |
 | Artifact revision body and predecessor | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:96` | Immutable publication history. |
 | Current output revision | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:97` and `oakridge-dbos/src/storage/commit.ts:98`; `writeDecision`, `oakridge-dbos/src/storage/commit.ts:114` | Pointer into artifact history, cleared by a decision mutation. |
-| Trigger and terminal-result facts | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:171`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:70` | Trigger facts feed decisions; invocation-keyed terminal facts mirror `execution.result`. |
+| Trigger and terminal-result facts | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:171`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:100` | Trigger facts feed decisions; invocation-keyed terminal facts mirror `execution.result`. |
 | Transition decision | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:173` | Decision record; its terminal outcome also appears on `scope_instance`. |
 | Ingress receipt | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:177`; `createMutationService.decide` → `commitDecision` → `writeRejection`, `oakridge-dbos/src/storage/commit.ts:184` | Idempotent command/publication response; a rejected decision writes only this row. |
-| Effect intent, handle, status, evidence | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:169`; `claimStartAttempt`, `oakridge-dbos/src/storage/effect-results.ts:24`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:52` and `oakridge-dbos/src/storage/effect-results.ts:64` (learned handle copied to a stop recorded mid-start); `ensureStopIntent`, `oakridge-dbos/src/storage/revocation.ts:10` | The intent is the durable provider obligation. Its settled status and the execution terminal status are separate projections. |
+| Effect intent, handle, status, evidence | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:169`; `claimStartAttempt`, `oakridge-dbos/src/storage/effect-results.ts:24`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:82` and `oakridge-dbos/src/storage/effect-results.ts:94` (learned handle copied to a stop recorded mid-start); `ensureStopIntent`, `oakridge-dbos/src/storage/revocation.ts:10` | The intent is the durable provider obligation. Its settled status and the execution terminal status are separate projections. |
+| Effect intent dispatch generation, redispatch failure count, deadline | `claimDispatchGeneration`, `oakridge-dbos/src/storage/effect-results.ts:42`; `claimChildRedispatch`, `oakridge-dbos/src/storage/effect-results.ts:51`; `stampEffectDeadline`, `oakridge-dbos/src/storage/effect-results.ts:63` | Addresses the live carrier for a redispatch and bounds it; the deadline is stamped once, absolute, and never refreshed on carry-over or redispatch. |
 | Capacity pool and reservation | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:178`; `createMutationService.decide` → `applyCapacityChanges`, `oakridge-dbos/src/storage/capacity.ts:14`, `oakridge-dbos/src/storage/capacity.ts:15` and `oakridge-dbos/src/storage/capacity.ts:16` | Pool limit is run-local; active reservations determine available capacity. |
 | Effect revocation status and version | `revokeStarts`, `oakridge-dbos/src/storage/revocation.ts:32` | Used by decision revocation and run cancellation; stop intent creation belongs to `ensureStopIntent`. |
 | Evidence delivery acknowledgement and intent version | `deliverEvidence`, `oakridge-dbos/src/effects/evidence.ts:24` | Receipt-backed delivery marks the evidence as delivered; this IO ledger writer is separate from effect settlement. |
@@ -52,11 +53,14 @@ These citations keep the authority inventory aligned with the startup, encryptio
 - `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:178`
 - `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:181`
 - `claimStartAttempt` `oakridge-dbos/src/storage/effect-results.ts:24`
-- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:52`
-- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:64`
-- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:70`
-- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:73`
-- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:74`
+- `claimDispatchGeneration` `oakridge-dbos/src/storage/effect-results.ts:42`
+- `claimChildRedispatch` `oakridge-dbos/src/storage/effect-results.ts:51`
+- `stampEffectDeadline` `oakridge-dbos/src/storage/effect-results.ts:63`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:82`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:94`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:100`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:103`
+- `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:104`
 - `storePromptContents` `oakridge-dbos/src/storage/prompt-content.ts:80`
 - `writeOutputs` `oakridge-dbos/src/storage/commit.ts:96`
 - `writeOutputs` `oakridge-dbos/src/storage/commit.ts:97`

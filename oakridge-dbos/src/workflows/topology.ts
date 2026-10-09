@@ -1,4 +1,4 @@
-import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors, type WorkflowStatus, type WorkflowStatusString } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
 import type { CheckedValue } from "../core-client/generated-contracts";
 import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
@@ -8,7 +8,7 @@ import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } 
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
 import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
-import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
+import { claimChildRedispatch, claimDispatchGeneration, claimStartAttempt, persistEffectResult, stampEffectDeadline } from "../storage/effect-results";
 import { claimRunGeneration, currentRunAddress, currentRunGeneration, RUN_NEEDS_WORK_SQL, runNeedsWork } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
 import type { RunId } from "../storage/schema-records";
@@ -53,12 +53,14 @@ export interface WorkflowTiming {
   readonly child_scan_per_scope_deadline_ms: number;
   /** Cap on the serial child request budget within the run advance step. */
   readonly child_scan_max_request_deadline_ms: number;
+  /** Maximum redispatches of a start intent whose carrier ended ERROR or SUCCESS while still owed; a stop retries without limit. */
+  readonly child_redispatch_max: number;
 }
 export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = {
   retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5,
   max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000,
   child_scan_max_scopes: 2, child_scan_per_scope_deadline_ms: 60_000,
-  child_scan_max_request_deadline_ms: 120_000,
+  child_scan_max_request_deadline_ms: 120_000, child_redispatch_max: 5,
 };
 
 let services: WorkflowServices | null = null;
@@ -77,9 +79,23 @@ export const runWorkflowId = (run_id: string, generation = 0): string => generat
  */
 export const intentWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
   `${intent_id}@${application_version}`;
-/** DBOS dequeues and recovers only rows recorded under the running version. */
+/**
+ * The live carrier for an intent, addressed by engine version and the
+ * dispatch generation claimed against authority.effect_intent.dispatch_generation.
+ * A redispatch (stale engine, or a failed carrier under commit 4) claims the
+ * next generation and starts a new workflow at a new id, rather than resuming
+ * the old one at its recorded version.
+ */
+export const childWorkflowId = (intent_id: string, dispatch_generation: number, application_version: string = DBOS.applicationVersion): string =>
+  dispatch_generation === 0 ? intentWorkflowId(intent_id, application_version) : `${intentWorkflowId(intent_id, application_version)}:${dispatch_generation}`;
+/**
+ * DBOS dequeues and recovers only rows recorded under the running version.
+ * The SDK's type claims `applicationVersion` is `string | undefined`, but it
+ * passes a SQL NULL through as `null`, not `undefined`; a loose `!= null`
+ * treats that the same as absent rather than misreading it as another engine.
+ */
 export function isFromOtherEngine(status: WorkflowStatus): boolean {
-  return status.applicationVersion !== undefined && status.applicationVersion !== DBOS.applicationVersion;
+  return status.applicationVersion != null && status.applicationVersion !== DBOS.applicationVersion;
 }
 export class RunInfrastructureError extends Error {
   override readonly name = "RunInfrastructureError";
@@ -216,10 +232,13 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   let intent = await loadIntentStep(intent_id);
   if (!intent || intent.payload.action !== "start") return intent?.status ?? null;
+  const deadline_epoch_ms = intent.deadline_epoch_ms;
+  const expired = async (): Promise<boolean> => deadline_epoch_ms !== null && await effectExpiredStep(deadline_epoch_ms);
   let payload = intent.payload;
   let status = intent.status;
   let terminal: CheckedValue | null = null;
   for (let attempt = 0; status === "pending"; attempt++) {
+    if (await expired()) { await settleExpiredEffect(intent_id); return (await loadIntentStep(intent_id))?.status ?? null; }
     const outcome = await startStep(intent_id);
     if (!outcome) {
       intent = await loadIntentStep(intent_id);
@@ -245,6 +264,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     status = written;
   }
   while (status === "acknowledged") {
+    if (await expired()) { await settleExpiredEffect(intent_id); return (await loadIntentStep(intent_id))?.status ?? null; }
     const outcome = resolveObserve(payload, await observeStep(payload));
     if (outcome.kind === "terminal") {
       payload = outcome.payload;
@@ -324,6 +344,12 @@ const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generati
   const current_generation = await currentRunGeneration(db, run_id);
   return current_generation !== null && current_generation > generation ? current_generation : null;
 }, { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
+const claimDispatchGenerationStep = DBOS.registerStep(async (intent_id: string, generation: number): Promise<number | null> =>
+  claimDispatchGeneration(current().db, intent_id, generation), { name: "oakridgeClaimDispatchGeneration", retriesAllowed: true, maxAttempts: 5 });
+const stampEffectDeadlineStep = DBOS.registerStep(async (intent_id: string, candidate_deadline_epoch_ms: number): Promise<number | null> =>
+  stampEffectDeadline(current().db, intent_id, candidate_deadline_epoch_ms), { name: "oakridgeStampEffectDeadline", retriesAllowed: true, maxAttempts: 5 });
+const claimChildRedispatchStep = DBOS.registerStep(async (intent_id: string, generation: number) =>
+  claimChildRedispatch(current().db, intent_id, generation), { name: "oakridgeClaimChildRedispatch", retriesAllowed: true, maxAttempts: 5 });
 
 export function forkStartStep(steps: readonly { readonly functionID: number; readonly error: Error | null }[]): number {
   const failed = steps.filter((step) => step.error !== null).map((step) => step.functionID);
@@ -368,45 +394,124 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<nu
   return successor;
 }
 
-async function settleExpiredEffect(intent_id: string): Promise<void> {
+async function settleEffectFailure(intent_id: string, detail: string): Promise<void> {
   const intent = await loadIntentStep(intent_id);
   if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
   const payload = await startRejectionStep({ ...intent.payload,
-    failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
+    failure: { kind: "attempt_budget_exhausted", detail } });
   await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
   await deliverEvidenceStep(intent_id);
-  DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+  DBOS.logger.error(`effect ${intent_id}: ${detail}`);
+}
+async function settleExpiredEffect(intent_id: string): Promise<void> {
+  await settleEffectFailure(intent_id, `execution deadline exceeded for ${intent_id}`);
 }
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
 
+/**
+ * Collapses the seven DBOS workflow statuses into the four categories
+ * dispatchChild and ensureRunWorkflow actually branch on. The `never` default
+ * means an eighth status added to the SDK fails typecheck here rather than
+ * falling through unhandled.
+ */
+export type WorkflowStatusCategory = "in_flight" | "parked" | "failed" | "done";
+export function classifyWorkflowStatus(status: WorkflowStatusString): WorkflowStatusCategory {
+  switch (status) {
+    case "PENDING":
+    case "ENQUEUED":
+    case "DELAYED":
+      return "in_flight";
+    case "CANCELLED":
+      return "parked";
+    case "ERROR":
+    case "MAX_RECOVERY_ATTEMPTS_EXCEEDED":
+      return "failed";
+    case "SUCCESS":
+      return "done";
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * A start intent's absolute deadline is stamped once, in the authority row,
+ * because the SDK's own deadline does not survive park-and-resume
+ * (resumeWorkflows NULLs it) or a fork (which does not copy workflow_timeout_ms).
+ * Every start computes its timeoutMS from that stamped deadline, and settles
+ * as expired immediately rather than dispatching past it.
+ */
+async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, intent_id: string): Promise<void> {
+  if (kind === "stop") { await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id); return; }
+  const deadline_epoch_ms = await stampEffectDeadlineStep(intent_id, Date.now() + current().timing.execution_deadline_ms);
+  if (deadline_epoch_ms === null) return; // intent no longer exists
+  const timeout_ms = deadline_epoch_ms - Date.now();
+  if (timeout_ms <= 0) { await settleExpiredEffect(intent_id); return; }
+  await DBOS.startWorkflow(effectWorkflow, { workflowID: workflow_id, timeoutMS: timeout_ms })(intent_id);
+}
+
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  const workflow_id = intentWorkflowId(intent_id);
+  // A plain (unwrapped) read: it has nothing to replay-protect. Dispatching a
+  // "start" still requires DBOS launched, via stampEffectDeadlineStep below.
+  const intent = await readIntent(current().db, intent_id);
+  if (!intent) return;
+  const workflow_id = childWorkflowId(intent_id, intent.dispatch_generation);
   const status = await DBOS.getWorkflowStatus(workflow_id);
   if (!status) {
-    if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
-      { workflowID: workflow_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id);
-    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
+    await startChildWorkflow(kind, workflow_id, intent_id);
     return;
   }
-  if (status.status === "PENDING" || status.status === "ENQUEUED") return;
-  if (status.status === "CANCELLED") {
-    if (kind === "start" && status.deadlineEpochMS !== undefined && await effectExpiredStep(status.deadlineEpochMS)) {
+  if (isFromOtherEngine(status)) {
+    // Defensive: workflow_id above is childWorkflowId(..., application_version)
+    // defaulted to the CURRENT DBOS.applicationVersion, so a status fetched at
+    // this id can only belong to this engine or not exist at all; it is not
+    // the version-handover mechanism engine-upgrade.test.ts exercises (that is
+    // ensureRunWorkflow, whose run ids do not encode a version). Kept, and
+    // cancel-and-redispatch rather than resume, in case that invariant ever
+    // breaks (e.g. DBOS.applicationVersion changing mid-process).
+    const category = classifyWorkflowStatus(status.status as WorkflowStatusString);
+    if (category === "in_flight") await DBOS.cancelWorkflow(workflow_id);
+    const next_generation = await claimDispatchGenerationStep(intent_id, intent.dispatch_generation);
+    if (next_generation === null) return; // another recheck already claimed the redispatch
+    await startChildWorkflow(kind, childWorkflowId(intent_id, next_generation), intent_id);
+    return;
+  }
+  const category = classifyWorkflowStatus(status.status as WorkflowStatusString);
+  if (category === "in_flight") return;
+  if (category === "parked") {
+    if (kind === "start" && intent.deadline_epoch_ms !== null && await effectExpiredStep(intent.deadline_epoch_ms)) {
       await settleExpiredEffect(intent_id);
       return;
     }
     await DBOS.resumeWorkflow(workflow_id);
     return;
   }
-  if (status.status === "ERROR" || status.status === "SUCCESS") {
-    const intent = await loadIntentStep(intent_id);
-    const needs_dispatch = intent !== null && (kind === "start"
-      ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
-      : intent.status === "cleanup_pending");
-    if (needs_dispatch)
-      throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
+  // category is "failed" or "done", with the intent still owed: the carrier
+  // ended without settling it. Redispatch under a new generation rather than
+  // wedging the run; a stop retries without limit, a start gives up after
+  // child_redispatch_max and settles as attempt_budget_exhausted.
+  const needs_dispatch = kind === "start"
+    ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
+    : intent.status === "cleanup_pending";
+  if (!needs_dispatch) return;
+  const timing = current().timing;
+  if (kind === "stop") {
+    await DBOS.sleepSeconds(backoff(intent.redispatch_failures, timing));
+    const claimed = await claimChildRedispatchStep(intent_id, intent.dispatch_generation);
+    if (claimed === null) return; // another recheck already claimed the redispatch
+    await startChildWorkflow(kind, childWorkflowId(intent_id, claimed.generation), intent_id);
+    return;
   }
+  if (intent.redispatch_failures >= timing.child_redispatch_max) {
+    await settleEffectFailure(intent_id, `run ${run_id}: carrier ended ${status.status} after ${intent.redispatch_failures} redispatch attempts for ${intent_id}`);
+    return;
+  }
+  const claimed = await claimChildRedispatchStep(intent_id, intent.dispatch_generation);
+  if (claimed === null) return;
+  await startChildWorkflow(kind, childWorkflowId(intent_id, claimed.generation), intent_id);
 }
 
 export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_cursor: string | null = null): Promise<void> => {
@@ -469,20 +574,19 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
     await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
     return;
   }
-  if (existing?.status === "PENDING" || existing?.status === "ENQUEUED") return;
-  if (existing?.status === "CANCELLED") { await DBOS.resumeWorkflow(id); return; }
-  if (existing?.status === "ERROR") {
+  if (!existing) { await DBOS.startWorkflow(runWorkflow, { workflowID: id })(run_id, address.cursor); return; }
+  const category = classifyWorkflowStatus(existing.status as WorkflowStatusString);
+  if (category === "in_flight") return;
+  if (category === "parked") { await DBOS.resumeWorkflow(id); return; }
+  if (category === "failed") {
     await recoverErroredRun(run_id, generation);
     return;
   }
-  if (existing?.status === "SUCCESS") {
-    if (!await runNeedsWork(db, run_id)) return;
-    const successor = await claimRunGeneration(db, run_id, generation);
-    if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
-    await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
-    return;
-  }
-  await DBOS.startWorkflow(runWorkflow, { workflowID: id })(run_id, address.cursor);
+  // category is "done"
+  if (!await runNeedsWork(db, run_id)) return;
+  const successor = await claimRunGeneration(db, run_id, generation);
+  if (successor === null) throw new RunInfrastructureError(run_id, "restart", "generation changed concurrently");
+  await DBOS.startWorkflow(runWorkflow, { workflowID: runWorkflowId(run_id, successor) })(run_id, address.cursor);
 }
 
 /** A wake is a hint, never a fact: the run re-reads the authority on receipt. */
@@ -510,10 +614,6 @@ const runOfScopeStep = DBOS.registerStep(async (scope_id: string): Promise<RunAd
 }, { name: "oakridgeRunOfScope", retriesAllowed: true, maxAttempts: 5 });
 
 const WORKFLOW_NAMES = ["oakridgeRunWorkflow", "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"];
-function isExpiredEffectWorkflow(status: WorkflowStatus, now_ms: number): boolean {
-  return status.workflowName === "oakridgeEffectWorkflow"
-    && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= now_ms;
-}
 
 function intentOf(status: WorkflowStatus): string | null {
   const intent_id = status.input?.[0];
@@ -527,30 +627,55 @@ function intentOf(status: WorkflowStatus): string | null {
  */
 export async function fenceOtherEngineWorkflows(): Promise<number> {
   const live = await DBOS.listWorkflows({ status: ["PENDING", "ENQUEUED"], workflowName: WORKFLOW_NAMES });
+  // A null applicationVersion is not merely absent (see isFromOtherEngine):
+  // every workflow this process starts sets it, so a live row recorded with a
+  // literal null is an SDK or migration invariant violation, not a carry-over
+  // to wave through silently as same-engine.
+  const unversioned = live.filter((status) => (status.applicationVersion as string | null | undefined) === null);
+  if (unversioned.length) throw new Error(`boot: ${unversioned.length} live workflow(s) recorded with a null applicationVersion: ${unversioned.map((status) => status.workflowID).join(", ")}`);
   const stale = live.filter(isFromOtherEngine);
   if (stale.length) await DBOS.cancelWorkflows(stale.map((status) => status.workflowID));
   return stale.length;
 }
 
 /**
- * Boot: workflows this engine parked at its last shutdown resume from their
- * last step, and every run whose root is still active gets its workflow back.
- * Another version's workflows are fenced; the run recheck starts this
- * version's carriers for any intent still owed.
+ * Boot: a parked effect or cleanup workflow past its stamped execution
+ * deadline settles as expired. Every run still owed work gets its run
+ * workflow back directly, resuming from its last step; any other parked
+ * effect or cleanup workflow that run still owes is resumed lazily, by that
+ * run's own recheck, not by a startup sweep over every parked child.
+ * Another version's workflows are fenced first; the run recheck starts this
+ * version's carrier, under the next dispatch generation, for any intent
+ * still owed.
  */
 export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<number> {
   await fenceOtherEngineWorkflows();
+  // A parked child past its absolute deadline settles as expired rather than
+  // resuming into a run recheck that would otherwise redispatch it. The
+  // authority column is the source of truth here, not the SDK's own
+  // deadlineEpochMS: resumeWorkflows NULLs it and fork does not copy it.
   const parked = await DBOS.listWorkflows({ status: "CANCELLED", workflowName: WORKFLOW_NAMES.slice(1),
     applicationVersion: DBOS.applicationVersion });
   const now_ms = Date.now();
-  const expired = parked.filter((status) => isExpiredEffectWorkflow(status, now_ms));
-  const expired_ids = new Set(expired.map((status) => status.workflowID));
-  const resumable = parked.filter((status) => !expired_ids.has(status.workflowID));
-  if (resumable.length) await DBOS.resumeWorkflows(resumable.map((status) => status.workflowID));
+  const effect_parked = parked.filter((status) => status.workflowName === "oakridgeEffectWorkflow");
+  const effect_intent_ids = effect_parked.map(intentOf).filter((id): id is string => id !== null);
+  const deadlines = effect_intent_ids.length
+    ? await db.query<{ id: string; deadline_epoch_ms: string | number | null }>(
+        "SELECT id,deadline_epoch_ms FROM authority.effect_intent WHERE id=ANY($1)", [effect_intent_ids])
+    : [];
+  const deadline_by_intent = new Map(deadlines.map((row) => [row.id, row.deadline_epoch_ms === null ? null : Number(row.deadline_epoch_ms)]));
+  const expired = effect_parked.filter((status) => {
+    const intent_id = intentOf(status);
+    const deadline = intent_id === null ? null : deadline_by_intent.get(intent_id);
+    return deadline !== null && deadline !== undefined && deadline <= now_ms;
+  });
   for (const status of expired) {
     const intent_id = intentOf(status);
     if (intent_id !== null) await settleExpiredEffect(intent_id);
   }
+  // Every other parked child is picked up by its run's own recheck below:
+  // RUN_NEEDS_WORK_SQL selects any run with a pending start or a cleanup_pending
+  // stop, and dispatchChild resumes a CANCELLED same-engine child it finds there.
   const runs = await db.query<{ id: string }>(`SELECT r.id FROM authority.run r WHERE ${RUN_NEEDS_WORK_SQL} ORDER BY r.id`, []);
   for (const run of runs) await ensureRunWorkflow(run.id);
   return runs.length;

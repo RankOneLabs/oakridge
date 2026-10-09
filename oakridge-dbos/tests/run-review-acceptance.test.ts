@@ -76,6 +76,10 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       if (sql.includes("ORDER BY id LIMIT $3")) return scopes.filter((scope) => !parameters[1] || scope.id > String(parameters[1])).slice(0, Number(parameters[2]));
       if (sql.includes("SELECT * FROM authority.scope_instance WHERE id=ANY")) return [];
       if (sql.includes("SELECT e.id,e.status")) return child_started ? [] : [{ id: "pending-child", status: "pending" }];
+      if (sql.includes("SELECT * FROM authority.effect_intent WHERE id=$1")) return [{ id: "pending-child", run_id: "run-1", scope_id: "scope-001",
+        execution_id: null, effect_key: "key", payload: storedPayload("start"), status: "pending",
+        dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: null, version: 0 }];
+      if (sql.includes("SET deadline_epoch_ms=COALESCE")) return [{ deadline_epoch_ms: Date.now() + DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }];
       if (sql.includes("SELECT is_terminal")) return [{ is_terminal: generation > 0 }];
       if (sql.includes("SELECT current_generation,current_cursor")) return [{ current_generation: generation, current_cursor: null }];
       if (sql.includes("UPDATE authority.run SET current_generation")) {
@@ -107,8 +111,10 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       expect(carried_cursor as string | null).toBe(`scope-${String(RUN_MAX_ITERATIONS).padStart(3, "0")}`);
       expect(starts).toEqual([
         { options: { workflowID: runWorkflowId("run-1", 1) }, args: ["run-1", carried_cursor] },
-        { options: { workflowID: intentWorkflowId("pending-child"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }, args: ["pending-child"] },
+        { options: { workflowID: intentWorkflowId("pending-child"), timeoutMS: expect.any(Number) }, args: ["pending-child"] },
       ]);
+      const dispatched_timeout_ms = (starts[1]?.options as { timeoutMS: number } | undefined)?.timeoutMS ?? 0;
+      expect(Math.abs(dispatched_timeout_ms - DEFAULT_WORKFLOW_TIMING.execution_deadline_ms)).toBeLessThan(5_000);
     } finally { status.mockRestore(); start.mockRestore(); }
   });
 }), 60_000);
@@ -116,13 +122,15 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
 const dispatchProbe = DBOS.registerWorkflow(async (intent_id: string, kind: "start" | "stop") =>
   dispatchChild("run-1", intent_id, kind), { name: "oakridgeDispatchReviewProbe" });
 const storedPayload = (action: "start" | "stop") => sealEffectPayload({ action, handle: null,
-  invocation: { id: "effect-1", execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload);
+  invocation: { id: "effect-1", execution_id: "execution-1", selection: { definition: { operation: "test_operation", contract_version: 1 } }, bytes: "pinned" } } as unknown as EffectPayload);
 
 test("cancelled-child expiry retains its branch when replayed after the deadline", async () => withDatabase(async ({ url }) => {
   await withDBOS(url, async () => {
-    registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
     const deadline = Date.now() + 250;
-    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "CANCELLED", deadlineEpochMS: deadline }) as never);
+    const db = { query: async () => [{ id: "effect-1", run_id: "run-1", scope_id: "scope-1", execution_id: null, effect_key: "key",
+      payload: storedPayload("start"), status: "pending", dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: deadline, version: 0 }] } as unknown as TransactionalSqlExecutor;
+    registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "CANCELLED" }) as never);
     let should_fail_resume = true;
     const resume = spyOn(DBOS, "resumeWorkflow").mockImplementation(async () => {
       if (should_fail_resume) throw new Error("resume unavailable");
@@ -155,12 +163,44 @@ for (const kind of ["start", "stop"] as const) {
   }
 }
 
-test("a terminal child workflow still fails dispatch when its intent remains pending", async () => withDatabase(async ({ url }) => {
+function intentRowDb(initial: { readonly dispatch_generation: number; readonly redispatch_failures: number }): TransactionalSqlExecutor {
+  let dispatch_generation = initial.dispatch_generation;
+  let redispatch_failures = initial.redispatch_failures;
+  return { query: async (sql: string) => {
+    if (sql.includes("SELECT * FROM authority.effect_intent WHERE id=$1")) return [{ id: "effect-1", run_id: "run-1", scope_id: "scope-1",
+      execution_id: null, effect_key: "key", status: "pending", dispatch_generation, redispatch_failures, deadline_epoch_ms: null,
+      version: 0, payload: storedPayload("start") }];
+    if (sql.includes("SET dispatch_generation=dispatch_generation+1, redispatch_failures=redispatch_failures+1")) {
+      dispatch_generation += 1; redispatch_failures += 1;
+      return [{ dispatch_generation, redispatch_failures }];
+    }
+    if (sql.includes("SET deadline_epoch_ms=COALESCE")) return [{ deadline_epoch_ms: Date.now() + DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }];
+    return [];
+  } } as unknown as TransactionalSqlExecutor;
+}
+
+test("a terminal child workflow redispatches a start intent still owed, under a new generation", async () => withDatabase(async ({ url }) => {
   await withDBOS(url, async () => {
-    const db = { query: async () => [{ id: "effect-1", status: "pending", version: 0, payload: storedPayload("start") }] } as unknown as TransactionalSqlExecutor;
-    registerWorkflowServices({ db } as Parameters<typeof registerWorkflowServices>[0]);
+    const db = intentRowDb({ dispatch_generation: 0, redispatch_failures: 0 });
+    registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
     const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
-    try { await expect(dispatchChild("run-1", "effect-1", "start")).rejects.toThrow("intent remains pending"); }
-    finally { status.mockRestore(); }
+    const start = spyOn(DBOS, "startWorkflow").mockImplementation(() => (async () => ({}) as never) as never);
+    try {
+      await expect(dispatchChild("run-1", "effect-1", "start")).resolves.toBeUndefined();
+      expect(start).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ workflowID: `${intentWorkflowId("effect-1")}:1` }));
+    } finally { status.mockRestore(); start.mockRestore(); }
+  });
+}), 20_000);
+
+test("a terminal child workflow settles a start intent as attempt_budget_exhausted after child_redispatch_max redispatches", async () => withDatabase(async ({ url }) => {
+  await withDBOS(url, async () => {
+    const db = intentRowDb({ dispatch_generation: 3, redispatch_failures: DEFAULT_WORKFLOW_TIMING.child_redispatch_max });
+    registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
+    const start = spyOn(DBOS, "startWorkflow").mockImplementation(() => (async () => ({}) as never) as never);
+    try {
+      await expect(dispatchChild("run-1", "effect-1", "start")).resolves.toBeUndefined();
+      expect(start).not.toHaveBeenCalled();
+    } finally { status.mockRestore(); start.mockRestore(); }
   });
 }), 20_000);

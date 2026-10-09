@@ -42,12 +42,19 @@ export interface EffectPayload {
 }
 /** An effect_intent row with its payload unsealed. */
 export type EffectIntent = Omit<EffectIntentRecord, "run_id" | "payload"> & { readonly payload: EffectPayload };
-interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: string | number }
+interface EffectRow extends Omit<EffectIntent, "version" | "dispatch_generation" | "redispatch_failures" | "deadline_epoch_ms"> {
+  readonly version: string | number;
+  readonly dispatch_generation: string | number;
+  readonly redispatch_failures: string | number;
+  readonly deadline_epoch_ms: string | number | null;
+}
 
 export async function readIntent(db: SqlExecutor, intent_id: string): Promise<EffectIntent | null> {
   const rows = await db.query<EffectRow>("SELECT * FROM authority.effect_intent WHERE id=$1", [intent_id]);
   const row = rows[0];
-  return row ? { ...row, payload: unsealEffectPayload(row.payload), version: Number(row.version) } : null;
+  return row ? { ...row, payload: unsealEffectPayload(row.payload), version: Number(row.version),
+    dispatch_generation: Number(row.dispatch_generation), redispatch_failures: Number(row.redispatch_failures),
+    deadline_epoch_ms: row.deadline_epoch_ms === null ? null : Number(row.deadline_epoch_ms) } : null;
 }
 
 /** A never-dispatched selection and a definite rejection own no external execution. */

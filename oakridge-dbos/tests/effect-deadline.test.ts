@@ -65,8 +65,10 @@ test("startup settles an expired CANCELLED effect with evidence instead of resum
     if (!intent_id) throw new Error("effect intent was not dispatched");
     const workflow_id = intentWorkflowId(intent_id);
     await composition.close();
-    await db.query("UPDATE dbos.workflow_status SET workflow_deadline_epoch_ms=$2 WHERE workflow_uuid=$1",
-      [workflow_id, Date.now() - 1_000]);
+    // The authority column is the source of truth for the deadline across a
+    // restart; the SDK's own workflow_deadline_epoch_ms is NULLed by the resume
+    // this restart performs, so backdating it here would prove nothing.
+    await db.query("UPDATE authority.effect_intent SET deadline_epoch_ms=$2 WHERE id=$1", [intent_id, Date.now() - 1_000]);
     composition = await createProductionComposition(options);
     const after = Date.now() + 10_000;
     let payload: { failure?: { detail: string }; evidence_delivered?: boolean } | null = null;

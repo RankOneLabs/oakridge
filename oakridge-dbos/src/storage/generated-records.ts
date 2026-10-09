@@ -166,6 +166,9 @@ export interface EffectIntent {
   /** @type {EffectIntentPayload} */
   payload: EffectIntentPayload;
   status: effect_status;
+  dispatch_generation: number;
+  redispatch_failures: number;
+  deadline_epoch_ms: number | null;
   version: number;
 }
 export interface EffectIntentInput {
@@ -177,11 +180,14 @@ export interface EffectIntentInput {
   /** @type {EffectIntentPayload} */
   payload: EffectIntentPayload;
   status?: effect_status;
+  dispatch_generation?: number;
+  redispatch_failures?: number;
+  deadline_epoch_ms?: number | null;
   version?: number;
 }
 const effect_intent = {
   tableName: 'effect_intent',
-  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'effect_key', 'payload', 'status', 'version'],
+  columns: ['id', 'run_id', 'scope_id', 'execution_id', 'effect_key', 'payload', 'status', 'dispatch_generation', 'redispatch_failures', 'deadline_epoch_ms', 'version'],
   requiredForInsert: ['id', 'run_id', 'scope_id', 'effect_key', 'payload'],
   primaryKey: 'id',
   foreignKeys: {},

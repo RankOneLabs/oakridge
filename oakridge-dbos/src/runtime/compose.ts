@@ -178,7 +178,9 @@ function isCancellationPayloads(value: unknown): value is readonly ScopeCancella
 /**
  * The production composition. DBOS is the runtime: it is configured and
  * launched here, every run gets a durable workflow, and effect intents are
- * carried by workflows that resume after a crash. Nothing here polls.
+ * carried by workflows that resume after a crash. Nothing here leases
+ * external state; a run workflow waits on a bounded wake and an effect
+ * workflow sleeps between observations, rather than polling either.
  */
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });

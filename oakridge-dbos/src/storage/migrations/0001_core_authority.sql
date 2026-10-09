@@ -126,6 +126,9 @@ CREATE TABLE authority.effect_intent (
   id text PRIMARY KEY, run_id text NOT NULL, scope_id text NOT NULL,
   execution_id text, effect_key text NOT NULL,
   payload jsonb NOT NULL, status authority.effect_status NOT NULL DEFAULT 'pending',
+  dispatch_generation bigint NOT NULL DEFAULT 0 CHECK (dispatch_generation >= 0),
+  redispatch_failures bigint NOT NULL DEFAULT 0 CHECK (redispatch_failures >= 0),
+  deadline_epoch_ms bigint,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0), UNIQUE (scope_id, effect_key),
   FOREIGN KEY (run_id, scope_id) REFERENCES authority.scope_instance(run_id, id),
   FOREIGN KEY (run_id, execution_id) REFERENCES authority.execution(run_id, id)
