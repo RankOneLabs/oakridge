@@ -202,16 +202,7 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         .unwrap_or("");
     // `DomainError::new` cannot know which request it serves; the transport does.
     let operation_name: Box<str> = operation.into();
-    if ![
-        "compile",
-        "validate_payload",
-        "validate_value",
-        "evaluate",
-        "materialize",
-        "explain",
-    ]
-    .contains(&operation)
-    {
+    if !Operation::NAMES.contains(&operation) {
         return transport(
             request_id,
             TransportErrorKind::UnknownOperation,
