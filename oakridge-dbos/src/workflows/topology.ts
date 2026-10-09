@@ -88,9 +88,14 @@ export const intentWorkflowId = (intent_id: string, application_version: string 
  */
 export const childWorkflowId = (intent_id: string, dispatch_generation: number, application_version: string = DBOS.applicationVersion): string =>
   dispatch_generation === 0 ? intentWorkflowId(intent_id, application_version) : `${intentWorkflowId(intent_id, application_version)}:${dispatch_generation}`;
-/** DBOS dequeues and recovers only rows recorded under the running version. */
+/**
+ * DBOS dequeues and recovers only rows recorded under the running version.
+ * The SDK's type claims `applicationVersion` is `string | undefined`, but it
+ * passes a SQL NULL through as `null`, not `undefined`; a loose `!= null`
+ * treats that the same as absent rather than misreading it as another engine.
+ */
 export function isFromOtherEngine(status: WorkflowStatus): boolean {
-  return status.applicationVersion !== undefined && status.applicationVersion !== DBOS.applicationVersion;
+  return status.applicationVersion != null && status.applicationVersion !== DBOS.applicationVersion;
 }
 export class RunInfrastructureError extends Error {
   override readonly name = "RunInfrastructureError";
@@ -461,9 +466,13 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
     return;
   }
   if (isFromOtherEngine(status)) {
-    // A stale engine's carrier never runs here, and resuming it would
-    // re-initialise the workflow at its recorded version. Cancel it if still
-    // live and redispatch under a new generation.
+    // Defensive: workflow_id above is childWorkflowId(..., application_version)
+    // defaulted to the CURRENT DBOS.applicationVersion, so a status fetched at
+    // this id can only belong to this engine or not exist at all; it is not
+    // the version-handover mechanism engine-upgrade.test.ts exercises (that is
+    // ensureRunWorkflow, whose run ids do not encode a version). Kept, and
+    // cancel-and-redispatch rather than resume, in case that invariant ever
+    // breaks (e.g. DBOS.applicationVersion changing mid-process).
     const category = classifyWorkflowStatus(status.status as WorkflowStatusString);
     if (category === "in_flight") await DBOS.cancelWorkflow(workflow_id);
     const next_generation = await claimDispatchGenerationStep(intent_id, intent.dispatch_generation);
@@ -619,6 +628,12 @@ function intentOf(status: WorkflowStatus): string | null {
  */
 export async function fenceOtherEngineWorkflows(): Promise<number> {
   const live = await DBOS.listWorkflows({ status: ["PENDING", "ENQUEUED"], workflowName: WORKFLOW_NAMES });
+  // A null applicationVersion is not merely absent (see isFromOtherEngine):
+  // every workflow this process starts sets it, so a live row recorded with a
+  // literal null is an SDK or migration invariant violation, not a carry-over
+  // to wave through silently as same-engine.
+  const unversioned = live.filter((status) => (status.applicationVersion as string | null | undefined) === null);
+  if (unversioned.length) throw new Error(`boot: ${unversioned.length} live workflow(s) recorded with a null applicationVersion: ${unversioned.map((status) => status.workflowID).join(", ")}`);
   const stale = live.filter(isFromOtherEngine);
   if (stale.length) await DBOS.cancelWorkflows(stale.map((status) => status.workflowID));
   return stale.length;
