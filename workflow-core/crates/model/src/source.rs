@@ -191,6 +191,17 @@ pub struct CommandDefinition {
     pub label: String,
     pub consequence: String,
     pub field_presentation: Vec<CommandFieldPresentation>,
+    /// Payload fields the operator does not type: each is read from the scope's
+    /// current evidence when the scope is projected, then submitted unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefill: Vec<CommandFieldPrefill>,
+}
+/// A top-level command payload record field filled from a direct reference.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommandFieldPrefill {
+    pub key: String,
+    pub value: Expression,
 }
 /// Presentation for a named, top-level command payload record field.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

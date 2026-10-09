@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { withDatabase } from "./effect-fixture";
 import { DEFAULT_WORKFLOW_TIMING, RUN_MAX_ITERATIONS, ensureRunWorkflow, registerWorkflowServices,
-  dispatchChild, intentWorkflowId, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
+  dispatchChild, parkRunningWorkflows, intentWorkflowId, runWorkflow, runWorkflowId, wakeRunOf } from "../src/workflows/topology";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { sealEffectPayload } from "../src/storage/effect-secret";
 import type { EffectPayload } from "../src/effects/intents";
@@ -107,7 +107,7 @@ test("RUN_MAX_ITERATIONS hands pending dispatches and the scan cursor to the suc
       expect(carried_cursor as string | null).toBe(`scope-${String(RUN_MAX_ITERATIONS).padStart(3, "0")}`);
       expect(starts).toEqual([
         { options: { workflowID: runWorkflowId("run-1", 1) }, args: ["run-1", carried_cursor] },
-        { options: { workflowID: intentWorkflowId("pending-child"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }, args: ["pending-child"] },
+        { options: { workflowID: intentWorkflowId("pending-child") }, args: ["pending-child"] },
       ]);
     } finally { status.mockRestore(); start.mockRestore(); }
   });
@@ -162,5 +162,17 @@ test("a terminal child workflow still fails dispatch when its intent remains pen
     const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "SUCCESS" }) as never);
     try { await expect(dispatchChild("run-1", "effect-1", "start")).rejects.toThrow("intent remains pending"); }
     finally { status.mockRestore(); }
+  });
+}), 20_000);
+
+test("shutdown parks only this version's workflows and leaves another live version's running", async () => withDatabase(async ({ url }) => {
+  await withDBOS(url, async () => {
+    const list = spyOn(DBOS, "listWorkflows").mockImplementation(async () => [{ workflowID: "mine" }] as never);
+    const cancel = spyOn(DBOS, "cancelWorkflows").mockImplementation(async () => undefined as never);
+    try {
+      expect(await parkRunningWorkflows()).toBe(1);
+      expect(list).toHaveBeenCalledWith(expect.objectContaining({ applicationVersion: DBOS.applicationVersion }));
+      expect(cancel).toHaveBeenCalledWith(["mine"]);
+    } finally { list.mockRestore(); cancel.mockRestore(); }
   });
 }), 20_000);

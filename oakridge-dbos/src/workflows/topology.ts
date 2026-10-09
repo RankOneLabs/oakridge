@@ -45,8 +45,13 @@ export interface WorkflowTiming {
   readonly max_observe_unavailable_attempts: number;
   /** Bound on how long a lost wake can delay a run's recheck. */
   readonly wake_timeout_seconds: number;
-  /** DBOS timeout for an effect, including observation and retry sleeps. */
-  readonly execution_deadline_ms: number;
+  /**
+   * Optional wall-clock DBOS timeout for an effect, including observation. Null
+   * by default: start retries are bounded by the action's pinned max_attempts and
+   * a lost session by max_observe_unavailable_attempts, so a wall clock would
+   * only end an agent session that is still working.
+   */
+  readonly execution_deadline_ms: number | null;
   /** Number of scopes admitted to one run advance step. */
   readonly child_scan_max_scopes: number;
   /** Per-scope share of the serial child request budget. */
@@ -56,7 +61,7 @@ export interface WorkflowTiming {
 }
 export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = {
   retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5,
-  max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: 3_600_000,
+  max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: null,
   child_scan_max_scopes: 2, child_scan_per_scope_deadline_ms: 60_000,
   child_scan_max_request_deadline_ms: 120_000,
 };
@@ -385,8 +390,9 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
   const workflow_id = intentWorkflowId(intent_id);
   const status = await DBOS.getWorkflowStatus(workflow_id);
   if (!status) {
+    const deadline_ms = current().timing.execution_deadline_ms;
     if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
-      { workflowID: workflow_id, timeoutMS: current().timing.execution_deadline_ms })(intent_id);
+      { workflowID: workflow_id, ...(deadline_ms === null ? {} : { timeoutMS: deadline_ms }) })(intent_id);
     else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
     return;
   }
@@ -562,7 +568,9 @@ export async function resumeActiveRuns(db: TransactionalSqlExecutor): Promise<nu
  * them. Nothing durable changes; the authority rows are untouched.
  */
 export async function parkRunningWorkflows(): Promise<number> {
-  const running = await DBOS.listWorkflows({ status: ["PENDING", "ENQUEUED"], workflowName: WORKFLOW_NAMES });
+  // Only this version's workflows: another version's live process owns its own.
+  const running = await DBOS.listWorkflows({ status: ["PENDING", "ENQUEUED"], workflowName: WORKFLOW_NAMES,
+    applicationVersion: DBOS.applicationVersion });
   if (running.length) await DBOS.cancelWorkflows(running.map((status) => status.workflowID));
   return running.length;
 }

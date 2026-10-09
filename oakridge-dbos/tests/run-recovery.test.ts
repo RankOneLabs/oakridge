@@ -43,7 +43,7 @@ test("a PENDING child is not dispatched again, while a missing child is started"
     expect(calls).toEqual([]);
     status.mockImplementation(async () => null as never);
     await dispatchChild("run-1", "intent-1", "start");
-    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1"), timeoutMS: DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }], ["intent-1"]]);
+    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1") }], ["intent-1"]]);
   } finally { status.mockRestore(); start.mockRestore(); }
 });
 

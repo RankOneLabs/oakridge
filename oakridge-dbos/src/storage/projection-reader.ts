@@ -2,7 +2,7 @@ import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import type { RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
-import { currentTargetRevisions } from "./command-selection";
+import { currentPrefill, currentTargetRevisions } from "./command-selection";
 import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "../projections/record-selectors";
 import { normalizeOutputSlot, selectAvailableCommands, type ScopeView, type StoredOutputSlotView, type TransitionRow } from "../projections/scope-view";
 import { selectInboxItems, type InboxPage, type InboxRow } from "../projections/inbox";
@@ -29,9 +29,10 @@ export async function readScopeView(db: TransactionalSqlExecutor, scope_id: Scop
     const { observations } = await readScopeObservations(tx, { owner: scope, scope: definition, bundle, reads });
     const command_targets = Object.fromEntries(await Promise.all(commands.map(async (command) =>
       [command.key, await currentTargetRevisions(tx, scope_id, command, observations)] as const)));
+    const command_prefill = Object.fromEntries(commands.map((command) => [command.key, currentPrefill(bundle, command, observations)] as const));
     return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,
       state: scope.local_state, outcome: scope.outcome, is_terminal: scope.is_terminal,
-      commands, command_targets, executions: executions.map(normalizeExecutionRecord),
+      commands, command_targets, command_prefill, executions: executions.map(normalizeExecutionRecord),
       outputs: outputs.map(normalizeOutputSlot), resources: resources.map(normalizeRecordVersion),
       decision: transitions[0]?.decision ?? null,
       cursor: { scope_version: Number(scope.version), transition_id: transitions[0]?.id ?? null } };

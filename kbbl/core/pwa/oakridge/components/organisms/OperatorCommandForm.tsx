@@ -6,7 +6,7 @@ import { isDefinitiveRequestRejection } from "../../lib/client-errors";
 import { clearOperatorDraft, clearPendingCommand, findRetainedDrafts, operatorDraftIdentity, readOperatorDraft, readPendingCommand, saveOperatorDraft, savePendingCommand } from "../../lib/operator-drafts";
 import { buildRootInput, stringFloor, type FieldDrafts } from "../../lib/operator-input";
 import { parseOperatorFieldValue } from "../../lib/operator-payload";
-import { selectDraftKey } from "../../lib/operator-selectors";
+import { selectCommandPrefill, selectDraftKey, selectPendingEvidence } from "../../lib/operator-selectors";
 import type { OperatorCommandDefinition, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
 
 interface Props { readonly scope: OperatorScopeView; readonly command: OperatorCommandDefinition;
@@ -19,7 +19,10 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAccepted, setIsAccepted] = useState(false);
   const shape = schemas.find((schema) => schema.key === command.payload_schema)?.shape;
-  const fields = shape?.kind === "record" ? shape.fields : null;
+  const prefill = selectCommandPrefill(scope, command);
+  const record_fields = shape?.kind === "record" ? shape.fields : null;
+  const fields = record_fields?.filter((field) => !(field.key in prefill)) ?? null;
+  const prefilled = record_fields?.filter((field) => field.key in prefill) ?? [];
 
   async function deliver(input: NonNullable<ReturnType<typeof readPendingCommand>>): Promise<void> {
     setIsSubmitting(true);
@@ -63,6 +66,8 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   }, [key ? operatorDraftIdentity(key) : null]);
 
   if (!key) return <p role="status">Target revisions are unavailable. Refresh this scope before acting.</p>;
+  const pending_evidence = selectPendingEvidence(scope, command);
+  if (pending_evidence.length > 0) return <p role="status" data-testid="operator-pending-evidence">Waiting for current evidence: {pending_evidence.join(", ")}.</p>;
 
   const update = (value: string) => { setIsAccepted(false); setDraft(value); saveOperatorDraft(key, value); };
   const submit = (event: React.FormEvent) => {
@@ -73,7 +78,7 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       let payload: unknown;
       if (fields) {
         const entered = JSON.parse(draft || "{}") as FieldDrafts;
-        payload = buildRootInput("{}", fields.map((field) => ({ field, schema: schemas.find((schema) => schema.key === field.schema) })), entered);
+        payload = buildRootInput(JSON.stringify(prefill), fields.map((field) => ({ field, schema: schemas.find((schema) => schema.key === field.schema) })), entered);
       } else {
         const parsed = parseOperatorFieldValue({ raw: draft, schema: schemas.find((schema) => schema.key === command.payload_schema) });
         if (!parsed.ok) { setError(parsed.error.detail); return; }
@@ -89,6 +94,9 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
   return <form onSubmit={submit} className="flex flex-col gap-3" data-testid="operator-command-form">
     <p>{command.consequence}</p>
     {retained.map((previous) => <details key={previous.identity}><summary>Draft from an earlier owner version or target revision</summary><pre>{previous.text}</pre></details>)}
+    {prefilled.map((field) => <details key={field.key} data-testid="operator-prefilled-field">
+      <summary>{command.field_presentation.find((item) => item.key === field.key)?.presentation.label ?? field.key}: from current evidence</summary>
+      <pre>{JSON.stringify(prefill[field.key], null, 2)}</pre></details>)}
     {fields ? fields.map((field) => {
       const fieldSchema = schemas.find((schema) => schema.key === field.schema);
       const presentation = command.field_presentation.find((item) => item.key === field.key)?.presentation;

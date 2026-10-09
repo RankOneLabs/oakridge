@@ -5,21 +5,21 @@ import { OperatorDefinitionsView } from "./views/OperatorDefinitionsView";
 import { OperatorDefinitionEditorView } from "./views/OperatorDefinitionEditorView";
 import { GenericOperatorRunView } from "./views/GenericOperatorRunView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
-import type { OakridgeSubRoute } from "../lib/hash";
+import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
 
 interface Props { readonly route: OakridgeSubRoute }
 export function OakridgeShell({ route }: Props) {
   const config = useOakridgeConfig();
   const navigate = (path: string) => { window.location.hash = path; };
   const runs = () => navigate("oakridge");
-  const run = (id: string) => navigate(`oakridge/run/${encodeURIComponent(id)}`);
+  const run = (id: string) => navigate(formatRunWorkspaceHash(id, null));
   const defs = () => navigate("oakridge/defs");
   let content: React.ReactNode;
   if (config.isPending) content = <p role="status">Connecting to Oakridge…</p>;
   else if (!config.data?.available) content = <p role="alert">Oakridge backend is unavailable.</p>;
   else switch (route.sub) {
-    case "run": content = <GenericOperatorRunView key={route.id} runId={route.id} onBack={runs} />; break;
-    case "review-inbox": content = <ReviewInboxView onSelectRun={run} onSelectArtifact={() => undefined} />; break;
+    case "run": content = <GenericOperatorRunView key={`${route.id}:${route.scope_id ?? ""}`} runId={route.id} initialScopeId={route.scope_id} onBack={runs} />; break;
+    case "review-inbox": content = <ReviewInboxView onSelectScope={(runId, scopeId) => navigate(formatRunWorkspaceHash(runId, scopeId))} />; break;
     case "new-run": content = <OperatorLaunchView onBack={runs} onCreated={run} onEdit={() => navigate("oakridge/def-new")} />; break;
     case "defs": content = <OperatorDefinitionsView onBack={runs} onNew={() => navigate("oakridge/def-new")} onClone={(id) => navigate(`oakridge/def-edit/${encodeURIComponent(id)}`)} />; break;
     case "def-new": content = <OperatorDefinitionEditorView cloneFromId={null} onBack={defs} onPinned={defs} />; break;

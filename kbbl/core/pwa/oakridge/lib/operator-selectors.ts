@@ -1,4 +1,4 @@
-import type { OperatorCommandDefinition, OperatorDefinitionSummary, OperatorRunView, OperatorScopeView, OperatorTargetRevision } from "../operator-contracts";
+import type { OperatorCommandDefinition, OperatorCommandPrefill, OperatorDefinitionSummary, OperatorRunView, OperatorScopeView, OperatorTargetRevision } from "../operator-contracts";
 import type { OperatorDraftKey } from "./operator-drafts";
 
 /** Target identities must come from the observed projection, never a later fetch. */
@@ -52,4 +52,15 @@ export function selectLaunchDigest({ pending_digest, chosen_digest, definitions 
   if (pending_digest) return pending_digest;
   if (chosen_digest) return chosen_digest;
   return definitions?.length === 1 ? definitions[0]?.digest ?? "" : "";
+}
+
+/** Evidence fields the scope projects for a command; the operator never retypes them. */
+export function selectCommandPrefill(scope: OperatorScopeView, command: OperatorCommandDefinition): OperatorCommandPrefill {
+  return scope.command_prefill[command.key] ?? {};
+}
+
+/** Prefilled fields the scope has not observed yet; the command waits for them rather than asking the operator. */
+export function selectPendingEvidence(scope: OperatorScopeView, command: OperatorCommandDefinition): readonly string[] {
+  const prefill = selectCommandPrefill(scope, command);
+  return (command.prefill ?? []).map((entry) => entry.key).filter((key) => !(key in prefill));
 }

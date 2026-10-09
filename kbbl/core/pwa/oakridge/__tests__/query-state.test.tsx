@@ -24,14 +24,14 @@ function runResponse(url: string): Response {
   if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
   return Response.json({ scope_id: "scope-one", run_id: "run-one", label: "Current scope",
     state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
-    outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+    outputs: [], resources: [], executions: [], commands: [], cursor: { scope_version: 1 } });
 }
 
 test("one run fetcher uses one key and run invalidation reaches definition and scope", async () => {
   const fetch = vi.fn(async (url: string) => runResponse(url));
   vi.stubGlobal("fetch", fetch);
   const cache = client();
-  render(<QueryClientProvider client={cache}><RunConsumer /><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><RunConsumer /><GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Current scope" });
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1);
   await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
@@ -44,7 +44,7 @@ test("failed refresh retains the last run snapshot behind an error banner", asyn
   vi.stubGlobal("fetch", vi.fn(async (url: string) => shouldFail && url.endsWith("/runs/run-one")
     ? Response.json({ error: "offline" }, { status: 503 }) : runResponse(url)));
   const cache = client();
-  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Current scope" });
   shouldFail = true;
   await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
@@ -57,7 +57,7 @@ test("the app badge and visible inbox share one fetch and one invalidation key",
   vi.stubGlobal("fetch", fetch);
   const cache = client();
   render(<QueryClientProvider client={cache}><InboxConsumer />
-    <ReviewInboxView onSelectRun={() => undefined} onSelectArtifact={() => undefined} /></QueryClientProvider>);
+    <ReviewInboxView onSelectScope={() => undefined} /></QueryClientProvider>);
   await screen.findByText("Nothing needs attention.");
   expect(fetch).toHaveBeenCalledTimes(1);
   await cache.invalidateQueries({ queryKey: ["operator", "inbox"] });
@@ -68,7 +68,7 @@ test("StrictMode recovery delivers one pending command with its retained request
   const command = { key: "action", label: "Act", consequence: "Continue", payload_schema: "empty",
     available_in: [], required: true, field_presentation: [], targets: [] } satisfies OperatorCommandDefinition;
   const scope = { run_id: "run-one", scope_id: "scope-one", commands: [command], outputs: [],
-    cursor: { scope_version: 1, transition_id: null }, command_targets: { action: [] } } as unknown as OperatorScopeView;
+    cursor: { scope_version: 1, transition_id: null }, command_targets: { action: [] }, command_prefill: {}, resources: [] } as unknown as OperatorScopeView;
   savePendingCommand({ run_id: "run-one", scope_id: "scope-one", command_key: "action", owner_version: 1,
     targets: [], request_id: "stable-id", payload: {} });
   let complete: (value: Response) => void = () => undefined;
@@ -95,7 +95,7 @@ function anyRunResponse(url: string): Response {
   const runId = url.match(/\/runs\/([^/?]+)/)?.[1] ?? "run-one";
   if (url.endsWith(`/scopes/${scopeOf(runId)}`)) return Response.json({ scope_id: scopeOf(runId), run_id: runId, label: `Scope of ${runId}`,
     state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
-    outputs: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+    outputs: [], resources: [], executions: [], commands: [], cursor: { scope_version: 1 } });
   return Response.json({ run_id: runId, scopes: [{ scope_id: scopeOf(runId), scope_key: "root", label: `Scope of ${runId}` }] });
 }
 
@@ -105,9 +105,9 @@ test("an authority event refreshes its own run and both shared lists, and leaves
   const cache = client();
   render(<QueryClientProvider client={cache}>
     <OperatorRunListView onSelectRun={() => undefined} onNewRun={() => undefined} onDefinitions={() => undefined} />
-    <ReviewInboxView onSelectRun={() => undefined} onSelectArtifact={() => undefined} />
-    <GenericOperatorRunView runId="run-one" onBack={() => undefined} />
-    <GenericOperatorRunView runId="run-two" onBack={() => undefined} />
+    <ReviewInboxView onSelectScope={() => undefined} />
+    <GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} />
+    <GenericOperatorRunView runId="run-two" initialScopeId={null} onBack={() => undefined} />
   </QueryClientProvider>);
   await screen.findByRole("heading", { name: "Scope of run-one" });
   await screen.findByRole("heading", { name: "Scope of run-two" });
@@ -130,13 +130,13 @@ test("the root scope is displayed even when the server lists a child scope first
     if (url.endsWith("/scopes/z-root") || url.endsWith("/scopes/a-child")) {
       const scope_id = url.split("/").pop() ?? "";
       return Response.json({ scope_id, run_id: "run-one", label: scope_id === "z-root" ? "Root scope" : "Child scope",
-        state: { schema: "text", data: { kind: "string", value: "s" } }, outcome: null, outputs: [], executions: [],
+        state: { schema: "text", data: { kind: "string", value: "s" } }, outcome: null, outputs: [], resources: [], executions: [],
         commands: [], cursor: { scope_version: 1 } });
     }
     return runResponse(url);
   }));
   const cache = client();
-  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" onBack={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Root scope" });
   reverse = true;
   await cache.invalidateQueries({ queryKey: ["operator", "run-one"] });
@@ -151,7 +151,7 @@ test("a failed scope fetch keeps the back button and scope selector and shows th
     return runResponse(url);
   }));
   const onBack = vi.fn();
-  render(<QueryClientProvider client={client()}><GenericOperatorRunView runId="run-one" onBack={onBack} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client()}><GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={onBack} /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Current scope" });
   fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "broken" } });
   expect((await screen.findByRole("alert")).textContent).toMatch(/scope is unreadable/);

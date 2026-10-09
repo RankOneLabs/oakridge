@@ -29,7 +29,8 @@ export const planning = defineScope({
       targets: [reference({ kind: "output_revision", key: "plan", schema: "revision" }, [])],
       label: "Accept",
       consequence: "accept",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "plan", schema: "revision" }, []) }]
     },
     {
       key: "request_changes",
@@ -39,7 +40,8 @@ export const planning = defineScope({
       targets: [reference({ kind: "output_revision", key: "plan", schema: "revision" }, [])],
       label: "Request Changes",
       consequence: "request changes",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "plan", schema: "revision" }, []) }]
     },
     {
       key: "retry",

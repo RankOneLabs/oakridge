@@ -32,7 +32,8 @@ export const implementation = defineScope({
       ],
       label: "Accept Build",
       consequence: "accept build",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "request_build_changes",
@@ -45,7 +46,8 @@ export const implementation = defineScope({
       ],
       label: "Request Build Changes",
       consequence: "request build changes",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "retry_build",
@@ -55,7 +57,8 @@ export const implementation = defineScope({
       targets: [],
       label: "Retry Build",
       consequence: "retry build",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "build_result", value: reference({ kind: "optional_output_revision", key: "build_result", schema: "optional_revision" }, []) }, { key: "pr_summary", value: reference({ kind: "optional_output_revision", key: "pr_summary", schema: "optional_revision" }, []) }]
     },
     {
       key: "accept_assessment",
@@ -69,7 +72,8 @@ export const implementation = defineScope({
       ],
       label: "Accept Assessment",
       consequence: "accept assessment",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "assessment", value: reference({ kind: "output_revision", key: "assessment", schema: "revision" }, []) }, { key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "discuss_assessment",
@@ -83,7 +87,8 @@ export const implementation = defineScope({
       ],
       label: "Discuss Assessment",
       consequence: "discuss assessment",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "assessment", value: reference({ kind: "output_revision", key: "assessment", schema: "revision" }, []) }, { key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "request_implementation_changes",
@@ -97,7 +102,8 @@ export const implementation = defineScope({
       ],
       label: "Request Implementation Changes",
       consequence: "request implementation changes",
-      field_presentation: []
+      field_presentation: [],
+      prefill: [{ key: "assessment", value: reference({ kind: "output_revision", key: "assessment", schema: "revision" }, []) }, { key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
       key: "retry_assessment",

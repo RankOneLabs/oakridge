@@ -13,6 +13,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/client.ts",
   "core-client/generated-contracts.ts",
   "core-client/observation-roots.ts",
+  "core-client/plain-value.ts",
   "core-client/transport-errors.ts",
   "domain/execution.ts",
   "domain/primitives.ts",

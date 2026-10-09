@@ -3,7 +3,7 @@ import { migrateEmptyDatabase } from "./storage/migrate";
 import { claimRunGeneration, currentRunGeneration } from "./storage/run-lifecycle";
 import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
-import { DEFAULT_WORKFLOW_TIMING, ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
+import { ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
 
 /** Recovery forks onto the version the production process runs, which includes its core binary. */
 function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
@@ -65,8 +65,8 @@ export async function runOps(args: readonly string[], database_url: string | und
     } else {
       const forked = await DBOS.forkWorkflow(workflow_id!, startStep,
         { applicationVersion: application_version,
-          ...(status.workflowName === "oakridgeEffectWorkflow"
-            ? { timeoutMS: status.timeoutMS ?? DEFAULT_WORKFLOW_TIMING.execution_deadline_ms } : {}) });
+          ...(status.workflowName === "oakridgeEffectWorkflow" && status.timeoutMS !== undefined
+            ? { timeoutMS: status.timeoutMS } : {}) });
       recovered_workflow_id = forked.workflowID;
     }
     if (runGeneration) {

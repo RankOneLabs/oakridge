@@ -37,9 +37,11 @@ Child dispatch reads durable intent and workflow status, so restart neither
 redelivers a settled child nor forgets one still pending.
 
 Each provider start, observe and stop call uses its action's pinned
-`deadline_ms`. Start and observation retries share a DBOS execution timeout
-(one hour by default); if that deadline expires while parked, startup settles
-the intent as rejected and delivers failure evidence. Cleanup remains pending
+`deadline_ms`. Start retries are bounded by the action's pinned `max_attempts`
+and a lost session by consecutive unavailable observations, so a working agent
+session has no wall-clock limit. `execution_deadline_ms` in the workflow timing
+optionally adds a DBOS execution timeout; if that deadline expires while parked,
+startup settles the intent as rejected and delivers failure evidence. Cleanup remains pending
 until the provider acknowledges it. Provider rejections and exhausted attempts
 follow the bundle's declared recovery policy; infrastructure failures surface
 as run workflow errors and are recovered through a fork.

@@ -21,6 +21,7 @@ export interface OperatorScopeView {
   readonly commands: readonly OperatorCommandDefinition[]; readonly executions: readonly OperatorExecutionView[];
   readonly outputs: readonly OperatorOutputSlotView[]; readonly resources: readonly OperatorResourceBindingRecord[];
   readonly command_targets: Readonly<{ readonly [command_key: string]: readonly OperatorTargetRevision[] }>;
+  readonly command_prefill: Readonly<{ readonly [command_key: string]: OperatorCommandPrefill }>;
   readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor;
 }
 
@@ -59,7 +60,7 @@ export type OperatorCompiledBundle = { readonly "digest": string; readonly "scop
 
 export type OperatorCheckedValue = { readonly "data": OperatorCheckedData; readonly "schema": string };
 
-export type OperatorCommandDefinition = { readonly "available_in": (string)[]; readonly "consequence": string; readonly "field_presentation": (OperatorCommandFieldPresentation)[]; readonly "key": string; readonly "label": string; readonly "payload_schema": string; readonly "required": boolean; readonly "targets": (OperatorExpression)[] };
+export type OperatorCommandDefinition = { readonly "available_in": (string)[]; readonly "consequence": string; readonly "field_presentation": (OperatorCommandFieldPresentation)[]; readonly "key": string; readonly "label": string; readonly "payload_schema": string; readonly "prefill"?: (OperatorCommandFieldPrefill)[]; readonly "required": boolean; readonly "targets": (OperatorExpression)[] };
 
 export type OperatorExecutionView = Pick<OperatorExecutionRecord, "id" | "scope_id" | "worker_key" | "generation" | "status" | "result" | "version">;
 
@@ -68,6 +69,8 @@ export interface OperatorOutputSlotView extends OperatorOutputSlotRecord { reado
 export type OperatorResourceBindingRecord = OperatorBranded<OperatorResourceBinding, { run_id: string; scope_id: string }>;
 
 export interface OperatorTargetRevision { readonly identity: string; readonly version: number }
+
+export type OperatorCommandPrefill = Readonly<{ readonly [field_key: string]: OperatorJsonValue }>;
 
 export type OperatorDecisionOutcome = { readonly "explanation": OperatorExplanation; readonly "invocations": (OperatorInvocation)[]; readonly "kind": "apply"; readonly "mutations": (OperatorMutationValue)[]; readonly "outcome"?: OperatorCheckedValue | null; readonly "targets": (OperatorCheckedValue)[] } | { readonly "attention"?: OperatorAttentionMetadata | null; readonly "continuations": (string)[]; readonly "explanation": OperatorExplanation; readonly "kind": "wait"; readonly "reason": string } | { readonly "detail": OperatorCheckedValue; readonly "error": string; readonly "explanation": OperatorExplanation; readonly "kind": "reject" };
 
@@ -93,6 +96,8 @@ export type OperatorCheckedData = { readonly "kind": "boolean"; readonly "value"
 
 export type OperatorCommandFieldPresentation = { readonly "key": string; readonly "presentation": OperatorPresentation };
 
+export type OperatorCommandFieldPrefill = { readonly "key": string; readonly "value": OperatorExpression };
+
 export type OperatorExpression = { readonly "kind": "literal"; readonly "schema": string; readonly "value": unknown } | { readonly "kind": "reference"; readonly "path": (string)[]; readonly "root": OperatorReferenceRoot } | { readonly "fields": (OperatorFieldExpression)[]; readonly "kind": "record"; readonly "schema": string } | { readonly "items": (OperatorExpression)[]; readonly "kind": "list"; readonly "schema": string } | { readonly "kind": "variant"; readonly "schema": string; readonly "value": OperatorExpression; readonly "variant": string } | { readonly "kind": "equals"; readonly "left": OperatorExpression; readonly "right": OperatorExpression } | { readonly "kind": "is_variant"; readonly "value": OperatorExpression; readonly "variant": string } | { readonly "items": (OperatorExpression)[]; readonly "kind": "all" } | { readonly "items": (OperatorExpression)[]; readonly "kind": "any" } | { readonly "kind": "not"; readonly "value": OperatorExpression } | { readonly "kind": "map"; readonly "schema": string; readonly "source": OperatorExpression; readonly "value": OperatorExpression } | { readonly "kind": "optional"; readonly "schema": string; readonly "value"?: OperatorExpression | null } | { readonly "key": string; readonly "kind": "field"; readonly "value": OperatorExpression } | { readonly "key": OperatorExpression; readonly "key_field": string; readonly "kind": "filter_by"; readonly "source": OperatorExpression } | { readonly "kind": "contains"; readonly "source": OperatorExpression; readonly "value": OperatorExpression } | { readonly "key": OperatorExpression; readonly "key_field": string; readonly "kind": "lookup"; readonly "source": OperatorExpression } | { readonly "kind": "filter"; readonly "predicate": OperatorExpression; readonly "source": OperatorExpression } | { readonly "key_field": string; readonly "kind": "unique_by"; readonly "source": OperatorExpression } | { readonly "dependencies_field": string; readonly "key_field": string; readonly "kind": "check_collection"; readonly "source": OperatorExpression } | { readonly "kind": "every"; readonly "predicate": OperatorExpression; readonly "source": OperatorExpression };
 
 export type OperatorExecutionRecord = OperatorBranded<OperatorExecution, { id: string; run_id: string; scope_id: string }>;
@@ -113,6 +118,8 @@ export interface OperatorResourceBinding {
   observation: OperatorCheckedValue | null;
   version: number;
 }
+
+export type OperatorJsonValue = OperatorJsonPrimitive | readonly OperatorJsonValue[] | { readonly [key: string]: OperatorJsonValue };
 
 export type OperatorExplanation = { readonly "bundle_digest": string; readonly "node_id": string; readonly "owner": string; readonly "read_set": (OperatorReadVersion)[]; readonly "trace": (string)[]; readonly "trigger_id": string };
 
@@ -202,6 +209,8 @@ export interface OperatorArtifactRevision {
   predecessor_id: string | null;
   version: number;
 }
+
+export type OperatorJsonPrimitive = string | number | boolean | null;
 
 export type OperatorReadVersion = { readonly "identity": string; readonly "version": number };
 

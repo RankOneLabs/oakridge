@@ -1,5 +1,6 @@
 import { INPUT_CONTRACTS } from "../provider-catalog";
-import type { CheckedValue, DefinitionBundle } from "../../core-client/generated-contracts";
+import type { DefinitionBundle } from "../../core-client/generated-contracts";
+import { plainValue } from "../../core-client/plain-value";
 import type { ExecutionRequest } from "../../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "../../domain/primitives";
 import { renderSessionStart } from "../../adapters/kbbl";
@@ -9,41 +10,6 @@ import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
 import type { PromptTexts } from "../../storage/prompt-content";
 
-/** Reverse the checked wire representation using the same field indexes as the compiler. */
-export function invocationInput(value: CheckedValue, bundle: DefinitionBundle): Result<JsonValue> {
-  const data = value.data;
-  const failure = (): Result<never> => ({ ok: false, error: { operation: "invocation_input", entity_id: value.schema, detail: "checked value does not match its stored schema" } });
-  switch (data.kind) {
-    case "boolean": case "integer": case "string": return { ok: true, value: data.value };
-    case "enum": return { ok: true, value: data.variant };
-    case "reference": return { ok: true, value: { brand: data.brand, id: data.id } };
-    case "optional": return data.value ? invocationInput(data.value, bundle) : { ok: true, value: null };
-    case "variant": {
-      const result = invocationInput(data.value, bundle);
-      return result.ok ? { ok: true, value: { kind: data.variant, value: result.value } } : result;
-    }
-    case "list": {
-      const items: JsonValue[] = [];
-      for (const item of data.items) { const result = invocationInput(item, bundle); if (!result.ok) return result; items.push(result.value); }
-      return { ok: true, value: items };
-    }
-    case "record": {
-      const shape = bundle.schemas.find((schema) => schema.key === value.schema)?.shape;
-      if (shape?.kind !== "record") return failure();
-      const record: { [key: string]: JsonValue } = {};
-      for (const field of data.fields) {
-        const definition = shape.fields[field.field_id];
-        if (!definition) return failure();
-        if (!field.value) continue;
-        const result = invocationInput(field.value, bundle);
-        if (!result.ok) return result;
-        record[definition.key] = result.value;
-      }
-      for (const entry of data.dictionary) { const result = invocationInput(entry.value, bundle); if (!result.ok) return result; record[entry.key] = result.value; }
-      return { ok: true, value: record };
-    }
-  }
-}
 
 /** `prompts` holds the stored text of every prompt the decision selected; a render never reads a prompt file. */
 export interface ProviderRequestSelection { readonly invocation: StableInvocation; readonly bundle: DefinitionBundle; readonly prompts: PromptTexts; readonly scope: Pick<ScopeInstanceRecord, "id" | "run_id" | "child_key" | "scope_key">; readonly publication_secret?: string }
@@ -54,7 +20,7 @@ export function promptWithActionInput(prompt: string, input: JsonValue): string 
 export function pinProviderRequest(input: ProviderRequestSelection): Result<StableInvocation> {
   const { invocation, bundle, prompts, scope, publication_secret } = input;
   const unit_id = scope.child_key ?? scope.id;
-  const decoded = invocationInput(invocation.selection.input, bundle);
+  const decoded = plainValue(invocation.selection.input, bundle);
   if (!decoded.ok) return decoded;
   const contract = invocation.selection.definition;
   const prompt_key = invocation.selection.prompt_key;
