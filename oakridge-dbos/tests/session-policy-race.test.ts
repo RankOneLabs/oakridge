@@ -79,6 +79,65 @@ test("policy edit waits for an in-flight child invocation pin", async () => with
   } finally { fixture.core.close(); }
 }));
 
+test("two invocation pins on sibling cohorts take the exclusive run lock without capacity changes", async () => withDatabase(async ({ db }) => {
+  const bundle = await developmentBundle("implementation");
+  const fixture = await runtimeFixture(db, bundle, { brief: { ...brief, cohort_id: "c02" }, repository, push_remote_owner: "owner" });
+  try {
+    for (const id of ["cohort-a", "cohort-b"]) await db.query(
+      "INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,collection_key,input,local_state) SELECT $1,run_id,id,scope_key,$1,'cohorts',input,local_state FROM authority.scope_instance WHERE id=$2",
+      [id, fixture.root_scope_id]);
+    const prepared = await Promise.all(["cohort-a", "cohort-b"].map(async (id) => {
+      const scope_id = id as ScopeId;
+      const trigger = { id: `begin-${id}`, key: "begin", payload: await fixture.checked("unit", {}) };
+      const source = (await readSnapshot(db, scope_id, trigger))!;
+      const evaluated = await fixture.core.request("evaluate", { bundle, snapshot: source.snapshot });
+      if (!evaluated.ok || evaluated.value.kind !== "evaluated" || evaluated.value.value.kind !== "apply") throw new Error(JSON.stringify(evaluated));
+      expect(evaluated.value.value.invocations).toHaveLength(1);
+      const request = prepareCommit({ run_id: fixture.run_id, scope_id, ingress_id: id, trigger, operator_version: null },
+        { source, outcome: { ...evaluated.value.value, mutations: [] } });
+      if (!request.ok) throw new Error(request.error.detail);
+      expect(request.value.capacity).toHaveLength(0);
+      return { source, request: request.value };
+    }));
+    let signal_first_write: () => void = () => undefined;
+    const first_write = new Promise<void>((resolve) => { signal_first_write = resolve; });
+    let release_first: () => void = () => undefined;
+    const hold_first = new Promise<void>((resolve) => { release_first = resolve; });
+    const paused: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) => db.transaction((tx) => operation({
+      query: async (statement, parameters) => {
+        if (statement.startsWith("INSERT INTO authority.effect_intent")) { signal_first_write(); await hold_first; }
+        return tx.query(statement, parameters);
+      },
+    }), isolation) };
+    const first = commitDecision(paused, prepared[0]!.request, prepared[0]!.source);
+    await first_write;
+    let signal_second_lock: () => void = () => undefined;
+    const second_lock = new Promise<void>((resolve) => { signal_second_lock = resolve; });
+    let signal_second_acquired: () => void = () => undefined;
+    const second_acquired = new Promise<void>((resolve) => { signal_second_acquired = resolve; });
+    const observed: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) => db.transaction((tx) => operation({
+      query: async <Row extends object>(statement: string, parameters: readonly unknown[]): Promise<readonly Row[]> => {
+        if (statement.startsWith("SELECT pg_advisory_xact_lock")) {
+          signal_second_lock();
+          const result = await tx.query<Row>(statement, parameters);
+          signal_second_acquired();
+          return result;
+        }
+        return tx.query(statement, parameters);
+      },
+    }), isolation) };
+    const second = commitDecision(observed, prepared[1]!.request, prepared[1]!.source);
+    await second_lock;
+    let acquired_while_first_open: boolean;
+    try {
+      acquired_while_first_open = await Promise.race([second_acquired.then(() => true), Bun.sleep(200).then(() => false)]);
+    } finally { release_first(); }
+    const results = await Promise.all([first, second]);
+    expect(acquired_while_first_open).toBe(false);
+    for (const result of results) expect(result).toMatchObject({ ok: true, value: { kind: "Committed" } });
+  } finally { fixture.core.close(); }
+}));
+
 test("busy sibling cohorts do not exhaust the policy edit or decision retry budget", async () => withDatabase(async ({ db }) => {
   const bundle = await developmentBundle("implementation");
   const fixture = await runtimeFixture(db, bundle, { brief: { ...brief, cohort_id: "c02" }, repository, push_remote_owner: "owner" });

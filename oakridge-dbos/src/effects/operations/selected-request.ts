@@ -24,8 +24,8 @@ export function resolveSelectedSessionSettings(bundle: DefinitionBundle, selecti
   if (manifest?.input_contract !== INPUT_CONTRACTS.session) return { ok: true, value: null };
   const decoded = plainValue(selection.input, bundle);
   if (!decoded.ok) return decoded;
-  if (!isRecord(decoded.value) || !isRecord(decoded.value.config)) return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session action config missing" } };
-  const config = decoded.value.config;
+  if (!isRecord(decoded.value)) return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session action config missing" } };
+  const config = isRecord(decoded.value.config) ? decoded.value.config : decoded.value;
   if (config.runtime !== "claude-code" && config.runtime !== "codex") return { ok: false, error: { operation: "resolve_session_settings", entity_id: scope.id, detail: "session runtime missing" } };
   const runtime = config.runtime as RuntimeId;
   const other_runtime: RuntimeId = runtime === "codex" ? "claude-code" : "codex";

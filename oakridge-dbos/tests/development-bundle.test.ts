@@ -131,6 +131,10 @@ test("selected child session pins policy model and effort in the provider bytes"
       settings: { runtime: null, model: "gpt-6-sol", effort: "high" } }] };
     const settings = resolveSelectedSessionSettings(bundle, selection, scope, policy);
     expect(settings).toMatchObject({ ok: true, value: { model: "gpt-6-sol", effort: "high", policy_version: 3 } });
+    const mismatched = await checked(core, "session_action", { selector: { stage_key: "planning", cohort_key: "c02", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    expect(resolveSelectedSessionSettings(bundle, { ...selection, input: mismatched }, scope, policy))
+      .toMatchObject({ ok: false, error: { detail: "session selector disagrees with selected action" } });
     if (!settings.ok) throw new Error(settings.error.detail);
     const selected = selectedInvocation("invocation" as InvocationId, "execution", selection, settings.value);
     const pinned = pinProviderRequest({ invocation: selected, bundle, prompts: new Map([[action.prompt!, "Build the cohort"]]), scope, publication_secret: "secret" });
