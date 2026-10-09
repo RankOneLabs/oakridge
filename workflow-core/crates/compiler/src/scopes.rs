@@ -370,7 +370,9 @@ fn check_prefill(
             _ => &value.schema,
         };
         if value.schema != field.schema && *unwrapped != field.schema {
-            return Err(invalid("prefill value schema differs from the payload field"));
+            return Err(invalid(
+                "prefill value schema differs from the payload field",
+            ));
         }
     }
     Ok(())
