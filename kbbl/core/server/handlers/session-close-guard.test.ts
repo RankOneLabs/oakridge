@@ -19,23 +19,16 @@ import { mountSessionsRoutes } from "./sessions";
 import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
 import { ok, type FenceContext } from "../../acp/types";
-
-const SID = "db26174d-21e2-40f4-af40-fc359c4e9604";
-const HOLDER = "012c6027-4a21-4ec4-aadd-244ebf3236a9:0";
+import { RECORDED_SESSION_HOLD } from "../../session/session-hold.fixture";
 
 /**
- * The exact body GET /api/session_holds/:sid returns, recorded from the real
- * route in oakridge-dbos/tests/production-effects.test.ts — not hand-rolled,
- * so the two sides are proven to agree rather than merely declared to.
+ * The exact body GET /api/session_holds/:sid returns — a value imported
+ * from the shared fixture, not hand-rolled, so a change to SessionHold's
+ * field set fails this suite too rather than drifting unnoticed.
  */
-const hold = {
-  session_id: SID,
-  execution_id: HOLDER,
-  run_id: "9e868912-4944-4687-8316-0c2f6470bc3c",
-  stage_instance_id: "012c6027-4a21-4ec4-aadd-244ebf3236a9",
-  stage_key: "spec_analyzer",
-  unit_id: "0",
-};
+const hold = RECORDED_SESSION_HOLD;
+const SID = hold.session_id;
+const HOLDER = hold.execution_id;
 const CONTROL_TOKEN = "oakridge-control-secret";
 
 interface Closed {

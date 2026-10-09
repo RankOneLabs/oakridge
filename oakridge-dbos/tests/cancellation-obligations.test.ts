@@ -72,6 +72,45 @@ test("findHeldSession stops reporting a hold once the start's cleanup is confirm
   expect(await findHeldSession(db, "session-1")).toBeNull();
 }));
 
+/**
+ * findHeldSession (intents.ts) carries a verbatim copy of
+ * pendingCleanupCount's cleanup-owed predicate rather than sharing one
+ * definition, because import-boundaries.test.ts requires a literal SQL
+ * string at every db.query() call. This pins the two copies — and
+ * requiresCleanup's in-memory version — to the same answer across every
+ * state requiresCleanup's own test (above) exercises, so the next change to
+ * one predicate without the other fails here before it ships.
+ */
+const kbblHandle = { kind: "kbbl_session", session_id: "session-1" } as const;
+test.each([
+  // Mirrors "cleanup is owed exactly when an external execution may exist" above, one row per case.
+  { status: "pending", extra: {}, held: false, expected: false },
+  { status: "pending", extra: { has_dispatched: true }, held: false, expected: true },
+  { status: "rejected", extra: { has_dispatched: true }, held: false, expected: false },
+  { status: "rejected", extra: { has_dispatched: true, has_uncertain_start: true }, held: false, expected: true },
+  { status: "acknowledged", extra: {}, held: true, expected: true },
+  { status: "revoked", extra: {}, held: true, expected: true },
+  { status: "cleanup_confirmed", extra: {}, held: true, expected: false },
+] as const)("requiresCleanup, pendingCleanupCount and findHeldSession agree for status=%s extra=%j", async ({ status, extra, held, expected }) =>
+  withDatabase(async ({ db }) => {
+    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+    await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
+    await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ('scope','run','build','unit-1','{}','{}')", []);
+    await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
+    const payload: EffectPayload = { ...start, handle: held ? kbblHandle : null, ...extra };
+    await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,$2)",
+      [JSON.stringify(sealEffectPayload(payload)), status]);
+
+    expect(requiresCleanup({ status, payload })).toBe(expected);
+    expect(await pendingCleanupCount(db, "run")).toBe(expected ? 1 : 0);
+    // findHeldSession keys on a kbbl session id; a null-handle case has none to look up, so it is skipped there.
+    if (held) {
+      expect(await findHeldSession(db, "session-1")).toEqual(expected
+        ? { session_id: "session-1", execution_id: "execution-1", run_id: "run", stage_instance_id: "scope", stage_key: "build", unit_id: "unit-1" }
+        : null);
+    }
+  }));
+
 test("deletion is refused while an external cleanup obligation remains", async () => {
   const db = { query: async (sql: string) => sql.includes("count(*)") ? [{ count: "1" }] : [] } as unknown as TransactionalSqlExecutor;
   expect(await deletionEligibility(db, "run")).toEqual({ kind: "refused", obligations: 1 });

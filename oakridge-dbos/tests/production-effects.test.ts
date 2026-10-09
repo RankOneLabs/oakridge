@@ -24,6 +24,7 @@ import type { MutationService } from "../src/storage/mutation-service";
 import { redactingView } from "../src/projections/serialization-view";
 import { sealEffectPayload, unsealEffectPayload, verifyEffectEncryption } from "../src/storage/effect-secret";
 import { developmentBundle, brief, repository, build_body } from "./development-runtime-fixture";
+import { RECORDED_SESSION_HOLD } from "../../kbbl/core/session/session-hold.fixture";
 
 process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 
@@ -147,26 +148,28 @@ test("run and definition pages expose stable next cursors and refuse malformed c
 });
 
 /**
- * The exact body kbbl's `isSessionHold` must accept: recorded here, from the
- * real route, rather than hand-rolled — a shared literal that proves the two
- * sides agree rather than merely declaring that they should.
+ * The exact body kbbl's `isSessionHold` must accept, built from the shared
+ * `RECORDED_SESSION_HOLD` fixture both sides import — a change to the
+ * field set fails `session-close-guard.test.ts` too, rather than drifting
+ * unnoticed behind a comment promising two hand-synced copies agree.
  */
 test("GET /api/session_holds/:sid returns the body kbbl's isSessionHold accepts", async () => withDatabase(async ({ db }) => {
+  const { session_id, execution_id, run_id, stage_instance_id, stage_key, unit_id } = RECORDED_SESSION_HOLD;
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
-  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
-  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ('scope','run','spec_analyzer','0','{}','{}')", []);
-  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ('execution-1','scope','agent',1,'pending')", []);
-  const held = sealEffectPayload({ action: "start", handle: { kind: "kbbl_session", session_id: "session-1" },
-    invocation: { id: "invocation-1", execution_id: "execution-1", selection: {}, bytes: "unused" } } as unknown as EffectPayload);
-  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start','scope','execution-1','ingress:0',$1,'acknowledged')", [JSON.stringify(held)]);
+  await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ($1,'bundle')", [run_id]);
+  await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,'{}','{}')",
+    [stage_instance_id, run_id, stage_key, unit_id]);
+  await db.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ($1,$2,'agent',1,'pending')", [execution_id, stage_instance_id]);
+  const held = sealEffectPayload({ action: "start", handle: { kind: "kbbl_session", session_id },
+    invocation: { id: "invocation-1", execution_id, selection: {}, bytes: "unused" } } as unknown as EffectPayload);
+  await db.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload,status) VALUES ('start',$1,$2,'ingress:0',$3,'acknowledged')",
+    [stage_instance_id, execution_id, JSON.stringify(held)]);
 
   const app = new Hono();
   installDefinitionApi(app, { db, core: {} as CoreClient, mutations: {} as MutationService, wake: async () => undefined });
-  const response = await app.request("/api/session_holds/session-1");
+  const response = await app.request(`/api/session_holds/${session_id}`);
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ held: true, hold: {
-    session_id: "session-1", execution_id: "execution-1", run_id: "run", stage_instance_id: "scope", stage_key: "spec_analyzer", unit_id: "0",
-  } });
+  expect(await response.json()).toEqual({ held: true, hold: RECORDED_SESSION_HOLD });
 
   expect(await (await app.request("/api/session_holds/no-such-session")).json()).toEqual({ held: false, hold: null });
 }));
