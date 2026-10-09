@@ -1,5 +1,4 @@
 import type { Hono } from "hono";
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import type { EffectPayload } from "../effects/intents";
@@ -8,6 +7,7 @@ import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { decisionRejectedBody, MAX_PUBLICATION_VALUE_BYTES, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
+import { requireCurrentAuthority, verifyExecutionSecret } from "./execution-authority";
 import { CORE_MAX_FRAME_BYTES } from "../core-client/generated-contracts";
 import { readScopeView } from "../storage/projection-reader";
 import { measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
@@ -16,16 +16,6 @@ import { readSnapshot } from "../storage/snapshot-reader";
 interface SelectedOutputRequest { readonly request_id: string; readonly predecessor_id: string | null; readonly collection_key: string; readonly body: unknown }
 interface PublicationDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 interface SelectedExecution { readonly source: DefinitionBundle; readonly scope_key: string; readonly payload: EffectPayload }
-interface ExecutionSecretRow { readonly publication_secret_hash: string | null }
-export async function hasExecutionSecret(db: TransactionalSqlExecutor, run_id: RunId, scope_id: ScopeId, execution_id: string, header: string | undefined): Promise<boolean> {
-  const rows = await db.query<ExecutionSecretRow>(`SELECT e.publication_secret_hash FROM authority.execution e
-    JOIN authority.execution_selection x ON x.scope_id=e.scope_id AND x.execution_id=e.id AND x.generation=e.generation
-    WHERE e.id=$1 AND e.scope_id=$2 AND e.run_id=$3 AND e.status='pending'`, [execution_id, scope_id, run_id]);
-  const expected = rows[0]?.publication_secret_hash;
-  if (!expected || !header?.startsWith("Bearer ")) return false;
-  const actual = createHash("sha256").update(header.slice(7)).digest("hex");
-  return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
-}
 function decodeOutput(value: unknown): SelectedOutputRequest | null {
   if (!value || typeof value !== "object" || !("request_id" in value) || typeof value.request_id !== "string" || !value.request_id
     || !("predecessor_id" in value) || !(value.predecessor_id === null || typeof value.predecessor_id === "string")
@@ -48,7 +38,8 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const run_id = c.req.param("run_id") as RunId;
     const scope_id = c.req.param("scope_id") as ScopeId;
     const execution_id = c.req.param("execution_id");
-    if (!await hasExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"))) return c.json({ error: "execution_authority_refused" }, 403);
+    const verified = await verifyExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"));
+    if (!verified || !await requireCurrentAuthority(deps.db, verified)) return c.json({ error: "execution_authority_refused" }, 403);
     const view = await readScopeView(deps.db, scope_id);
     if (!view || view.run_id !== run_id) return c.json({ error: "scope_not_found" }, 404);
     const selected = await readSelectedExecution(deps.db, scope_id, execution_id);
@@ -80,7 +71,8 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const run_id = c.req.param("run_id") as RunId;
     const scope_id = c.req.param("scope_id") as ScopeId;
     const execution_id = c.req.param("execution_id");
-    if (!await hasExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"))) return c.json({ error: "execution_authority_refused" }, 403);
+    const verified = await verifyExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"));
+    if (!verified) return c.json({ error: "execution_authority_refused" }, 403);
     const output_key = c.req.param("output_key");
     const revision_id = publicationRevisionId(run_id, scope_id, body.request_id);
     const digest = requestDigest({ execution_id, output_key, body });
@@ -90,6 +82,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
       return c.json(publicationReceipt(body.request_id, prior.receipt, revision_id), 200);
     }
     if (prior.kind === "conflict") return c.json({ error: "request ID reused with different publication content" }, 409);
+    if (!await requireCurrentAuthority(deps.db, verified)) return c.json({ error: "execution_authority_refused" }, 403);
     const owners = await deps.db.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1 AND run_id=$2", [scope_id, run_id]);
     if (!owners.length) return c.json({ error: "scope not found in run" }, 404);
     const selected = await readSelectedExecution(deps.db, scope_id, execution_id);
