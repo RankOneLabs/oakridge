@@ -58,11 +58,12 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     let remaining_frame_bytes = CORE_MAX_FRAME_BYTES;
     for (const output_key of selected_keys) {
       const output = scope.outputs.find((output) => output.key === output_key);
-      const event = scope.facts.find((fact) => fact.key === output?.publication_trigger);
-      if (!output?.publication_trigger || !event) return c.json({ error: "publication trigger is not configured" }, 422);
+      const key = typeof output?.publication_trigger === "string" ? output.publication_trigger : null;
+      const event = key ? scope.facts.find((fact) => fact.key === key) : undefined;
+      if (!key || !event) return c.json({ error: "publication trigger is not configured" }, 422);
       const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
       if (!trigger.ok || trigger.value.kind !== "validated") return c.json({ error: "publication trigger payload is invalid" }, 422);
-      const measured = await readSnapshot(deps.db, scope_id, { id: "frame-budget", key: output.publication_trigger, payload: trigger.value.value });
+      const measured = await readSnapshot(deps.db, scope_id, { id: "frame-budget", key, payload: trigger.value.value });
       if (!measured) return c.json({ error: "scope_not_found" }, 404);
       // The shared budget must fit every output this execution can publish.
       remaining_frame_bytes = Math.min(remaining_frame_bytes, Math.max(0, CORE_MAX_FRAME_BYTES - measureAuthoritySnapshot(measured).bytes));
@@ -94,7 +95,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const output = scope?.outputs.find((output) => output.key === output_key);
     if (!selected || !output || !selected.payload.invocation.selection.definition.outputs.includes(output_key))
       return c.json({ error: "selected execution cannot publish this output" }, 422);
-    const key = output.publication_trigger;
+    const key = typeof output.publication_trigger === "string" ? output.publication_trigger : null;
     const event = scope?.facts.find((fact) => fact.key === key);
     if (!key || !event) return c.json({ error: "publication trigger is not configured" }, 422);
     const value_bytes = publicationValueBytes(body.body);

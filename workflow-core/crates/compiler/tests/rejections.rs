@@ -943,7 +943,9 @@ fn unhonorable_tool_authorization() {
 fn output_publication_requires_authorized_producer() {
     reject(
         fixture(),
-        |v| v["scopes"][0]["outputs"][0]["producers"] = json!(["foreign"]),
+        |v| {
+            v["scopes"][0]["outputs"][0]["producers"] = json!(["foreign"]);
+        },
         DomainErrorKind::UnsupportedPublication,
     );
 }
@@ -1112,9 +1114,25 @@ fn publishable_output_rejects_a_null_publication_trigger() {
 fn publication_trigger_requires_declared_fact() {
     reject(
         fixture(),
-        |source| source["scopes"][0]["outputs"][0]["publication_trigger"] = json!("undeclared"),
+        |source| {
+            source["scopes"][0]["outputs"][0]["operator_edit_trigger"] = json!("publish");
+            source["scopes"][0]["outputs"][0]["publication_trigger"] = json!("undeclared");
+        },
         DomainErrorKind::UndeclaredTrigger,
     );
+}
+#[test]
+fn operator_edit_is_a_valid_distinct_publication_trigger() {
+    let mut source: DefinitionBundle = serde_json::from_value(fixture()).unwrap();
+    source.scopes[0].outputs[0].operator_edit_trigger = Some(SymbolKey::from("publish"));
+    assert!(compile(&source, &source.operations).is_ok());
+}
+#[test]
+fn operator_edit_trigger_must_name_a_declared_command() {
+    let mut value = fixture();
+    value["scopes"][0]["outputs"][0]["operator_edit_trigger"] = json!("undeclared");
+    let source: DefinitionBundle = serde_json::from_value(value).unwrap();
+    assert_eq!(compile(&source, &source.operations).unwrap_err().kind, DomainErrorKind::UndeclaredTrigger);
 }
 #[test]
 fn collection_projection_cannot_read_an_undeclared_output() {

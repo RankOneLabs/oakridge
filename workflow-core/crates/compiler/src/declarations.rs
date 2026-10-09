@@ -191,24 +191,16 @@ pub fn validate_bundle(
                     "publishable output requires a publication_trigger",
                 )
             })?;
-            let fact = owner
-                .facts
-                .iter()
-                .find(|fact| fact.key == *key)
-                .ok_or_else(|| {
-                    error(
-                        DomainErrorKind::UndeclaredTrigger,
-                        key.to_string(),
-                        "publication fact missing",
-                    )
-                })?;
-            if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty())
-            {
-                return Err(error(
-                    DomainErrorKind::IncompatiblePort,
-                    key.to_string(),
-                    "publication fact requires an empty record payload",
-                ));
+            let fact = owner.facts.iter().find(|fact| fact.key == *key).ok_or_else(|| {
+                error(DomainErrorKind::UndeclaredTrigger, key.to_string(), "publication fact missing")
+            })?;
+            if !matches!(schema(bundle, &fact.payload_schema)?, SchemaShape::Record { fields, dictionary: None } if fields.is_empty()) {
+                return Err(error(DomainErrorKind::IncompatiblePort, key.to_string(), "publication fact requires an empty record payload"));
+            }
+            if let Some(operator_trigger) = &output.operator_edit_trigger {
+                if !owner.commands.iter().any(|command| command.key == *operator_trigger) {
+                    return Err(error(DomainErrorKind::UndeclaredTrigger, operator_trigger.to_string(), "operator edit trigger must name a declared command"));
+                }
             }
             schema(bundle, &output.schema)?;
             unique(output.producers.iter().map(|w| w.0.as_str()), &output.key.0)?;

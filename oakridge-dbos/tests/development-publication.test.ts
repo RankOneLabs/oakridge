@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { controlTokenMiddleware } from "../src/http/control-auth";
 import { installDefinitionApi } from "../src/http/app";
 import { createHash } from "node:crypto";
-import { withDatabase } from "./effect-fixture";
+import { withDatabase, unit } from "./effect-fixture";
 import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body, launch } from "./development-runtime-fixture";
 import { HTTP_ROUTES } from "../src/http/routes";
 import type { PublicationRequest, PublicationReceipt } from "../src/http/publication";
@@ -46,6 +46,61 @@ test("publication trigger mismatches are typed HTTP rejections and storage rejec
     expect(await validateStorageAuthority(db, request, source, missing)).toMatchObject({ ok: false,
       error: { operation: "validate_storage", detail: "publication trigger does not match output declaration" } });
     expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
+  } finally { f.core.close(); }
+}));
+
+test("operator edits publish validated revisions atomically and stale concurrent edits leave one complete outbox event", async () => withDatabase(async ({ db }) => {
+  const original = await developmentBundle();
+  const bundle: DefinitionBundle = { ...original, scopes: original.scopes.map((scope) => ({ ...scope,
+    outputs: scope.outputs.map((output) => output.key === "build_result" ? { ...output, operator_edit_trigger: "begin" } : output) })) };
+  for (const request_ids of [["edit-first", "edit-second"], ["edit-second", "edit-first"]]) {
+    const f = await runtimeFixture(db, bundle, { brief, repository });
+    try {
+      const owner = await f.scope();
+      const send = async (request_id: string) => f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}/publications`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+          request_id, expected_scope_version: Number(owner.version),
+          trigger: { id: request_id, key: "begin", payload: await f.checked("unit", {}) },
+          output: { scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id: null,
+            predecessor_id: null, expected_slot_version: null, body: await f.checked("build_body", build_body) },
+        }),
+      });
+      const responses = await Promise.all(request_ids.map(send));
+      expect(responses.map((response) => response.status).sort()).toEqual([202, 409]);
+      expect((await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1 AND output_key='build_result'", [f.root_scope_id])).length).toBe(1);
+      const frames = await db.query<{ payload: { kind: string; run_id?: string; scope_id?: string; event?: { scope_key: string } } }>(
+        "SELECT payload FROM authority.operator_event WHERE scope_id=$1 ORDER BY id", [f.root_scope_id]);
+      expect(frames.map((frame) => frame.payload.kind).sort()).toEqual(["invalidate", "run_event"]);
+      expect(frames.find((frame) => frame.payload.kind === "run_event")?.payload.event?.scope_key).toBe("implementation");
+      await db.query("DELETE FROM authority.transition WHERE scope_id=$1", [f.root_scope_id]);
+      expect(await db.query("SELECT payload FROM authority.operator_event WHERE scope_id=$1 ORDER BY id", [f.root_scope_id])).toEqual(frames);
+    } finally { f.core.close(); }
+  }
+}));
+
+test("operator edit schema and reviewed predecessor rejections leave no revision or outbox rows", async () => withDatabase(async ({ db }) => {
+  const original = await developmentBundle();
+  const bundle: DefinitionBundle = { ...original, scopes: original.scopes.map((scope) => ({ ...scope,
+    outputs: scope.outputs.map((output) => output.key === "build_result" ? { ...output, operator_edit_trigger: "begin" } : output) })) };
+  const f = await runtimeFixture(db, bundle, { brief, repository });
+  try {
+    const owner = await f.scope();
+    const request = (request_id: string, body: unknown, predecessor_id: string | null = null) => ({
+      request_id, expected_scope_version: Number(owner.version),
+      trigger: { id: request_id, key: "begin", payload: unit },
+      output: { scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id: null,
+        predecessor_id, expected_slot_version: null, body },
+    });
+    const wrong_schema = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}/publications`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request("wrong-schema", await f.checked("unit", {}))),
+    });
+    expect(wrong_schema.status).toBe(422);
+    const stale = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}/publications`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request("wrong-predecessor", await f.checked("build_body", build_body), "reviewed-elsewhere")),
+    });
+    expect(stale.status).toBe(409);
+    expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
+    expect(await db.query("SELECT id FROM authority.operator_event WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
   } finally { f.core.close(); }
 }));
 

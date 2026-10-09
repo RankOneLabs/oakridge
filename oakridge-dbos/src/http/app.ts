@@ -182,11 +182,16 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       const pinned = await readPinnedDefinition(deps.db, view.run_id);
       const declaration = pinned?.source.scopes.find((scope) => scope.key === view.scope_key);
       const output = declaration?.outputs.find((item) => item.key === parsed.output.output_key);
-      if (!output || parsed.output.body.schema !== output.schema || output.publication_trigger !== parsed.trigger.key
+      const is_operator_edit = parsed.output.execution_id === null && output?.operator_edit_trigger === parsed.trigger.key;
+      if (!output || parsed.output.body.schema !== output.schema
+        || (parsed.output.execution_id !== null && output.publication_trigger !== parsed.trigger.key)
+        || (parsed.output.execution_id === null && !is_operator_edit)
         || (output.collection_key === null && parsed.output.collection_key !== ""))
         return response({ ok: false, error: new InvalidPayloadError("output does not match pinned definition") });
       if (!pinned) return response({ ok: false, error: new MissingEntityError("pinned definition not found") });
-      const trigger_schema = declaration?.facts.find((fact) => fact.key === parsed.trigger.key)?.payload_schema
+      const edit_command = is_operator_edit ? declaration?.commands.find((command) => command.key === parsed.trigger.key) : undefined;
+      if (is_operator_edit && !edit_command) return response({ ok: false, error: new InvalidPayloadError("operator edit command is undeclared") });
+      const trigger_schema = is_operator_edit ? edit_command?.payload_schema : declaration?.facts.find((fact) => fact.key === parsed.trigger.key)?.payload_schema
         ?? declaration?.commands.find((command) => command.key === parsed.trigger.key)?.payload_schema;
       if (!trigger_schema) return response({ ok: false, error: new InvalidPayloadError("publication trigger is undeclared") });
       const raw_output = plainValue(parsed.output.body, pinned.source);
