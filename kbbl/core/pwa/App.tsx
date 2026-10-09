@@ -95,8 +95,6 @@ export function App() {
         inboxStatus={inboxStatus}
         chrome={{
           kind: "route",
-          theme,
-          onToggleTheme: toggleTheme,
           onBack: () => navigate(null),
         }}
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
@@ -107,11 +105,9 @@ export function App() {
       <SessionListView
         sessions={sessions}
         inboxStatus={inboxStatus}
-        theme={theme}
         defaultWorkdir={config?.defaultWorkdir ?? null}
         defaultRuntimeId={config?.defaultRuntimeId ?? "claude-code"}
         runtimes={config?.runtimes ?? []}
-        onToggleTheme={toggleTheme}
         onSelect={(nextSid) => navigate(nextSid)}
         onHydrateSession={hydrateSession}
       />
@@ -126,6 +122,8 @@ export function App() {
         activeSurface={activeSurface}
         attentionCount={attentionCount}
         onNavigate={navigateToSurface}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       {view}
       <PendingApprovalsBadge />

@@ -29,8 +29,8 @@ export function SessionTopBar({
   usage: UsageState | null;
   /**
    * What the host contributes. Session identity — sid, status, stream status,
-   * usage — is the bar's own and renders for both; back and theme belong to
-   * the route host alone.
+   * usage — is the bar's own and renders for both; back belongs to the route
+   * host alone.
    */
   chrome: SessionSurfaceChrome;
 }) {
@@ -70,19 +70,6 @@ export function SessionTopBar({
         >
           {usageText}
         </span>
-      )}
-      {chrome.kind === "route" && (
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={chrome.onToggleTheme}
-          title={chrome.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          aria-label={
-            chrome.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-          }
-        >
-          {chrome.theme === "dark" ? "LIGHT" : "DARK"}
-        </button>
       )}
       <span
         className="session-label"
