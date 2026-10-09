@@ -79,6 +79,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     if (decided.value.kind === "Conflict") return { ok: false, error: new ConflictError(decided.value.detail) };
     if (decided.value.kind === "Rejected") return { ok: false, error: new InvalidPayloadError(decided.value.detail) };
     if (decided.value.kind === "snapshot_too_large") return { ok: false, error: new InvalidPayloadError(`snapshot_too_large: ${decided.value.scope} ${decided.value.bytes}/${decided.value.limit}`) };
+    if (decided.value.kind === "DecisionRejected") return { ok: false, error: new InvalidPayloadError(decided.value.error) };
     return { ok: true, value: new PendingWork(request.request_id, decided.value.receipt.transition_id, decided.value.receipt.scope_version) };
   } catch (cause) { return { ok: false, error: new InternalFaultError(String(cause)) }; }
 }

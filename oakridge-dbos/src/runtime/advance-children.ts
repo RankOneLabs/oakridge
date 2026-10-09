@@ -232,6 +232,8 @@ async function advanceChildrenInternal({ db, core, mutations, run_ids, ...page }
           throw new Error(outcome.detail);
         case "snapshot_too_large":
           throw new Error(`snapshot_too_large: ${outcome.scope} ${outcome.bytes}/${outcome.limit}`);
+        case "DecisionRejected":
+          throw new Error(`lifecycle trigger ${key} for scope ${scope.id} rejected: ${outcome.error}`);
         default: { const unhandled: never = outcome; throw new Error(`unhandled commit outcome: ${JSON.stringify(unhandled)}`); }
       }
     }

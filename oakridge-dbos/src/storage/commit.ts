@@ -25,10 +25,18 @@ export interface OutputPublication { readonly revision_id?: string; readonly sco
 export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
 export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
 export type CommittedReceipt = Extract<CommitReceipt, { readonly kind: "committed" }>;
+export type RejectedReceipt = Extract<CommitReceipt, { readonly kind: "rejected" }>;
+/** The decision outcome writeRejection writes a receipt for and nothing else. */
+export type RejectedDecision = Extract<DecisionOutcome, { readonly kind: "reject" }>;
 export type CommitRejectionReason = "owner_terminal" | "generation_revoked" | "capacity_unavailable" | "database_constraint" | "invalid";
-export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommittedReceipt } | { readonly kind: "Replayed"; readonly receipt: CommittedReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly reason: CommitRejectionReason; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
+export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommittedReceipt } | { readonly kind: "Replayed"; readonly receipt: CommittedReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly reason: CommitRejectionReason; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] } | { readonly kind: "DecisionRejected"; readonly error: string; readonly detail: CheckedValue };
+/** Normalizes a stored receipt into the result its replay should answer with. */
+export function replayResult(receipt: CommitReceipt): CommitResult {
+  if (receipt.kind === "rejected") return { kind: "DecisionRejected", error: receipt.error, detail: receipt.detail };
+  return { kind: "Replayed", receipt };
+}
 
-class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
+class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super(outcome.kind === "Rejected" || outcome.kind === "Conflict" ? outcome.detail : outcome.kind); } }
 function fail(outcome: CommitResult): never { throw new AbortCommit(outcome); }
 
 function databaseFailure(error: unknown): CommitResult | null {
@@ -170,6 +178,14 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   return receipt;
 }
 
+/** A reject writes only its receipt: no outputs, capacity, effects, fact or transition. */
+async function writeRejection(tx: SqlExecutor, identity: IngressIdentity, decision: RejectedDecision): Promise<RejectedReceipt> {
+  const receipt: RejectedReceipt = { kind: "rejected", error: decision.error, detail: decision.detail };
+  await tx.query("INSERT INTO authority.ingress_receipt (id,run_id,scope_id,ingress_id,request_digest,result) VALUES ($1,$2,$3,$4,$5,$6)",
+    [crypto.randomUUID(), identity.run_id, identity.scope_id, identity.ingress_id, identity.request_digest, JSON.stringify(receipt)]);
+  return receipt;
+}
+
 export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
@@ -178,7 +194,7 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
     const result = await db.transaction(async (tx): Promise<CommitResult> => {
       await lockOwners(tx, request);
       const receipt = await findReceipt(tx, request.identity);
-      if (receipt.kind === "replay" && receipt.receipt.kind === "committed") return { kind: "Replayed", receipt: receipt.receipt };
+      if (receipt.kind === "replay") return replayResult(receipt.receipt);
       if (receipt.kind === "conflict") return { kind: "Conflict", detail: "ingress identity reused with different request content" };
       if (!await hasSameReadSet(tx, request.read_set)) return { kind: "Conflict", detail: "read set changed; refresh decision" };
       const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
@@ -213,6 +229,10 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
         if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
           fail({ kind: "Rejected", reason: "invalid", detail: "cancellation target is not an active owned descendant" });
         await writeDecision(tx, child.request, child.source, definition);
+      }
+      if (request.decision.kind === "reject") {
+        const rejected = await writeRejection(tx, request.identity, request.decision);
+        return { kind: "DecisionRejected", error: rejected.error, detail: rejected.detail };
       }
       const committed = await writeDecision(tx, request, source, definition);
       await measureWrittenSnapshots(tx, source, request.child_cancellations, definition);

@@ -185,6 +185,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (result.value.kind === "Conflict") return response({ ok: false, error: new ConflictError(result.value.detail) });
       if (result.value.kind === "Rejected") return response({ ok: false, error: new InvalidPayloadError(result.value.detail) });
       if (result.value.kind === "snapshot_too_large") return Response.json(result.value, { status: 413 });
+      if (result.value.kind === "DecisionRejected") return response({ ok: false, error: new InvalidPayloadError(result.value.error) });
       void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
       return Response.json(publicationReceipt(parsed.request_id, result.value.receipt, input.outputs?.[0]?.revision_id ?? null), { status: 202 });
     } catch (cause) { return fault(cause); }

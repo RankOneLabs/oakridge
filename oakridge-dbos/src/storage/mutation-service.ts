@@ -6,7 +6,7 @@ import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./com
 import { prepareChildCancellations } from "./child-cancellation";
 import { CORE_MAX_FRAME_BYTES, type CompiledBundle, type DecisionOutcome, type DefinitionBundle, type Trigger, type Output } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
-import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
+import { commitDecision, replayResult, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
 import type { RunId, ScopeId } from "./schema-records";
@@ -92,8 +92,10 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
   }) : [];
   const effects = decision.outcome.kind === "apply" ? decision.outcome.invocations.map((invocation, index) => ({ effect_key: `${input.ingress_id}:${index}`, payload: invocation.input, execution_id: null })) : [];
   if (decision.outcome.kind === "apply" && capacity.length !== decision.outcome.mutations.filter((mutation) => mutation.kind === "acquire" || mutation.kind === "release").length) return error("prepare_commit", input.scope_id, "capacity pool missing");
+  // A reject writes nothing but its receipt, so a staged publication's output must not ride along.
+  const outputs = decision.outcome.kind === "reject" ? [] : (input.outputs ?? []);
   return { ok: true, value: { identity: selectMutationIdentity(input),
-    execution_authority: input.execution_authority, read_set: decision.source.read_set, decision: decision.outcome, outputs: input.outputs ?? [], capacity, effects, operator_version: input.operator_version } };
+    execution_authority: input.execution_authority, read_set: decision.source.read_set, decision: decision.outcome, outputs, capacity, effects, operator_version: input.operator_version } };
 }
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient, provider_capabilities?: ProviderCapabilities): MutationService {
   return {
@@ -188,10 +190,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         outputs: (input.outputs ?? []).map((output) => ({ ...output, revision_id: output.revision_id ?? crypto.randomUUID() })) };
       try {
         const prior = await findReceipt(db, identity);
-        if (prior.kind === "replay") {
-          if (prior.receipt.kind !== "committed") return error("decide", input.scope_id, "decision_rejected receipt replay not yet supported");
-          return { ok: true, value: { kind: "Replayed", receipt: prior.receipt } };
-        }
+        if (prior.kind === "replay") return { ok: true, value: replayResult(prior.receipt) };
         if (prior.kind === "conflict") return { ok: true, value: { kind: "Conflict", detail: "ingress identity reused with different request content" } };
         for (let attempt = 0; attempt < 3; attempt++) {
           // Prepared sources are valid only for the first attempt. A conflict must

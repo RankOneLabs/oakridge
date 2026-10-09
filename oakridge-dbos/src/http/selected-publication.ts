@@ -120,6 +120,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
+    if (result.value.kind === "DecisionRejected") return c.json({ error: result.value.error }, 422);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json(publicationReceipt(body.request_id, result.value.receipt, revision_id), result.value.kind === "Committed" ? 201 : 200);
   });

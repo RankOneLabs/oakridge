@@ -48,6 +48,7 @@ export function installSelectedEvidenceApi(app: Hono, deps: EvidenceDependencies
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);
+    if (result.value.kind === "DecisionRejected") return c.json({ error: result.value.error }, 422);
     void deps.wake(c.req.param("run_id") as RunId).catch(() => undefined);
     return c.json(publicationReceipt(raw.request_id, result.value.receipt, null), 202);
   });
