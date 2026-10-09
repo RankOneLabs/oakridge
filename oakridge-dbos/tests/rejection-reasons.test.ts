@@ -4,8 +4,11 @@ import { resolve } from "node:path";
 import { deliverEvidence } from "../src/effects/evidence";
 import type { EffectIntent } from "../src/effects/intents";
 import { installDefinitionApi } from "../src/http/app";
+import { submitScopeCommand } from "../src/http/scope-commands";
+import type { CoreClient } from "../src/core-client/client";
 import type { MutationService } from "../src/storage/mutation-service";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
+import { requestDigest } from "../src/storage/receipts";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { validateDecision } from "../src/storage/storage-validator";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
@@ -53,7 +56,7 @@ test("evidence delivery accepts a decision the evaluator rejected as settled, no
   expect(await deliverEvidence(db, mutations, intent)).toEqual({ kind: "delivered" });
 });
 
-test("validateDecision refuses a reject that arrives with outputs, capacity changes or effects", async () => withDatabase(async ({ db }) => {
+test("validateDecision refuses a reject that arrives with outputs, capacity changes, effects or child cancellations", async () => withDatabase(async ({ db }) => {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,$2)",
     [JSON.stringify({ limits: { max_depth: 64, max_list_items: 100 }, schemas: [{ key: "unit", shape: { kind: "record", fields: [], dictionary: null } }],
       scopes: [{ key: "root", tree: { kind: "wait", reason: "storage fixture" }, commands: [], state_schema: "unit", outcome_schema: "unit",
@@ -70,11 +73,13 @@ test("validateDecision refuses a reject that arrives with outputs, capacity chan
   expect(validateDecision(base, source)).toMatchObject({ ok: true });
   const with_outputs: CommitRequest = { ...base, outputs: [{ scope_id: "scope" as ScopeId, output_key: "out", collection_key: "",
     body: unit, predecessor_id: null, expected_slot_version: null, execution_id: null }] };
-  expect(validateDecision(with_outputs, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes or effects" } });
+  expect(validateDecision(with_outputs, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes, effects or child cancellations" } });
   const with_capacity: CommitRequest = { ...base, capacity: [{ kind: "acquire", pool_id: "pool" as import("../src/storage/schema-records").PoolId, scope_id: "scope" as ScopeId }] };
-  expect(validateDecision(with_capacity, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes or effects" } });
+  expect(validateDecision(with_capacity, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes, effects or child cancellations" } });
   const with_effects: CommitRequest = { ...base, effects: [{ effect_key: "e", payload: unit, execution_id: null }] };
-  expect(validateDecision(with_effects, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes or effects" } });
+  expect(validateDecision(with_effects, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes, effects or child cancellations" } });
+  const with_child_cancellations: CommitRequest = { ...base, child_cancellations: [{ source, request: base }] };
+  expect(validateDecision(with_child_cancellations, source)).toMatchObject({ ok: false, error: { detail: "a rejected decision must not carry outputs, capacity changes, effects or child cancellations" } });
 }));
 
 test("a rejected decision writes only its ingress receipt, and its replay answers the same rejection without rewriting it", async () => withDatabase(async ({ db }) => {
@@ -144,3 +149,13 @@ test("evidence the evaluator rejects answers 422 with the decision_rejected shap
     expect(await response.json()).toEqual({ kind: "decision_rejected", error: "invalid_command", detail: unit });
   } finally { f.core.close(); }
 }));
+
+test("a scope command replaying a stored rejection answers the same 422 as the fresh result, not 500", async () => {
+  const request = { command_key: "k", payload: {}, request_id: "r", scope_id: "scope" as ScopeId, expected_scope_version: 0, targets: [] };
+  const digest = requestDigest(request);
+  const receipt = { kind: "rejected", error: "invalid_command", detail: unit };
+  const db = { query: async (sql: string) => sql.includes("authority.ingress_receipt")
+    ? [{ run_id: "run", scope_id: "scope", ingress_id: "r", request_digest: digest, result: receipt }] : [] } as unknown as TransactionalSqlExecutor;
+  const result = await submitScopeCommand({ db, core: {} as CoreClient, mutations: {} as MutationService }, "run" as RunId, request);
+  expect(result).toMatchObject({ ok: false, error: { kind: "invalid_payload", detail: "invalid_command" } });
+});

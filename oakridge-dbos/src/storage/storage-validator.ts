@@ -12,8 +12,8 @@ export function validateDecision(request: CommitRequest, source: AuthoritySnapsh
   if (request.identity.scope_id !== source.owner.id || request.identity.run_id !== source.owner.run_id) return reject("validate_commit", source.owner.id, "owner mismatch");
   if (!isDecisionOutcome(request.decision)) return reject("validate_commit", source.owner.id, "malformed decision outcome");
   if (!Array.isArray(request.outputs) || !Array.isArray(request.capacity) || !Array.isArray(request.effects)) return reject("validate_commit", source.owner.id, "malformed commit writes");
-  if (request.decision.kind === "reject" && (request.outputs.length || request.capacity.length || request.effects.length))
-    return reject("validate_commit", source.owner.id, "a rejected decision must not carry outputs, capacity changes or effects");
+  if (request.decision.kind === "reject" && (request.outputs.length || request.capacity.length || request.effects.length || request.child_cancellations?.length))
+    return reject("validate_commit", source.owner.id, "a rejected decision must not carry outputs, capacity changes, effects or child cancellations");
   if (request.decision.kind === "apply" && request.decision.mutations.some((mutation) => mutation.kind === "observe")) return reject("validate_commit", source.owner.id, "observe requires a resource observation provider; unsupported by this composition");
   if (request.outputs.some((output) => output.scope_id !== source.owner.id || output.output_key.length === 0)) return reject("validate_commit", source.owner.id, "output ownership mismatch");
   if (request.capacity.some((change) => change.scope_id !== source.owner.id)) return reject("validate_commit", source.owner.id, "capacity ownership mismatch");
