@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 
 
 import type {
-  RuntimeDescriptor, SessionSnapshot, Theme, Status,
+  RuntimeDescriptor, SessionSnapshot, Status,
 } from "../types";
 import type { RuntimeId } from "../../runtime-interface";
 import {
@@ -14,7 +14,6 @@ import {
 import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
-import { Button } from "../components/atoms/Button";
 import { FeedbackMessage } from "../components/atoms/FeedbackMessage";
 import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
 import {
@@ -111,11 +110,9 @@ function SessionRunSection({
 interface SessionListViewProps {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
-  theme: Theme;
   defaultWorkdir: string | null;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
-  onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
 }
@@ -123,11 +120,9 @@ interface SessionListViewProps {
 export function SessionListView({
   sessions,
   inboxStatus,
-  theme,
   defaultWorkdir,
   defaultRuntimeId,
   runtimes,
-  onToggleTheme,
   onSelect,
   onHydrateSession,
 }: SessionListViewProps) {
@@ -232,19 +227,6 @@ export function SessionListView({
             {totalCount} {totalCount === 1 ? "session" : "sessions"}
           </span>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="xsmall"
-          className="theme-toggle"
-          onClick={onToggleTheme}
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          aria-label={
-            theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-          }
-        >
-          {theme === "dark" ? "LIGHT" : "DARK"}
-        </Button>
       </header>
       <div className="session-list-intro">
         <div>
