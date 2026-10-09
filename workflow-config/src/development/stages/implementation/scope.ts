@@ -50,6 +50,16 @@ export const implementation = defineScope({
       prefill: [{ key: "build_result", value: reference({ kind: "output_revision", key: "build_result", schema: "revision" }, []) }, { key: "pr_summary", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
     {
+      key: "operator_edit",
+      payload_schema: "unit",
+      available_in: ["review"],
+      required: true,
+      targets: [],
+      label: "Edit build result",
+      consequence: "publish a reviewed build result revision",
+      field_presentation: []
+    },
+    {
       key: "retry_build",
       payload_schema: "retry_build_target",
       available_in: ["working"],
@@ -182,7 +192,8 @@ export const implementation = defineScope({
       policy: { kind: "append_revision" },
       producers: ["build"],
       collection_key: null,
-      publication_trigger: "build_submitted"
+      publication_trigger: "build_submitted",
+      operator_edit_trigger: "operator_edit"
     },
     {
       key: "pr_summary",

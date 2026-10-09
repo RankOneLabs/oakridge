@@ -4,14 +4,87 @@ import { controlTokenMiddleware } from "../src/http/control-auth";
 import { installDefinitionApi } from "../src/http/app";
 import { createHash } from "node:crypto";
 import { withDatabase, unit } from "./effect-fixture";
-import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body, launch } from "./development-runtime-fixture";
+import { developmentBundle, runtimeFixture, throughAnalysis, repository, brief, revision, build_body, pr_body, launch } from "./development-runtime-fixture";
 import { HTTP_ROUTES } from "../src/http/routes";
 import type { PublicationRequest, PublicationReceipt } from "../src/http/publication";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { CommitRequest } from "../src/storage/commit";
 import { validateStorageAuthority } from "../src/storage/storage-validator";
 import type { ScopeId } from "../src/storage/schema-records";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
+
+async function operatorEdit(f: Awaited<ReturnType<typeof runtimeFixture>>, db: TransactionalSqlExecutor, scope_id: ScopeId,
+  output_key: string, collection_key: string, schema: string, body: unknown, predecessor_id?: string): Promise<Response> {
+  const slots = await db.query<{ current_revision_id: string | null; version: string | number }>(
+    "SELECT current_revision_id,version FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3", [scope_id, output_key, collection_key]);
+  const request_id = crypto.randomUUID();
+  return f.app.request(`/api/runs/${f.run_id}/scopes/${scope_id}/publications`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      request_id, expected_scope_version: Number((await f.scope(scope_id)).version),
+      trigger: { id: request_id, key: "operator_edit", payload: await f.checked("unit", {}) },
+      output: { scope_id, output_key, collection_key, execution_id: null,
+        predecessor_id: predecessor_id ?? slots[0]?.current_revision_id ?? null,
+        expected_slot_version: slots[0] ? Number(slots[0].version) : null, body: await f.checked(schema, body) },
+    }),
+  });
+}
+
+test("shipped plan and one planned brief accept operator revisions only after review work finishes", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle("development"), launch);
+  try {
+    const planning = await throughAnalysis(f, db);
+    const plan = { summary: "Plan", cohorts: [{ id: brief.cohort_id, repository_key: brief.repository_key, title: brief.title,
+      scope: brief.goal, depends_on: brief.depends_on, description: null, files_in_scope: brief.files_in_scope,
+      decisions: [], acceptance_criteria: brief.acceptance_criteria }], dependency_order: [brief.cohort_id],
+      scope: { in_scope: [], out_of_scope: [] }, acceptance_criteria: [], risks: [] };
+    expect((await f.publish("plan", plan, "author", planning)).status).toBe(201);
+    expect((await operatorEdit(f, db, planning, "plan", "", "plan_body", { ...plan, summary: "Reviewed plan" })).status).toBe(422);
+    await db.query("UPDATE authority.execution SET status='terminal' WHERE scope_id=$1 AND status='pending'", [planning]);
+    const edited_plan = await operatorEdit(f, db, planning, "plan", "", "plan_body", { ...plan, summary: "Reviewed plan" });
+    expect(edited_plan.status).toBe(202);
+    const plan_revision = (await edited_plan.json()).revision_id;
+    expect((await f.command("accept", { revision: revision(plan_revision) }, planning)).status).toBe(202);
+    await f.advance(); await f.advance();
+    const briefs = await db.query<{ id: ScopeId }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND child_key='briefs'", [f.root_scope_id]);
+    const writing = briefs[0]?.id;
+    if (!writing) throw new Error("brief writing scope missing");
+    expect((await f.publish("briefs", brief, "author", writing, brief.cohort_id)).status).toBe(201);
+    await db.query("UPDATE authority.execution SET status='terminal' WHERE scope_id=$1 AND status='pending'", [writing]);
+    const before = await db.query("SELECT id FROM authority.operator_event WHERE scope_id=$1", [writing]);
+    const invalid_member = await operatorEdit(f, db, writing, "briefs", "unknown", "brief_body", { ...brief, cohort_id: "unknown" });
+    expect(invalid_member.status).toBe(422);
+    expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1 AND collection_key='unknown'", [writing])).toEqual([]);
+    expect(await db.query("SELECT id FROM authority.operator_event WHERE scope_id=$1", [writing])).toEqual(before);
+    const edited_brief = await operatorEdit(f, db, writing, "briefs", brief.cohort_id, "brief_body", { ...brief, title: "Reviewed brief" });
+    expect(edited_brief.status).toBe(202);
+    const event_rows = await db.query("SELECT id FROM authority.operator_event WHERE scope_id=$1", [writing]);
+    expect((await f.command("operator_edit", {}, writing)).status).toBe(422);
+    expect(await db.query("SELECT id FROM authority.operator_event WHERE scope_id=$1", [writing])).toEqual(event_rows);
+    const slot = await db.query<{ current_revision_id: string }>(
+      "SELECT current_revision_id FROM authority.output_slot WHERE scope_id=$1 AND output_key='briefs' AND collection_key=$2", [writing, brief.cohort_id]);
+    expect(slot[0]?.current_revision_id).toBe((await edited_brief.json()).revision_id);
+  } finally { f.core.close(); }
+}));
+
+test("shipped build result accepts an operator revision in review after selected executions finish", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    await f.fact("begin");
+    expect((await operatorEdit(f, db, f.root_scope_id, "build_result", "", "build_body", build_body)).status).toBe(422);
+    expect((await f.publish("build_result", build_body)).status).toBe(201);
+    expect((await f.publish("pr_summary", pr_body)).status).toBe(201);
+    const view = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}`);
+    expect(((await view.json()) as { commands: { key: string }[] }).commands.map((command) => command.key)).not.toContain("operator_edit");
+    expect((await operatorEdit(f, db, f.root_scope_id, "build_result", "", "build_body", { ...build_body, summary: "Reviewed build" })).status).toBe(422);
+    await db.query("UPDATE authority.execution SET status='terminal' WHERE scope_id=$1 AND status='pending'", [f.root_scope_id]);
+    expect((await operatorEdit(f, db, f.root_scope_id, "wrong_slot", "", "build_body", build_body)).status).toBe(422);
+    expect((await operatorEdit(f, db, f.root_scope_id, "build_result", "", "unit", {})).status).toBe(422);
+    const edited = await operatorEdit(f, db, f.root_scope_id, "build_result", "", "build_body", { ...build_body, summary: "Reviewed build" });
+    expect(edited.status).toBe(202);
+    expect((await operatorEdit(f, db, f.root_scope_id, "build_result", "", "build_body", build_body, "reviewed-elsewhere")).status).toBe(409);
+  } finally { f.core.close(); }
+}));
 
 test("publication trigger mismatches are typed HTTP rejections and storage rejects missing declarations", async () => withDatabase(async ({ db }) => {
   const bundle = await developmentBundle();

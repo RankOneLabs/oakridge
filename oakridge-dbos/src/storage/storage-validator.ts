@@ -71,6 +71,15 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
     const selected = await tx.query<{ execution_id: string }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND execution_id=$2", [source.owner.id, request.execution_authority]);
     if (!selected.length) return reject("validate_storage", source.owner.id, "execution generation was revoked", "generation_revoked");
   }
+  const is_operator_edit = request.operator_version !== null && scope.outputs.some((output) => output.operator_edit_trigger === source.snapshot.trigger.key);
+  if (is_operator_edit && !request.outputs.some((output) => output.execution_id === null))
+    return reject("validate_storage", source.owner.id, "operator edit requires an output publication");
+  if (is_operator_edit) {
+    const active = await tx.query<{ id: string }>(`SELECT e.id FROM authority.execution_selection s
+      JOIN authority.execution e ON e.id=s.execution_id
+      WHERE s.scope_id=$1 AND e.status='pending' LIMIT 1`, [source.owner.id]);
+    if (active.length) return reject("validate_storage", source.owner.id, "operator edit requires completed executions");
+  }
   for (const output of request.outputs) {
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");

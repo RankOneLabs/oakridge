@@ -186,6 +186,8 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
 export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
+  if (request.decision.kind === "reject" && request.outputs.length) return { ok: true, value: { kind: "Rejected", reason: "invalid",
+    detail: request.decision.detail.data.kind === "string" ? request.decision.detail.data.value : "scope rejected publication" } };
   if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "read set owner differs from decision owner" } };
   try {
     const result = await db.transaction(async (tx): Promise<CommitResult> => {

@@ -1,4 +1,4 @@
-import type { DecisionTree } from "../../../source-contracts";
+import type { DecisionTree, Expression } from "../../../source-contracts";
 import { literal, optional, reference, variant } from "../../../primitives/expressions";
 
 const brief_begin: DecisionTree = {
@@ -38,6 +38,20 @@ const brief_accepted: DecisionTree = {
 };
 
 const brief_membership_denied: DecisionTree = { kind: "reject", id: "brief_membership_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
+const brief_members_belong_to_plan: Expression = {
+  kind: "every",
+  source: reference({ kind: "output_collection", key: "briefs", schema: "brief_bodies" }, []),
+  predicate: {
+    kind: "contains",
+    source: {
+      kind: "map",
+      source: reference({ kind: "input" }, ["plan", "cohorts"]),
+      schema: "ids",
+      value: reference({ kind: "item" }, ["id"])
+    },
+    value: reference({ kind: "item" }, ["cohort_id"])
+  }
+};
 
 const brief_membership: DecisionTree = {
   kind: "if",
@@ -58,20 +72,7 @@ const brief_membership: DecisionTree = {
       {
         kind: "all",
         items: [
-          {
-            kind: "every",
-            source: reference({ kind: "output_collection", key: "briefs", schema: "brief_bodies" }, []),
-            predicate: {
-              kind: "contains",
-              source: {
-                kind: "map",
-                source: reference({ kind: "input" }, ["plan", "cohorts"]),
-                schema: "ids",
-                value: reference({ kind: "item" }, ["id"])
-              },
-              value: reference({ kind: "item" }, ["cohort_id"])
-            }
-          },
+          brief_members_belong_to_plan,
           {
             kind: "every",
             source: reference({ kind: "input" }, ["plan", "cohorts"]),
@@ -167,6 +168,19 @@ const brief_feedback_exact: DecisionTree = {
 };
 
 const brief_retry: DecisionTree = { kind: "apply", id: "brief_retry", mutations: [], actions: [{ worker: "author", action: "retry" }], outcome: null };
+const brief_operator_edit: DecisionTree = {
+  kind: "match",
+  id: "brief_operator_edit",
+  value: reference({ kind: "input" }, ["plan"]),
+  cases: [{ variant: "some", node: {
+    kind: "if",
+    id: "brief_operator_edit_member",
+    condition: brief_members_belong_to_plan,
+    then: { kind: "apply", id: "brief_operator_edit_apply", mutations: [], actions: [], outcome: null },
+    otherwise: { kind: "reject", id: "brief_operator_edit_invalid_member", error: "invalid_command", detail: "brief cohort_id is not in the plan" }
+  } }],
+  otherwise: { kind: "reject", id: "brief_operator_edit_no_plan", error: "invalid_command", detail: "brief plan is missing" }
+};
 
 const brief_cancel: DecisionTree = {
   kind: "apply",
@@ -201,6 +215,7 @@ export const brief_dispatch: DecisionTree = {
     { variant: "submitted", node: brief_review },
     { variant: "accept", node: brief_plan_present },
     { variant: "request_changes", node: brief_feedback_exact },
+    { variant: "operator_edit", node: brief_operator_edit },
     { variant: "retry", node: brief_retry },
     { variant: "cancel", node: brief_cancel },
     { variant: "abandon", node: brief_abandon },

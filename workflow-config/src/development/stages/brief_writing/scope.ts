@@ -44,6 +44,16 @@ export const brief_writing = defineScope({
       prefill: [{ key: "revisions", value: reference({ kind: "output_revisions", key: "briefs", schema: "revisions" }, []) }]
     },
     {
+      key: "operator_edit",
+      payload_schema: "unit",
+      available_in: ["review"],
+      required: true,
+      targets: [],
+      label: "Edit brief",
+      consequence: "publish a reviewed brief revision",
+      field_presentation: []
+    },
+    {
       key: "retry",
       payload_schema: "unit",
       available_in: ["working"],
@@ -82,7 +92,8 @@ export const brief_writing = defineScope({
       policy: { kind: "append_revision" },
       producers: ["author"],
       collection_key: "cohort_id",
-      publication_trigger: "submitted"
+      publication_trigger: "submitted",
+      operator_edit_trigger: "operator_edit"
     }
   ],
   workers: workers,
