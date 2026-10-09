@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
-import { childWorkflowId, intentWorkflowId, wakeRun } from "../src/workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, childWorkflowId, dispatchChild, intentWorkflowId, registerWorkflowServices, wakeRun } from "../src/workflows/topology";
+import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { sealEffectPayload } from "../src/storage/effect-secret";
+import type { EffectPayload } from "../src/effects/intents";
 import { begin, sessionBundle, withDatabase } from "./effect-fixture";
 
 const topology = readFileSync(resolve(import.meta.dir, "../src/workflows/topology.ts"), "utf8");
@@ -18,6 +21,38 @@ test("run bodies keep child dispatch and scope lookup in durable DBOS operations
   expect(run_body).toBeDefined();
   expect(run_body).not.toContain(".db.query");
 });
+
+// The deadline stamp is a registered step, so dispatching a "start" child
+// now requires a launched DBOS runtime (ensureDBOSIsLaunched fires inside
+// DBOS.registerStep's wrapper regardless of workflow context).
+test("a PENDING child is not dispatched again, while a missing child is started", async () => withDatabase(async ({ url }) => {
+  const db = { query: async (sql: string) => {
+    if (sql.includes("SELECT * FROM authority.effect_intent WHERE id=$1")) return [{ id: "intent-1", run_id: "run-1", scope_id: "scope-1",
+      execution_id: null, effect_key: "key", status: "pending", dispatch_generation: 0, redispatch_failures: 0, deadline_epoch_ms: null,
+      version: 0, payload: sealEffectPayload({ action: "start", handle: null,
+        invocation: { id: "intent-1", execution_id: "execution-1", selection: {}, bytes: "pinned" } } as unknown as EffectPayload) }];
+    if (sql.includes("SET deadline_epoch_ms=COALESCE")) return [{ deadline_epoch_ms: Date.now() + DEFAULT_WORKFLOW_TIMING.execution_deadline_ms }];
+    return [];
+  } } as unknown as TransactionalSqlExecutor;
+  registerWorkflowServices({ db, timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+  DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: url, applicationVersion: "test-dispatch" });
+  await DBOS.launch();
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "PENDING" }) as never);
+  const calls: unknown[][] = [];
+  const start = spyOn(DBOS, "startWorkflow").mockImplementation(((_workflow: unknown, options: unknown) => {
+    calls.push([options]);
+    return async (...args: unknown[]) => { calls.push(args); return {} as never; };
+  }) as never);
+  try {
+    await dispatchChild("run-1", "intent-1", "start");
+    expect(calls).toEqual([]);
+    status.mockImplementation(async () => null as never);
+    await dispatchChild("run-1", "intent-1", "start");
+    expect(calls).toEqual([[{ workflowID: intentWorkflowId("intent-1"), timeoutMS: expect.any(Number) }], ["intent-1"]]);
+    const dispatched_timeout_ms = (calls[0]?.[0] as { timeoutMS: number }).timeoutMS;
+    expect(Math.abs(dispatched_timeout_ms - DEFAULT_WORKFLOW_TIMING.execution_deadline_ms)).toBeLessThan(5_000);
+  } finally { status.mockRestore(); start.mockRestore(); await DBOS.shutdown(); }
+}), 25_000);
 
 test("restart preserves an already-started effect and dispatches a pending one", async () => withDatabase(async ({ url, db }) => {
   let starts = 0;

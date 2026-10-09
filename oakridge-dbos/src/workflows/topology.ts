@@ -346,6 +346,8 @@ const claimRunGenerationStep = DBOS.registerStep(async (run_id: string, generati
 }, { name: "oakridgeClaimRunGeneration", retriesAllowed: true, maxAttempts: 5 });
 const claimDispatchGenerationStep = DBOS.registerStep(async (intent_id: string, generation: number): Promise<number | null> =>
   claimDispatchGeneration(current().db, intent_id, generation), { name: "oakridgeClaimDispatchGeneration", retriesAllowed: true, maxAttempts: 5 });
+const stampEffectDeadlineStep = DBOS.registerStep(async (intent_id: string, candidate_deadline_epoch_ms: number): Promise<number | null> =>
+  stampEffectDeadline(current().db, intent_id, candidate_deadline_epoch_ms), { name: "oakridgeStampEffectDeadline", retriesAllowed: true, maxAttempts: 5 });
 const claimChildRedispatchStep = DBOS.registerStep(async (intent_id: string, generation: number) =>
   claimChildRedispatch(current().db, intent_id, generation), { name: "oakridgeClaimChildRedispatch", retriesAllowed: true, maxAttempts: 5 });
 
@@ -444,10 +446,7 @@ export function classifyWorkflowStatus(status: WorkflowStatusString): WorkflowSt
  */
 async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, intent_id: string): Promise<void> {
   if (kind === "stop") { await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id); return; }
-  // A plain (unwrapped) call: the stamp is idempotent by construction
-  // (COALESCE keeps the first-ever value), so a bare retry on replay is safe,
-  // and dispatchChild must stay callable without DBOS launched for its unit tests.
-  const deadline_epoch_ms = await stampEffectDeadline(current().db, intent_id, Date.now() + current().timing.execution_deadline_ms);
+  const deadline_epoch_ms = await stampEffectDeadlineStep(intent_id, Date.now() + current().timing.execution_deadline_ms);
   if (deadline_epoch_ms === null) return; // intent no longer exists
   const timeout_ms = deadline_epoch_ms - Date.now();
   if (timeout_ms <= 0) { await settleExpiredEffect(intent_id); return; }
@@ -455,8 +454,8 @@ async function startChildWorkflow(kind: "start" | "stop", workflow_id: string, i
 }
 
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  // A plain (unwrapped) read: dispatchChild must stay callable without DBOS
-  // launched for its unit tests, and a read has nothing to replay-protect.
+  // A plain (unwrapped) read: it has nothing to replay-protect. Dispatching a
+  // "start" still requires DBOS launched, via stampEffectDeadlineStep below.
   const intent = await readIntent(current().db, intent_id);
   if (!intent) return;
   const workflow_id = childWorkflowId(intent_id, intent.dispatch_generation);

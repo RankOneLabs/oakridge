@@ -61,7 +61,8 @@ export async function claimChildRedispatch(db: TransactionalSqlExecutor, intent_
  */
 export async function stampEffectDeadline(db: TransactionalSqlExecutor, intent_id: string, candidate_deadline_epoch_ms: number): Promise<number | null> {
   const rows = await db.query<{ deadline_epoch_ms: string | number }>(`UPDATE authority.effect_intent
-    SET deadline_epoch_ms=COALESCE(deadline_epoch_ms,$2), version=version+1
+    SET deadline_epoch_ms=COALESCE(deadline_epoch_ms,$2),
+        version=CASE WHEN deadline_epoch_ms IS NULL THEN version+1 ELSE version END
     WHERE id=$1 RETURNING deadline_epoch_ms`, [intent_id, candidate_deadline_epoch_ms]);
   return rows[0] ? Number(rows[0].deadline_epoch_ms) : null;
 }
