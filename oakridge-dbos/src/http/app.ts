@@ -12,7 +12,7 @@ import { listDefinitions, readPinnedDefinition } from "./definition-inspection";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
-import { invocationInput } from "../effects/operations/selected-request";
+import { plainValue } from "../core-client/plain-value";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 
@@ -166,8 +166,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       const trigger_schema = declaration?.facts.find((fact) => fact.key === parsed.trigger.key)?.payload_schema
         ?? declaration?.commands.find((command) => command.key === parsed.trigger.key)?.payload_schema;
       if (!trigger_schema) return response({ ok: false, error: new InvalidPayloadError("publication trigger is undeclared") });
-      const raw_output = invocationInput(parsed.output.body, pinned.source);
-      const raw_trigger = invocationInput(parsed.trigger.payload, pinned.source);
+      const raw_output = plainValue(parsed.output.body, pinned.source);
+      const raw_trigger = plainValue(parsed.trigger.payload, pinned.source);
       if (!raw_output.ok || !raw_trigger.ok) return response({ ok: false, error: new InvalidPayloadError("publication checked value is malformed") });
       const checked_output = await deps.core.request("validate_payload", { bundle: pinned.source, schema: output.schema, payload: raw_output.value });
       const checked_trigger = await deps.core.request("validate_payload", { bundle: pinned.source, schema: trigger_schema, payload: raw_trigger.value });

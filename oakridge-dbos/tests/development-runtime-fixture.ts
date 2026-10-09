@@ -62,6 +62,11 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
     return app.request(`http://localhost/api/runs/${run_id}/scopes/${id}/commands`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ command_key: key, payload, request_id: crypto.randomUUID(), scope_id: id, expected_scope_version: view.cursor.scope_version, targets }) });
   };
+  const prefill = async (key: string, id = root_scope_id): Promise<ScopeView["command_prefill"][string] | undefined> => {
+    const projected = await app.request(`http://localhost/api/runs/${run_id}/scopes/${id}`);
+    if (!projected.ok) throw new Error(await projected.text());
+    return ((await projected.json()) as ScopeView).command_prefill[key];
+  };
   const selected = async (worker: string, id = root_scope_id): Promise<string> => {
     const rows = await db.query<{ execution_id: string | null }>("SELECT execution_id FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2", [id, worker]);
     if (!rows[0]?.execution_id) throw new Error(`worker not selected: ${worker}`);
@@ -82,7 +87,7 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
   };
   const observe = (state = "open", head_sha = "head1", id = root_scope_id) => fact("pr_observed", { observations: [{ ...forge, state, head_sha }] }, id);
   const advance = () => advanceChildren({ db, core, mutations, run_ids: [run_id] });
-  return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, selected, publicationSecret, publish, observe, advance };
+  return { app, core, mutations, run_id, root_scope_id, checked, scope, fact, command, prefill, selected, publicationSecret, publish, observe, advance };
 }
 async function rootChild(f: Awaited<ReturnType<typeof runtimeFixture>>, db: TransactionalSqlExecutor, key: string): Promise<ScopeId> {
   const rows = await db.query<DevelopmentScope>("SELECT * FROM authority.scope_instance WHERE parent_id=$1 AND child_key=$2", [f.root_scope_id, key]);

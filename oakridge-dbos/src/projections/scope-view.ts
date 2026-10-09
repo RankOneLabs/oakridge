@@ -1,6 +1,6 @@
 import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
 import type { ScopeId, ScopeInstanceRecord, OutputSlotRecord, ArtifactRevisionRecord, ResourceBindingRecord } from "../storage/schema-records";
-import type { TargetRevision } from "../storage/command-selection";
+import type { CommandPrefill, TargetRevision } from "../storage/command-selection";
 import { normalizeRecordVersion, type ExecutionView, type StoredVersionedRecord } from "./record-selectors";
 
 export interface ProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
@@ -15,6 +15,7 @@ export interface ScopeView {
   readonly commands: readonly CommandDefinition[]; readonly executions: readonly ExecutionView[];
   readonly outputs: readonly OutputSlotView[]; readonly resources: readonly ResourceBindingRecord[];
   readonly command_targets: Readonly<{ readonly [command_key: string]: readonly TargetRevision[] }>;
+  readonly command_prefill: Readonly<{ readonly [command_key: string]: CommandPrefill }>;
   readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor;
 }
 export interface TransitionRow { readonly id: string; readonly decision: DecisionOutcome }

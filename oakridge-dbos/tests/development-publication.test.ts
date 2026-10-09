@@ -4,7 +4,7 @@ import { controlTokenMiddleware } from "../src/http/control-auth";
 import { installDefinitionApi } from "../src/http/app";
 import { createHash } from "node:crypto";
 import { withDatabase } from "./effect-fixture";
-import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body } from "./development-runtime-fixture";
+import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body, launch } from "./development-runtime-fixture";
 import { HTTP_ROUTES } from "../src/http/routes";
 import type { PublicationRequest, PublicationReceipt } from "../src/http/publication";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
@@ -275,5 +275,34 @@ test("selected contract budgets ignore historical fact payloads and hide unrelat
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ request_id: "after-historical-fact", predecessor_id: null, collection_key: "", body: build_body }) });
     expect(publication.status).toBe(201);
+  } finally { f.core.close(); }
+}));
+
+test("an analysis review is accepted with the evidence the scope projects", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle("development"), launch);
+  try {
+    await f.fact("begin"); await f.advance();
+    const preparations = await db.query<{ id: string }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND scope_key='repository_preparation'", [f.root_scope_id]);
+    for (const preparation of preparations) await f.fact("prepared", { repository_path: "/tmp", head: "head1", push_remote_owner: repository.forge.owner }, preparation.id);
+    await f.advance(); await f.advance();
+    const analysis = (await db.query<{ id: string }>("SELECT id FROM authority.scope_instance WHERE parent_id=$1 AND child_key='analysis'", [f.root_scope_id]))[0]!.id;
+    const published = await f.publish("analysis", { summary: "Spec", source_spec_refs: [], findings: [], requirements: [], risks: [] }, "author", analysis);
+    if (published.status !== 201) throw new Error(await published.text());
+    const prefill = await f.prefill("accept", analysis);
+    expect(prefill).toEqual({ revision: revision((await published.json()).revision_id) });
+    expect((await f.command("accept", prefill, analysis)).status).toBe(202);
+  } finally { f.core.close(); }
+}));
+
+test("build and assessment reviews are accepted with the evidence the scope projects", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    const target = await acceptedBuild(f);
+    expect(await f.prefill("accept_build")).toEqual(target);
+    expect((await f.command("accept_build", await f.prefill("accept_build"))).status).toBe(202);
+    const assessment = await f.publish("assessment", { verdict: "pass", findings: [], test_evidence: null, recommended_next_actions: [] }, "assessment");
+    if (assessment.status !== 201) throw new Error(await assessment.text());
+    expect(await f.prefill("accept_assessment")).toEqual({ ...target, assessment: revision((await assessment.json()).revision_id) });
+    expect((await f.command("discuss_assessment", { ...await f.prefill("discuss_assessment"), text: "Explain coverage" })).status).toBe(202);
   } finally { f.core.close(); }
 }));
