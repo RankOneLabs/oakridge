@@ -20,6 +20,16 @@ const MAX_RESPAWN_ATTEMPTS = 4;
 const MAX_RESPAWN_DELAY_MS = 2_000;
 /** A poisoned request must not loop across respawns forever. */
 const MAX_PENDING_REPLAYS = 4;
+/** Caps a single logged field pulled from untrusted child output. */
+const MAX_LOGGED_FIELD_CHARS = 200;
+/** A faulty-but-alive child can emit unattributed responses continuously; collapse
+ * repeats into one line per window instead of logging every one. */
+const UNATTRIBUTED_FAULT_LOG_INTERVAL_MS = 1_000;
+/** Strips newlines (which could forge extra log lines) and caps length. */
+function sanitizeLogField(value: string): string {
+  const flattened = value.replace(/[\r\n]+/g, " ");
+  return flattened.length > MAX_LOGGED_FIELD_CHARS ? `${flattened.slice(0, MAX_LOGGED_FIELD_CHARS)}…` : flattened;
+}
 function decodeStderr(bytes: Uint8Array): string {
   const decoded = new TextDecoder().decode(bytes);
   const encoded = new TextEncoder().encode(decoded);
@@ -53,6 +63,8 @@ export class CoreClient {
   private lastSpawnAt = 0;
   private spawnedAt: number | null = null;
   private stderrBytes = new Uint8Array(0);
+  private lastUnattributedFaultLogAt = 0;
+  private suppressedUnattributedFaults = 0;
   get health(): CoreChildHealth {
     return { pid: this.process?.pid ?? null, uptime_ms: this.spawnedAt === null ? null : Date.now() - this.spawnedAt,
       restart_count: this.restartCount, last_stderr_lines: decodeStderr(this.stderrBytes).trimEnd().split("\n").filter(Boolean).slice(-20) };
@@ -118,6 +130,24 @@ export class CoreClient {
     const stderr = decodeStderr(this.stderrBytes).trim();
     return stderr ? `${detail}; child stderr: ${stderr}` : detail;
   }
+  /** Rate-limited, size-bounded log for faults naming a request we no longer track:
+   * a faulty child can emit these continuously while staying alive, so one line per
+   * window (with a suppressed-count) replaces logging every occurrence verbatim. */
+  private logUnattributedFault(kind: CoreTransportKind, request_id: string, detail: string): void {
+    const now = Date.now();
+    if (now - this.lastUnattributedFaultLogAt < UNATTRIBUTED_FAULT_LOG_INTERVAL_MS) {
+      this.suppressedUnattributedFaults++;
+      return;
+    }
+    const suppressed = this.suppressedUnattributedFaults;
+    this.suppressedUnattributedFaults = 0;
+    this.lastUnattributedFaultLogAt = now;
+    const suffix = suppressed > 0 ? ` (${suppressed} more suppressed)` : "";
+    console.error(
+      `core client: dropping ${sanitizeLogField(kind)} fault for unattributed request ` +
+        `${sanitizeLogField(request_id)}: ${sanitizeLogField(detail)}${suffix}`,
+    );
+  }
   private fault({ kind, detail, generation, request_id }: ChildFault): void {
     if (generation !== this.generation || this.closed) return;
     // A nonempty id names one request: settle it alone and leave the child running.
@@ -125,7 +155,7 @@ export class CoreClient {
     // dropped with a diagnostic rather than taken out on an unrelated request.
     if (request_id) {
       if (!this.pending.has(request_id)) {
-        console.error(`core client: dropping ${kind} fault for unattributed request ${request_id}: ${detail}`);
+        this.logUnattributedFault(kind, request_id, detail);
         return;
       }
       this.settle(request_id, transportFailure(kind, this.failureDetail(detail)));
