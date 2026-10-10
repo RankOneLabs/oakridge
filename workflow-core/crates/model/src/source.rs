@@ -232,6 +232,8 @@ pub struct OutputDefinition {
     pub collection_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication_trigger: Option<SymbolKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_trigger: Option<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

@@ -47,6 +47,14 @@ const implementation_wait: DecisionTree = {
   attention: { label: "Awaiting work or review", trigger: "accept_build" }
 };
 
+const assessment_edit_wait: DecisionTree = {
+  kind: "wait",
+  id: "assessment_edit_wait",
+  continuations: ["accept_assessment", "discuss_assessment", "request_implementation_changes"],
+  reason: "awaiting assessment review",
+  attention: { label: "Review assessment", trigger: "accept_assessment" }
+};
+
 export const implementation_dispatch: DecisionTree = {
   kind: "match",
   id: "implementation_dispatch",
@@ -60,6 +68,7 @@ export const implementation_dispatch: DecisionTree = {
     { variant: "request_build_changes", node: feedback_open_pr },
     { variant: "retry_build", node: retry_retained_exact },
     { variant: "assessment_submitted", node: assessment_submission_context },
+    { variant: "edit_assessment", node: assessment_edit_wait },
     { variant: "accept_assessment", node: assessment_accept_context },
     { variant: "discuss_assessment", node: discussion_context },
     { variant: "assessment_unchanged", node: unchanged_context },
