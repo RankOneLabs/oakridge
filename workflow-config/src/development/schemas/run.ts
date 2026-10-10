@@ -1,5 +1,5 @@
 import type { Schema } from "../../source-contracts";
-import { field, recordSchema } from "../../primitives/schemas";
+import { field, optionalField, recordSchema } from "../../primitives/schemas";
 
 export const runSchemas: Schema[] = [
   recordSchema("run_input", [
@@ -7,7 +7,8 @@ export const runSchemas: Schema[] = [
     field("repositories", "repository_configs"),
     field("analysis", "session_config"),
     field("planning", "session_config"),
-    field("briefs", "session_config")
+    field("briefs", "session_config"),
+    optionalField("title", "text")
   ]),
   recordSchema("prepare_member", [field("key", "ident"), field("input", "repo_input"), field("dependencies", "ids")]),
   { key: "prepare_members", shape: { kind: "list", item: "prepare_member", max_items: 100 } },

@@ -54,3 +54,14 @@ fn every_shipped_definition_compiles() {
             .unwrap_or_else(|error| panic!("{}: {error:?}", path.display()));
     }
 }
+
+#[test]
+fn run_input_accepts_title() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../workflow-config/definitions/development.json");
+    let bundle = decode_bundle(&fs::read(path).expect("generated development bundle")).unwrap();
+    let config = serde_json::json!({"runtime":"codex","workdir":"/tmp","session_name":"development"});
+    let mut input = serde_json::json!({"spec":"Feature","repositories":[],"analysis":config,"planning":config,"briefs":config});
+    input["title"] = serde_json::json!("Feature");
+    workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("title is accepted");
+}
