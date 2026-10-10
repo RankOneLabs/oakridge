@@ -1905,6 +1905,16 @@
         "kind": "record",
         "fields": [
           {
+            "key": "planner",
+            "schema": "session_settings",
+            "required": false
+          },
+          {
+            "key": "worker",
+            "schema": "session_settings",
+            "required": false
+          },
+          {
             "key": "spec_analysis",
             "schema": "session_settings",
             "required": false

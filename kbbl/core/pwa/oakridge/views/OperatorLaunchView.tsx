@@ -12,6 +12,10 @@ import type { OperatorStartPinnedRunRequest, OperatorSchema, OperatorDefinitionB
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
+import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig } from "../../hooks/useServerConfig";
+import { initialSelectionForRole } from "../lib/runtime-selection";
+import { supportsRoleSessionInput, withRoleSessionInput } from "../lib/launch-role-settings";
+import { RoleSettingsFields } from "../components/organisms/RoleSettingsFields";
 
 
 function selectInputFields(source: OperatorDefinitionBundle | undefined): readonly InputField[] | null {
@@ -45,13 +49,13 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [input, setInput] = useState("{}");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDrafts>({});
   const [rawMode, setRawMode] = useState(false);
+  const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole("planner", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole("worker", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
   const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
-  // Pinned launches accept digest, root input, and request_id, with no role/model
-  // override. The development bundle declares a sessions input shape, but no
-  // action reads it; a planner/worker picker would submit settings with no effect.
+  const supportsRoleSettings = supportsRoleSessionInput(selectedDefinition?.source);
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
@@ -71,8 +75,12 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     catch (cause) { setIsStorageUnreadable(true); setError(String(cause)); return; }
     let request: OperatorStartPinnedRunRequest;
     try {
-      request = retained ?? { request_id: randomUuid(), digest: selected,
-        input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts) };
+      if (retained) request = retained;
+      else {
+        const rootInput = rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts);
+        request = { request_id: randomUuid(), digest: selected,
+          input: supportsRoleSettings ? withRoleSessionInput(rootInput, { planner: plannerSelection, worker: workerSelection }) : rootInput };
+      }
       savePendingLaunch(request);
       setPending(request);
     } catch (cause) { setError(String(cause)); return; }
@@ -126,6 +134,8 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
         </select></label>}
       {fields && <label className="flex items-center gap-2"><input type="checkbox" checked={rawMode} disabled={pending !== null || launching}
         onChange={toggleRaw} />Raw JSON</label>}
+      {supportsRoleSettings && pending === null && <RoleSettingsFields planner={plannerSelection} worker={workerSelection}
+        onPlannerChange={setPlannerSelection} onWorkerChange={setWorkerSelection} isPending={launching} />}
       {(rawMode || fields === null || pending !== null) ? <>
         <label htmlFor="operator-input">Root input JSON</label>
         <textarea id="operator-input" value={pending ? JSON.stringify(pending.input, null, 2) : input} disabled={pending !== null || launching}

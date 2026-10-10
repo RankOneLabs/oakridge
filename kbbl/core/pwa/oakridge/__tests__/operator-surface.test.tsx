@@ -91,11 +91,16 @@ function requiredEmptyStringField(bundle: WorkflowDefinitionDescriptor): Sampled
 const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
 
 /** Serves one pinned bundle and accepts the launch it produces. */
-const launchFetch = (bundle: WorkflowDefinitionDescriptor) => vi.fn(async (url: string, init?: RequestInit) => {
+const launchFetch = (bundle: WorkflowDefinitionDescriptor, runtimes: readonly unknown[] = []) => vi.fn(async (url: string, init?: RequestInit) => {
+  if (url === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "claude-code", runtimes });
   if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
   if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
   throw new Error(url);
 });
+const postedLaunch = (fetch: ReturnType<typeof launchFetch>) => {
+  const call = fetch.mock.calls.find(([url, init]) => url.endsWith("/runs") && init?.method === "POST");
+  return call ? JSON.parse(String(call[1]?.body)) : null;
+};
 
 /** Enters every sampled root field but the named one, which the test leaves to the form. */
 function enterRootFieldsExcept(fields: readonly SampledRootField[], skipped: string): void {
@@ -136,11 +141,7 @@ test("the third bundle renders its extra root input as JSON and round-trips the 
   const extra = fields[fields.length - 1];
   if (!extra) throw new Error("root input has no fields");
   if (!extra.label.endsWith(" JSON")) throw new Error(`${extra.key} no longer needs a JSON fallback`);
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "third", digest: "third-digest", source: bundle }]);
-    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
-    throw new Error(url);
-  });
+  const fetch = launchFetch(bundle);
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   await screen.findByLabelText(extra.label);
@@ -150,8 +151,40 @@ test("the third bundle renders its extra root input as JSON and round-trips the 
   fireEvent.click(screen.getByLabelText("Raw JSON"));
   expect(JSON.parse(screen.getByLabelText<HTMLTextAreaElement>(extra.label).value)).toEqual(extra.value);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input).toEqual(rootInputRecord(fields));
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  const root = rootInputRecord(fields) as { readonly [key: string]: unknown; readonly sessions: object };
+  expect(postedLaunch(fetch).input).toEqual({ ...root, sessions: {
+    ...root.sessions,
+    planner: { runtime: "claude-code", model: "opus", effort: null },
+    worker: { runtime: "claude-code", model: "opus", effort: null },
+  } });
+});
+
+test("planner and worker choices are retained in the pinned launch input", async () => {
+  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  const fetch = launchFetch(bundle, [
+    { id: "claude-code", label: "Claude Code", models: [{ value: "opus", label: "Opus" }], efforts: [{ value: "high", label: "high" }] },
+    { id: "codex", label: "Codex", models: [
+      { value: "gpt-5.6-sol", label: "5.6 sol" }, { value: "gpt-6-astra", label: "6 astra" }, { value: "gpt-6-luna", label: "6 luna" },
+    ], efforts: [{ value: "high", label: "high" }, { value: "low", label: "low" }] },
+  ]);
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByLabelText("spec");
+  for (const field of sampleRootFields(bundle)) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
+  await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Planner runtime").options.length).toBe(2));
+  fireEvent.change(screen.getByLabelText("Planner runtime"), { target: { value: "codex" } });
+  fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "gpt-6-astra" } });
+  fireEvent.change(screen.getByLabelText("Planner effort"), { target: { value: "high" } });
+  fireEvent.change(screen.getByLabelText("Worker runtime"), { target: { value: "codex" } });
+  fireEvent.change(screen.getByLabelText("Worker model"), { target: { value: "gpt-6-luna" } });
+  fireEvent.change(screen.getByLabelText("Worker effort"), { target: { value: "low" } });
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  expect(postedLaunch(fetch).input.sessions).toMatchObject({
+    planner: { runtime: "codex", model: "gpt-6-astra", effort: "high" },
+    worker: { runtime: "codex", model: "gpt-6-luna", effort: "low" },
+  });
 });
 
 test("launches a run using the pinned digest and entered root input", async () => {
@@ -231,8 +264,8 @@ test("a required root string that admits an empty value launches without ever be
   await screen.findByLabelText(admitsEmpty.label);
   enterRootFieldsExcept(sampleRootFields(bundle), admitsEmpty.key);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input[admitsEmpty.key]).toBe("");
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  expect(postedLaunch(fetch).input[admitsEmpty.key]).toBe("");
 });
 
 test("clearing a required root string that admits an empty value submits the empty string", async () => {
@@ -246,8 +279,8 @@ test("clearing a required root string that admits an empty value submits the emp
   fireEvent.change(screen.getByLabelText(admitsEmpty.label), { target: { value: admitsEmpty.draft } });
   fireEvent.change(screen.getByLabelText(admitsEmpty.label), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).input[admitsEmpty.key]).toBe("");
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  expect(postedLaunch(fetch).input[admitsEmpty.key]).toBe("");
 });
 
 test("a required root string that admits an empty value is not marked required in the browser", async () => {

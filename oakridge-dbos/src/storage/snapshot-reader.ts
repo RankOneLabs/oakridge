@@ -3,6 +3,8 @@ import type { CheckedValue, CompiledBundle, DefinitionBundle, ReferenceRoot, Sna
 import type { CapacityPoolRecord, OutputSlotRecord, RevisionId, ResourceBindingRecord, ScopeExportRecord, ScopeId, ScopeInstanceRecord } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { SessionPolicy } from "../domain/session-settings";
+import { policyFromRunInput } from "../domain/run-session-policy";
+import { plainValue } from "../core-client/plain-value";
 
 export const READ_RELATIONS = ["scope_instance", "scope_export", "child_collection", "execution_selection", "execution", "output_slot", "artifact_revision", "resource_binding", "capacity_pool", "capacity_reservation"] as const;
 export type ReadRelation = typeof READ_RELATIONS[number];
@@ -17,11 +19,35 @@ export interface CurrentOutput extends OutputSlotRecord { readonly current_revis
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string; readonly child_id: string; readonly collection_key: string | null }
 interface VersionRow { readonly id: string; readonly version: string | number }
 interface RunPolicyRow { readonly run_id: string; readonly project_id: string | null; readonly session_policy: SessionPolicy | null }
+interface RootSessionInputRow { readonly input: CheckedValue; readonly source: DefinitionBundle }
+
+function hasRunSessionInput(bundle: DefinitionBundle): boolean {
+  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+  const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
+  if (shape?.kind !== "record") return false;
+  const sessions = shape.fields.find((field) => field.key === "sessions");
+  const session_shape = bundle.schemas.find((schema) => schema.key === sessions?.schema)?.shape;
+  return session_shape?.kind === "record" && ["planner", "worker"].every((key) =>
+    session_shape.fields.some((field) => field.key === key && field.schema === "session_settings"));
+}
 
 export async function readRunPolicy(tx: SqlExecutor, run_id: string): Promise<{ readonly policy: SessionPolicy; readonly witness: PolicyWitness }> {
   const row = (await tx.query<RunPolicyRow>("SELECT r.id AS run_id,p.id AS project_id,p.session_policy FROM authority.run r LEFT JOIN authority.project p ON p.id=r.project_id WHERE r.id=$1", [run_id]))[0];
   if (!row) throw new Error(`run ${run_id} missing while reading session policy`);
-  const policy = row.session_policy ?? { version: 0, entries: [] };
+  const root = (await tx.query<RootSessionInputRow>(`SELECT s.input,d.source FROM authority.scope_instance s
+    JOIN authority.run r ON r.id=s.run_id JOIN authority.definition_bundle d ON d.id=r.definition_bundle_id
+    WHERE s.run_id=$1 AND s.parent_id IS NULL LIMIT 1`, [run_id]))[0];
+  let run_policy: SessionPolicy = { version: 0, entries: [] };
+  if (root && hasRunSessionInput(root.source)) {
+    const input = plainValue(root.input, root.source);
+    if (!input.ok) throw new Error(`${input.error.operation}: ${input.error.detail}`);
+    const parsed = policyFromRunInput(input.value);
+    if (!parsed.ok) throw new Error(`${parsed.error.entity_id}: ${parsed.error.detail}`);
+    run_policy = parsed.value;
+  }
+  const project_policy = row.session_policy;
+  const policy: SessionPolicy = { version: project_policy?.version ?? 0,
+    entries: [...run_policy.entries, ...(project_policy?.entries ?? [])] };
   return { policy, witness: { relation: "session_policy", id: row.project_id ?? row.run_id, version: policy.version } };
 }
 
