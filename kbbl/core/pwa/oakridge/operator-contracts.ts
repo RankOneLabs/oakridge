@@ -7,8 +7,13 @@ export interface OperatorStartedRun { readonly run_id: string; readonly root_sco
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
-export interface OperatorRunView { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
-  readonly created_at: string; readonly archived_at: string | null; readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
+export interface OperatorRunView extends OperatorRunSummary {
+  readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
+
+export interface OperatorRunSummary { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
+  readonly created_at: string; readonly archived_at: string | null }
+
+export type OperatorRunDetail = OperatorRunView;
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
@@ -26,6 +31,8 @@ export interface OperatorScopeView {
   readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor;
 }
 
+export interface OperatorDecision { readonly scope_id: string; readonly outcome: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor }
+
 export type OperatorInboxItem =
   | { readonly kind: "command"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly key: string; readonly label: string; readonly consequence: string }
   | { readonly kind: "wait"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly reason: string; readonly label: string }
@@ -35,6 +42,36 @@ export interface OperatorInboxPage {
   readonly cursor: readonly { readonly scope_id: string; readonly version: number }[];
   readonly items: readonly OperatorInboxItem[]; readonly next_cursor: string | null;
 }
+
+export type OperatorReviewInbox = OperatorInboxPage;
+
+export interface OperatorSessionLocation {
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly execution_id: string;
+}
+
+export interface OperatorRunSessionAttempt {
+  readonly location: OperatorSessionLocation;
+  readonly worker_key: string;
+  readonly generation: number;
+  readonly status: OperatorExecutionView["status"];
+  readonly result: OperatorExecutionView["result"];
+}
+
+export interface OperatorArtifactDetail {
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly output_key: string;
+  readonly collection_key: string;
+  readonly slot_version: number;
+  readonly revision_id: string | null;
+  readonly predecessor_id: string | null;
+  readonly body: OperatorCheckedValue | null;
+  readonly status: OperatorArtifactRevisionStatus;
+}
+
+export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
 
 export interface OperatorScopeHistory {
   readonly scope_id: string;
