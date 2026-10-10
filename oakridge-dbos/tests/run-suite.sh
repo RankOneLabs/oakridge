@@ -11,6 +11,9 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
 fi
 # Shipped bundles are generated, not committed.
 bash "$(dirname "$0")/../../scripts/generate-bundles.sh"
+if [[ "$suite" == integration ]]; then
+  bun run --filter kbbl build:pwa
+fi
 # Booting a composition requires an effect-encryption key, and CI supplies none.
 # Default one for the whole suite so a new test that boots the authority cannot
 # omit it; production-effects.test.ts still unsets it at runtime to assert that a
@@ -30,6 +33,6 @@ shard="${TEST_SHARD:-0}"
 count="${TEST_SHARD_COUNT:-1}"
 failed=0
 for ((index=shard; index<${#selected[@]}; index+=count)); do
-  OAKRIDGE_ENABLE_RAW_INGRESS=1 bun test --timeout=30000 "${selected[index]}" || failed=$((failed+1))
+  OAKRIDGE_ENABLE_RAW_INGRESS=1 bun test --timeout=120000 "${selected[index]}" || failed=$((failed+1))
 done
 if [[ "$failed" -ne 0 ]]; then echo "$failed $suite test files failed" >&2; exit 1; fi

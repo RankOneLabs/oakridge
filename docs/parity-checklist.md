@@ -8,6 +8,9 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
+This branch ports 10 of the 48 `main` PWA test files. The remaining 38 are
+listed below as an explicit coverage gap; this is not a completed parity gate.
+
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
 
 | Classification | Original assertion (`main`) | New assertion | Reason |
@@ -65,6 +68,12 @@ The test inputs are HTTP failure payloads, not hand-written read-model fixtures.
 No changed assertions. All four source-scanning tests retain their original
 text. This suite has no read-model fixture.
 
+## `kbbl/core/pwa/oakridge/components/molecules/RoleModelPicker.test.tsx`
+
+No changed assertions. Both tests and the runtime descriptor fixture retain their
+original text. The descriptor fixture comes from the runtime catalog constants,
+not a hand-written Oakridge read model.
+
 ## `kbbl/core/pwa/oakridge/client.project-update.test.ts`
 
 | Classification | Original assertion (`main`) | New assertion | Reason |
@@ -94,11 +103,64 @@ text. This suite has no read-model fixture.
 | Unportable | `expect(within(screen.getByTestId("or-risk-card")).getByText("No mitigation given.")).toBeTruthy();` | No equivalent assertion. | The shipped checked `risk` schema requires a mitigation string; a bare-string risk cannot be projected. |
 | Unportable | `expect(screen.getByRole("alert").textContent).toContain("scope: expected an object");` | No equivalent assertion. | The checked value has already been validated by the compiler; the viewer has no untyped-body contract error surface. |
 
+## Remaining `main` suite gap
+
+The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
+
+| Original file | Original tests | Why no assertion-preserving port is present |
+| --- | ---: | --- |
+| `__tests__/GateDecisionActions.test.tsx` | 5 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/ReviewInboxView.test.tsx` | 11 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
+| `client.test.ts` | 8 | The old run, session, and gate endpoints and event frame parser were replaced by scope commands and generated projections; the existing same-name suite exercises different client behavior. |
+| `components/molecules/AssessmentViewer.test.tsx` | 5 | The old viewer cross-references brief and build result, numbers unmet criteria, and folds met criteria; the current checked viewer receives only the assessment body. |
+| `components/molecules/BuildBriefViewer.test.tsx` | 4 | The old atom-edit toggle and RFC-6901 edit callbacks are absent from the restored viewer. |
+| `components/molecules/BuildResultViewer.test.tsx` | 5 | The old viewer cross-references a brief for out-of-scope files and acceptance criteria; the current checked viewer receives only one body. |
+| `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `components/molecules/SpecAnalysisViewer.test.tsx` | 6 | The old blocker callout, source toggle, and untyped validation alert are absent; current checked-schema content needs a separate parity decision. |
+| `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `hooks/useOakridgeRunEventStream.test.tsx` | 1 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/build-brief.test.ts` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/build-result.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/launch-config.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/launch-selection.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/plan.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/pr-summary.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/request-identity.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-accent.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-notifications.test.ts` | 2 | The existing same-name suite uses current scope notifications; the two old run-event assertions have not been mapped to that projection. |
+| `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
+| `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-sessions.test.ts` | 14 | The old work-order attempt and health model differs from the generated session projection; no assertion-preserving mapping has been established. |
+| `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
+| `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+| `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
+| `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
+
+This register covers 38 files and 362 named test declarations; parameterized cases may expand further. None is silently counted as ported.
+
 ## Surface checklist
+
+The browser test serves the production PWA bundle through stub kbbl, routes its API calls to the production Oakridge composition, and uses a stub forge. Each row has a light and dark capture from that walk. The historical `main` surface has no runnable backend in this branch, so the per-file assertion diff above is the available baseline; these captures establish current rendering, not visual equality with `main`.
 
 | Surface | `main` reference | Current light screenshot | Current dark screenshot | Result |
 | --- | --- | --- | --- | --- |
-| Artifact review | Pending browser walk | Pending browser walk | Pending browser walk | Pending |
-| Run overview | Pending browser walk | Pending browser walk | Pending browser walk | Pending |
-| Review inbox | Pending browser walk | Pending browser walk | Pending browser walk | Pending |
-| Definition list and editor | Pending browser walk | Pending browser walk | Pending browser walk | Pending |
+| Run overview | `main` run-workspace tests | [light](parity-screenshots/run-overview-light.png) | [dark](parity-screenshots/run-overview-dark.png) | Rendered in production bundle |
+| Artifact review | `main` artifact-review tests and assertion diff above | [light](parity-screenshots/artifact-review-light.png) | [dark](parity-screenshots/artifact-review-dark.png) | Operator edit revision rendered |
+| Artifact discussion | `main` artifact-review tests | [light](parity-screenshots/artifact-discussion-light.png) | [dark](parity-screenshots/artifact-discussion-dark.png) | Ping delivered to the completed stub session |
+| Review inbox | `main` ReviewInboxView tests | [light](parity-screenshots/review-inbox-light.png) | [dark](parity-screenshots/review-inbox-dark.png) | Rendered in production bundle |
+| Definition list | [`main` workflow list capture](../kbbl/docs/c1-before-workflow-def-list.png) and workflowdefs tests | [light](parity-screenshots/definitions-light.png) | [dark](parity-screenshots/definitions-dark.png) | Rendered in production bundle; old list is a different workflow model |
+| Definition editor | `main` workflowdefs tests | [light](parity-screenshots/definition-editor-light.png) | [dark](parity-screenshots/definition-editor-dark.png) | Rendered in production bundle |
+
+The edit-then-ping test checks that the edited revision has a null `execution_id` and points back to the agent revision. It then creates a discussion thread, sends a reply with Ping agent selected, and checks `delivered`, one resume of the already completed stub session, and the exact input received by stub kbbl. The edit is sent from the browser through the operator command API because the restored review surface does not expose an edit control.
