@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { buildDevelopmentRun } from "./development";
+import { buildBundle } from "./build-bundle";
 import { renderPromptFiles } from "./development/prompts";
 import { DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY } from "./development/policies";
 
@@ -10,8 +10,17 @@ const promptDrift = renderPromptFiles(check);
 for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
 if (promptDrift.length > 0) process.exit(1);
 // Bundles are not committed; every consumer generates them first.
-for (const variant of variants)
-  await Bun.write(resolve(root, "definitions", `${variant.key}.json`), JSON.stringify(buildDevelopmentRun(variant), null, 2) + "\n");
+for (const variant of variants) {
+  const result = buildBundle({ authoring_version: 1, template: "development", key: variant.key,
+    implementation_capacity: variant.implementation_capacity, sibling_failure: variant.sibling_failure,
+    wire_field_order: variant.contract_field_order, stage_layout: variant.stage_layout ?? "standard" });
+  if (!result.ok) throw new Error(`${result.error.field_path}: ${result.error.detail}`);
+  const path = resolve(root, "definitions", `${variant.key}.json`);
+  const bytes = JSON.stringify(result.value, null, 2) + "\n";
+  if (check) {
+    if (await Bun.file(path).text() !== bytes) throw new Error(`Bundle drift: ${path}`);
+  } else await Bun.write(path, bytes);
+}
 if (check) {
   const stageTests = Bun.spawnSync({
     cmd: ["bun", "test", "workflow-config/src/development/policies.test.ts"],

@@ -1,5 +1,6 @@
 import type { WorkflowDefinitionDescriptor as DefinitionBundle } from "./source-contracts";
-import { defineBundle } from "./builder";
+import { buildBundle } from "./build-bundle";
+import type { WorkflowAuthoring } from "./authoring";
 import { developmentSchemas } from "./development/schemas";
 import { buildPrompts } from "./development/prompts";
 import { stageTableFor } from "./development/run/stage-table";
@@ -18,7 +19,17 @@ export interface DevelopmentOptions { readonly independentSiblings: boolean }
 
 /** Compose the existing Rust source contract; expansion stays outside run policy. */
 export function buildDevelopmentRun(policy: RunPolicy): DefinitionBundle {
-  return structuredClone(defineBundle({
+  const authoring: WorkflowAuthoring = { authoring_version: 1, template: "development", key: policy.key,
+    implementation_capacity: policy.implementation_capacity, sibling_failure: policy.sibling_failure,
+    wire_field_order: policy.contract_field_order, stage_layout: policy.stage_layout ?? "standard" };
+  const result = buildBundle(authoring);
+  if (!result.ok) throw new Error(`${result.error.field_path}: ${result.error.detail}`);
+  return result.value;
+}
+
+/** Template assembly; callers must use buildBundle so validation has one entry point. */
+export function assembleDevelopmentRun(policy: RunPolicy): DefinitionBundle {
+  return {
     language_version: 1,
     key: policy.key,
     version: 3,
@@ -41,7 +52,7 @@ export function buildDevelopmentRun(policy: RunPolicy): DefinitionBundle {
     prompts: buildPrompts(stageTableFor(policy)),
     operations,
     limits: { max_list_items: 100, max_depth: 28, evaluation_budget: 20000 },
-  }));
+  };
 }
 
 /** Preserve the generator's established entry point. */
