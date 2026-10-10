@@ -72,6 +72,8 @@ test("agent trigger still requires an execution while the declared edit trigger 
     await f.fact("begin");
     const first = await f.publish("build_result", build_body);
     expect(first.status).toBe(201);
+    const summary = await f.publish("pr_summary", pr_body);
+    expect(summary.status).toBe(201);
     const predecessor_id: string = (await first.json()).revision_id;
     const slot = (await db.query<{ version: number | string }>(
       "SELECT version FROM authority.output_slot WHERE scope_id=$1 AND output_key='build_result' AND collection_key=''", [f.root_scope_id]))[0];
