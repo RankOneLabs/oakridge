@@ -100,7 +100,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
  * change mid-session, and SessionTopBar's PATCH /config invalidates this
  * query so the next read reflects the server response.
  */
-export function useServerConfig(): ServerConfig | null {
+export function useServerConfigState(enabled = true): { readonly config: ServerConfig | null; readonly error: Error | null } {
   const query = useQuery({
     queryKey: ["config"],
     queryFn: async (): Promise<ServerConfigResponse> => {
@@ -109,11 +109,12 @@ export function useServerConfig(): ServerConfig | null {
       return (await res.json()) as ServerConfigResponse;
     },
     staleTime: Infinity,
+    enabled,
   });
   return useMemo(() => {
-    if (!query.data) return null;
+    if (!query.data) return { config: null, error: query.error };
     const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
-    return {
+    return { config: {
       defaultWorkdir: query.data.defaultWorkdir,
       softThresholdTokens:
         typeof query.data.softThresholdTokens === "number"
@@ -128,6 +129,10 @@ export function useServerConfig(): ServerConfig | null {
         runtimes,
       }),
       runtimes,
-    };
-  }, [query.data]);
+    }, error: null };
+  }, [query.data, query.error]);
+}
+
+export function useServerConfig(): ServerConfig | null {
+  return useServerConfigState().config;
 }

@@ -187,6 +187,33 @@ test("planner and worker choices are retained in the pinned launch input", async
   });
 });
 
+test("launch waits for advertised model settings and pins the advertised default runtime", async () => {
+  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
+  let resolveConfig: (response: Response) => void = () => undefined;
+  const config = new Promise<Response>((resolve) => { resolveConfig = resolve; });
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/config") return config;
+    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
+    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
+    throw new Error(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByLabelText("spec");
+  for (const field of sampleRootFields(bundle)) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(true);
+  resolveConfig(Response.json({ defaultWorkdir: null, defaultRuntimeId: "codex", runtimes: [
+    { id: "codex", label: "Codex", models: [{ value: "gpt-5.6-sol", label: "5.6 sol" }], efforts: [] },
+  ] }));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  expect(postedLaunch(fetch).input.sessions).toMatchObject({
+    planner: { runtime: "codex", model: "gpt-5.6-sol" },
+    worker: { runtime: "codex", model: "gpt-5.6-sol" },
+  });
+});
+
 test("launches a run using the pinned digest and entered root input", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/oakridge/api/api/definitions") return cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);

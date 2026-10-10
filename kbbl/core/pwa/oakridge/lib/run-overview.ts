@@ -24,6 +24,9 @@ export const selectLoadedScopes = (values: readonly (OperatorScopeView | undefin
 export const selectScopeDetail = (scopes: readonly OperatorScopeView[], scopeId: string | null): OperatorScopeView | null =>
   scopeId === null ? scopes[0] ?? null : scopes.find((scope) => scope.scope_id === scopeId) ?? null;
 
+export const selectScopeQueryIndex = (run: OperatorRunView, scopeId: string | null): number =>
+  run.scopes.findIndex((scope) => scope.scope_id === scopeId);
+
 export const selectWaitingScopes = (scopes: readonly OperatorScopeView[]): readonly OperatorScopeView[] =>
   scopes.filter((scope) => scope.decision?.kind === "wait");
 

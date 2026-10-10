@@ -5,7 +5,7 @@ import { formatRunWorkspaceHash } from "../../../lib/hash";
 import { fetchOperatorDefinition, fetchOperatorScope, submitOperatorCommand } from "../../client";
 import { useRun } from "../../hooks/useRun";
 import { queryKeys } from "../../queryKeys";
-import { selectLoadedScopes, selectRunScope, selectScopeDetail } from "../../lib/run-overview";
+import { selectLoadedScopes, selectRunScope, selectScopeDetail, selectScopeQueryIndex } from "../../lib/run-overview";
 import { selectPendingCommandsForRecovery } from "../../lib/run-attention";
 import { clearOperatorDraft, clearPendingCommand, listPendingCommands, operatorDraftIdentity } from "../../lib/operator-drafts";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
@@ -21,7 +21,8 @@ interface Props { readonly runId: string; readonly routePane: RoutePaneTarget | 
 export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
   const client = useQueryClient();
   const [recovery, setRecovery] = useState("");
-  const attempted = useRef(new Set<string>());
+  const attemptedScopeVersions = useRef(new Map<string, number>());
+  const inFlight = useRef(new Set<string>());
   const runQuery = useRun(runId);
   const definition = useQuery({ queryKey: queryKeys.definition(runId), queryFn: () => fetchOperatorDefinition(runId) });
   const scopeQueries = useQueries({ queries: (runQuery.data?.scopes ?? []).map((scope) => ({
@@ -30,10 +31,15 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
   const scopes = selectLoadedScopes(scopeQueries.map((query) => query.data));
   useEffect(() => {
     if (scopes.length === 0) return;
-    const pending = selectPendingCommandsForRecovery(listPendingCommands(runId), scopes)
-      .filter((submission) => !attempted.current.has(operatorDraftIdentity(submission)));
+    const pending = selectPendingCommandsForRecovery({ pending: listPendingCommands(runId), scopes,
+      attemptedScopeVersions: attemptedScopeVersions.current, inFlight: inFlight.current });
     if (pending.length === 0) return;
-    for (const submission of pending) attempted.current.add(operatorDraftIdentity(submission));
+    for (const submission of pending) {
+      const identity = operatorDraftIdentity(submission);
+      const scope = scopes.find((item) => item.scope_id === submission.scope_id);
+      if (scope) attemptedScopeVersions.current.set(identity, scope.cursor.scope_version);
+      inFlight.current.add(identity);
+    }
     void Promise.all(pending.map(async (submission) => {
       try {
         await submitOperatorCommand(submission);
@@ -43,6 +49,8 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
       } catch (cause) {
         if (isDefinitiveRequestRejection(cause)) clearPendingCommand(submission);
         return `${submission.command_key}: ${cause instanceof Error ? cause.message : "Receipt still pending"}`;
+      } finally {
+        inFlight.current.delete(operatorDraftIdentity(submission));
       }
     })).then((messages) => {
       setRecovery(messages.join(" "));
@@ -54,6 +62,7 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
   if (!run) return <main className="or-page" role="status">Loading run…</main>;
   const selected = selectRunScope(run, scopeId, definition.data?.source.root ?? null);
   const detail = selectScopeDetail(scopes, selected?.scope_id ?? null);
+  const selectedQuery = scopeQueries[selectScopeQueryIndex(run, selected?.scope_id ?? null)];
   const schemas = definition.data?.source.schemas ?? [];
   const navigate = (target: RoutePaneTarget | string | null) => { window.location.hash = formatRunWorkspaceHash(runId, target); };
   const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.run(runId) }); };
@@ -71,6 +80,7 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
           : routePane?.kind === "session" ? <RunSessionPane sessionId={routePane.session_id} onOpenSession={(id) => navigate({ kind: "session", session_id: id })} />
           : <><RunOverviewPane run={run} scopes={scopes} schemas={schemas} onOpenScope={(id) => navigate(id)} />
             {detail ? <RunDetail scope={detail} schemas={schemas} onRefresh={refresh} />
+              : selectedQuery?.isError ? <p role="alert">Could not load scope: {String(selectedQuery.error)}</p>
               : <p role="status">Loading scope…</p>}</>}
       </div>
     </div>

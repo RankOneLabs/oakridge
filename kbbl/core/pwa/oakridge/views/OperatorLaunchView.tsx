@@ -12,8 +12,8 @@ import type { OperatorStartPinnedRunRequest, OperatorSchema, OperatorDefinitionB
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
-import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig } from "../../hooks/useServerConfig";
-import { initialSelectionForRole } from "../lib/runtime-selection";
+import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfigState } from "../../hooks/useServerConfig";
+import { coerceRoleSelection, initialSelectionForRole } from "../lib/runtime-selection";
 import { supportsRoleSessionInput, withRoleSessionInput } from "../lib/launch-role-settings";
 import { RoleSettingsFields } from "../components/organisms/RoleSettingsFields";
 
@@ -51,11 +51,18 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [rawMode, setRawMode] = useState(false);
   const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole("planner", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
   const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole("worker", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [plannerRuntimeTouched, setPlannerRuntimeTouched] = useState(false);
+  const [workerRuntimeTouched, setWorkerRuntimeTouched] = useState(false);
   const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
   const supportsRoleSettings = supportsRoleSessionInput(selectedDefinition?.source);
+  const { config: serverConfig, error: configError } = useServerConfigState(supportsRoleSettings && pending === null);
+  const descriptors = runtimeDescriptorsForConfig(serverConfig);
+  const defaultRuntimeId = defaultRuntimeIdForConfig(serverConfig);
+  const planner = coerceRoleSelection("planner", plannerSelection, descriptors, defaultRuntimeId, plannerRuntimeTouched);
+  const worker = coerceRoleSelection("worker", workerSelection, descriptors, defaultRuntimeId, workerRuntimeTouched);
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
@@ -77,9 +84,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     try {
       if (retained) request = retained;
       else {
+        if (supportsRoleSettings && serverConfig === null) throw new Error("Model settings are not available yet.");
         const rootInput = rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts);
         request = { request_id: randomUuid(), digest: selected,
-          input: supportsRoleSettings ? withRoleSessionInput(rootInput, { planner: plannerSelection, worker: workerSelection }) : rootInput };
+          input: supportsRoleSettings ? withRoleSessionInput(rootInput, { planner, worker }) : rootInput };
       }
       savePendingLaunch(request);
       setPending(request);
@@ -134,8 +142,11 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
         </select></label>}
       {fields && <label className="flex items-center gap-2"><input type="checkbox" checked={rawMode} disabled={pending !== null || launching}
         onChange={toggleRaw} />Raw JSON</label>}
-      {supportsRoleSettings && pending === null && <RoleSettingsFields planner={plannerSelection} worker={workerSelection}
-        onPlannerChange={setPlannerSelection} onWorkerChange={setWorkerSelection} isPending={launching} />}
+      {supportsRoleSettings && pending === null && serverConfig === null && <p role={configError ? "alert" : "status"}>
+        {configError ? `Could not load model settings: ${configError.message}` : "Loading model settings…"}</p>}
+      {supportsRoleSettings && pending === null && serverConfig !== null && <RoleSettingsFields serverConfig={serverConfig} planner={planner} worker={worker}
+        onPlannerChange={setPlannerSelection} onWorkerChange={setWorkerSelection}
+        onPlannerRuntimeTouched={setPlannerRuntimeTouched} onWorkerRuntimeTouched={setWorkerRuntimeTouched} isPending={launching} />}
       {(rawMode || fields === null || pending !== null) ? <>
         <label htmlFor="operator-input">Root input JSON</label>
         <textarea id="operator-input" value={pending ? JSON.stringify(pending.input, null, 2) : input} disabled={pending !== null || launching}
@@ -160,7 +171,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
       {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result, or discard it to compose a new launch. Discarding forgets the retry identity, and the earlier attempt may still have created a run; check the runs list.</p>}
       {isStorageUnreadable && !pending && <p role="status">Stored launch state is unreadable. Discard it to compose a new launch; any earlier attempt may still have created a run, so check the runs list.</p>}
       {error && <p role="alert">{error}</p>}
-      <Button type="submit" disabled={!selected || launching}>{pending ? "Retry launch" : "Launch"}</Button>
+      <Button type="submit" disabled={!selected || launching || (pending === null && supportsRoleSettings && serverConfig === null)}>{pending ? "Retry launch" : "Launch"}</Button>
       {(pending || isStorageUnreadable) && <Button variant="secondary" onClick={discard} disabled={launching}>Discard</Button>}
     </form>
   </main>;
