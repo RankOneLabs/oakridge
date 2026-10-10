@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { chromium } from "@playwright/test";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { PullRequestObservation } from "../src/domain/pull-request";
@@ -16,6 +18,8 @@ import { withDatabase } from "./effect-fixture";
 // publishes through the selected publication contract its prompt carries.
 
 const binary = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
+const pwa_dist = resolve(import.meta.dir, "../../kbbl/core/pwa/dist");
+const screenshots = resolve(import.meta.dir, "../../docs/parity-screenshots");
 const cohort = { id: "first", branch: "work", pr_url: "https://github.com/owner/repo/pull/1" };
 const final_pr = { branch: "cohort", pr_url: "https://github.com/owner/repo/pull/2" };
 
@@ -77,9 +81,11 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
     if (pr && pr.state !== "closed_unmerged") pull_requests.set(branch, { ...pr, state: "closed_unmerged" });
   };
 
-  let app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> } | null = null;
+  let app: Awaited<ReturnType<typeof createProductionComposition>>["app"] | null = null;
   const sessions = new Map<string, { completed: boolean }>();
   const sids = new Map<string, string>();
+  const resumed_after_end: string[] = [];
+  const ping_inputs: string[] = [];
   const started_settings: StartedSessionSettings[] = [];
   const publish = async (start: SessionStart, stage: string, sid: string) => {
     for (const output of start.outputs) {
@@ -93,11 +99,30 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
   };
   const agent_failures: string[] = [];
   const kbbl = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
-    const segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const url = new URL(request.url);
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (url.pathname === "/") return new Response(Bun.file(resolve(pwa_dist, "index.html")), { headers: { "content-type": "text/html" } });
+    if (url.pathname.startsWith("/assets/")) return new Response(Bun.file(resolve(pwa_dist, url.pathname.slice(1))));
+    if (url.pathname === "/oakridge/config") return Response.json({ available: true, fallback_refresh_ms: 5_000 });
+    if (url.pathname === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "codex", runtimes: [] });
+    if (url.pathname === "/sessions" && request.method === "GET") return Response.json({ sessions: [] });
+    if (url.pathname === "/inbox") return Response.json({ sessions: [] });
+    if (url.pathname.startsWith("/oakridge/api/") && app) {
+      const path = url.pathname.slice("/oakridge/api".length) + url.search;
+      return app.request(new Request(`http://localhost${path}`, request));
+    }
     const target = segments[0] === "sessions" && segments[1] === "resumable" ? segments[2] ?? "" : segments[1] ?? "";
+    if (request.method === "PUT" && segments[0] === "sessions" && segments[1] === "resumable" && segments[3] === "input") {
+      ping_inputs.push((await request.json() as { text: string }).text);
+      return Response.json({ accepted: true });
+    }
     if (request.method === "PUT") {
       const known = sids.get(target);
-      if (known) return Response.json({ kind: "attached", session: { sid: known, status: "live" } });
+      if (known) {
+        if (request.headers.get("x-oakridge-collaboration-resume") === "true" && sessions.get(known)?.completed)
+          resumed_after_end.push(known);
+        return Response.json({ kind: "attached", session: { sid: known, status: "live" } });
+      }
       const sid = crypto.randomUUID();
       sids.set(target, sid);
       sessions.set(sid, { completed: false });
@@ -116,11 +141,17 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
   } });
 
   try {
-    await withDatabase(async ({ url }) => {
+      await withDatabase(async ({ url, db }) => {
       const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
       const session = { runtime: "codex", workdir: repository_path, session_name: "test" };
       const repository = { key: "repo", preparation: { repository_path, expected_head: null },
         build: session, integration: session, forge: { owner: "owner", name: "repo", build_base: "cohort", final_base: "main" } };
+      const previous_allowed_origins = process.env.OAKRIDGE_ALLOWED_ORIGINS;
+      const previous_kbbl_base_url = process.env.KBBL_BASE_URL;
+      process.env.OAKRIDGE_ALLOWED_ORIGINS = new URL(kbbl.url.href).origin;
+      // The collaboration HTTP handler reads this env var at composition time.
+      // Keep it on the stub so an end-to-end test cannot start a real ACP session.
+      process.env.KBBL_BASE_URL = kbbl.url.href;
       const composition = await createProductionComposition({ database_url: url, core_binary: binary, host: "127.0.0.1",
         kbbl_base_url: kbbl.url.href, pull_requests: reader,
         provider_capabilities: { probe: async () => ({ ok: true as const, value: true as const }), check_github: async () => ({ ok: true as const, value: true as const }) },
@@ -139,6 +170,88 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
           if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
           return response.json() as Promise<T>;
         };
+        let browser_walked = false;
+        const browserWalk = async (scope: ScopeView): Promise<void> => {
+          const result = scope.outputs.find((item) => item.output_key === "build_result" && item.collection_key === "");
+          const agentRevision = result?.current_revision;
+          if (!agentRevision || agentRevision.body.data.kind !== "record") throw new Error("build result revision not ready for browser walk");
+          const buildSchema = bundle.schemas.find((item) => item.key === "build_body")?.shape;
+          const summaryId = buildSchema?.kind === "record" ? buildSchema.fields.findIndex((field) => field.key === "summary") : -1;
+          if (summaryId < 0) throw new Error("build_body summary field missing");
+          const editedBody = { ...agentRevision.body, data: { ...agentRevision.body.data,
+            fields: agentRevision.body.data.fields.map((field) => field.field_id === summaryId
+              ? { ...field, value: { schema: "text", data: { kind: "string" as const, value: "Edited by operator" } } } : field) } };
+          const browser = await chromium.launch({ args: ["--no-sandbox"] });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          try {
+            const page = await context.newPage();
+            page.setDefaultTimeout(10_000);
+            const base = kbbl.url.href;
+            const capture = async (name: string, hash: string, ready: string): Promise<void> => {
+              await page.goto(`${base}#${hash}`);
+              await page.locator(ready).waitFor();
+              for (const theme of ["light", "dark"] as const) {
+                if (await page.evaluate(() => document.documentElement.dataset.theme) !== theme)
+                  await page.getByRole("button", { name: `Switch to ${theme} mode` }).click();
+                await page.evaluate(() => {
+                  window.scrollTo(0, 0);
+                  for (const element of Array.from(document.querySelectorAll("*"))) if (element.scrollTop) element.scrollTop = 0;
+                });
+                await page.screenshot({ path: resolve(screenshots, `${name}-${theme}.png`), fullPage: true });
+              }
+            };
+            mkdirSync(screenshots, { recursive: true });
+            await capture("run-overview", `oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
+            let edit: { status: number; body: unknown } = { status: 409, body: null };
+            for (let attempt = 0; attempt < 5 && edit.status === 409; attempt++) {
+              const latest = await read<ScopeView>(`/api/runs/${run_id}/scopes/${scope.scope_id}`);
+              const command = { command_key: "edit_build_result", payload: { output_key: "build_result", collection_key: "",
+                reviewed_revision_id: agentRevision.id, prev_value: agentRevision.body, body: editedBody },
+                request_id: crypto.randomUUID(), scope_id: scope.scope_id, expected_scope_version: latest.cursor.scope_version,
+                targets: latest.command_targets.edit_build_result ?? [] };
+              edit = await page.evaluate(async ({ path, body }) => {
+                const response = await fetch(`/oakridge/api${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+                return { status: response.status, body: await response.json() };
+              }, { path: `/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, body: command });
+            }
+            if (edit.status !== 202) throw new Error(`operator edit failed: ${JSON.stringify(edit)}`);
+            let editRevision: NonNullable<typeof agentRevision> | null = null;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              const projected = await read<ScopeView>(`/api/runs/${run_id}/scopes/${scope.scope_id}`);
+              const current = projected.outputs.find((item) => item.output_key === "build_result")?.current_revision;
+              if (current && current.id !== agentRevision.id) { editRevision = current; break; }
+              await Bun.sleep(50);
+            }
+            if (!editRevision) throw new Error("operator edit did not project a new revision");
+            const revisionRows = await db.query<{ execution_id: string | null; predecessor_id: string | null }>(
+              "SELECT execution_id, predecessor_id FROM authority.artifact_revision WHERE id=$1", [editRevision.id]);
+            expect(revisionRows).toEqual([{ execution_id: null, predecessor_id: agentRevision.id }]);
+            await page.goto(`${base}#oakridge/run/${run_id}/artifact/${editRevision.id}`);
+            await page.getByTestId("or-artifact-review").waitFor();
+            await page.getByLabel("New thread title").fill("Review the operator edit");
+            await page.getByRole("button", { name: "Start thread" }).click();
+            await page.getByText("Review the operator edit").waitFor();
+            await page.getByRole("button", { name: "Reply" }).click();
+            await page.getByLabel("Reply").fill("Please review the changed summary");
+            await page.getByLabel("Ping agent").check();
+            const response = page.waitForResponse((reply) => reply.url().includes("/messages") && reply.request().method() === "POST");
+            await page.getByRole("button", { name: "Send reply" }).click();
+            const delivered: { delivery: { payload: { status: string; reason: string | null } } } = await (await response).json();
+            if (delivered.delivery.payload.status !== "delivered") throw new Error(`ping delivery failed: ${JSON.stringify(delivered.delivery)}`);
+            expect(resumed_after_end).toHaveLength(1);
+            expect(ping_inputs).toEqual(["Please review the changed summary"]);
+            await capture("artifact-review", `oakridge/run/${run_id}/artifact/${editRevision.id}`, '[data-testid="or-artifact-review"]');
+            for (const theme of ["light", "dark"] as const) {
+              if (await page.evaluate(() => document.documentElement.dataset.theme) !== theme)
+                await page.getByRole("button", { name: `Switch to ${theme} mode` }).click();
+              await page.getByText("Review the operator edit").scrollIntoViewIfNeeded();
+              await page.screenshot({ path: resolve(screenshots, `artifact-discussion-${theme}.png`) });
+            }
+            await capture("review-inbox", "oakridge/review-inbox", '[data-testid="or-review-inbox"]');
+            await capture("definitions", "oakridge/defs", 'h1:has-text("Pinned definitions")');
+            await capture("definition-editor", "oakridge/def-new", '[data-testid="or-def-editor"]');
+          } finally { await context.close(); await browser.close(); }
+        };
         const issued: string[] = [];
         const deadline = Date.now() + 90_000;
         while (Date.now() < deadline) {
@@ -155,6 +268,12 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
             // The forge merges once the operator has accepted the work it is waiting on.
             if (scope.scope_key === "final_integration" && state === "review") {
               if (final_merge_policy === "allow_close_without_merge") close(final_pr.branch);
+            }
+            if (!browser_walked && final_merge_policy === "require_merge" && scope.scope_key === "implementation"
+              && state === "review" && scope.outputs.some((item) => item.output_key === "build_result" && item.current_revision)) {
+              await browserWalk(scope);
+              browser_walked = true;
+              continue;
             }
             // Like the PWA, a command waits until every prefilled field has been observed.
             const command = FORWARD_COMMANDS.filter((key) => key !== (final_merge_policy === "require_merge" ? "closed_without_merge" : "confirm_merged") || scope.scope_key === "implementation")
@@ -191,7 +310,14 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
           .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-luna", effort: "low" });
         expect(started_settings.filter(({ stage, worker }) => stage === "implementation" && worker === "assessment")
           .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-astra", effort: "high" });
-      } finally { await composition.close(); }
+        if (final_merge_policy === "require_merge") expect(browser_walked).toBe(true);
+      } finally {
+        await composition.close();
+        if (previous_allowed_origins === undefined) delete process.env.OAKRIDGE_ALLOWED_ORIGINS;
+        else process.env.OAKRIDGE_ALLOWED_ORIGINS = previous_allowed_origins;
+        if (previous_kbbl_base_url === undefined) delete process.env.KBBL_BASE_URL;
+        else process.env.KBBL_BASE_URL = previous_kbbl_base_url;
+      }
     });
   } finally { kbbl.stop(true); rmSync(repository_path, { recursive: true, force: true }); }
 }, 120_000);
