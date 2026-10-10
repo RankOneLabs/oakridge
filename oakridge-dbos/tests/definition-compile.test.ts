@@ -74,6 +74,37 @@ test("compile preserves the Rust compiler's declaration path", async () => {
     .toEqual({ status: 422, body: { error: "invalid action input", field_path: "scopes[1].workers[0]" } });
 });
 
+for (const failure of [
+  { kind: "unresponsive_child", status: 503, code: "transient_service" },
+  { kind: "malformed_frame", status: 500, code: "internal_fault" },
+] as const) {
+  test(`compile classifies ${failure.kind} as ${failure.status}`, async () => {
+    const mutations = { async compile() { return { ok: false,
+      error: { operation: "compile", entity_id: "development", detail: JSON.stringify({ kind: "transport",
+        detail: { kind: failure.kind, detail: "core failure" } }) } }; } } as unknown as MutationService;
+    const app = new Hono();
+    installDefinitionApi(app, { db: {} as TransactionalSqlExecutor, core: {} as CoreClient,
+      mutations, wake: async () => {} });
+    const response = await app.request("/api/definitions/compile", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(authoring) });
+    const body = await response.json() as { code: string };
+    expect({ status: response.status, code: body.code }).toEqual({ status: failure.status, code: failure.code });
+  });
+}
+
+test("authored pinning keeps a compiler transport failure transient", async () => {
+  const mutations = { async pinDefinition() { return { ok: false,
+    error: { operation: "compile", entity_id: "development", detail: JSON.stringify({ kind: "transport",
+      detail: { kind: "terminated_child", detail: "core exited" } }) } }; } } as unknown as MutationService;
+  const app = new Hono();
+  installDefinitionApi(app, { db: {} as TransactionalSqlExecutor, core: {} as CoreClient,
+    mutations, wake: async () => {} });
+  const response = await app.request("/api/definitions", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(authoring) });
+  expect({ status: response.status, body: await response.json() })
+    .toEqual({ status: 503, body: { error: "core exited", code: "transient_service" } });
+});
+
 test("definition detail returns saved authoring and a dependency graph", async () => {
   const bundle = buildDevelopmentRun(DEVELOPMENT_POLICY);
   const db = { query: async () => [{ bundle_id: "bundle-1", digest: "digest", source: bundle, archived_at: null, authoring }] } as unknown as TransactionalSqlExecutor;

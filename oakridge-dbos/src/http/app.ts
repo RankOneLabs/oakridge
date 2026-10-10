@@ -4,6 +4,7 @@ import { installProjectApi } from "./projects";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
+import type { CoreFailure } from "../core-client/transport-errors";
 import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
 import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
@@ -18,7 +19,7 @@ import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
 import { plainValue } from "../core-client/plain-value";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, TransientServiceError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 import { selectDecision } from "../projections/scope-view";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
@@ -66,17 +67,20 @@ function fault(cause: unknown): Response { return response({ ok: false, error: n
 async function body(request: Request): Promise<unknown | MalformedRequestError> {
   try { return await request.json(); } catch { return new MalformedRequestError("invalid JSON"); }
 }
-interface CompilerFailure { readonly kind: string; readonly detail: { readonly path?: string; readonly detail?: string } }
-function compileFailure(detail: string): { readonly error: string; readonly field_path: string } {
+function compileFailure(detail: string): Response {
   try {
     const parsed: unknown = JSON.parse(detail);
-    if (parsed && typeof parsed === "object" && "kind" in parsed && parsed.kind === "domain"
+    if (parsed && typeof parsed === "object" && "kind" in parsed
       && "detail" in parsed && parsed.detail && typeof parsed.detail === "object") {
-      const failure = parsed as CompilerFailure;
-      return { error: failure.detail.detail ?? detail, field_path: failure.detail.path ?? "bundle" };
+      const failure = parsed as CoreFailure;
+      if (failure.kind === "domain") return Response.json({ error: failure.detail.detail ?? detail,
+        field_path: failure.detail.path ?? "bundle" }, { status: 422 });
+      if (failure.kind === "transport" && (failure.detail.kind === "terminated_child"
+        || failure.detail.kind === "unresponsive_child" || failure.detail.kind === "queue_full"))
+        return response({ ok: false, error: new TransientServiceError(failure.detail.detail ?? detail) });
     }
   } catch { /* A transport or storage error may be plain text. */ }
-  return { error: detail, field_path: "bundle" };
+  return fault(detail);
 }
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
@@ -123,7 +127,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
     const compiled = await deps.mutations.compile({ bundle: built.value, authoring: authored as WorkflowAuthoring });
     return compiled.ok ? Response.json(compiled.value)
-      : Response.json(compileFailure(compiled.error.detail), { status: 422 });
+      : compileFailure(compiled.error.detail);
   } catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
     const source = await body(c.req.raw);
@@ -134,7 +138,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
       const pinned = await deps.mutations.pinDefinition({ bundle: built.value, authoring: authored as WorkflowAuthoring });
       return pinned.ok ? Response.json(pinned.value, { status: 201 })
-        : Response.json({ error: pinned.error.detail, field_path: "bundle" }, { status: 422 });
+        : pinned.error.operation === "compile" ? compileFailure(pinned.error.detail)
+          : Response.json({ error: pinned.error.detail, field_path: "bundle" }, { status: 422 });
     }
     if (!source || typeof source !== "object" || !("key" in source) || typeof source.key !== "string")
       return response({ ok: false, error: new InvalidPayloadError("invalid definition bundle") });
