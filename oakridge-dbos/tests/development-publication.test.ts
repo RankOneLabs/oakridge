@@ -27,11 +27,11 @@ test("publication trigger mismatches are typed HTTP rejections and storage rejec
     const response = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}/publications`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
     expect({ status: response.status, body: await response.json() }).toMatchObject({ status: 422,
-      body: { error: "invalid_payload", detail: "output does not match pinned definition" } });
+      body: { error: "output does not match pinned definition", code: "invalid_payload" } });
     const missing_scope = await f.app.request(`/api/runs/another-run/scopes/${f.root_scope_id}/publications`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(publication) });
     expect({ status: missing_scope.status, body: await missing_scope.json() }).toMatchObject({ status: 404,
-      body: { error: "missing_entity", detail: "scope not found in run" } });
+      body: { error: "scope not found in run", code: "missing_entity" } });
     const source = await readSnapshot(db, f.root_scope_id, publication.trigger);
     if (!source) throw new Error("snapshot missing");
     const request: CommitRequest = { identity: { run_id: f.run_id, scope_id: f.root_scope_id, ingress_id: publication.request_id, request_digest: "mismatch" },
@@ -60,7 +60,7 @@ test("the core rejects a published output whose checked body does not match its 
       trigger: { id: "forged-output", key: "build_submitted", payload: await f.checked("unit", {}) },
       outputs: [{ scope_id: f.root_scope_id, output_key: "build_result", collection_key: "", execution_id,
         predecessor_id: null, expected_slot_version: null, body: forged }] });
-    expect(decided).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output schema mismatch" } });
+    expect(decided).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "output build_result schema mismatch" } });
     expect(await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id])).toEqual([]);
   } finally { f.core.close(); }
 }));

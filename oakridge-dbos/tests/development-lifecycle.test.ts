@@ -54,7 +54,7 @@ test("a plan with no cohorts is refused at acceptance", async () => withDatabase
     const accepted = await f.command("accept", { revision: revision((await planned.json()).revision_id) }, planning);
     // The same acceptance with cohorts returns 202 (throughBriefs); only the empty plan is refused.
     expect({ status: accepted.status, body: await accepted.json(), terminal: (await f.scope(planning)).is_terminal })
-      .toEqual({ status: 422, body: { error: "invalid_payload", detail: "invalid_command" }, terminal: false });
+      .toEqual({ status: 422, body: { error: "invalid_command", code: "invalid_payload" }, terminal: false });
   } finally { f.core.close(); }
 }), 30_000);
 
