@@ -91,6 +91,14 @@ test("agent trigger still requires an execution while the declared edit trigger 
     expect(await validateStorageAuthority(db, request, source, bundle)).toMatchObject({ ok: false,
       error: { operation: "validate_storage", detail: "producer execution required" } });
 
+    const missing_predecessor_id = crypto.randomUUID();
+    const missing_predecessor = await f.mutations.decide({ run_id: f.run_id, scope_id: f.root_scope_id,
+      ingress_id: missing_predecessor_id, operator_version: null,
+      trigger: { id: missing_predecessor_id, key: "edit_build_result", payload: await f.checked("unit", {}) },
+      outputs: [{ ...output, predecessor_id: null }] });
+    expect(missing_predecessor).toMatchObject({ ok: true,
+      value: { kind: "Rejected", detail: "edit publication requires predecessor" } });
+
     const ingress_id = crypto.randomUUID();
     const result = await f.mutations.decide({ run_id: f.run_id, scope_id: f.root_scope_id, ingress_id, operator_version: null,
       trigger: { id: ingress_id, key: "edit_build_result", payload: await f.checked("unit", {}) }, outputs: [output] });
@@ -99,6 +107,29 @@ test("agent trigger still requires an execution while the declared edit trigger 
       "SELECT id,predecessor_id,execution_id,body FROM authority.artifact_revision WHERE scope_id=$1 AND output_key='build_result'", [f.root_scope_id]);
     expect(revisions).toHaveLength(2);
     expect(revisions.find((item) => item.predecessor_id === predecessor_id)).toMatchObject({ predecessor_id, execution_id: null, body: edited_body });
+  } finally { f.core.close(); }
+}));
+
+test("editing an assessment keeps the assessment-review continuation", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    const target = await acceptedBuild(f);
+    expect((await f.command("accept_build", target)).status).toBe(202);
+    const first = await f.publish("assessment", { verdict: "fail", findings: [], test_evidence: null, recommended_next_actions: ["Review"] }, "assessment");
+    if (first.status !== 201) throw new Error(await first.text());
+    const predecessor_id: string = (await first.json()).revision_id;
+    const slot = (await db.query<{ version: number | string }>(
+      "SELECT version FROM authority.output_slot WHERE scope_id=$1 AND output_key='assessment' AND collection_key=''", [f.root_scope_id]))[0];
+    const ingress_id = crypto.randomUUID();
+    const result = await f.mutations.decide({ run_id: f.run_id, scope_id: f.root_scope_id, ingress_id,
+      operator_version: null, trigger: { id: ingress_id, key: "edit_assessment", payload: await f.checked("unit", {}) },
+      outputs: [{ scope_id: f.root_scope_id, output_key: "assessment", collection_key: "", execution_id: null,
+        predecessor_id, expected_slot_version: Number(slot.version),
+        body: await f.checked("assessment_body", { verdict: "pass", findings: [], test_evidence: null, recommended_next_actions: [] }) }] });
+    expect(result).toMatchObject({ ok: true, value: { kind: "Committed" } });
+    const view = await f.app.request(`/api/runs/${f.run_id}/scopes/${f.root_scope_id}`);
+    expect((await view.json())).toMatchObject({ state: { data: { variant: "assessment_review" } },
+      decision: { kind: "wait", attention: { trigger: "accept_assessment" } } });
   } finally { f.core.close(); }
 }));
 

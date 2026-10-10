@@ -75,6 +75,7 @@ export async function validateStorageAuthority(tx: SqlExecutor, request: CommitR
     const definition: OutputDefinition | undefined = scope.outputs.find((item) => item.key === output.output_key);
     if (!definition) return reject("validate_storage", source.owner.id, "output is absent from scope definition");
     const is_edit_publication = definition.edit_trigger !== undefined && definition.edit_trigger === source.snapshot.trigger.key;
+    if (is_edit_publication && output.predecessor_id === null) return reject("validate_storage", source.owner.id, "edit publication requires predecessor");
     if (!is_edit_publication) {
       if (definition.publication_trigger !== source.snapshot.trigger.key) return reject("validate_storage", source.owner.id, "publication trigger does not match output declaration");
     }

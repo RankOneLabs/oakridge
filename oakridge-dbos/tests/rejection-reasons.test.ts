@@ -46,10 +46,13 @@ test("only the declared edit trigger permits a publication without an execution"
   const source = { owner: { id: "scope", run_id: "run", scope_key: "implementation" },
     snapshot: { trigger: { key: "build_submitted" } } } as AuthoritySnapshot;
   const request = { decision: { kind: "wait" }, outputs: [{ output_key: "build_result", collection_key: "",
-    execution_id: null }], capacity: [] } as unknown as CommitRequest;
+    execution_id: null, predecessor_id: "previous" }], capacity: [] } as unknown as CommitRequest;
   const tx = { query: async () => [] } as unknown as SqlExecutor;
   expect(await validateStorageAuthority(tx, request, source, bundle)).toMatchObject({ ok: false,
     error: { detail: "producer execution required" } });
   const edit_source = { ...source, snapshot: { ...source.snapshot, trigger: { key: "edit_build_result" } } } as AuthoritySnapshot;
   expect(await validateStorageAuthority(tx, request, edit_source, bundle)).toMatchObject({ ok: true });
+  const missing_predecessor = { ...request, outputs: [{ ...request.outputs[0]!, predecessor_id: null }] };
+  expect(await validateStorageAuthority(tx, missing_predecessor, edit_source, bundle)).toMatchObject({ ok: false,
+    error: { detail: "edit publication requires predecessor" } });
 });
