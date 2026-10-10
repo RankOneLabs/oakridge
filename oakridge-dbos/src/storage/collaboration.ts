@@ -1,4 +1,7 @@
 import type { SqlExecutor } from "./sql-executor";
+import type { TransactionalSqlExecutor } from "./sql-executor";
+import type { CollaborationMessageBody, CollaborationThreadContext, ReviewItemBody } from "./json-column-types";
+import { createHash } from "node:crypto";
 
 /** The linear artifact_revision predecessor chain, as stored by the authority. */
 export interface RevisionCollaborationNode {
@@ -37,4 +40,137 @@ export async function readRevisionCollaborationTarget(db: SqlExecutor, run_id: s
       JOIN predecessors p ON r.id=p.predecessor_id WHERE r.run_id=$1
   ) SELECT id,predecessor_id,execution_id FROM predecessors ORDER BY depth`, [run_id, reviewed_revision_id]);
   return revisionCollaborationTarget(reviewed_revision_id, rows);
+}
+
+export interface CollaborationThreadRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly artifact_revision_id: string; readonly context: CollaborationThreadContext;
+  readonly created_at: Date;
+}
+export interface CollaborationMessageRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly body: CollaborationMessageBody; readonly created_at: Date;
+}
+export interface ReviewItemRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly artifact_revision_id: string;
+  readonly body: ReviewItemBody; readonly created_at: Date;
+}
+export interface CollaborationDeliveryRecord {
+  readonly id: string; readonly run_id: string; readonly scope_id: string; readonly message_id: string;
+  readonly payload: { readonly status: "delivered" | "failed"; readonly session_id: string | null; readonly reason: string | null; readonly request_key: string };
+  readonly created_at: Date;
+}
+export type CollaborationWriteResult<T> = { readonly kind: "written" | "replayed"; readonly value: T }
+  | { readonly kind: "missing" | "superseded" | "conflict" };
+
+export function collaborationRecordId(thread_id: string, request_key: string): string {
+  return createHash("sha256").update(JSON.stringify([thread_id, request_key])).digest("hex");
+}
+
+interface RevisionAddress { readonly run_id: string; readonly scope_id: string; readonly output_key: string; readonly collection_key: string }
+async function currentRevision(tx: SqlExecutor, revision_id: string): Promise<{ readonly address: RevisionAddress; readonly is_current: boolean } | null> {
+  const rows = await tx.query<RevisionAddress & { readonly current_revision_id: string | null }>(`SELECT r.run_id,r.scope_id,r.output_key,r.collection_key,s.current_revision_id
+    FROM authority.artifact_revision r JOIN authority.output_slot s
+      ON s.scope_id=r.scope_id AND s.output_key=r.output_key AND s.collection_key=r.collection_key
+    WHERE r.id=$1 FOR UPDATE OF s`, [revision_id]);
+  const row = rows[0];
+  return row ? { address: row, is_current: row.current_revision_id === revision_id } : null;
+}
+
+export async function createCollaborationThread(db: TransactionalSqlExecutor, input: {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly revision_id: string; readonly context: CollaborationThreadContext;
+}): Promise<CollaborationWriteResult<CollaborationThreadRow>> {
+  return db.transaction(async (tx) => {
+    const existing = (await tx.query<CollaborationThreadRow>("SELECT * FROM authority.collaboration_thread WHERE id=$1", [input.id]))[0];
+    if (existing) return existing.run_id === input.run_id && existing.scope_id === input.scope_id
+      && existing.artifact_revision_id === input.revision_id && JSON.stringify(existing.context) === JSON.stringify(input.context)
+      ? { kind: "replayed", value: existing } : { kind: "conflict" };
+    const revision = await currentRevision(tx, input.revision_id);
+    if (!revision || revision.address.run_id !== input.run_id || revision.address.scope_id !== input.scope_id) return { kind: "missing" };
+    if (!revision.is_current) return { kind: "superseded" };
+    const row = (await tx.query<CollaborationThreadRow>(`INSERT INTO authority.collaboration_thread
+      (id,run_id,scope_id,artifact_revision_id,context) VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (id) DO NOTHING RETURNING *`,
+      [input.id,input.run_id,input.scope_id,input.revision_id,JSON.stringify(input.context)]))[0];
+    if (!row) {
+      const concurrent = (await tx.query<CollaborationThreadRow>("SELECT * FROM authority.collaboration_thread WHERE id=$1",[input.id]))[0];
+      return concurrent?.run_id === input.run_id && concurrent.scope_id === input.scope_id
+        && concurrent.artifact_revision_id === input.revision_id && JSON.stringify(concurrent.context) === JSON.stringify(input.context)
+        ? { kind: "replayed", value: concurrent } : { kind: "conflict" };
+    }
+    return { kind: "written", value: row };
+  });
+}
+
+async function writableThread(tx: SqlExecutor, run_id: string, scope_id: string, thread_id: string): Promise<{
+  readonly kind: "current" | "superseded"; readonly thread: CollaborationThreadRow
+} | null> {
+  const thread = (await tx.query<CollaborationThreadRow>("SELECT * FROM authority.collaboration_thread WHERE id=$1 AND run_id=$2 AND scope_id=$3", [thread_id,run_id,scope_id]))[0];
+  if (!thread) return null;
+  const revision = await currentRevision(tx, thread.artifact_revision_id);
+  return { kind: revision?.is_current ? "current" : "superseded", thread };
+}
+
+export async function addCollaborationMessage(db: TransactionalSqlExecutor, input: {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly body: CollaborationMessageBody;
+}): Promise<CollaborationWriteResult<CollaborationMessageRow>> {
+  return db.transaction(async (tx) => {
+    const existing = (await tx.query<CollaborationMessageRow>("SELECT * FROM authority.collaboration_message WHERE id=$1", [input.id]))[0];
+    if (existing) return existing.run_id === input.run_id && existing.thread_id === input.thread_id
+      && JSON.stringify(existing.body) === JSON.stringify(input.body)
+      ? { kind: "replayed", value: existing } : { kind: "conflict" };
+    const writable = await writableThread(tx, input.run_id, input.scope_id, input.thread_id);
+    if (!writable) return { kind: "missing" };
+    if (writable.kind === "superseded") return { kind: "superseded" };
+    const row = (await tx.query<CollaborationMessageRow>(`INSERT INTO authority.collaboration_message
+      (id,run_id,scope_id,thread_id,body) VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (id) DO NOTHING RETURNING *`,
+      [input.id,input.run_id,input.scope_id,input.thread_id,JSON.stringify(input.body)]))[0];
+    if (!row) {
+      const concurrent = (await tx.query<CollaborationMessageRow>("SELECT * FROM authority.collaboration_message WHERE id=$1",[input.id]))[0];
+      return concurrent?.run_id === input.run_id && concurrent.thread_id === input.thread_id
+        && JSON.stringify(concurrent.body) === JSON.stringify(input.body)
+        ? { kind: "replayed", value: concurrent } : { kind: "conflict" };
+    }
+    return { kind: "written", value: row };
+  });
+}
+
+export async function addReviewItem(db: TransactionalSqlExecutor, input: {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly body: ReviewItemBody;
+}): Promise<CollaborationWriteResult<ReviewItemRow>> {
+  return db.transaction(async (tx) => {
+    const existing = (await tx.query<ReviewItemRow>("SELECT * FROM authority.review_item WHERE id=$1", [input.id]))[0];
+    if (existing) return existing.run_id === input.run_id && existing.thread_id === input.thread_id
+      && JSON.stringify(existing.body) === JSON.stringify(input.body)
+      ? { kind: "replayed", value: existing } : { kind: "conflict" };
+    const writable = await writableThread(tx, input.run_id, input.scope_id, input.thread_id);
+    if (!writable) return { kind: "missing" };
+    if (writable.kind === "superseded") return { kind: "superseded" };
+    const row = (await tx.query<ReviewItemRow>(`INSERT INTO authority.review_item
+      (id,run_id,scope_id,artifact_revision_id,thread_id,body) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (id) DO NOTHING RETURNING *`,
+      [input.id,input.run_id,input.scope_id,writable.thread.artifact_revision_id,input.thread_id,JSON.stringify(input.body)]))[0];
+    if (!row) {
+      const concurrent = (await tx.query<ReviewItemRow>("SELECT * FROM authority.review_item WHERE id=$1",[input.id]))[0];
+      return concurrent?.run_id === input.run_id && concurrent.thread_id === input.thread_id
+        && JSON.stringify(concurrent.body) === JSON.stringify(input.body)
+        ? { kind: "replayed", value: concurrent } : { kind: "conflict" };
+    }
+    return { kind: "written", value: row };
+  });
+}
+
+export async function findCollaborationDelivery(db: SqlExecutor, id: string): Promise<CollaborationDeliveryRecord | null> {
+  return (await db.query<CollaborationDeliveryRecord>("SELECT * FROM authority.collaboration_delivery WHERE id=$1", [id]))[0] ?? null;
+}
+export async function recordCollaborationDelivery(db: SqlExecutor, input: Omit<CollaborationDeliveryRecord,"created_at">): Promise<CollaborationDeliveryRecord> {
+  const rows = await db.query<CollaborationDeliveryRecord>(`INSERT INTO authority.collaboration_delivery
+    (id,run_id,scope_id,message_id,payload) VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT (id) DO NOTHING RETURNING *`, [input.id,input.run_id,input.scope_id,input.message_id,JSON.stringify(input.payload)]);
+  return rows[0] ?? (await findCollaborationDelivery(db,input.id))!;
 }

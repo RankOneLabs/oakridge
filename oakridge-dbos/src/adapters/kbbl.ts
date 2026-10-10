@@ -294,11 +294,21 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     return this.start_request(rendered.value);
   }
 
-  private async start_request(request: PinnedSessionStart): Promise<ExternalExecutionReference | ExecutorUnavailable> {
+  async ensure_collaboration(request: PinnedSessionStart): Promise<ProviderResult<ExternalExecutionReference>> {
+    try {
+      const result = await this.start_request(request, true);
+      return result.kind === "executor_unavailable" ? { kind: "uncertain", detail: result.detail }
+        : { kind: "acknowledged", value: result };
+    } catch (error) {
+      return { kind: "permanently_rejected", code: "ensure_failed", detail: String(error) };
+    }
+  }
+
+  private async start_request(request: PinnedSessionStart, collaboration_resume = false): Promise<ExternalExecutionReference | ExecutorUnavailable> {
     let response: Response;
     try { response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(request.session_key)}`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(collaboration_resume ? { "x-oakridge-collaboration-resume": "true" } : {}) },
       body: request.body,
     }); } catch (error) { return { kind: "executor_unavailable", operation: "start_or_attach", detail: String(error) }; }
     if (!response.ok) {

@@ -1,6 +1,7 @@
 import { installSelectedEvidenceApi } from "./selected-evidence";
 import { installSelectedPublicationApi } from "./selected-publication";
 import { installProjectApi } from "./projects";
+import { collaborationHandlers } from "./collaboration";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
@@ -67,6 +68,11 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
   installProjectApi(app, deps);
+  const collaboration = collaborationHandlers({ db: deps.db, kbbl_base_url: process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788" });
+  app.get("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.getThreads);
+  app.post("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.createThread);
+  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/messages", collaboration.addMessage);
+  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/review-items", collaboration.addReviewItem);
   app.get("/api/runs", async (c) => { try {
     const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
     if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
