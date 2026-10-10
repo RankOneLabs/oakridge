@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { selectInboxItems } from "../src/projections/inbox";
-import { DEFAULT_INBOX_LIMIT, readInbox } from "../src/storage/projection-reader";
+import { DEFAULT_INBOX_LIMIT, readInbox, readOperatorEventsAfter } from "../src/storage/projection-reader";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
+import { withDatabase } from "./effect-fixture";
+import { writeOperatorEvent } from "../src/storage/operator-events";
 
 const scope = { id: "scope-1", run_id: "run-1", scope_key: "scope", version: 2, is_terminal: false,
   local_state: { schema: "state", data: { kind: "enum", variant: "ready" } } } as unknown as ScopeInstanceRecord;
@@ -52,3 +54,33 @@ test("inbox limits a run page and returns a usable cursor", async () => {
   const second = await readInbox(db, { run_id: "run-1" as RunId, cursor: first.next_cursor ?? undefined });
   expect(second.items).toHaveLength(1);
 });
+
+test("operator stream excludes open transactions before advancing its shared cursor", async () => {
+  let statement = "";
+  const db: TransactionalSqlExecutor = {
+    async query<Row extends object>(sql: string): Promise<readonly Row[]> { statement = sql; return []; },
+    async transaction<Value>(operation: (tx: SqlExecutor) => Promise<Value>): Promise<Value> { return operation(this); },
+  };
+  expect(await readOperatorEventsAfter(db, { commit_txid: "12", id: "event-1" }, 100)).toEqual([]);
+  expect(statement).toContain("e.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint");
+  expect(statement).toContain("ORDER BY e.commit_txid,e.id");
+});
+
+if (process.env.OAKRIDGE_TEST_DATABASE_URL) test("an open operator mutation delivers no frame until it commits", async () => withDatabase(async ({ db }) => {
+  let signal_inserted: () => void = () => undefined;
+  let release_transaction: () => void = () => undefined;
+  const inserted = new Promise<void>((resolve) => { signal_inserted = resolve; });
+  const held = new Promise<void>((resolve) => { release_transaction = resolve; });
+  const transaction = db.transaction(async (tx) => {
+    await writeOperatorEvent(tx, null, "isolation", { kind: "invalidate", data: { target: "runs", run_id: null } });
+    signal_inserted();
+    await held;
+  });
+  await inserted;
+  const cursor = { commit_txid: "0", id: "" };
+  await writeOperatorEvent(db, null, "isolation-newer", { kind: "invalidate", data: { target: "projects", run_id: null } });
+  try { expect(await readOperatorEventsAfter(db, cursor, 100)).toEqual([]); }
+  finally { release_transaction(); await transaction; }
+  const committed = await readOperatorEventsAfter(db, cursor, 100);
+  expect(committed.map((row) => row.payload.kind === "invalidate" ? row.payload.data.target : row.payload.kind)).toEqual(["runs", "projects"]);
+}));
