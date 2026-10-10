@@ -117,7 +117,7 @@ test("reusing a committed request ID with different payload conflicts", async ()
 test("an edit with a stale previous value conflicts without writing a revision", async () => {
   const api = await editHarness();
   const response = await api.submit({ ...api.request, payload: { ...api.request.payload,
-    prev_value: { schema: "unregistered_output", data: { kind: "string", value: "Stale body" } } } });
+    prev_value: unit } });
   expect({ status: response.status, body: await response.json(), written: api.writtenRevision() })
     .toMatchObject({ status: 409, body: { code: "conflict", error: "output specimen changed since review" }, written: null });
 });

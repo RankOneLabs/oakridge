@@ -81,8 +81,7 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     if (output_definition) {
       const edit = parseEditPayload(request.payload);
       if (edit instanceof MalformedRequestError) return { ok: false, error: edit };
-      if (edit.output_key !== output_definition.key || edit.body.schema !== output_definition.schema
-        || edit.prev_value.schema !== output_definition.schema)
+      if (edit.output_key !== output_definition.key || edit.body.schema !== output_definition.schema)
         return { ok: false, error: new InvalidPayloadError(`output ${edit.output_key} does not match declared schema`) };
       const current = await currentOutputRevision(deps.db, request.scope_id, edit.output_key, edit.collection_key);
       if (!current || current.revision_id !== edit.reviewed_revision_id || requestDigest(current.body) !== requestDigest(edit.prev_value))
