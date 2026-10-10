@@ -11,6 +11,7 @@ export type { ScopeView, Decision } from "../projections/scope-view";
 export type { InboxItem, InboxPage, ReviewInbox } from "../projections/inbox";
 export type { SessionLocation, RunSessionAttempt } from "../projections/session-view";
 export type { ArtifactDetail, ArtifactRevisionStatus } from "../projections/artifact-view";
+export type { CollaborationThreadView } from "../projections/collaboration-view";
 export type { ScopeHistory } from "./diagnostics";
 export type { CommandReceipt, ScopeCommandRequest, EditCommandPayload } from "./scope-commands";
 export type { ProjectDraft, ProjectList, ProjectView } from "./projects";

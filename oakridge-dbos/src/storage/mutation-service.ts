@@ -299,3 +299,6 @@ export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): P
   });
 }
 export { persistEffectResult } from "./effect-results";
+/** Collaboration writes share this mutation boundary with scope decisions. */
+export { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread,
+  findCollaborationDelivery, readCollaborationThreads, readRevisionCollaborationTarget, recordCollaborationDelivery } from "./collaboration";

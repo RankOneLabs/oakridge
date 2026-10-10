@@ -19,6 +19,7 @@ The writer column names the mutation-service entry and the function that execute
 | Execution identity, result, status, publication secret hash | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:139` and `oakridge-dbos/src/storage/commit.ts:165`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:73` | `execution.result` duplicates the terminal checked value stored in an invocation-keyed fact. |
 | Artifact revision body and predecessor | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:89` | Immutable publication history. |
 | Current output revision | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:90` and `oakridge-dbos/src/storage/commit.ts:91`; `writeDecision`, `oakridge-dbos/src/storage/commit.ts:107` | Pointer into artifact history, cleared by a decision mutation. |
+| Revision collaboration | `createCollaborationThread`, `oakridge-dbos/src/storage/collaboration.ts:77`; `addCollaborationMessage`, `oakridge-dbos/src/storage/collaboration.ts:114`; `addReviewItem`, `oakridge-dbos/src/storage/collaboration.ts:153`; `recordCollaborationDelivery`, `oakridge-dbos/src/storage/collaboration.ts:171` | Threads and review items retain their reviewed revision; keyed delivery records retain the result and failure reason. |
 | Trigger and terminal-result facts | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:169`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:70` | Trigger facts feed decisions; invocation-keyed terminal facts mirror `execution.result`. |
 | Transition decision | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:171` | Decision record; its terminal outcome also appears on `scope_instance`. |
 | Ingress receipt | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:175` | Idempotent command/publication response. |
@@ -94,3 +95,7 @@ These citations keep the authority inventory aligned with the startup, encryptio
 - `setSessionPolicy` `oakridge-dbos/src/storage/projects.ts:45`
 - `setRunArchived` `oakridge-dbos/src/storage/archive.ts:6`
 - `setDefinitionArchived` `oakridge-dbos/src/storage/archive.ts:13`
+- `createCollaborationThread` `oakridge-dbos/src/storage/collaboration.ts:77`
+- `addCollaborationMessage` `oakridge-dbos/src/storage/collaboration.ts:114`
+- `addReviewItem` `oakridge-dbos/src/storage/collaboration.ts:153`
+- `recordCollaborationDelivery` `oakridge-dbos/src/storage/collaboration.ts:171`

@@ -6,6 +6,10 @@ import { resolveObserve } from "../src/effects/outcomes";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
 import type { ExternalHandle, InvocationId, StableInvocation } from "../src/effects/provider";
 import type { SqlExecutor } from "../src/storage/sql-executor";
+import { Hono } from "hono";
+import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
+import type { AcpSessionService } from "../../kbbl/core/acp/session-service";
+import type { SessionManager } from "../../kbbl/core/session/session-manager";
 
 const definitions = ["development", "development-independent-siblings"] as const;
 const terminal = { session: { endReason: "subprocess_exited" }, exit_code: 0 };
@@ -87,4 +91,24 @@ for (const definition of definitions) test(`${definition}: build revision after 
   const action = bundle.scopes.find((scope) => scope.key === "implementation")?.workers
     .find((worker) => worker.key === "build")?.actions.find((action) => action.key === "revise_after_assessment");
   expect(action?.settings).toContainEqual({ key: "evidence_fact", value: "build_submitted" });
+});
+
+test("collaboration ensure revives an ended pinned session and returns the same sid", async () => {
+  const states: string[] = [];
+  let status: "ended" | "live" = "ended";
+  const snapshot = () => ({ sid: "pinned", status, name: "session",
+    worktree_path: process.cwd(), created_at: new Date().toISOString(), last_activity_at: new Date().toISOString(),
+    agent_profile: "codex", acp_session_id: null, artifact_id: null, worktree_branch: null, worktree_base_ref: null,
+    project_workdir: process.cwd(), requested_model: null, requested_effort: null, end_reason: null });
+  const service = { async ensureResumableSession() { states.push(status); return { ok: true,
+    value: { kind: "existing", session: snapshot() } }; },
+    async reviveResumable() { status = "live"; return { ok: true, value: snapshot() }; } } as unknown as AcpSessionService;
+  const app = new Hono();
+  mountSessionsRoutes(app,{ acp: service, manager: {} as SessionManager, defaultWorkdir: process.cwd() });
+  const response = await app.request("/sessions/resumable/pinned",{ method: "PUT",
+    headers: { "content-type": "application/json", "x-oakridge-collaboration-resume": "true" },
+    body: JSON.stringify({ initial_prompt: "start", workdir: process.cwd() }) });
+  expect(response.status).toBe(200);
+  expect((await response.json() as { session: { sid: string } }).session.sid).toBe("pinned");
+  expect(states).toEqual(["ended"]);
 });
