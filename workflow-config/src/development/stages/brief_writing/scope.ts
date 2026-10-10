@@ -11,6 +11,8 @@ export const brief_writing = defineScope({
   outcome_schema: "result",
   errors: [{ key: "invalid_command", payload_schema: "text" }],
   commands: [
+    { key: "admit", payload_schema: "unit", available_in: ["waiting_admission"], required: true, targets: [],
+      label: "Admit", consequence: "admit", field_presentation: [] },
     {
       key: "begin",
       payload_schema: "unit",

@@ -1,4 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
+import { admissionGate } from "../../run/stage-table";
 import { literal, optional, reference, variant } from "../../../primitives/expressions";
 
 const brief_begin: DecisionTree = {
@@ -197,14 +198,15 @@ export const brief_dispatch: DecisionTree = {
   id: "brief_dispatch",
   value: reference({ kind: "trigger" }, []),
   cases: [
-    { variant: "begin", node: brief_begin },
+    { variant: "begin", node: admissionGate("brief_writing", "phase_review", brief_begin) },
+    { variant: "admit", node: { ...brief_begin, id: "brief_writing_admitted" } },
     { variant: "submitted", node: brief_review },
     { variant: "accept", node: brief_plan_present },
     { variant: "request_changes", node: brief_feedback_exact },
     { variant: "retry", node: brief_retry },
     { variant: "cancel", node: brief_cancel },
     { variant: "abandon", node: brief_abandon },
-    { variant: "session_failed", node: { ...brief_abandon, id: "brief_writing_session_failed" } },
+    { variant: "session_failed", node: { kind: "apply", id: "brief_writing_session_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_review", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
   ],
   otherwise: brief_wait
 };

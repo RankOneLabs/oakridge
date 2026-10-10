@@ -27,7 +27,7 @@ export function buildDevelopmentRun(policy: RunPolicy): DefinitionBundle {
       ? [...developmentSchemas, recordSchema("run_input_verification", [
         field("spec", "text"), field("repositories", "repository_configs"),
         field("analysis", "session_config"), field("planning", "session_config"),
-        field("briefs", "session_config"), field("verification_note", "optional_text")
+        field("briefs", "session_config"), field("admission", "admission_flags"), field("final_merge_policy", "final_merge_policy"), field("verification_note", "optional_text")
       ])] : developmentSchemas, policy),
     scopes: [
       buildDevelopmentScope(policy),

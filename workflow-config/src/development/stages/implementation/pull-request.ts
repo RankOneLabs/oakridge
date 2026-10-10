@@ -107,23 +107,13 @@ const merge_resource_head: DecisionTree = {
   otherwise: merge_resource_head_absent
 };
 
-const merge_resource_denied: DecisionTree = { kind: "reject", id: "merge_resource_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
-
-const merge_resource: DecisionTree = {
-  kind: "match",
-  id: "merge_resource",
-  value: reference({ kind: "resource", key: "pull_request" }, ["state"]),
-  cases: [{ variant: "merged", node: merge_resource_head }],
-  otherwise: merge_resource_denied
-};
-
 const merge_context_denied: DecisionTree = { kind: "reject", id: "merge_context_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
 
 export const merge_context: DecisionTree = {
   kind: "match",
   id: "merge_context",
   value: reference({ kind: "state" }, []),
-  cases: [{ variant: "awaiting_merge", node: merge_resource }],
+  cases: [{ variant: "awaiting_merge", node: merge_resource_head }],
   otherwise: merge_context_denied
 };
 

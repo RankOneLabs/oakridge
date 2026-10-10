@@ -1,4 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
+import { admissionGate } from "../../run/stage-table";
 import { literal, reference, variant } from "../../../primitives/expressions";
 
 const spec_analysis_begin: DecisionTree = {
@@ -103,14 +104,15 @@ export const spec_analysis_dispatch: DecisionTree = {
   id: "spec_analysis_dispatch",
   value: reference({ kind: "trigger" }, []),
   cases: [
-    { variant: "begin", node: spec_analysis_begin },
+    { variant: "begin", node: admissionGate("spec_analysis", "phase_review", spec_analysis_begin) },
+    { variant: "admit", node: { ...spec_analysis_begin, id: "spec_analysis_admitted" } },
     { variant: "submitted", node: spec_analysis_review },
     { variant: "accept", node: spec_analysis_exact },
     { variant: "request_changes", node: spec_analysis_feedback_exact },
     { variant: "retry", node: spec_analysis_retry },
     { variant: "cancel", node: spec_analysis_cancel },
     { variant: "abandon", node: spec_analysis_abandon },
-    { variant: "session_failed", node: { ...spec_analysis_abandon, id: "spec_analysis_session_failed" } },
+    { variant: "session_failed", node: { kind: "apply", id: "spec_analysis_session_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_review", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
   ],
   otherwise: spec_analysis_wait
 };

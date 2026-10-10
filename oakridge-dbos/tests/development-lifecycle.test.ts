@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 import { withDatabase } from "./effect-fixture";
 import { developmentBundle, runtimeFixture, launch, brief, revision, throughAnalysis, throughBriefs } from "./development-runtime-fixture";
 
+test("unknown admission stage is rejected by root input validation at launch", async () => withDatabase(async ({ db }) => {
+  await expect(runtimeFixture(db, await developmentBundle("development"),
+    { ...launch, admission: { misspelled_stage: true } })).rejects.toThrow(/start_run|validate_payload/);
+}), 30_000);
+
 test("accepted brief keys materialize children and failure atomically cancels siblings and releases capacity", async () => withDatabase(async ({ db }) => {
   const f = await runtimeFixture(db, await developmentBundle("development"), launch);
   try {
@@ -107,7 +112,8 @@ test("completed implementations create one final integration child per repositor
       expect((await f.command("review_pr", target, integration.id)).status).toBe(202);
       await f.observe("merged", "head2", integration.id);
       expect((await f.command("confirm_merged", target, integration.id)).status).toBe(422);
-      await f.observe("merged", "head1", integration.id);
+      // The operator may assert the merge against exact, current PR evidence.
+      await f.observe("open", "head1", integration.id);
       expect((await f.command("confirm_merged", target, integration.id)).status).toBe(202);
     }
     await f.advance();
