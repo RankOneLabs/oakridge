@@ -8,10 +8,37 @@ import { ReviewInboxView } from "../views/ReviewInboxView";
 import { OperatorRunListView } from "../views/OperatorRunListView";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
+import { useOakridgeInvalidationStream } from "../hooks/useOakridgeInvalidationStream";
+import { useOakridgeRunEventStream } from "../hooks/useOakridgeRunEventStream";
+import { selectEventNotification } from "../lib/run-notifications";
 import { operatorEvent } from "../lib/__fixtures__/operator-event";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
 import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
+import type { LiveStreamFrame } from "../../../live-stream";
+
+class EventSourceStub {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
+  static instances: EventSourceStub[] = [];
+  readyState = EventSourceStub.OPEN;
+  private readonly listeners = new Map<string, EventListener>();
+  constructor(readonly url: string) { EventSourceStub.instances.push(this); }
+  addEventListener(name: string, listener: EventListener): void { this.listeners.set(name, listener); }
+  close(): void { this.readyState = EventSourceStub.CLOSED; }
+  emit(frame: LiveStreamFrame): void { this.listeners.get("live")?.(new MessageEvent("live", { data: JSON.stringify(frame) })); }
+}
+
+function StreamConsumer({ onToast, cache }: { readonly onToast: (toast: unknown) => void; readonly cache: QueryClient }) {
+  useOakridgeInvalidationStream(true);
+  useOakridgeRunEventStream(true, (event) => {
+    invalidateOperatorFrame(cache, event);
+    const toast = selectEventNotification(event);
+    if (toast) onToast(toast);
+  });
+  return null;
+}
 
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
@@ -120,6 +147,49 @@ test("an authority event refreshes its own run and both shared lists, and leaves
 
   await waitFor(() => expect([served("/api/runs"), served("/api/inbox"), served(`/scopes/${scopeOf("run-one")}`)]).toEqual([2, 2, 2]));
   expect(served(`/scopes/${scopeOf("run-two")}`)).toBe(1);
+});
+
+test("replayed authority frames refresh queries without toasts; session snapshots refresh only sessions", async () => {
+  EventSourceStub.instances = [];
+  vi.stubGlobal("EventSource", EventSourceStub);
+  const cache = client();
+  const invalidations = vi.spyOn(cache, "invalidateQueries");
+  const onToast = vi.fn();
+  const mounted = render(<QueryClientProvider client={cache}><StreamConsumer cache={cache} onToast={onToast} /></QueryClientProvider>);
+  await waitFor(() => expect(EventSourceStub.instances.some((source) => source.readyState !== EventSourceStub.CLOSED)).toBe(true));
+  const source = EventSourceStub.instances.findLast((item) => item.readyState !== EventSourceStub.CLOSED);
+  if (!source) throw new Error("live source did not connect");
+  source.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", id: "first", data: JSON.stringify({ ...operatorEvent(), replay: true }) } });
+  expect(invalidations.mock.calls.map(([filter]) => filter?.queryKey)).toEqual([
+    ["operator", "run-one"], ["operator", "runs"], ["operator", "inbox"],
+  ]);
+  expect(onToast).not.toHaveBeenCalled();
+  invalidations.mockClear();
+  source.emit({ topic: "/oakridge/api/events", frame: { event: "invalidate", id: "second", data: JSON.stringify({ kind: "invalidate", target: "projects", run_id: null, replay: true }) } });
+  expect(invalidations.mock.calls.map(([filter]) => filter?.queryKey)).toEqual([["operator", "projects"]]);
+  expect(onToast).not.toHaveBeenCalled();
+  invalidations.mockClear();
+  source.emit({ topic: "/inbox", frame: { event: "snapshot", data: JSON.stringify({ sessions: [] }) } });
+  expect(invalidations.mock.calls.map(([filter]) => filter?.queryKey)).toEqual([["sessions"]]);
+  expect(onToast).not.toHaveBeenCalled();
+  mounted.unmount();
+});
+
+test("a session snapshot does not refetch an active run", async () => {
+  EventSourceStub.instances = [];
+  vi.stubGlobal("EventSource", EventSourceStub);
+  const fetch = vi.fn(async (url: string) => runResponse(url));
+  vi.stubGlobal("fetch", fetch);
+  const cache = client();
+  const mounted = render(<QueryClientProvider client={cache}><RunConsumer /><StreamConsumer cache={cache} onToast={() => undefined} /></QueryClientProvider>);
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1));
+  await waitFor(() => expect(EventSourceStub.instances.some((source) => source.readyState !== EventSourceStub.CLOSED)).toBe(true));
+  const source = EventSourceStub.instances.findLast((item) => item.readyState !== EventSourceStub.CLOSED);
+  if (!source) throw new Error("live source did not connect");
+  source.emit({ topic: "/inbox", frame: { event: "snapshot", data: JSON.stringify({ sessions: [] }) } });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1);
+  mounted.unmount();
 });
 
 test("the root scope is displayed even when the server lists a child scope first, and stays through a refetch", async () => {
