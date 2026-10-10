@@ -51,6 +51,19 @@ test("compile reports an unknown prompt key at its binding", async () => {
     .toEqual({ status: 422, body: { error: "prompt key is not in the catalog", field_path: "prompt_bindings[0].prompt_key" } });
 });
 
+test("compile preserves the Rust compiler's declaration path", async () => {
+  const mutations = { async compile() { return { ok: false,
+    error: { operation: "compile", entity_id: "development", detail: JSON.stringify({ kind: "domain",
+      detail: { path: "scopes[1].workers[0]", detail: "invalid action input" } }) } }; } } as unknown as MutationService;
+  const app = new Hono();
+  installDefinitionApi(app, { db: {} as TransactionalSqlExecutor, core: {} as CoreClient,
+    mutations, wake: async () => {} });
+  const response = await app.request("/api/definitions/compile", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(authoring) });
+  expect({ status: response.status, body: await response.json() })
+    .toEqual({ status: 422, body: { error: "invalid action input", field_path: "scopes[1].workers[0]" } });
+});
+
 test("definition detail returns saved authoring and a dependency graph", async () => {
   const bundle = buildDevelopmentRun(DEVELOPMENT_POLICY);
   const db = { query: async () => [{ bundle_id: "bundle-1", digest: "digest", source: bundle, archived_at: null, authoring }] } as unknown as TransactionalSqlExecutor;

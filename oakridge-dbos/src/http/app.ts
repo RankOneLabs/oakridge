@@ -66,6 +66,18 @@ function fault(cause: unknown): Response { return response({ ok: false, error: n
 async function body(request: Request): Promise<unknown | MalformedRequestError> {
   try { return await request.json(); } catch { return new MalformedRequestError("invalid JSON"); }
 }
+interface CompilerFailure { readonly kind: string; readonly detail: { readonly path?: string; readonly detail?: string } }
+function compileFailure(detail: string): { readonly error: string; readonly field_path: string } {
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (parsed && typeof parsed === "object" && "kind" in parsed && parsed.kind === "domain"
+      && "detail" in parsed && parsed.detail && typeof parsed.detail === "object") {
+      const failure = parsed as CompilerFailure;
+      return { error: failure.detail.detail ?? detail, field_path: failure.detail.path ?? "bundle" };
+    }
+  } catch { /* A transport or storage error may be plain text. */ }
+  return { error: detail, field_path: "bundle" };
+}
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
@@ -111,7 +123,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
     const compiled = await deps.mutations.compile({ bundle: built.value, authoring: authored as WorkflowAuthoring });
     return compiled.ok ? Response.json(compiled.value)
-      : Response.json({ error: compiled.error.detail, field_path: "bundle" }, { status: 422 });
+      : Response.json(compileFailure(compiled.error.detail), { status: 422 });
   } catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
     const source = await body(c.req.raw);
