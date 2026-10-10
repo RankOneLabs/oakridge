@@ -49,9 +49,9 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
-  // Pinned launches accept only digest, root input, and request_id. Runtime/model
-  // settings belong to fields in a definition's root input (by stage where offered),
-  // so the old planner/worker role picker has no contract field to submit.
+  // Pinned launches accept digest, root input, and request_id, with no role/model
+  // override. The development bundle declares a sessions input shape, but no
+  // action reads it; a planner/worker picker would submit settings with no effect.
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
