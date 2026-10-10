@@ -10,7 +10,7 @@ const nodes = reachable(graph, entry);
 const files = nodes.map((node) => relative(root, node.path));
 const deleted = [
   "kbbl/core/pwa/oakridge/review-command-types.ts", "kbbl/core/pwa/oakridge/lib/worker-review-actions.ts",
-  "kbbl/core/pwa/oakridge/components/organisms/RunWorkspace.tsx", "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
+  "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
   "oakridge-dbos/src/validation", "oakridge-dbos/src/adapters/dev-flow.ts",
 ];
 test("production entry reaches one evaluator bridge and one mutation authority", () => {
