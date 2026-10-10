@@ -15,7 +15,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "initial") }
           ]) },
@@ -40,7 +40,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "revise") }
           ]) },
@@ -70,7 +70,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "replace_pr") }
           ]) },
@@ -95,7 +95,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "retry") }
           ]) },
@@ -124,7 +124,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "retry_missing_build") }
           ]) },
@@ -153,7 +153,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "retry_missing_pr") }
           ]) },
@@ -182,7 +182,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "build") },
             { key: "action_key", value: literal("ident", "revise_after_assessment") }
           ]) },
@@ -219,7 +219,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "assessment") },
             { key: "action_key", value: literal("ident", "initial") }
           ]) },
@@ -249,7 +249,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "assessment") },
             { key: "action_key", value: literal("ident", "retry") }
           ]) },
@@ -279,7 +279,7 @@ export const workers: WorkerDefinition[] = [
         input: record("session_action", [
           { key: "selector", value: record("session_selector", [
             { key: "stage_key", value: literal("ident", "implementation") },
-            { key: "cohort_key", value: optional("optional_ident", reference({ kind: "input" }, ["brief", "cohort_id"])) },
+            { key: "cohort_key", value: optional("optional_ident", null) },
             { key: "worker_key", value: literal("ident", "assessment") },
             { key: "action_key", value: literal("ident", "discuss") }
           ]) },
