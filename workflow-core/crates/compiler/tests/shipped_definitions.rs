@@ -56,7 +56,7 @@ fn every_shipped_definition_compiles() {
 }
 
 #[test]
-fn run_input_accepts_title_slug_and_merge_policy() {
+fn run_input_accepts_title_slug_merge_policy_and_base_branch() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../workflow-config/definitions/development.json");
     let bundle = decode_bundle(&fs::read(path).expect("generated development bundle")).unwrap();
@@ -68,4 +68,6 @@ fn run_input_accepts_title_slug_and_merge_policy() {
     workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("slug is accepted");
     input["final_merge_policy"] = serde_json::json!("require_merge");
     workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("merge policy is accepted");
+    input["base_branch"] = serde_json::json!("main");
+    workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("base branch is accepted");
 }

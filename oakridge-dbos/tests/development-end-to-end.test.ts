@@ -122,7 +122,7 @@ test("the shipped development bundle runs from launch to completion with operato
       app = composition.app;
       try {
         const created = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, title: "Feature", slug: "feature", final_merge_policy: "require_merge" } }) });
+          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, title: "Feature", slug: "feature", final_merge_policy: "require_merge", base_branch: "main" } }) });
         expect(created.status).toBe(201);
         const { run_id, root_scope_id }: { run_id: string; root_scope_id: string } = await created.json();
         const read = async <T,>(path: string): Promise<T> => {

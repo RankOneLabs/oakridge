@@ -10,7 +10,8 @@ export const runSchemas: Schema[] = [
     field("briefs", "session_config"),
     optionalField("title", "text"),
     optionalField("slug", "ident"),
-    optionalField("final_merge_policy", "final_merge_policy")
+    optionalField("final_merge_policy", "final_merge_policy"),
+    optionalField("base_branch", "ident")
   ]),
   { key: "final_merge_policy", shape: { kind: "enum", variants: ["require_merge", "allow_close_without_merge"] } },
   recordSchema("prepare_member", [field("key", "ident"), field("input", "repo_input"), field("dependencies", "ids")]),
