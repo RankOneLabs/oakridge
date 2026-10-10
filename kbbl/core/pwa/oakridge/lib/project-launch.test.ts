@@ -23,7 +23,8 @@ test("a project fills the development launch's repositories and sessions, leavin
   expect(JSON.parse(drafts.analysis!)).toEqual({ runtime: "claude-code", workdir: project.repo_dir, session_name: "scout-analysis" });
   expect(JSON.parse(drafts.final_merge_policy!)).toBe("require_merge");
   expect(JSON.parse(drafts.sessions!)).toEqual(Object.fromEntries(
-    ["spec_analysis", "planning", "brief_writing", "implementation", "final_integration"].map((stage) => [stage, { runtime: null, model: null, effort: null }])));
+    ["planner", "worker", "spec_analysis", "planning", "brief_writing", "implementation", "final_integration"]
+      .map((stage) => [stage, { runtime: null, model: null, effort: null }])));
 });
 
 test("a project without a forge repository leaves the repositories for the operator", () => {

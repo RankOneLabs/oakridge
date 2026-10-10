@@ -1,24 +1,28 @@
-import type { Schema } from "../../source-contracts";
+import type { Schema, SchemaField } from "../../source-contracts";
 import { field, optionalField, recordSchema } from "../../primitives/schemas";
 
+/** Shared root fields keep the verification variant's launch contract in sync. */
+export const runInputFields: SchemaField[] = [
+  field("spec", "text"),
+  field("repositories", "repository_configs"),
+  field("analysis", "session_config"),
+  field("planning", "session_config"),
+  field("briefs", "session_config"),
+  optionalField("title", "text"),
+  optionalField("slug", "ident"),
+  field("final_merge_policy", "final_merge_policy"),
+  optionalField("base_branch", "ident"),
+  optionalField("sessions", "run_sessions"),
+  field("admission", "admission_flags")
+];
+
 export const runSchemas: Schema[] = [
-  recordSchema("run_input", [
-    field("spec", "text"),
-    field("repositories", "repository_configs"),
-    field("analysis", "session_config"),
-    field("planning", "session_config"),
-    field("briefs", "session_config"),
-    optionalField("title", "text"),
-    optionalField("slug", "ident"),
-    field("final_merge_policy", "final_merge_policy"),
-    optionalField("base_branch", "ident"),
-    optionalField("sessions", "run_sessions"),
-    field("admission", "admission_flags")
-  ]),
+  recordSchema("run_input", runInputFields),
   { key: "final_merge_policy", shape: { kind: "enum", variants: ["require_merge", "allow_close_without_merge"] } },
   { key: "optional_runtime", shape: { kind: "optional", item: "runtime" } },
   recordSchema("session_settings", [field("runtime", "optional_runtime"), field("model", "optional_ident"), field("effort", "optional_ident")]),
   recordSchema("run_sessions", [
+    optionalField("planner", "session_settings"), optionalField("worker", "session_settings"),
     optionalField("spec_analysis", "session_settings"), optionalField("planning", "session_settings"),
     optionalField("brief_writing", "session_settings"), optionalField("implementation", "session_settings"),
     optionalField("final_integration", "session_settings")

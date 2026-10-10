@@ -3,6 +3,7 @@ import type { WorkflowDefinitionDescriptor } from "./source-contracts";
 import type { AuthoringError, PromptBinding, WorkflowAuthoring } from "./authoring";
 import { buildPrompts, resolvePromptKeys } from "./development/prompts";
 import { developmentSchemas } from "./development/schemas";
+import { runInputFields } from "./development/schemas/run";
 import { stageTableFor } from "./development/run/stage-table";
 import { operations } from "./development/operations";
 import { configureSchemas, configureScope, type RunPolicy } from "./development/policies";
@@ -43,9 +44,7 @@ function assembleDevelopmentRun(policy: RunPolicy): WorkflowDefinitionDescriptor
     root: "development",
     schemas: configureSchemas(policy.stage_layout === "verification"
       ? [...developmentSchemas, recordSchema("run_input_verification", [
-        field("spec", "text"), field("repositories", "repository_configs"),
-        field("analysis", "session_config"), field("planning", "session_config"),
-        field("briefs", "session_config"), field("admission", "admission_flags"), field("final_merge_policy", "final_merge_policy"), field("verification_note", "optional_text")
+        ...runInputFields, field("verification_note", "optional_text")
       ])] : developmentSchemas, policy),
     scopes: [
       buildDevelopmentScope(policy),

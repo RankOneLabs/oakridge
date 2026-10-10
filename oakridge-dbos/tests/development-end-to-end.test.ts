@@ -49,6 +49,7 @@ const OUTPUT_BODIES: { readonly [output_key: string]: (stage: string) => unknown
 const FORWARD_COMMANDS = ["admit", "begin", "accept", "accept_build", "accept_assessment", "review_pr", "confirm_merged", "closed_without_merge"] as const;
 
 interface SessionStart { readonly secret: string; readonly endpoint: string; readonly outputs: readonly { readonly key: string; readonly collection_key: string | null }[] }
+interface StartedSessionSettings { readonly stage: string; readonly worker: string | null; readonly runtime: string; readonly model: string | null; readonly effort: string | null }
 function readSessionStart(prompt: string): SessionStart {
   const secret = prompt.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
   const endpoint = prompt.match(/PUT (\S+)\/outputs\/<output-key>/)?.[1];
@@ -79,6 +80,7 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
   let app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> } | null = null;
   const sessions = new Map<string, { completed: boolean }>();
   const sids = new Map<string, string>();
+  const started_settings: StartedSessionSettings[] = [];
   const publish = async (start: SessionStart, stage: string, sid: string) => {
     for (const output of start.outputs) {
       const response = await app!.request(`${start.endpoint}/outputs/${output.key}`, { method: "PUT",
@@ -99,8 +101,12 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
       const sid = crypto.randomUUID();
       sids.set(target, sid);
       sessions.set(sid, { completed: false });
-      const { initial_prompt } = await request.json() as { initial_prompt: string };
+      const { initial_prompt, runtime, model, effort, workflow } = await request.json() as {
+        initial_prompt: string; runtime: string; model?: string; effort?: string; workflow?: { operator_role?: string } };
       const stage = initial_prompt.match(/Stage: (\S+)/)?.[1] ?? "";
+      const stage_key = initial_prompt.match(/"stage_key":\s*"([^"]+)"/)?.[1] ?? stage;
+      const worker = initial_prompt.match(/"worker_key":\s*"([^"]+)"/)?.[1] ?? workflow?.operator_role ?? null;
+      started_settings.push({ stage: stage_key, worker, runtime, model: model ?? null, effort: effort ?? null });
       void publish(readSessionStart(initial_prompt), stage, sid).catch((cause) => agent_failures.push(String(cause)));
       return Response.json({ kind: "attached", session: { sid, status: "live" } });
     }
@@ -122,7 +128,10 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
       app = composition.app;
       try {
         const created = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: { spec_analysis: true }, final_merge_policy, title: "Feature", slug: "feature", base_branch: "main", sessions: { spec_analysis: { runtime: "codex", model: "gpt-6-sol", effort: "high" } } } }) });
+          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: { spec_analysis: true }, final_merge_policy, title: "Feature", slug: "feature", base_branch: "main", sessions: {
+            planner: { runtime: "codex", model: "gpt-6-astra", effort: "high" }, worker: { runtime: "codex", model: "gpt-6-luna", effort: "low" },
+            spec_analysis: { runtime: "codex", model: "gpt-6-sol", effort: "medium" },
+          } } }) });
         expect(created.status).toBe(201);
         const { run_id, root_scope_id }: { run_id: string; root_scope_id: string } = await created.json();
         const read = async <T,>(path: string): Promise<T> => {
@@ -174,6 +183,14 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
           is_terminal: true, outcome: { kind: "variant", variant: final_merge_policy === "require_merge" ? "complete" : "closed_without_merge" },
           reviews: ["spec_analysis.admit", "spec_analysis.accept", "planning.accept", "brief_writing.accept", "implementation.accept_build", "implementation.accept_assessment",
             "implementation.confirm_merged", "final_integration.review_pr", `final_integration.${final_merge_policy === "require_merge" ? "confirm_merged" : "closed_without_merge"}`] });
+        expect(started_settings.filter(({ stage, worker }) => stage === "spec_analysis" && worker === "author")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-sol", effort: "medium" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "planning" && worker === "author")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-astra", effort: "high" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "implementation" && worker === "build")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-luna", effort: "low" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "implementation" && worker === "assessment")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-astra", effort: "high" });
       } finally { await composition.close(); }
     });
   } finally { kbbl.stop(true); rmSync(repository_path, { recursive: true, force: true }); }

@@ -1,6 +1,6 @@
 import type {
   OperatorArtifactDetail, OperatorDecision, OperatorReviewInbox, OperatorRunDetail,
-  OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation,
+  OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation, OperatorScopeView,
 } from "../operator-contracts";
 
 /** Shared defaults for operator read-model tests; callers override only the behavior under test. */
@@ -11,6 +11,14 @@ export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): Ope
 
 export function makeRunDetail(overrides: Partial<OperatorRunDetail> = {}): OperatorRunDetail {
   return { ...makeRunSummary(), cursor: [], scopes: [], ...overrides };
+}
+
+export function makeScopeView(overrides: Partial<OperatorScopeView> = {}): OperatorScopeView {
+  return { run_id: "run-1", scope_id: "scope-1", scope_key: "development", label: "Development",
+    state: { schema: "text", data: { kind: "string", value: "running" } }, outcome: null,
+    is_terminal: false, commands: [], executions: [], outputs: [], resources: [],
+    command_targets: {}, command_prefill: {}, decision: null,
+    cursor: { scope_version: 1, transition_id: null }, ...overrides };
 }
 
 export function makeSessionLocation(overrides: Partial<OperatorSessionLocation> = {}): OperatorSessionLocation {

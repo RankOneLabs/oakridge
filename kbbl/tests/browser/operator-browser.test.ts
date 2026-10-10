@@ -55,17 +55,15 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
       else await route.fulfill({ response });
     });
     await page.goto(server.url.href);
-    await page.getByText("Output artifact body", { exact: true }).waitFor();
+    const discuss = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit discuss", exact: true }) });
+    const change = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit change", exact: true }) });
+    await change.waitFor();
     await page.getByTestId("operator-history-pane").getByText("No transitions yet.", { exact: true }).waitFor();
-    await page.getByLabel("Feedback").fill("Discussion draft");
-    await page.getByLabel("Action", { exact: true }).selectOption("change");
-    expect(await page.getByLabel("Feedback").inputValue()).toBe("");
-    await page.getByLabel("Action", { exact: true }).selectOption("discuss");
-    expect(await page.getByLabel("Feedback").inputValue()).toBe("Discussion draft");
-    await page.getByLabel("Action", { exact: true }).selectOption("change");
-    await page.getByLabel("Feedback").fill("Change draft");
-    await page.getByRole("button", { name: "Submit change", exact: true }).click();
-    await page.getByTestId("operator-command-form").getByRole("alert")
+    await discuss.getByLabel("Feedback").fill("Discussion draft");
+    await change.getByLabel("Feedback").fill("Change draft");
+    expect(await discuss.getByLabel("Feedback").inputValue()).toBe("Discussion draft");
+    await change.getByRole("button", { name: "Submit change", exact: true }).click();
+    await change.getByRole("alert")
       .filter({ hasText: "Delivery is uncertain." }).waitFor();
     expect(requests[0]).toMatchObject({ command_key: "change", expected_scope_version: 4,
       targets: [{ identity: "exec-1", version: 6 }], payload: { text: "Change draft" } });

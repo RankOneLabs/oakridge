@@ -1905,6 +1905,16 @@
         "kind": "record",
         "fields": [
           {
+            "key": "planner",
+            "schema": "session_settings",
+            "required": false
+          },
+          {
+            "key": "worker",
+            "schema": "session_settings",
+            "required": false
+          },
+          {
             "key": "spec_analysis",
             "schema": "session_settings",
             "required": false
@@ -2309,13 +2319,33 @@
             "required": true
           },
           {
-            "key": "admission",
-            "schema": "admission_flags",
-            "required": true
+            "key": "title",
+            "schema": "text",
+            "required": false
+          },
+          {
+            "key": "slug",
+            "schema": "ident",
+            "required": false
           },
           {
             "key": "final_merge_policy",
             "schema": "final_merge_policy",
+            "required": true
+          },
+          {
+            "key": "base_branch",
+            "schema": "ident",
+            "required": false
+          },
+          {
+            "key": "sessions",
+            "schema": "run_sessions",
+            "required": false
+          },
+          {
+            "key": "admission",
+            "schema": "admission_flags",
             "required": true
           },
           {
