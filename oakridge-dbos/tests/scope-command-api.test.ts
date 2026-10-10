@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { DefinitionBundle, DecisionOutcome, ReferenceRoot, VersionedValue } from "../src/core-client/generated-contracts";
-import { availableCommand, currentTargetRevisions, MalformedRequestError, parseScopeCommand, targetsMatch } from "../src/http/scope-commands";
+import { availableCommand, COMMAND_STATUS, commandStatus, ConflictError, currentTargetRevisions, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, targetsMatch, TransientServiceError } from "../src/http/scope-commands";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
@@ -8,6 +8,13 @@ const scope_id = "scope-1" as ScopeId;
 const state = { schema: "state", data: { kind: "variant" as const, variant: "review", value: { schema: "unit", data: { kind: "boolean" as const, value: true } } } };
 const command = { key: "new_bundle_command", payload_schema: "payload", available_in: ["review"], required: true, targets: [], label: "Review", consequence: "Approve", field_presentation: [] };
 const bundle = { scopes: [{ key: "scope", commands: [command] }] } as unknown as DefinitionBundle;
+
+test("every command error kind maps to exactly one HTTP status", () => {
+  const errors = [new MalformedRequestError("bad"), new InvalidPayloadError("bad"), new MissingEntityError("missing"),
+    new ConflictError("stale"), new TransientServiceError("unavailable"), new InternalFaultError("fault")];
+  expect(Object.keys(COMMAND_STATUS).sort()).toEqual(errors.map((error) => error.kind).sort());
+  expect(errors.map((error) => commandStatus({ ok: false, error }))).toEqual([400, 422, 404, 409, 503, 500]);
+});
 
 test("new pinned command is selected without a server registry", () => {
   expect(availableCommand(bundle, "scope", state, "new_bundle_command")?.label).toBe("Review");

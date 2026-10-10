@@ -7,6 +7,22 @@ import type { SqlExecutor } from "./sql-executor";
 import { requestDigest } from "./receipts";
 
 export interface TargetRevision { readonly identity: string; readonly version: number }
+export interface CurrentOutputRevision {
+  readonly id: string;
+  readonly slot_version: number;
+  readonly revision_id: string;
+  readonly body: CheckedValue;
+}
+
+/** The current artifact witness for an edit, read from the authority's output slot. */
+export async function currentOutputRevision(db: SqlExecutor, scope_id: ScopeId, output_key: string, collection_key: string): Promise<CurrentOutputRevision | null> {
+  const rows = await db.query<{ id: string; version: string | number; current_revision_id: string; body: CheckedValue }>(
+    `SELECT s.id,s.version,s.current_revision_id,r.body FROM authority.output_slot s
+      JOIN authority.artifact_revision r ON r.id=s.current_revision_id AND r.scope_id=s.scope_id
+      WHERE s.scope_id=$1 AND s.output_key=$2 AND s.collection_key=$3`, [scope_id, output_key, collection_key]);
+  const row = rows[0];
+  return row ? { id: row.id, slot_version: Number(row.version), revision_id: row.current_revision_id, body: row.body } : null;
+}
 
 export function targetsMatch(command: CommandDefinition, outcome: DecisionOutcome, submitted: readonly TargetRevision[], current: readonly TargetRevision[]): boolean {
   return outcome.kind === "apply" && outcome.targets.length === command.targets.length && submitted.length === current.length

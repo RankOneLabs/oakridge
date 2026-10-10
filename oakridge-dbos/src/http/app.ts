@@ -16,6 +16,7 @@ import type { RunPage } from "../projections/run-view";
 import { plainValue } from "../core-client/plain-value";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { selectDecision } from "../projections/scope-view";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -52,8 +53,8 @@ function archivedQuery(raw: string | undefined): boolean | MalformedRequestError
   if (raw === undefined || raw === "false") return false;
   return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
 }
-function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
-  return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
+function errorResponse(error: CommandError): { readonly error: string; readonly code: CommandError["kind"]; readonly trace_id?: string } {
+  return error instanceof InternalFaultError ? { error: "internal fault", code: error.kind, trace_id: error.trace_id } : { error: error.detail, code: error.kind };
 }
 function response(result: CommandResult): Response {
   return Response.json(result.ok ? result.value : errorResponse(result.error), { status: commandStatus(result) });
@@ -142,7 +143,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/scopes/:scope_id/decision", async (c) => { try {
     const view = await readScopeView(deps.db, c.req.param("scope_id") as ScopeId);
-    return view && view.run_id === c.req.param("run_id") ? c.json({ decision: view.decision, cursor: view.cursor }) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
+    return view && view.run_id === c.req.param("run_id") ? c.json(selectDecision(view)) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/scopes/:scope_id/history", async (c) => { try {
     const history = await readScopeHistory(deps.db, c.req.param("run_id"), c.req.param("scope_id"));

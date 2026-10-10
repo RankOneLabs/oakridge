@@ -18,6 +18,11 @@ export interface ScopeView {
   readonly command_prefill: Readonly<{ readonly [command_key: string]: CommandPrefill }>;
   readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor;
 }
+/** The latest evaluator decision shown beside the scope state. */
+export interface Decision { readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor }
+export function selectDecision(view: ScopeView): Decision {
+  return { decision: view.decision, cursor: view.cursor };
+}
 export interface TransitionRow { readonly id: string; readonly decision: DecisionOutcome }
 export function selectAvailableCommands(bundle: DefinitionBundle, scope: ScopeInstanceRecord): readonly CommandDefinition[] {
   return bundle.scopes.find((item) => item.key === scope.scope_key)?.commands.filter((item) =>

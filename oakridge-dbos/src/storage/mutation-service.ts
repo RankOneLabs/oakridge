@@ -67,7 +67,7 @@ export async function compileBundle(core: CoreClient, request: CompileRequest): 
   return { ok: true, value: { program: response.value.value } };
 }
 /** Whether every published output still matches its declared schema. */
-export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string };
+export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string } | { readonly kind: "internal_fault"; readonly output_key: string; readonly detail: string };
 /**
  * Published outputs arrive as checked values from outside the core, so the
  * core rechecks each against the schema its scope declares. Undeclared
@@ -79,7 +79,7 @@ export async function checkPublications(core: CoreClient, bundle: DefinitionBund
     const declared = scope?.outputs.find((item) => item.key === output.output_key);
     if (!declared) continue;
     const checked = await core.request("validate_value", { bundle, schema: declared.schema, value: output.body });
-    if (checked.ok) continue;
+    if (checked.ok) { if (checked.value.kind === "validated") continue; return { ok: true, value: { kind: "internal_fault", output_key: output.output_key, detail: "core returned unexpected validation result" } }; }
     if (checked.error.kind === "transport") return error("validate_publication", output.output_key, checked.error.detail.detail);
     return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
   }
@@ -225,7 +225,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (attempt === 0) {
             const publications = await checkPublications(core, bundle, source.owner.scope_key, staged_input.outputs ?? []);
             if (!publications.ok) return publications;
-            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "output schema mismatch" } };
+            if (publications.value.kind === "internal_fault") return error("validate_publication_protocol", publications.value.output_key, publications.value.detail);
+            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: `output ${publications.value.output_key} schema mismatch` } };
           }
           const staged = stagePublications(bundle, source, staged_input.outputs ?? []);
           if (!staged.ok) return staged;
