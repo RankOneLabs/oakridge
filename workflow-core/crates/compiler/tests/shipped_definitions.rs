@@ -56,7 +56,7 @@ fn every_shipped_definition_compiles() {
 }
 
 #[test]
-fn run_input_accepts_title_slug_merge_policy_base_branch_and_sessions() {
+fn run_input_accepts_all_new_fields_and_rejects_unknown_admission_stage() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../workflow-config/definitions/development.json");
     let bundle = decode_bundle(&fs::read(path).expect("generated development bundle")).unwrap();
@@ -72,4 +72,9 @@ fn run_input_accepts_title_slug_merge_policy_base_branch_and_sessions() {
     workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("base branch is accepted");
     input["sessions"] = serde_json::json!({"spec_analysis":{"runtime":"codex","model":"gpt-6-sol","effort":"high"}});
     workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("per-scope session settings are accepted");
+    input["admission"] = serde_json::json!({"spec_analysis":true});
+    workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).expect("admission flag is accepted");
+    input["admission"] = serde_json::json!({"misspelled_stage":true});
+    assert!(workflow_compiler::check_value(&bundle, &SchemaId::from("run_input"), &input).is_err(),
+        "unknown stage is rejected by root input validation");
 }
