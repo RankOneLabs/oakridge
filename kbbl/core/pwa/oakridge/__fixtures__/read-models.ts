@@ -1,5 +1,6 @@
 import type {
-  OperatorArtifactDetail, OperatorDecision, OperatorReviewInbox, OperatorRunDetail,
+  OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorDecision,
+  OperatorOutputSlotView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation, OperatorScopeView,
 } from "../operator-contracts";
 
@@ -44,6 +45,25 @@ export function makeArtifactDetail(overrides: Partial<OperatorArtifactDetail> = 
     presentation: { artifact_type: "analysis", viewer: "document",
       capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true } },
     ...overrides };
+}
+
+export function makeArtifactRevision(overrides: Partial<OperatorArtifactRevisionRecord> = {}): OperatorArtifactRevisionRecord {
+  return { id: "revision-1", run_id: "run-1", scope_id: "scope-1", execution_id: "execution-1",
+    output_key: "analysis", collection_key: "", version: 1, predecessor_id: null,
+    created_at: "2026-07-01T09:00:00Z", body: { schema: "text", data: { kind: "string", value: "Spec body" } },
+    ...overrides };
+}
+
+export function makeOutputSlot(overrides: Partial<OperatorOutputSlotView> = {}): OperatorOutputSlotView {
+  const revision = makeArtifactRevision();
+  return { id: "slot-1", run_id: "run-1", scope_id: "scope-1", output_key: "analysis",
+    collection_key: "", current_revision_id: revision.id, current_revision: revision, version: 1, ...overrides };
+}
+
+export function makeCommand(overrides: Partial<OperatorCommandDefinition> = {}): OperatorCommandDefinition {
+  return { key: "approve", label: "Approve", consequence: "Approve the current revision",
+    payload_schema: "text", available_in: ["running"], required: false, field_presentation: [],
+    targets: [{ kind: "reference", root: { kind: "output", key: "analysis" }, path: [] }], ...overrides };
 }
 
 export function makeDecision(overrides: Partial<OperatorDecision> = {}): OperatorDecision {
