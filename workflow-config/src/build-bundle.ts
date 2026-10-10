@@ -26,6 +26,15 @@ function invalid(field_path: string, detail: string): BuildBundleResult {
   return { ok: false, error: { kind: "authoring_error", field_path, detail } };
 }
 
+class MissingTemplateSlotError extends Error {
+  readonly field_path: string;
+
+  constructor(schema: string, role: string) {
+    super(`template ${schema} is missing slot ${role}`);
+    this.field_path = `template.slots.${schema}.${role}`;
+  }
+}
+
 function assembleDevelopmentRun(policy: RunPolicy): WorkflowDefinitionDescriptor {
   return {
     language_version: 1,
@@ -72,7 +81,10 @@ export function buildBundle(value: unknown): BuildBundleResult {
   if (authoring.prompt_bindings !== undefined && !Array.isArray(authoring.prompt_bindings))
     return invalid("prompt_bindings", "prompt bindings must be a list");
   try { return buildValidated(authoring); }
-  catch (cause) { return invalid("template", String(cause)); }
+  catch (cause) {
+    if (cause instanceof MissingTemplateSlotError) return invalid(cause.field_path, cause.message);
+    return invalid("template", String(cause));
+  }
 }
 
 function buildValidated(authoring: WorkflowAuthoring): BuildBundleResult {
@@ -154,7 +166,7 @@ function synthesizeRecord(input: Expression): Expression {
     : input.schema === "pr_observe_input" ? OBSERVER_TEMPLATE_SLOTS : null;
   const fields: FieldExpression[] = (slots ?? input.fields.map(({ key }) => ({ role: key }))).map(({ role }) => {
     const field = input.fields.find((candidate) => candidate.key === role);
-    if (!field) throw new Error(`template ${input.schema} is missing slot ${role}`);
+    if (!field) throw new MissingTemplateSlotError(input.schema, role);
     return { ...field, value: synthesizeRecord(field.value) };
   });
   return record(input.schema, fields);
