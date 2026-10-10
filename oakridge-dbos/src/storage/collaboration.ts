@@ -159,13 +159,21 @@ export async function recordCollaborationDelivery(db: SqlExecutor, input: Omit<C
   return rows[0] ?? (await findCollaborationDelivery(db,input.id))!;
 }
 
+/** Current-revision reads include predecessor threads so superseded review remains visible and read-only. */
 export async function readCollaborationThreads(db: SqlExecutor, run_id: string, scope_id: string,
   revision_id: string): Promise<readonly CollaborationThreadView[]> {
-  const threads = await db.query<ThreadWithCurrent>(`SELECT t.id,t.run_id,t.scope_id,t.artifact_revision_id,t.context,
+  const threads = await db.query<ThreadWithCurrent>(`WITH RECURSIVE chain AS (
+    SELECT id,predecessor_id,0 AS depth FROM authority.artifact_revision
+      WHERE run_id=$1 AND scope_id=$2 AND id=$3
+    UNION ALL
+    SELECT r.id,r.predecessor_id,chain.depth+1 FROM authority.artifact_revision r
+      JOIN chain ON r.id=chain.predecessor_id WHERE r.run_id=$1 AND r.scope_id=$2
+  ) SELECT t.id,t.run_id,t.scope_id,t.artifact_revision_id,t.context,
     t.created_at::text AS created_at,s.current_revision_id FROM authority.collaboration_thread t
+    JOIN chain ON chain.id=t.artifact_revision_id
     JOIN authority.artifact_revision r ON r.id=t.artifact_revision_id
     JOIN authority.output_slot s ON s.scope_id=r.scope_id AND s.output_key=r.output_key AND s.collection_key=r.collection_key
-    WHERE t.run_id=$1 AND t.scope_id=$2 AND t.artifact_revision_id=$3 ORDER BY t.created_at,t.id`, [run_id,scope_id,revision_id]);
+    WHERE t.run_id=$1 AND t.scope_id=$2 ORDER BY chain.depth DESC,t.created_at,t.id`, [run_id,scope_id,revision_id]);
   return Promise.all(threads.map(async (thread) => {
     const [messages, review_items, deliveries] = await Promise.all([
       db.query<CollaborationMessageRow>(`SELECT id,run_id,scope_id,thread_id,body,created_at::text AS created_at

@@ -14,24 +14,28 @@ export interface CollaborationApiDependencies {
 }
 interface PingCommand { readonly run_id: string; readonly scope_id: string; readonly thread_id: string;
   readonly revision_id: string; readonly message_id: string; readonly request_key: string; readonly text: string }
+interface PinnedCollaborationSession { readonly request: PinnedSessionStart; readonly session_id: string }
+class CollaborationEnsureUncertainError extends Error {}
 export interface CollaborationDeliveryPort {
-  ensure(request: PinnedSessionStart): Promise<{ readonly kind: "ok"; readonly session_id: string } | { readonly kind: "error"; readonly reason: string }>;
+  ensure(request: PinnedSessionStart): Promise<{ readonly kind: "ok"; readonly session_id: string }
+    | { readonly kind: "error"; readonly reason: string } | { readonly kind: "uncertain"; readonly reason: string }>;
   send(session_id: string, delivery_key: string, text: string): Promise<void>;
 }
 
-async function pinnedSession(db: SqlExecutor, execution_id: string): Promise<PinnedSessionStart | null> {
+async function pinnedSession(db: SqlExecutor, execution_id: string): Promise<PinnedCollaborationSession | null> {
   const intents = await db.query<{ readonly id: string }>(`SELECT id FROM authority.effect_intent
     WHERE execution_id=$1 AND payload->>'action'='start' ORDER BY updated_at DESC,id DESC LIMIT 1`, [execution_id]);
   if (!intents[0]) return null;
   const intent = await readIntent(db,intents[0].id);
   const request = intent?.payload.invocation.request;
-  return request?.kind === "kbbl_session" && request.version === 1
-    ? { session_key: request.session_key, body: intent!.payload.invocation.bytes } : null;
+  const handle = intent?.payload.handle;
+  return request?.kind === "kbbl_session" && request.version === 1 && handle?.kind === "kbbl_session"
+    ? { request: { session_key: request.session_key, body: intent!.payload.invocation.bytes }, session_id: handle.session_id } : null;
 }
 
 /** One DBOS step's IO body. The persisted record closes recovery after kbbl accepted the keyed turn. */
 export async function deliverCollaborationPing(db: SqlExecutor, port: CollaborationDeliveryPort,
-  command: PingCommand, read_pinned: (db: SqlExecutor, execution_id: string) => Promise<PinnedSessionStart | null> = pinnedSession): Promise<CollaborationDeliveryRecord> {
+  command: PingCommand, read_pinned: (db: SqlExecutor, execution_id: string) => Promise<PinnedCollaborationSession | null> = pinnedSession): Promise<CollaborationDeliveryRecord> {
   const id = collaborationRecordId(command.thread_id,command.request_key);
   const prior = await findCollaborationDelivery(db,id);
   if (prior) return prior;
@@ -42,8 +46,10 @@ export async function deliverCollaborationPing(db: SqlExecutor, port: Collaborat
   if (!target) return fail("no agent-produced revision exists in the reviewed revision chain");
   const request = await read_pinned(db,target.execution_id);
   if (!request) return fail(`no pinned resumable session exists for execution ${target.execution_id}`);
-  const ensured = await port.ensure(request);
+  const ensured = await port.ensure(request.request);
+  if (ensured.kind === "uncertain") throw new CollaborationEnsureUncertainError(`session ensure uncertain: ${ensured.reason}`);
   if (ensured.kind === "error") return fail(`session ensure failed: ${ensured.reason}`);
+  if (ensured.session_id !== request.session_id) return fail(`session ensure returned ${ensured.session_id} instead of pinned session ${request.session_id}`);
   await port.send(ensured.session_id,id,command.text);
   return recordCollaborationDelivery(db, { id, run_id: command.run_id, scope_id: command.scope_id,
     message_id: command.message_id,
@@ -57,7 +63,9 @@ export function kbblDeliveryPort(base_url: string): CollaborationDeliveryPort {
       const result = await adapter.ensure_collaboration(request);
       return result.kind === "acknowledged" && result.value.kind === "kbbl_session"
         ? { kind: "ok", session_id: result.value.session_id }
-        : { kind: "error", reason: result.kind === "acknowledged" ? "kbbl returned no session" : result.detail };
+        : result.kind === "uncertain" || result.kind === "transiently_unavailable"
+          ? { kind: "uncertain", reason: result.detail }
+          : { kind: "error", reason: result.kind === "acknowledged" ? "kbbl returned no session" : result.detail };
     },
     async send(session_id, delivery_key, text) {
       await adapter.deliver_input("collaboration" as import("../domain/primitives").ExecutionId,
@@ -67,11 +75,26 @@ export function kbblDeliveryPort(base_url: string): CollaborationDeliveryPort {
 }
 
 let workflow_dependencies: CollaborationApiDependencies | null = null;
-const deliverStep = DBOS.registerStep(async (command: PingCommand): Promise<CollaborationDeliveryRecord> => {
+type DeliveryAttempt = { readonly kind: "recorded"; readonly record: CollaborationDeliveryRecord }
+  | { readonly kind: "uncertain"; readonly reason: string };
+const deliverStep = DBOS.registerStep(async (command: PingCommand): Promise<DeliveryAttempt> => {
   if (!workflow_dependencies) throw new Error("collaboration delivery service is unavailable");
-  return deliverCollaborationPing(workflow_dependencies.db,kbblDeliveryPort(workflow_dependencies.kbbl_base_url),command);
+  try {
+    return { kind: "recorded", record: await deliverCollaborationPing(
+      workflow_dependencies.db,kbblDeliveryPort(workflow_dependencies.kbbl_base_url),command) };
+  } catch (error) {
+    if (error instanceof CollaborationEnsureUncertainError) return { kind: "uncertain", reason: error.message };
+    throw error;
+  }
 }, { name: "oakridgeCollaborationDelivery" });
-const deliveryWorkflow = DBOS.registerWorkflow(async (command: PingCommand): Promise<CollaborationDeliveryRecord> => deliverStep(command),
+const deliveryWorkflow = DBOS.registerWorkflow(async (command: PingCommand): Promise<CollaborationDeliveryRecord> => {
+  for (;;) {
+    const attempt = await deliverStep(command);
+    if (attempt.kind === "recorded") return attempt.record;
+    DBOS.logger.warn(`collaboration ${command.thread_id}: ${attempt.reason}; retrying`);
+    await DBOS.sleepSeconds(2);
+  }
+},
   { name: "oakridgeCollaborationPing" });
 
 const object = (value: unknown): value is { readonly [key: string]: unknown } =>

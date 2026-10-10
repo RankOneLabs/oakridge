@@ -428,11 +428,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       ...(inheritWorktreeFrom ? { inherit_worktree_from: inheritWorktreeFrom } : {}),
     };
     let ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
-    if (ensured.ok && (ensured.value.session.status === "ended" || ensured.value.session.status === "failed")
+    if (ensured.ok && (ensured.value.session.status === "ended" || ensured.value.session.status === "failed" || ensured.value.session.status === "fenced")
       && c.req.header("x-oakridge-collaboration-resume") === "true") {
-      const advanced = await acp.advanceResumable(rawKey);
-      if (advanced.kind === "not_found") return c.json({ error: "resumable session disappeared during collaboration resume" }, 409);
-      ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
+      const revived = await acp.reviveResumable(rawKey);
+      ensured = revived.ok ? { ok: true, value: { kind: "existing", session: revived.value } } : revived;
     }
     if (!ensured.ok) {
       const { status, body: errBody } = errorResponse(ensured.error);

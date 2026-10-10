@@ -6,6 +6,7 @@ import type { SqlExecutor } from "../src/storage/sql-executor";
 const command = { run_id: "run", scope_id: "scope", thread_id: "thread", revision_id: "edit",
   message_id: "message", request_key: "request-1", text: "Please review the change" };
 const request = { session_key: "pinned-key", body: JSON.stringify({ initial_prompt: "start", workdir: "/tmp" }) };
+const pinned = { request, session_id: "pinned-session" };
 
 function deliveryDatabase(): { db: SqlExecutor; deliveries: CollaborationDeliveryRecord[] } {
   const deliveries: CollaborationDeliveryRecord[] = [];
@@ -28,18 +29,22 @@ function deliveryDatabase(): { db: SqlExecutor; deliveries: CollaborationDeliver
 }
 
 async function withKbbl(initial_status: "live" | "ended" | "failed", run: (url: string,
-  observations: { readonly ensures: string[]; readonly inputs: string[] }) => Promise<void>): Promise<void> {
+  observations: { readonly ensures: string[]; readonly inputs: string[] }) => Promise<void>,
+  behavior: "preserve" | "replace" | "transient" = "preserve"): Promise<void> {
   let status = initial_status;
+  let ensure_count = 0;
   const observations = { ensures: [] as string[], inputs: [] as string[] };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (request.method === "PUT" && url.pathname === "/sessions/resumable/pinned-key") {
       observations.ensures.push(status);
+      ensure_count += 1;
+      if (behavior === "transient" && ensure_count === 1) return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       if (status === "failed") return Response.json({ error: "worktree unavailable" }, { status: 422 });
       if (status === "ended" && request.headers.get("x-oakridge-collaboration-resume") === "true") status = "live";
-      return Response.json({ kind: "attached", session: { sid: status === "live" ? "live-session" : "ended-session", status } });
+      return Response.json({ kind: "attached", session: { sid: behavior === "replace" && status === "live" ? "fresh-session" : "pinned-session", status } });
     }
-    if (request.method === "PUT" && url.pathname.startsWith("/sessions/resumable/live-session/input/")) {
+    if (request.method === "PUT" && url.pathname.startsWith("/sessions/resumable/pinned-session/input/")) {
       observations.inputs.push((await request.json() as { text: string }).text);
       return Response.json({ accepted: true });
     }
@@ -52,8 +57,8 @@ test("live session accepts one keyed ping and repeat returns the recorded delive
   const { db, deliveries } = deliveryDatabase();
   await withKbbl("live", async (url, observations) => {
     const port = kbblDeliveryPort(url);
-    const first = await deliverCollaborationPing(db,port,command,async () => request);
-    const repeat = await deliverCollaborationPing(db,port,command,async () => request);
+    const first = await deliverCollaborationPing(db,port,command,async () => pinned);
+    const repeat = await deliverCollaborationPing(db,port,command,async () => pinned);
     expect(first).toEqual(repeat);
     expect(observations.inputs).toEqual([command.text]);
     expect(deliveries).toHaveLength(1);
@@ -63,17 +68,39 @@ test("live session accepts one keyed ping and repeat returns the recorded delive
 test("ended producing session is re-ensured before ping delivery", async () => {
   const { db } = deliveryDatabase();
   await withKbbl("ended", async (url, observations) => {
-    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => request);
+    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => pinned);
     expect(observations.ensures).toEqual(["ended"]);
     expect(observations.inputs).toEqual([command.text]);
-    expect(delivery.payload).toMatchObject({ status: "delivered", session_id: "live-session" });
+    expect(delivery.payload).toMatchObject({ status: "delivered", session_id: "pinned-session" });
   });
+});
+
+test("a replaced sid after collaboration resume cannot receive the pinned ping", async () => {
+  const { db, deliveries } = deliveryDatabase();
+  await withKbbl("ended", async (url, observations) => {
+    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => pinned);
+    expect(delivery.payload.reason).toContain("instead of pinned session pinned-session");
+    expect(observations.inputs).toEqual([]);
+    expect(deliveries).toHaveLength(1);
+  }, "replace");
+});
+
+test("transient ensure result can retry the same request key", async () => {
+  const { db, deliveries } = deliveryDatabase();
+  await withKbbl("live", async (url, observations) => {
+    const port = kbblDeliveryPort(url);
+    await expect(deliverCollaborationPing(db,port,command,async () => pinned)).rejects.toThrow("session ensure uncertain");
+    expect(deliveries).toHaveLength(0);
+    const delivery = await deliverCollaborationPing(db,port,command,async () => pinned);
+    expect(delivery.payload.status).toBe("delivered");
+    expect(observations.inputs).toEqual([command.text]);
+  }, "transient");
 });
 
 test("ensure failure records an explicit reason", async () => {
   const { db, deliveries } = deliveryDatabase();
   await withKbbl("failed", async (url, observations) => {
-    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => request);
+    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => pinned);
     expect(observations.inputs).toEqual([]);
     expect(delivery.payload.reason).toContain("worktree unavailable");
     expect(deliveries).toHaveLength(1);

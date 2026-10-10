@@ -464,6 +464,16 @@ export class AcpSessionStore {
     this.notifySessionsChanged();
   }
 
+  /** Reopen an ended resumable row after its ACP session has been loaded. */
+  reviveEnded(sid: KbblSessionId): boolean {
+    const changed = this.db.prepare(
+      `UPDATE acp_sessions SET status = 'idle', end_reason = NULL, end_detail = NULL, updated_at = ?
+       WHERE sid = ? AND status IN ('ended', 'failed') AND fenced_by IS NULL`,
+    ).run(nowIso(), sid).changes > 0;
+    if (changed) this.notifySessionsChanged();
+    return changed;
+  }
+
   setRequestedMode(sid: KbblSessionId, mode: string): void {
     this.db
       .prepare(

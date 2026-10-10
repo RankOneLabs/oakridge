@@ -85,6 +85,25 @@ afterEach(async () => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
+test("collaboration ensure revives an ended session in place", async () => {
+  const app = makeApp(repoDir);
+  const body = JSON.stringify({ initial_prompt: "remember the first turn", workdir: repoDir, runtime: "fake" });
+  const url = "/sessions/resumable/key-review";
+  const first = await app.request(url, { method: "PUT", headers: { "content-type": "application/json" }, body });
+  expect(first.status).toBe(201);
+  const initial = await first.json() as { session: { sid: string } };
+  await harness.service.observeInitialTurn(initial.session.sid, 8000);
+  await harness.service.closeSession(initial.session.sid);
+  expect(harness.store.getSession(initial.session.sid as import("../../acp/types").KbblSessionId)?.status).toBe("ended");
+
+  const resumed = await app.request(url, { method: "PUT", headers: {
+    "content-type": "application/json", "x-oakridge-collaboration-resume": "true",
+  }, body });
+  expect(resumed.status).toBe(200);
+  expect(await resumed.json()).toMatchObject({ kind: "attached", session: { sid: initial.session.sid, status: "live" } });
+  expect(String(harness.store.getByResumableKey("key-review" as import("../../acp/types").ResumableKey)?.sid)).toBe(initial.session.sid);
+}, 15000);
+
 describe("POST /sessions create-session contract", () => {
   test("no model override (omitted field) is accepted; snapshot model is null", async () => {
     const app = makeApp(repoDir);
