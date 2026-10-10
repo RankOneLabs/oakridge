@@ -9,7 +9,10 @@ import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
-import { listDefinitions, readPinnedDefinition } from "./definition-inspection";
+import { listDefinitions, readDefinition, readPinnedDefinition } from "./definition-inspection";
+import { buildBundle } from "../../../workflow-config/src/build-bundle";
+import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
+import { listPromptCatalog } from "../../../workflow-config/src/development/prompts";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
@@ -94,9 +97,33 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     return Response.json(await listDefinitions(deps.db, after, page.limit, is_archived));
   }
     catch (cause) { return fault(cause); } });
+  app.get("/api/prompts", () => { try { return Response.json(listPromptCatalog()); }
+    catch (cause) { return fault(cause); } });
+  app.get("/api/definitions/:bundle_id", async (c) => { try {
+    const definition = await readDefinition(deps.db, c.req.param("bundle_id"));
+    return definition ? c.json(definition) : response({ ok: false, error: new MissingEntityError("definition not found") });
+  } catch (cause) { return fault(cause); } });
+  app.post("/api/definitions/compile", async (c) => { try {
+    const source = await body(c.req.raw);
+    if (source instanceof MalformedRequestError) return response({ ok: false, error: source });
+    const authored = source && typeof source === "object" && "authoring" in source ? source.authoring : source;
+    const built = buildBundle(authored);
+    if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
+    const compiled = await deps.mutations.compile({ bundle: built.value, authoring: authored as WorkflowAuthoring });
+    return compiled.ok ? Response.json(compiled.value)
+      : Response.json({ error: compiled.error.detail, field_path: "bundle" }, { status: 422 });
+  } catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
     const source = await body(c.req.raw);
     if (source instanceof MalformedRequestError) return response({ ok: false, error: source });
+    const authored = source && typeof source === "object" && "authoring" in source ? source.authoring : source;
+    if (authored && typeof authored === "object" && "authoring_version" in authored) {
+      const built = buildBundle(authored);
+      if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
+      const pinned = await deps.mutations.pinDefinition({ bundle: built.value, authoring: authored as WorkflowAuthoring });
+      return pinned.ok ? Response.json(pinned.value, { status: 201 })
+        : Response.json({ error: pinned.error.detail, field_path: "bundle" }, { status: 422 });
+    }
     if (!source || typeof source !== "object" || !("key" in source) || typeof source.key !== "string")
       return response({ ok: false, error: new InvalidPayloadError("invalid definition bundle") });
     const pinned = await deps.mutations.pinDefinition({ bundle: source as DefinitionBundle });

@@ -9,7 +9,7 @@ const check = process.argv.includes("--check");
 const promptDrift = renderPromptFiles(check);
 for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
 if (promptDrift.length > 0) process.exit(1);
-// Bundles are not committed; every consumer generates them first.
+// The checked-in bundles are byte-for-byte fixtures for every authoring change.
 for (const variant of variants) {
   const result = buildBundle({ authoring_version: 1, template: "development", key: variant.key,
     implementation_capacity: variant.implementation_capacity, sibling_failure: variant.sibling_failure,

@@ -17,8 +17,8 @@ import type { ProjectId, ProjectRecord, RunId, ScopeId } from "./schema-records"
 import type { Result as SharedResult } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { resolveBundlePrompts, storePromptContents, type PromptContent } from "./prompt-content";
-
-export interface CompileRequest { readonly bundle: DefinitionBundle }
+import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
+export interface CompileRequest { readonly bundle: DefinitionBundle; readonly authoring?: WorkflowAuthoring }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
 export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
@@ -130,8 +130,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         const bundle_id = crypto.randomUUID();
         const rows = await db.transaction(async (tx) => {
           await storePromptContents(tx, prompts.value);
-          await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
-            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+          await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program,authoring) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (digest) DO UPDATE SET authoring=coalesce(authority.definition_bundle.authoring,EXCLUDED.authoring)",
+            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program), request.authoring ? JSON.stringify(request.authoring) : null]);
           return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source,archived_at FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");

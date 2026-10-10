@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { readStoredPrompts, resolveBundlePrompts, type PromptContent } from "../src/storage/prompt-content";
+import { listPromptCatalog, resolvePromptKeys } from "../../workflow-config/src/development/prompts";
 import type { SqlExecutor } from "../src/storage/sql-executor";
 
 const PATH = "workflow-config/prompts/dev-flow/test_prompt.md";
@@ -68,4 +69,24 @@ test("rendering returns the stored text for each selected prompt key", async () 
   const pinned = "Write the plan.\n";
   const stored = await readStoredPrompts(promptStore([{ content_digest: digest(pinned), content: pinned }]), bundleWith(digest(pinned)), ["build", "build"]);
   expect(stored.ok ? [...stored.value] : null).toEqual([["build", pinned]]);
+});
+
+test("catalog includes every allowlisted file with its server-computed digest", () => {
+  writeFileSync(resolve(root, PATH), "One.\n");
+  mkdirSync(resolve(root, "workflow-config/prompts/templates"), { recursive: true });
+  writeFileSync(resolve(root, "workflow-config/prompts/templates/example.md"), "Two.\n");
+  expect(listPromptCatalog()).toEqual([
+    { key: PATH, path: PATH, content_digest: digest("One.\n") },
+    { key: "workflow-config/prompts/templates/example.md", path: "workflow-config/prompts/templates/example.md", content_digest: digest("Two.\n") },
+  ]);
+});
+
+test("a generated prompt key resolves its path and digest at compile time", () => {
+  const path = "workflow-config/prompts/dev-flow/v3/build_initial.md";
+  mkdirSync(resolve(root, "workflow-config/prompts/dev-flow/v3"), { recursive: true });
+  writeFileSync(resolve(root, path), "Build.\n");
+  const bundle = bundleWith("");
+  const result = resolvePromptKeys({ ...bundle, prompts: [{ key: "build_initial_v3", path: "", input_schema: "session_action", content_digest: "" }] });
+  expect(result.ok ? result.value.prompts[0] : null).toEqual({ key: "build_initial_v3", path,
+    input_schema: "session_action", content_digest: digest("Build.\n") });
 });
