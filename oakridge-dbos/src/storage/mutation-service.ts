@@ -79,8 +79,7 @@ export async function checkPublications(core: CoreClient, bundle: DefinitionBund
     const declared = scope?.outputs.find((item) => item.key === output.output_key);
     if (!declared) continue;
     const checked = await core.request("validate_value", { bundle, schema: declared.schema, value: output.body });
-    if (checked.ok && checked.value.kind === "validated") continue;
-    if (checked.ok) return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
+    if (checked.ok) { if (checked.value.kind === "validated") continue; return { ok: true, value: { kind: "mismatch", output_key: output.output_key } }; }
     if (checked.error.kind === "transport") return error("validate_publication", output.output_key, checked.error.detail.detail);
     return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
   }
