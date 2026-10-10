@@ -1,7 +1,7 @@
 import type {
-  OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorDecision,
+  OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCheckedValue, OperatorCommandDefinition, OperatorDecision,
   OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
-  OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation, OperatorScopeView,
+  OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
 } from "../operator-contracts";
 
 /** Shared defaults for operator read-model tests; callers override only the behavior under test. */
@@ -98,4 +98,35 @@ export function makeProject(overrides: Partial<OperatorProjectView> = {}): Opera
 export function makeProjectDraft(overrides: Partial<OperatorProjectDraft> = {}): OperatorProjectDraft {
   return { name: "Scout", repo_dir: "/code/rol/scout", forge_repository: null,
     integration_branch: null, ...overrides };
+}
+
+interface PlanCohortInput { readonly id: string; readonly title: string; readonly depends_on: readonly string[] }
+export interface PlanGraphFixture { readonly body: OperatorCheckedValue; readonly schemas: readonly OperatorSchema[] }
+
+/** Field order mirrors plan_body, plan_cohort and plan_scope in workflow-config/definitions/development.json. */
+export function makePlanGraphFixture(cohorts: readonly PlanCohortInput[], dependencyOrder: readonly string[] = cohorts.map((cohort) => cohort.id)): PlanGraphFixture {
+  const value = (schema: string, text: string): OperatorCheckedValue => ({ schema, data: { kind: "string", value: text } });
+  const list = (schema: string, items: readonly OperatorCheckedValue[]): OperatorCheckedValue =>
+    ({ schema, data: { kind: "list", items: [...items] } });
+  const record = (schema: string, fields: readonly OperatorCheckedValue[]): OperatorCheckedValue =>
+    ({ schema, data: { kind: "record", fields: fields.map((field, field_id) => ({ field_id, value: field })), dictionary: [] } });
+  const emptyOptional = (schema: string): OperatorCheckedValue => ({ schema, data: { kind: "optional", value: null } });
+  const checkedCohorts = cohorts.map((cohort) => record("plan_cohort", [
+    value("ident", cohort.id), emptyOptional("optional_ident"), value("text", cohort.title), value("text", "One package."),
+    list("ids", cohort.depends_on.map((id) => value("ident", id))), emptyOptional("optional_text"),
+    list("texts", []), list("texts", []), list("texts", []),
+  ]));
+  const body = record("plan_body", [value("text", "Two cohorts."), list("plan_cohorts", checkedCohorts),
+    list("ids", dependencyOrder.map((id) => value("ident", id))), record("plan_scope", [list("texts", []), list("texts", [])]),
+    list("texts", []), list("risks", [])]);
+  const field = (key: string, schema: string) => ({ key, schema, required: true });
+  const schemas: readonly OperatorSchema[] = [
+    { key: "plan_body", shape: { kind: "record", fields: [field("summary", "text"), field("cohorts", "plan_cohorts"),
+      field("dependency_order", "ids"), field("scope", "plan_scope"), field("acceptance_criteria", "texts"), field("risks", "risks")], dictionary: null } },
+    { key: "plan_cohort", shape: { kind: "record", fields: [field("id", "ident"), field("repository_key", "optional_ident"),
+      field("title", "text"), field("scope", "text"), field("depends_on", "ids"), field("description", "optional_text"),
+      field("files_in_scope", "texts"), field("decisions", "texts"), field("acceptance_criteria", "texts")], dictionary: null } },
+    { key: "plan_scope", shape: { kind: "record", fields: [field("in_scope", "texts"), field("out_of_scope", "texts")], dictionary: null } },
+  ];
+  return { body, schemas };
 }

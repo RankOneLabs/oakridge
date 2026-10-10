@@ -6,6 +6,10 @@ export interface PlanGraphLayoutNode extends PlanGraphNode { readonly x: number;
 export interface PlanGraphLayout { readonly nodes: readonly PlanGraphLayoutNode[]; readonly edges: readonly { readonly from: string; readonly to: string; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number }[]; readonly width: number; readonly height: number }
 
 export function selectPlanGraph(body: OperatorCheckedValue, schemas: readonly OperatorSchema[]): PlanGraphLayout {
+  const dependencyOrder = selectFieldItems(body, schemas, "dependency_order").flatMap((item) => {
+    const id = selectCheckedText(item); return id === null ? [] : [id];
+  });
+  const order = new Map(dependencyOrder.map((id, index) => [id, index]));
   const cohorts = selectFieldItems(body, schemas, "cohorts").map((cohort) => ({
     id: selectFieldText(cohort, schemas, "id") ?? "",
     title: selectFieldText(cohort, schemas, "title") ?? "Untitled cohort",
@@ -13,7 +17,8 @@ export function selectPlanGraph(body: OperatorCheckedValue, schemas: readonly Op
       const id = selectCheckedText(item); return id === null ? [] : [id];
     }),
     cohort,
-  })).filter((cohort) => cohort.id.length > 0);
+  })).filter((cohort) => cohort.id.length > 0)
+    .sort((left, right) => (order.get(left.id) ?? dependencyOrder.length) - (order.get(right.id) ?? dependencyOrder.length));
   const nodes = cohorts.map((cohort, index) => ({ ...cohort, x: 24 + index * 230, y: 36 }));
   const edges = nodes.flatMap((to) => to.depends_on.flatMap((from) => {
     const source = nodes.find((node) => node.id === from);
