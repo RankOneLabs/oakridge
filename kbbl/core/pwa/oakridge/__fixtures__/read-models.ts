@@ -1,6 +1,6 @@
 import type {
   OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorDecision,
-  OperatorInboxItem, OperatorOutputSlotView, OperatorReviewInbox, OperatorRunDetail,
+  OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation, OperatorScopeView,
 } from "../operator-contracts";
 
@@ -87,4 +87,15 @@ export function makeInboxWait(overrides: Partial<Extract<OperatorInboxItem, { ki
 export function makeInboxDiagnostic(overrides: Partial<Extract<OperatorInboxItem, { kind: "diagnostic" }>> = {}): Extract<OperatorInboxItem, { kind: "diagnostic" }> {
   return { kind: "diagnostic", run_id: "run-1", scope_id: "scope-1", scope_version: 1,
     detail: "pull request mismatch", ...overrides };
+}
+
+export function makeProject(overrides: Partial<OperatorProjectView> = {}): OperatorProjectView {
+  return { id: "project-1", name: "Scout", repo_dir: "/code/rol/scout", created_at: "2026-08-15T12:00:00Z",
+    forge_repository: { provider: "github", owner: "RankOneLabs", name: "scout" },
+    integration_branch: "main", session_policy: null, ...overrides };
+}
+
+export function makeProjectDraft(overrides: Partial<OperatorProjectDraft> = {}): OperatorProjectDraft {
+  return { name: "Scout", repo_dir: "/code/rol/scout", forge_repository: null,
+    integration_branch: null, ...overrides };
 }
