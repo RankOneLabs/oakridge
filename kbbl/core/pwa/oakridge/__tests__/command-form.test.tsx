@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { GenericOperatorRunView } from "../views/GenericOperatorRunView";
+import { RunDetailView } from "../views/RunDetailView";
 import { afterEach, expect, test, vi } from "vitest";
 import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
 import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
@@ -41,10 +41,10 @@ function versionedRun(initial: number, onCommand: () => Response = () => Respons
   const state = { version: initial };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/commands") && init?.method === "POST") return onCommand();
-    if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", scope_key: "root", label: "Root" }] });
+    if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", scope_key: "root", label: "Root", is_terminal: false, available_commands: ["act"] }] });
     if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: noteSchemas(0) } });
     if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
-    return Response.json({ scope_id: "scope-one", run_id: "run-one", label: "Root", state: { schema: "text", data: { kind: "string", value: "s" } },
+    return Response.json({ scope_id: "scope-one", scope_key: "root", is_terminal: false, run_id: "run-one", label: "Root", state: { schema: "text", data: { kind: "string", value: "s" } },
       outcome: null, outputs: [], executions: [], commands: [noteCommand], command_targets: { act: [] }, command_prefill: {}, resources: [], cursor: { scope_version: state.version } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -52,7 +52,7 @@ function versionedRun(initial: number, onCommand: () => Response = () => Respons
 }
 const mountRun = () => {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={cache}><GenericOperatorRunView runId="run-one" initialScopeId={null} onBack={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><RunDetailView runId="run-one" routePane={null} scopeId={null} onBack={() => undefined} /></QueryClientProvider>);
   return cache;
 };
 

@@ -7,9 +7,13 @@ export const queryKeys = {
   runList: (is_archived: boolean) => ["operator", "runs", is_archived] as const,
   definitions: ["operator", "definitions"] as const,
   definitionList: (is_archived: boolean) => ["operator", "definitions", is_archived] as const,
+  definitionDetail: (bundleId: string | null) => ["operator", "definitions", "detail", bundleId] as const,
   projects: ["operator", "projects"] as const,
   run: (runId: string) => ["operator", runId] as const,
   definition: (runId: string) => ["operator", runId, "definition"] as const,
   scope: (runId: string, scopeId: string | null) => ["operator", runId, "scope", scopeId] as const,
   history: (runId: string, scopeId: string) => ["operator", runId, "scope", scopeId, "history"] as const,
+  artifact: (revisionId: string) => ["operator", "artifact", revisionId] as const,
+  sessionLocation: (sessionId: string) => ["operator", "session-location", sessionId] as const,
+  threads: (runId: string, scopeId: string, revisionId: string) => ["operator", runId, "scope", scopeId, "revision", revisionId, "threads"] as const,
 };

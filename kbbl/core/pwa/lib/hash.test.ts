@@ -48,7 +48,7 @@ describe("readHashRoute oakridge routes", () => {
     });
     expect(withHash("#oakridge/run/run-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: null },
+      route: { sub: "run", id: "run-1", scope_id: null, pane: null },
     });
     expect(withHash("#oakridge/def/def%2F1")).toEqual({
       view: "oakridge",
@@ -66,14 +66,14 @@ describe("run scope routes", () => {
   it("parses a run route that names a scope", () => {
     expect(withHash("#oakridge/run/run-1/scope/scope-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: "scope-1" },
+      route: { sub: "run", id: "run-1", scope_id: "scope-1", pane: null },
     });
   });
 
-  it("opens a retired pane suffix at the run's root scope", () => {
+  it("opens a session pane within its run", () => {
     expect(withHash("#oakridge/run/run-1/session/sid-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: null },
+      route: { sub: "run", id: "run-1", scope_id: null, pane: { kind: "session", session_id: "sid-1" } },
     });
   });
 
@@ -88,8 +88,16 @@ describe("run scope routes", () => {
   it.each(ROUND_TRIPS)("round-trips %s", (_label, runId, scopeId) => {
     expect(withHash(`#${formatRunWorkspaceHash(runId, scopeId)}`)).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: runId, scope_id: scopeId },
+      route: { sub: "run", id: runId, scope_id: scopeId, pane: null },
     });
+  });
+
+  it("round-trips an artifact pane and both project routes", () => {
+    expect(withHash(`#${formatRunWorkspaceHash("run/one", { kind: "artifact", artifact_id: "revision/one" as never })}`))
+      .toEqual({ view: "oakridge", route: { sub: "run", id: "run/one", scope_id: null,
+        pane: { kind: "artifact", artifact_id: "revision/one" } } });
+    expect(withHash("#oakridge/create-project")).toEqual({ view: "oakridge", route: { sub: "create-project" } });
+    expect(withHash("#oakridge/projects")).toEqual({ view: "oakridge", route: { sub: "projects" } });
   });
 });
 

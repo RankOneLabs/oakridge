@@ -8,14 +8,13 @@ import { Button } from "../../components/atoms/Button";
 import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import type { OperatorStartPinnedRunRequest, OperatorSchema } from "../operator-contracts";
-import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+import type { OperatorStartPinnedRunRequest, OperatorSchema, OperatorDefinitionBundle } from "../operator-contracts";
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
 
 
-function selectInputFields(source: WorkflowDefinitionDescriptor | undefined): readonly InputField[] | null {
+function selectInputFields(source: OperatorDefinitionBundle | undefined): readonly InputField[] | null {
   if (!source || !Array.isArray(source.scopes) || !Array.isArray(source.schemas)) return null;
   const root = source.scopes.find((scope) => scope.key === source.root);
   const shape = source.schemas.find((schema) => schema.key === root?.input_schema)?.shape;

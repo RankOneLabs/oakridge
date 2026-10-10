@@ -1,4 +1,5 @@
-import type { Sid } from "./ids";
+import type { ArtifactId, Sid } from "./ids";
+import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
 
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
@@ -57,13 +58,14 @@ export function readHashSessionTarget(): SessionHashTarget | null {
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
-  /** `#oakridge/run/:id`, optionally naming the scope to open in `#oakridge/run/:id/scope/:scope_id` form. */
-  | { sub: "run"; id: string; scope_id: string | null }
+  /** A run can address its workspace pane, or a scope needing attention. */
+  | { sub: "run"; id: string; pane?: RoutePaneTarget | null; scope_id?: string | null }
   | { sub: "artifact"; id: string }
   /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
   | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
   | { sub: "projects" }
+  | { sub: "create-project" }
   | { sub: "defs" }
   | { sub: "def"; id: string }
   | { sub: "def-new" }
@@ -91,11 +93,14 @@ function tryDecode(s: string): string {
  */
 function parseRunRoute(rest: string): OakridgeSubRoute | null {
   const segments = rest.slice("/run/".length).split("/");
-  const [rawId, suffix, rawScopeId] = segments;
+  const [rawId, suffix, rawTargetId] = segments;
   if (!rawId) return null;
   const id = tryDecode(rawId);
-  const scope_id = segments.length === 3 && suffix === "scope" && rawScopeId ? tryDecode(rawScopeId) : null;
-  return { sub: "run", id, scope_id };
+  const target = segments.length === 3 && rawTargetId ? tryDecode(rawTargetId) : null;
+  const scope_id = suffix === "scope" ? target : null;
+  const pane: RoutePaneTarget | null = suffix === "session" && target ? { kind: "session", session_id: target as Sid }
+    : suffix === "artifact" && target ? { kind: "artifact", artifact_id: target as ArtifactId } : null;
+  return { sub: "run", id, pane, scope_id };
 }
 
 /**
@@ -103,9 +108,12 @@ function parseRunRoute(rest: string): OakridgeSubRoute | null {
  * these hashes are built, so the parser above and every navigation that
  * produces one cannot disagree about encoding.
  */
-export function formatRunWorkspaceHash(runId: string, scopeId: string | null): string {
+export function formatRunWorkspaceHash(runId: string, target: RoutePaneTarget | string | null): string {
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
-  return scopeId === null ? base : `${base}/scope/${encodeURIComponent(scopeId)}`;
+  if (target === null) return base;
+  if (typeof target === "string") return `${base}/scope/${encodeURIComponent(target)}`;
+  return target.kind === "session" ? `${base}/session/${encodeURIComponent(target.session_id)}`
+    : `${base}/artifact/${encodeURIComponent(target.artifact_id)}`;
 }
 
 /**
@@ -157,10 +165,10 @@ export function readHashRoute(
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }
-    // `/create-project` was the v15 project form; projects are managed on one page now.
-    if (rest === "/projects" || rest === "/create-project") {
+    if (rest === "/projects") {
       return { view: "oakridge", route: { sub: "projects" } };
     }
+    if (rest === "/create-project") return { view: "oakridge", route: { sub: "create-project" } };
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
     }
