@@ -49,6 +49,9 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
+  // Pinned launches accept only digest, root input, and request_id. Runtime/model
+  // settings belong to fields in a definition's root input (by stage where offered),
+  // so the old planner/worker role picker has no contract field to submit.
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
