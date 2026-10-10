@@ -71,7 +71,7 @@ export function buildBundle(value: unknown): BuildBundleResult {
   if (!authoring.key || !/^[a-z][a-z0-9-]*$/.test(authoring.key)) return invalid("key", "invalid workflow key");
   if (!Number.isSafeInteger(authoring.implementation_capacity) || authoring.implementation_capacity < 1
     || authoring.implementation_capacity > 4_294_967_295)
-    return invalid("implementation_capacity", "capacity must be a positive integer");
+    return invalid("implementation_capacity", "capacity must be an integer between 1 and 4294967295");
   if (authoring.sibling_failure !== "cancel" && authoring.sibling_failure !== "continue_independent")
     return invalid("sibling_failure", "unknown sibling failure policy");
   if (authoring.wire_field_order !== "canonical" && authoring.wire_field_order !== "alternate")

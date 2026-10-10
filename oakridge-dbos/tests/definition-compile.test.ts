@@ -37,7 +37,17 @@ test("compile reports invalid authoring at its field path", async () => {
   const response = await app.request("/api/definitions/compile", { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...authoring, implementation_capacity: 0 }) });
   expect({ status: response.status, body: await response.json() })
-    .toEqual({ status: 422, body: { error: "capacity must be a positive integer", field_path: "implementation_capacity" } });
+    .toEqual({ status: 422, body: { error: "capacity must be an integer between 1 and 4294967295", field_path: "implementation_capacity" } });
+});
+
+test("compile reports the supported range for an above-limit capacity", async () => {
+  const app = new Hono();
+  installDefinitionApi(app, { db: {} as TransactionalSqlExecutor, core: {} as CoreClient,
+    mutations: {} as MutationService, wake: async () => {} });
+  const response = await app.request("/api/definitions/compile", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...authoring, implementation_capacity: 4_294_967_296 }) });
+  expect({ status: response.status, body: await response.json() })
+    .toEqual({ status: 422, body: { error: "capacity must be an integer between 1 and 4294967295", field_path: "implementation_capacity" } });
 });
 
 test("compile reports an unknown prompt key at its binding", async () => {
