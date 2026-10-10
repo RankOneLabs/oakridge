@@ -46,7 +46,7 @@ const OUTPUT_BODIES: { readonly [output_key: string]: (stage: string) => unknown
   assessment: () => ({ verdict: "pass", findings: [], test_evidence: null, recommended_next_actions: [] }),
 };
 /** Commands an operator issues to move work forward, in preference order. */
-const FORWARD_COMMANDS = ["begin", "accept", "accept_build", "accept_assessment", "review_pr", "confirm_merged"] as const;
+const FORWARD_COMMANDS = ["admit", "begin", "accept", "accept_build", "accept_assessment", "review_pr", "confirm_merged", "closed_without_merge"] as const;
 
 interface SessionStart { readonly secret: string; readonly endpoint: string; readonly outputs: readonly { readonly key: string; readonly collection_key: string | null }[] }
 function readSessionStart(prompt: string): SessionStart {
@@ -57,7 +57,7 @@ function readSessionStart(prompt: string): SessionStart {
   return { secret, endpoint: new URL(endpoint).pathname, outputs: JSON.parse(outputs) };
 }
 
-test("the shipped development bundle runs from launch to completion with operator evidence from the projection", async () => {
+for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] as const) test(`the shipped development bundle reaches ${final_merge_policy} with every run field`, async () => {
   const repository_path = localRepository();
   const pull_requests = new Map<string, PullRequestObservation>();
   const opened = (query: PullRequestBranchQuery, url: string) => pull_requests.set(query.head_branch, { provider: "github", owner: query.owner, name: query.name,
@@ -71,9 +71,9 @@ test("the shipped development bundle runs from launch to completion with operato
       return { ok: true, value: [pull_requests.get(query.head_branch)!] };
     },
   };
-  const merge = (branch: string) => {
+  const close = (branch: string) => {
     const pr = pull_requests.get(branch);
-    if (pr && pr.state !== "merged") pull_requests.set(branch, { ...pr, state: "merged", merged_at: new Date().toISOString() });
+    if (pr && pr.state !== "closed_unmerged") pull_requests.set(branch, { ...pr, state: "closed_unmerged" });
   };
 
   let app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> } | null = null;
@@ -122,7 +122,7 @@ test("the shipped development bundle runs from launch to completion with operato
       app = composition.app;
       try {
         const created = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, title: "Feature", slug: "feature", final_merge_policy: "require_merge", base_branch: "main", sessions: { spec_analysis: { runtime: "codex", model: "gpt-6-sol", effort: "high" } }, admission: {} } }) });
+          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: { spec_analysis: true }, final_merge_policy, title: "Feature", slug: "feature", base_branch: "main", sessions: { spec_analysis: { runtime: "codex", model: "gpt-6-sol", effort: "high" } } } }) });
         expect(created.status).toBe(201);
         const { run_id, root_scope_id }: { run_id: string; root_scope_id: string } = await created.json();
         const read = async <T,>(path: string): Promise<T> => {
@@ -141,11 +141,15 @@ test("the shipped development bundle runs from launch to completion with operato
             const scope = await read<ScopeView>(`/api/runs/${run_id}/scopes/${summary.scope_id}`);
             if (scope.is_terminal) continue;
             const state = scope.state.data.kind === "variant" ? scope.state.data.variant : null;
+            if (scope.scope_key === "spec_analysis" && state === "waiting_admission")
+              expect(scope.commands.map((item) => item.key)).toEqual(["admit"]);
             // The forge merges once the operator has accepted the work it is waiting on.
-            if (scope.scope_key === "implementation" && state === "awaiting_merge") merge(cohort.branch);
-            if (scope.scope_key === "final_integration" && state === "review") merge(final_pr.branch);
+            if (scope.scope_key === "final_integration" && state === "review") {
+              if (final_merge_policy === "allow_close_without_merge") close(final_pr.branch);
+            }
             // Like the PWA, a command waits until every prefilled field has been observed.
-            const command = FORWARD_COMMANDS.map((key) => scope.commands.find((item) => item.key === key))
+            const command = FORWARD_COMMANDS.filter((key) => key !== (final_merge_policy === "require_merge" ? "closed_without_merge" : "confirm_merged") || scope.scope_key === "implementation")
+              .map((key) => scope.commands.find((item) => item.key === key))
               .find((item) => item !== undefined && (item.prefill ?? []).every((entry) => entry.key in (scope.command_prefill[item.key] ?? {})));
             if (!command) continue;
             const response = await app.request(`/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, { method: "POST",
@@ -155,7 +159,7 @@ test("the shipped development bundle runs from launch to completion with operato
             if (response.status === 202) { issued.push(`${scope.scope_key}.${command.key}`); continue; }
             // A merge confirmation waits on a fresh PR observation; anything else is a defect.
             const detail = await response.text();
-            if (command.key === "confirm_merged" && response.status === 422 && scope.commands.some((item) => item.key === "refresh_pr")) {
+            if ((command.key === "confirm_merged" || command.key === "closed_without_merge") && response.status === 422 && scope.commands.some((item) => item.key === "refresh_pr")) {
               await app.request(`/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, { method: "POST", headers: { "content-type": "application/json" },
                 body: JSON.stringify({ command_key: "refresh_pr", payload: {}, request_id: crypto.randomUUID(), scope_id: scope.scope_id,
                   expected_scope_version: scope.cursor.scope_version, targets: [] }) });
@@ -167,9 +171,9 @@ test("the shipped development bundle runs from launch to completion with operato
         }
         const root = await read<ScopeView>(`/api/runs/${run_id}/scopes/${root_scope_id}`);
         expect({ is_terminal: root.is_terminal, outcome: root.outcome?.data, reviews: issued.filter((item) => !item.endsWith(".begin")) }).toMatchObject({
-          is_terminal: true, outcome: { kind: "variant", variant: "complete" },
-          reviews: ["spec_analysis.accept", "planning.accept", "brief_writing.accept", "implementation.accept_build", "implementation.accept_assessment",
-            "implementation.confirm_merged", "final_integration.review_pr", "final_integration.confirm_merged"] });
+          is_terminal: true, outcome: { kind: "variant", variant: final_merge_policy === "require_merge" ? "complete" : "closed_without_merge" },
+          reviews: ["spec_analysis.admit", "spec_analysis.accept", "planning.accept", "brief_writing.accept", "implementation.accept_build", "implementation.accept_assessment",
+            "implementation.confirm_merged", "final_integration.review_pr", `final_integration.${final_merge_policy === "require_merge" ? "confirm_merged" : "closed_without_merge"}`] });
       } finally { await composition.close(); }
     });
   } finally { kbbl.stop(true); rmSync(repository_path, { recursive: true, force: true }); }

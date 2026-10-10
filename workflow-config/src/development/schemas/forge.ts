@@ -4,7 +4,7 @@ import { field, recordSchema } from "../../primitives/schemas";
 export const forgeSchemas: Schema[] = [
   recordSchema("forge_config", [field("owner", "ident"), field("name", "ident"), field("build_base", "ident"), field("final_base", "ident")]),
   { key: "pr_number", shape: { kind: "integer", min: 1, max: 2147483647 } },
-  { key: "forge_state", shape: { kind: "enum", variants: ["open", "merged", "closed"] } },
+  { key: "forge_state", shape: { kind: "enum", variants: ["open", "merged", "closed", "closed_unmerged"] } },
   recordSchema("forge_observation", [
     field("provider", "text"),
     field("owner", "ident"),

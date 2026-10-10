@@ -1,4 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
+import { admissionGate } from "../../run/stage-table";
 import { literal, nonEmpty, optional, record, reference, variant } from "../../../primitives/expressions";
 
 const planning_begin: DecisionTree = {
@@ -143,14 +144,15 @@ export const planning_dispatch: DecisionTree = {
   id: "planning_dispatch",
   value: reference({ kind: "trigger" }, []),
   cases: [
-    { variant: "begin", node: planning_begin },
+    { variant: "begin", node: admissionGate("planning", "phase_review", planning_begin) },
+    { variant: "admit", node: { ...planning_begin, id: "planning_admitted" } },
     { variant: "submitted", node: planning_review },
     { variant: "accept", node: planning_exact },
     { variant: "request_changes", node: planning_feedback_exact },
     { variant: "retry", node: planning_retry },
     { variant: "cancel", node: planning_cancel },
     { variant: "abandon", node: planning_abandon },
-    { variant: "session_failed", node: { ...planning_abandon, id: "planning_session_failed" } },
+    { variant: "session_failed", node: { kind: "apply", id: "planning_session_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_review", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
   ],
   otherwise: planning_wait
 };

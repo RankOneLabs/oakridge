@@ -1,4 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
+import { admissionGate } from "../../run/stage-table";
 import { literal, reference, variant } from "../../../primitives/expressions";
 
 const github_auth_failure: DecisionTree = { kind: "apply", id: "github_auth_failure", mutations: [], actions: [], outcome: null };
@@ -88,6 +89,30 @@ const final_complete: DecisionTree = {
   outcome: variant({ schema: "result", variant: "complete", value: literal("unit", {}) })
 };
 
+const final_closed: DecisionTree = { kind: "apply", id: "final_closed_without_merge",
+  mutations: [{ kind: "export", key: "accepted", value: literal("flag", false) }], actions: [],
+  outcome: variant({ schema: "result", variant: "complete", value: literal("unit", {}) }) };
+
+const final_close_exact: DecisionTree = { kind: "if", id: "final_close_exact",
+  condition: { kind: "all", items: [
+    { kind: "equals", left: reference({ kind: "trigger" }, []), right: reference({ kind: "state" }, []) },
+    { kind: "equals", left: reference({ kind: "state" }, ["revision"]), right: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) },
+    { kind: "equals", left: reference({ kind: "state" }, ["pr_url"]), right: reference({ kind: "resource", key: "pull_request" }, ["url"]) },
+    { kind: "equals", left: reference({ kind: "state" }, ["head_sha"]), right: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }
+  ] }, then: final_closed, otherwise: { ...final_review_exact_denied, id: "final_close_exact_denied" } };
+
+const final_close_context: DecisionTree = { kind: "match", id: "final_close_context", value: reference({ kind: "state" }, []),
+  cases: [{ variant: "review", node: { kind: "match", id: "final_close_resource_closed",
+    value: reference({ kind: "resource", key: "pull_request" }, ["state"]),
+    cases: [{ variant: "closed_unmerged", node: { kind: "match", id: "final_close_head_present",
+      value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]),
+      cases: [{ variant: "some", node: final_close_exact }], otherwise: { ...final_review_exact_denied, id: "final_close_head_absent" } } }],
+    otherwise: { ...final_review_exact_denied, id: "final_close_resource_denied" } } }],
+  otherwise: { ...final_review_exact_denied, id: "final_close_state_denied" } };
+
+const final_close_policy: DecisionTree = { kind: "match", id: "final_close_policy", value: reference({ kind: "input" }, ["final_merge_policy"]),
+  cases: [{ variant: "allow_close_without_merge", node: final_close_context }], otherwise: { ...final_review_exact_denied, id: "final_close_policy_denied" } };
+
 const final_merge_exact_denied: DecisionTree = { kind: "reject", id: "final_merge_exact_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
 
 const final_merge_exact: DecisionTree = {
@@ -128,23 +153,13 @@ const final_merged_pr_head: DecisionTree = {
   otherwise: final_merged_pr_head_absent
 };
 
-const final_merged_pr_denied: DecisionTree = { kind: "reject", id: "final_merged_pr_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
-
-const final_merged_pr: DecisionTree = {
-  kind: "match",
-  id: "final_merged_pr",
-  value: reference({ kind: "resource", key: "pull_request" }, ["state"]),
-  cases: [{ variant: "merged", node: final_merged_pr_head }],
-  otherwise: final_merged_pr_denied
-};
-
 const final_review_context_denied: DecisionTree = { kind: "reject", id: "final_review_context_denied", error: "invalid_command", detail: "command does not apply to current exact evidence" };
 
 const final_review_context: DecisionTree = {
   kind: "match",
   id: "final_review_context",
   value: reference({ kind: "state" }, []),
-  cases: [{ variant: "review", node: final_merged_pr }],
+  cases: [{ variant: "review", node: final_merged_pr_head }],
   otherwise: final_review_context_denied
 };
 
@@ -244,15 +259,17 @@ export const final_dispatch: DecisionTree = {
   value: reference({ kind: "trigger" }, []),
   cases: [
     { variant: "auth", node: github_auth_failure },
-    { variant: "begin", node: final_begin },
+    { variant: "begin", node: admissionGate("final_integration", "phase_final", final_begin) },
+    { variant: "admit", node: { ...final_begin, id: "final_integration_admitted" } },
     { variant: "retry", node: final_retry },
     { variant: "submitted", node: final_publication },
     { variant: "review_pr", node: final_open_pr },
     { variant: "confirm_merged", node: final_review_context },
+    { variant: "closed_without_merge", node: final_close_policy },
     { variant: "cancel", node: final_cancel },
     { variant: "abandon", node: final_abandon },
-    { variant: "session_failed", node: { ...final_abandon, id: "final_integration_session_failed" } },
-    { variant: "provider_start_failed", node: { ...final_abandon, id: "final_integration_provider_start_failed" } },
+    { variant: "session_failed", node: { kind: "apply", id: "final_integration_session_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_final", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
+    { variant: "provider_start_failed", node: { kind: "apply", id: "final_integration_provider_start_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_final", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
     { variant: "refresh_pr", node: refresh_pr },
     { variant: "pr_observed", node: matching_pr_observation }
   ],

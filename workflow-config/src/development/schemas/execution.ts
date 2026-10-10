@@ -8,10 +8,11 @@ export const executionSchemas: Schema[] = [
     field("repositories", "repository_configs"),
     field("repository_refs", "repository_refs"),
     field("analysis", "optional_analysis"),
-    field("plan", "optional_plan")
+    field("plan", "optional_plan"),
+    field("admission", "admission_flags")
   ]),
   { key: "optional_task", shape: { kind: "optional", item: "task_input" } },
-  recordSchema("implementation_input", [field("brief", "brief_body"), field("repository", "repository_config"), field("push_remote_owner", "ident")]),
+  recordSchema("implementation_input", [field("brief", "brief_body"), field("repository", "repository_config"), field("push_remote_owner", "ident"), field("admission", "admission_flags")]),
   { key: "optional_implementation", shape: { kind: "optional", item: "implementation_input" } },
   recordSchema("completed_work", [field("repository_key", "ident"), field("pr_url", "text"), field("head_sha", "ident"), field("branch", "ident")]),
   { key: "completed_works", shape: { kind: "list", item: "completed_work", max_items: 100 } },
@@ -20,7 +21,9 @@ export const executionSchemas: Schema[] = [
     field("config", "session_config"),
     field("completed_work", "completed_works"),
     field("forge", "forge_config"),
-    field("push_remote_owner", "ident")
+    field("push_remote_owner", "ident"),
+    field("admission", "admission_flags"),
+    field("final_merge_policy", "final_merge_policy")
   ]),
   { key: "optional_integration", shape: { kind: "optional", item: "integration_input" } },
   recordSchema("integration_seed", [field("repository_key", "ident"), field("config", "session_config"), field("forge", "forge_config"), field("push_remote_owner", "ident")]),
@@ -45,13 +48,14 @@ export const executionSchemas: Schema[] = [
       variants: [{ key: "complete", schema: "unit" }, { key: "failed", schema: "unit" }, { key: "cancelled", schema: "unit" }]
     }
   },
+  { key: "flags", shape: { kind: "list", item: "flag", max_items: 100 } },
   { key: "results", shape: { kind: "list", item: "result", max_items: 100 } },
   recordSchema("failure_summary", [field("failures", "results"), field("prior_failures", "results")]),
   {
     key: "run_result",
     shape: {
       kind: "union",
-      variants: [{ key: "complete", schema: "unit" }, { key: "failed", schema: "failure_summary" }, { key: "cancelled", schema: "unit" }]
+      variants: [{ key: "complete", schema: "unit" }, { key: "failed", schema: "failure_summary" }, { key: "cancelled", schema: "unit" }, { key: "closed_without_merge", schema: "unit" }]
     }
   },
   {
@@ -71,7 +75,7 @@ export const executionSchemas: Schema[] = [
   },
   {
     key: "phase_review",
-    shape: { kind: "union", variants: [{ key: "ready", schema: "unit" }, { key: "working", schema: "unit" }, { key: "review", schema: "unit" }] }
+    shape: { kind: "union", variants: [{ key: "ready", schema: "unit" }, { key: "waiting_admission", schema: "unit" }, { key: "working", schema: "unit" }, { key: "review", schema: "unit" }] }
   },
   { key: "phase_simple", shape: { kind: "union", variants: [{ key: "ready", schema: "unit" }, { key: "working", schema: "unit" }] } },
   {
@@ -80,6 +84,7 @@ export const executionSchemas: Schema[] = [
       kind: "union",
       variants: [
         { key: "ready", schema: "unit" },
+        { key: "waiting_admission", schema: "unit" },
         { key: "working", schema: "unit" },
         { key: "review", schema: "unit" },
         { key: "assessing", schema: "build_target" },
@@ -93,7 +98,7 @@ export const executionSchemas: Schema[] = [
     key: "phase_final",
     shape: {
       kind: "union",
-      variants: [{ key: "ready", schema: "unit" }, { key: "working", schema: "unit" }, { key: "review", schema: "final_target" }]
+      variants: [{ key: "ready", schema: "unit" }, { key: "waiting_admission", schema: "unit" }, { key: "working", schema: "unit" }, { key: "review", schema: "final_target" }]
     }
   },
 ];

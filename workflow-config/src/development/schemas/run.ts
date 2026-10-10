@@ -10,10 +10,10 @@ export const runSchemas: Schema[] = [
     field("briefs", "session_config"),
     optionalField("title", "text"),
     optionalField("slug", "ident"),
-    optionalField("final_merge_policy", "final_merge_policy"),
+    field("final_merge_policy", "final_merge_policy"),
     optionalField("base_branch", "ident"),
     optionalField("sessions", "run_sessions"),
-    optionalField("admission", "admission_flags")
+    field("admission", "admission_flags")
   ]),
   { key: "final_merge_policy", shape: { kind: "enum", variants: ["require_merge", "allow_close_without_merge"] } },
   { key: "optional_runtime", shape: { kind: "optional", item: "runtime" } },
