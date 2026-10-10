@@ -17,11 +17,12 @@ import type { ProjectId, ProjectRecord, RunId, ScopeId } from "./schema-records"
 import type { Result as SharedResult } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { resolveBundlePrompts, storePromptContents, type PromptContent } from "./prompt-content";
+import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
 import { writeOperatorEvent } from "./operator-events";
 import { inTransaction } from "./sql-executor";
 import { deleteRun as deleteStoredRun, type DeleteRunResult } from "./run-lifecycle";
 
-export interface CompileRequest { readonly bundle: DefinitionBundle }
+export interface CompileRequest { readonly bundle: DefinitionBundle; readonly authoring?: WorkflowAuthoring }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
 export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
@@ -153,9 +154,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         const bundle_id = crypto.randomUUID();
         const rows = await db.transaction(async (tx) => {
           await storePromptContents(tx, prompts.value);
-          const inserted = await tx.query<{ id: string }>("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING RETURNING id",
-            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
-          if (inserted.length) await writeOperatorEvent(tx, null, bundle_id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
+          const inserted = await tx.query<{ id: string }>("INSERT INTO authority.definition_bundle (id,digest,source,checked_program,authoring) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (digest) DO NOTHING RETURNING id",
+            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program), request.authoring ? JSON.stringify(request.authoring) : null]);
+          const enriched = !inserted.length && request.authoring
+            ? await tx.query<{ id: string }>("UPDATE authority.definition_bundle SET authoring=$2 WHERE digest=$1 AND authoring IS NULL RETURNING id",
+              [compiled.value.program.digest, JSON.stringify(request.authoring)]) : [];
+          const changed = inserted[0] ?? enriched[0];
+          if (changed) await writeOperatorEvent(tx, null, changed.id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
           return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source,archived_at FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");

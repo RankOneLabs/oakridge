@@ -5,14 +5,14 @@ The writer column names the mutation-service entry and the function that execute
 | State | Function-level writer and SQL citation | Authority and derived copies |
 | --- | --- | --- |
 | Schema baseline | `migrateEmptyDatabase` → `migrate`, `oakridge-dbos/src/storage/migrate.ts:24` | Migration bookkeeping only. |
-| Pinned definition and checked program | `createMutationService.pinDefinition`, `oakridge-dbos/src/storage/mutation-service.ts:156`; `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:205` | The source bundle and compiled program are pinned together by digest. |
+| Pinned definition and checked program | `createMutationService.pinDefinition`, `oakridge-dbos/src/storage/mutation-service.ts:157` and `oakridge-dbos/src/storage/mutation-service.ts:160`; `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:210` | The source bundle and compiled program are pinned together by digest; an authored pin fills missing authoring metadata on an existing digest. |
 | Pinned prompt content | `storePromptContents`, `oakridge-dbos/src/storage/prompt-content.ts:80`, called by `createMutationService.pinDefinition` and `createMutationService.startRun` | Content-addressed by SHA-256 and immutable; a pinned definition names its prompts by digest and every render reads this copy, never the authored file. |
-| Run identity and bundle link | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:209`; `deleteRun`, `oakridge-dbos/src/storage/run-lifecycle.ts:76` | One run refers to one pinned definition. |
+| Run identity and bundle link | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:214`; `deleteRun`, `oakridge-dbos/src/storage/run-lifecycle.ts:76` | One run refers to one pinned definition. |
 | Current run workflow generation and scope cursor | `claimRunGeneration`, `oakridge-dbos/src/storage/run-lifecycle.ts:93` | The run workflow's address and pending scan position survive rollover and restart. |
-| Root scope and initial state | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:210` | Initial state comes from the checked root definition. |
+| Root scope and initial state | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:215` | Initial state comes from the checked root definition. |
 | Child scope and input | `createMutationService.decide` → `commitDecision` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:119` and `oakridge-dbos/src/storage/commit.ts:128` | Child instances are created from declared child mutations. |
 | Scope state, outcome, terminal flag, version | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:108`, `oakridge-dbos/src/storage/commit.ts:142`, `oakridge-dbos/src/storage/commit.ts:172`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:74` | Scope outcome is the durable terminal projection of a decision; version also advances for a terminal execution result. |
-| Launch receipt | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:220` | Idempotent run creation. |
+| Launch receipt | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:225` | Idempotent run creation. |
 | Scope export | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:109` | Child consumers read the committed export. |
 | Child collection membership | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:130` | Membership is explicit; child scope rows carry the corresponding collection key. |
 | Execution selection and generation | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:112` and `oakridge-dbos/src/storage/commit.ts:140`; `cancelRun`, `oakridge-dbos/src/storage/run-lifecycle.ts:49` | Current worker selection points at an execution; generation fences predecessors. |
@@ -24,7 +24,7 @@ The writer column names the mutation-service entry and the function that execute
 | Ingress receipt | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:175` | Idempotent command/publication response. |
 | Operator event outbox | `createMutationService` → `writeOperatorEvent`, `oakridge-dbos/src/storage/operator-events.ts:7` | Invalidate and run event rows commit atomically with their mutation and survive run deletion through the retained run key. |
 | Effect intent, handle, status, evidence | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:167`; `claimStartAttempt`, `oakridge-dbos/src/storage/effect-results.ts:24`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:52` and `oakridge-dbos/src/storage/effect-results.ts:64` (learned handle copied to a stop recorded mid-start); `ensureStopIntent`, `oakridge-dbos/src/storage/revocation.ts:10` | The intent is the durable provider obligation. Its settled status and the execution terminal status are separate projections. |
-| Capacity pool and reservation | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:217`; `createMutationService.decide` → `applyCapacityChanges`, `oakridge-dbos/src/storage/capacity.ts:14`, `oakridge-dbos/src/storage/capacity.ts:15` and `oakridge-dbos/src/storage/capacity.ts:16` | Pool limit is run-local; active reservations determine available capacity. |
+| Capacity pool and reservation | `createMutationService.startRun`, `oakridge-dbos/src/storage/mutation-service.ts:222`; `createMutationService.decide` → `applyCapacityChanges`, `oakridge-dbos/src/storage/capacity.ts:14`, `oakridge-dbos/src/storage/capacity.ts:15` and `oakridge-dbos/src/storage/capacity.ts:16` | Pool limit is run-local; active reservations determine available capacity. |
 | Effect revocation status and version | `revokeStarts`, `oakridge-dbos/src/storage/revocation.ts:32` | Used by decision revocation and run cancellation; stop intent creation belongs to `ensureStopIntent`. |
 | Evidence delivery acknowledgement and intent version | `deliverEvidence`, `oakridge-dbos/src/effects/evidence.ts:24` | Receipt-backed delivery marks the evidence as delivered; this IO ledger writer is separate from effect settlement. |
 | Project registry and session policy | `createMutationService.createProject` → `createProject`, `oakridge-dbos/src/storage/projects.ts:13`; `createMutationService.updateProject` → `updateProject`, `oakridge-dbos/src/storage/projects.ts:24`; `createMutationService.setSessionPolicy` → `setSessionPolicy`, `oakridge-dbos/src/storage/projects.ts:45` | The project policy is read when a session invocation is pinned; its identity and version are witnessed with the decision. |
@@ -50,12 +50,13 @@ These citations keep the authority inventory aligned with the startup, encryptio
 - `claimRunGeneration` `oakridge-dbos/src/storage/run-lifecycle.ts:93`
 - `ensureStopIntent` `oakridge-dbos/src/storage/revocation.ts:10`
 - `revokeStarts` `oakridge-dbos/src/storage/revocation.ts:32`
-- `createMutationService.pinDefinition` `oakridge-dbos/src/storage/mutation-service.ts:156`
-- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:205`
-- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:209`
+- `createMutationService.pinDefinition` `oakridge-dbos/src/storage/mutation-service.ts:157`
+- `createMutationService.pinDefinition` `oakridge-dbos/src/storage/mutation-service.ts:160`
 - `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:210`
-- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:217`
-- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:220`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:214`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:215`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:222`
+- `createMutationService.startRun` `oakridge-dbos/src/storage/mutation-service.ts:225`
 - `claimStartAttempt` `oakridge-dbos/src/storage/effect-results.ts:24`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:52`
 - `persistEffectResult` `oakridge-dbos/src/storage/effect-results.ts:64`
