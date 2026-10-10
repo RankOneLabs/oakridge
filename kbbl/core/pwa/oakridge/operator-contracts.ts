@@ -74,6 +74,20 @@ export interface OperatorArtifactDetail {
 
 export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
 
+export interface OperatorCollaborationThreadView {
+  readonly id: string;
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly artifact_revision_id: string;
+  readonly context: OperatorCollaborationThreadRow["context"];
+  readonly created_at: string;
+  readonly capabilities: { readonly can_write: boolean };
+  readonly messages: readonly OperatorCollaborationMessageRow[];
+  readonly review_items: readonly OperatorReviewItemRow[];
+  readonly deliveries: readonly OperatorCollaborationDeliveryRecord[];
+  readonly last_delivery_failure_reason: string | null;
+}
+
 export interface OperatorScopeHistory {
   readonly scope_id: string;
   readonly transitions: readonly OperatorTransitionHistory<string>[];
@@ -153,6 +167,29 @@ export interface OperatorArtifactPresentation {
   readonly capabilities: OperatorArtifactCapabilities;
 }
 
+export interface OperatorCollaborationThreadRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly artifact_revision_id: string; readonly context: OperatorCollaborationThreadContext;
+  readonly created_at: string;
+}
+
+export interface OperatorCollaborationMessageRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly body: OperatorCollaborationMessageBody; readonly created_at: string;
+}
+
+export interface OperatorReviewItemRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly artifact_revision_id: string;
+  readonly body: OperatorReviewItemBody; readonly created_at: string;
+}
+
+export interface OperatorCollaborationDeliveryRecord {
+  readonly id: string; readonly run_id: string; readonly scope_id: string; readonly message_id: string;
+  readonly payload: OperatorCollaborationDeliveryPayload;
+  readonly created_at: string;
+}
+
 export interface OperatorTransitionHistory<Timestamp> extends Omit<OperatorStoredTransitionHistory<Timestamp>, "version"> { readonly version: number }
 
 export interface OperatorScopeFactHistory { readonly id: string; readonly fact_key: string; readonly payload: OperatorCheckedValue }
@@ -216,6 +253,16 @@ export interface OperatorArtifactCapabilities {
   readonly atom_editable: boolean;
   readonly review_items: boolean;
 }
+
+export interface OperatorCollaborationThreadContext { readonly title: string; readonly anchor: string | null }
+
+export interface OperatorCollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }
+
+export interface OperatorReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
+
+export type OperatorCollaborationDeliveryPayload =
+  | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
+  | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
 
 export interface OperatorStoredTransitionHistory<Timestamp> {
   readonly id: string; readonly trigger_id: string; readonly decision: OperatorDecisionOutcome;
