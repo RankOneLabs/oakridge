@@ -286,6 +286,18 @@ test("revocation refuses the pinned publication secret", async () => withDatabas
   } finally { f.core.close(); }
 }));
 
+test("selected publication reports mutation-service validation faults as 500", async () => withDatabase(async ({ db }) => {
+  const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
+  try {
+    await f.fact("begin");
+    Object.assign(f.mutations, { decide: async () => ({ ok: false, error: {
+      operation: "validate_publication_protocol", entity_id: "build_result", detail: "core returned unexpected validation result" } }) });
+    const response = await f.publish("build_result", build_body);
+    expect({ status: response.status, revisions: await db.query("SELECT id FROM authority.artifact_revision WHERE scope_id=$1", [f.root_scope_id]) })
+      .toEqual({ status: 500, revisions: [] });
+  } finally { f.core.close(); }
+}));
+
 test("agent secret publishes while the same scope read requires operator authority", async () => withDatabase(async ({ db }) => {
   const f = await runtimeFixture(db, await developmentBundle(), { brief, repository });
   try {

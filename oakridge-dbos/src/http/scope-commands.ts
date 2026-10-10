@@ -76,12 +76,13 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     const command = availableCommand(bundle, source.owner.scope_key, source.owner.local_state, request.command_key);
     if (!command) return { ok: false, error: new InvalidPayloadError("command is undeclared or unavailable in current state") };
     if (request.targets.length !== command.targets.length) return { ok: false, error: new InvalidPayloadError("target count differs from pinned definition") };
-    const output_definition = bundle.scopes.find((item) => item.key === source.owner.scope_key)?.outputs.find((item) => item.edit_trigger === request.command_key);
+    const editable_outputs = bundle.scopes.find((item) => item.key === source.owner.scope_key)?.outputs.filter((item) => item.edit_trigger === request.command_key) ?? [];
     let outputs: readonly OutputPublication[] = [];
-    if (output_definition) {
+    if (editable_outputs.length) {
       const edit = parseEditPayload(request.payload);
       if (edit instanceof MalformedRequestError) return { ok: false, error: edit };
-      if (edit.output_key !== output_definition.key || edit.body.schema !== output_definition.schema)
+      const output_definition = editable_outputs.find((item) => item.key === edit.output_key);
+      if (!output_definition || edit.body.schema !== output_definition.schema)
         return { ok: false, error: new InvalidPayloadError(`output ${edit.output_key} does not match declared schema`) };
       const current = await currentOutputRevision(deps.db, request.scope_id, edit.output_key, edit.collection_key);
       if (!current || current.revision_id !== edit.reviewed_revision_id || requestDigest(current.body) !== requestDigest(edit.prev_value))
@@ -92,10 +93,12 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
         execution_id: null }];
       const publication_check = await checkPublications(deps.core, bundle, source.owner.scope_key, outputs);
       if (!publication_check.ok) return { ok: false, error: new TransientServiceError(publication_check.error.detail) };
+      if (publication_check.value.kind === "internal_fault")
+        return { ok: false, error: new InternalFaultError(publication_check.value.detail) };
       if (publication_check.value.kind === "mismatch")
         return { ok: false, error: new InvalidPayloadError(`output ${publication_check.value.output_key} does not match declared schema`) };
     }
-    const checked = await deps.core.request("validate_payload", { bundle, schema: command.payload_schema, payload: output_definition ? {} : request.payload });
+    const checked = await deps.core.request("validate_payload", { bundle, schema: command.payload_schema, payload: editable_outputs.length ? {} : request.payload });
     if (!checked.ok) return { ok: false, error: checked.error.kind === "transport" ? new TransientServiceError(checked.error.detail.detail) : new InvalidPayloadError(checked.error.detail.detail) };
     if (checked.value.kind !== "validated") return { ok: false, error: new InternalFaultError("core returned unexpected validation result") };
     const trigger: Trigger = { id: request.request_id, key: request.command_key, payload: checked.value.value };

@@ -2,18 +2,20 @@ import { expect, test } from "bun:test";
 import { MAX_PUBLICATION_VALUE_BYTES } from "../src/http/publication";
 import { harness, unit } from "./scope-command-fixture";
 import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { RunId } from "../src/storage/schema-records";
 
-async function editHarness(is_invalid_body = false) {
+interface EditHarnessOptions { readonly validation?: "valid" | "invalid" | "unexpected"; readonly output_key?: string }
+async function editHarness(options: EditHarnessOptions = {}) {
   const api = await harness();
   const previous: CheckedValue = { schema: "unregistered_output", data: { kind: "string", value: "Output artifact body" } };
   const edited: CheckedValue = { schema: "unregistered_output", data: { kind: "string", value: "Edited body" } };
   const query = api.deps.db.query.bind(api.deps.db);
-  let written: { readonly predecessor_id: string; readonly body: CheckedValue } | null = null;
+  let written: { readonly output_key: string; readonly predecessor_id: string; readonly body: CheckedValue } | null = null;
   Object.assign(api.deps.db, { query: async (sql: string, parameters: readonly unknown[]) => {
     if (sql.startsWith("SELECT s.id,s.version,s.current_revision_id,r.body"))
       return [{ id: "slot-1", version: 3, current_revision_id: "revision-1", body: previous }];
     if (sql.startsWith("INSERT INTO authority.artifact_revision"))
-      written = { predecessor_id: String(parameters[6]), body: JSON.parse(String(parameters[5])) as CheckedValue };
+      written = { output_key: String(parameters[3]), predecessor_id: String(parameters[6]), body: JSON.parse(String(parameters[5])) as CheckedValue };
     const rows = await query(sql, parameters);
     if (!sql.startsWith("SELECT b.source")) return rows;
     return rows.map((row) => {
@@ -21,20 +23,24 @@ async function editHarness(is_invalid_body = false) {
       const source: DefinitionBundle = { ...pinned.source, scopes: pinned.source.scopes.map((scope) => ({ ...scope,
         commands: [...scope.commands, { key: "edit_specimen", label: "Edit specimen", consequence: "publish an edit",
           payload_schema: "unit", available_in: ["inspection"], required: false, targets: [], field_presentation: [] }],
-        outputs: scope.outputs.map((output) => ({ ...output, schema: "unregistered_output", edit_trigger: "edit_specimen" })) })) };
+        outputs: scope.outputs.flatMap((output) => {
+          const editable = { ...output, schema: "unregistered_output", edit_trigger: "edit_specimen" };
+          return [editable, { ...editable, key: "alternate" }];
+        }) })) };
       return { ...row, source };
     });
   } });
   Object.assign(api.deps.core, { request: async (operation: string, input: unknown) => {
-    if (operation === "validate_value") return is_invalid_body
+    if (operation === "validate_value") return options.validation === "invalid"
       ? { ok: false, error: { kind: "domain", detail: { kind: "invalid_payload", operation, entity_id: "specimen", path: "", expected: "text", actual: "invalid", detail: "invalid edit" } } }
+      : options.validation === "unexpected" ? { ok: true, value: { kind: "evaluated", value: {} } }
       : { ok: true, value: { kind: "validated", value: (input as { readonly value: CheckedValue }).value } };
     if (operation === "validate_payload") return { ok: true, value: { kind: "validated", value: unit } };
     return { ok: true, value: { kind: "evaluated", value: { kind: "apply", targets: [], mutations: [], invocations: [], outcome: null,
       explanation: { bundle_digest: "pinned", node_id: "edit", owner: "scope-1", read_set: [], trace: [], trigger_id: "edit-1" } } } };
   } });
   const request = { ...api.request, command_key: "edit_specimen", request_id: "edit-1", targets: [],
-    payload: { output_key: "specimen", collection_key: "", reviewed_revision_id: "revision-1", prev_value: previous, body: edited } };
+    payload: { output_key: options.output_key ?? "specimen", collection_key: "", reviewed_revision_id: "revision-1", prev_value: previous, body: edited } };
   return { ...api, request, writtenRevision: () => written };
 }
 
@@ -123,10 +129,35 @@ test("an edit with a stale previous value conflicts without writing a revision",
 });
 
 test("an edited body failing its declared schema names the output and writes nothing", async () => {
-  const api = await editHarness(true);
+  const api = await editHarness({ validation: "invalid" });
   const response = await api.submit(api.request);
   expect({ status: response.status, body: await response.json(), written: api.writtenRevision() })
     .toMatchObject({ status: 422, body: { code: "invalid_payload", error: "output specimen does not match declared schema" }, written: null });
+});
+
+test("an edit selects the later output sharing its declared edit command", async () => {
+  const api = await editHarness({ output_key: "alternate" });
+  const response = await api.submit(api.request);
+  expect({ status: response.status, written: api.writtenRevision() }).toMatchObject({ status: 202,
+    written: { output_key: "alternate", predecessor_id: "revision-1" } });
+});
+
+test("an unexpected core validation response is an internal fault for edits", async () => {
+  const api = await editHarness({ validation: "unexpected" });
+  const response = await api.submit(api.request);
+  expect({ status: response.status, body: await response.json(), written: api.writtenRevision() })
+    .toMatchObject({ status: 500, body: { code: "internal_fault", trace_id: expect.any(String) }, written: null });
+});
+
+test("an unexpected core validation response is an internal fault for publications", async () => {
+  const api = await editHarness({ validation: "unexpected" });
+  const decided = await api.deps.mutations.decide({ run_id: "run-1" as RunId, scope_id: api.request.scope_id,
+    ingress_id: "unexpected-publication", operator_version: null,
+    trigger: { id: "unexpected-publication", key: "edit_specimen", payload: unit },
+    outputs: [{ scope_id: api.request.scope_id, output_key: "specimen", collection_key: "", execution_id: null,
+      predecessor_id: "revision-1", expected_slot_version: 3, body: api.request.payload.body }] });
+  expect({ decided, written: api.writtenRevision() }).toMatchObject({ decided: { ok: false,
+    error: { operation: "validate_publication_protocol", entity_id: "specimen", detail: "core returned unexpected validation result" } }, written: null });
 });
 
 test("an accepted edit publishes the reviewed revision as predecessor", async () => {
