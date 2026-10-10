@@ -39,11 +39,14 @@ test("prompt bindings target a fixed stage action and report unknown controls", 
 });
 
 test("buildBundle is the only module that calls defineBundle", async () => {
-  const glob = new Bun.Glob("**/*.ts");
-  const root = resolve(import.meta.dir, "..");
-  const callers = [...glob.scanSync(root)].filter((path) =>
-    path !== "builder.ts" && /\bdefineBundle\s*\(/.test(readFileSync(resolve(root, path), "utf8")));
-  expect(callers).toEqual(["build-bundle.ts"]);
+  const glob = new Bun.Glob("**/*.{ts,tsx}");
+  const root = resolve(import.meta.dir, "../../..");
+  const packages = ["workflow-config", "oakridge-dbos", "kbbl"];
+  const callers = packages.flatMap((pack) => [...glob.scanSync(resolve(root, pack))]
+    .map((path) => `${pack}/${path}`))
+    .filter((path) => path !== "workflow-config/src/builder.ts"
+      && /\bdefineBundle\s*\(/.test(readFileSync(resolve(root, path), "utf8")));
+  expect(callers).toEqual(["workflow-config/src/build-bundle.ts"]);
 });
 
 test("stage table regenerates the shipped completion gates", () => {
