@@ -2,7 +2,7 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt, OperatorArtifactRevisionRecord, OperatorSessionLocation, OperatorCheckedValue, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow } from "./operator-contracts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow } from "./operator-contracts";
 import type { WorkflowAuthoring } from "../../../../workflow-config/src/authoring";
 import type { OperatorCommandSubmission } from "./lib/operator-drafts";
 
@@ -44,40 +44,6 @@ export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
 export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
-
-/** Legacy global links have no lookup endpoint in v2. Inspect the read projections. */
-async function findInProjectedScopes<T>(select: (scope: OperatorScopeView) => T | null): Promise<T | null> {
-  for (const isArchived of [false, true]) {
-    const runs = await fetchOperatorRuns(isArchived);
-    for (const run of runs) for (const summary of run.scopes) {
-      const found = select(await fetchOperatorScope(run.run_id, summary.scope_id));
-      if (found !== null) return found;
-    }
-  }
-  return null;
-}
-
-export const fetchOperatorArtifactRevision = (revisionId: string): Promise<OperatorArtifactRevisionRecord | null> =>
-  findInProjectedScopes((scope) => scope.outputs.find((slot) => slot.current_revision?.id === revisionId)?.current_revision ?? null);
-
-function containsCheckedString(value: OperatorCheckedValue | null, wanted: string): boolean {
-  if (value === null) return false;
-  const data = value.data;
-  if (data.kind === "string") return data.value === wanted;
-  if (data.kind === "reference") return data.id === wanted;
-  if (data.kind === "record") return data.fields.some((field) => containsCheckedString(field.value ?? null, wanted))
-    || data.dictionary.some((entry) => containsCheckedString(entry.value, wanted));
-  if (data.kind === "list") return data.items.some((item) => containsCheckedString(item, wanted));
-  if (data.kind === "optional") return containsCheckedString(data.value ?? null, wanted);
-  if (data.kind === "variant") return containsCheckedString(data.value, wanted);
-  return false;
-}
-
-export const fetchOperatorSessionLocation = (sessionId: string): Promise<OperatorSessionLocation | null> =>
-  findInProjectedScopes((scope) => {
-    const execution = scope.executions.find((item) => containsCheckedString(item.result, sessionId));
-    return execution ? { run_id: scope.run_id, scope_id: scope.scope_id, execution_id: execution.id } : null;
-  });
 
 const revisionThreadsPath = (runId: string, scopeId: string, revisionId: string): string =>
   `/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/revisions/${encodeURIComponent(revisionId)}/threads`;

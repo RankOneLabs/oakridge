@@ -6,12 +6,9 @@ import { WorkflowDefListView } from "./views/WorkflowDefListView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
 import { CreateProjectView } from "./views/CreateProjectView";
-import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
-import { ArtifactWorkspaceRedirectView } from "./views/ArtifactWorkspaceRedirectView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
 import { OperatorProjectsView } from "./views/OperatorProjectsView";
 import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
-import type { ArtifactId } from "../lib/ids";
 
 interface Props { readonly route: OakridgeSubRoute }
 export function OakridgeShell({ route }: Props) {
@@ -25,8 +22,6 @@ export function OakridgeShell({ route }: Props) {
   else if (!config.data?.available) content = <p role="alert">Oakridge backend is unavailable.</p>;
   else switch (route.sub) {
     case "run": content = <RunDetailView runId={route.id} routePane={route.pane ?? null} scopeId={route.scope_id ?? null} onBack={runs} />; break;
-    case "session": content = <SessionWorkspaceRedirectView sessionId={route.session_id} onBack={runs} />; break;
-    case "artifact": content = <ArtifactWorkspaceRedirectView artifactId={route.id as ArtifactId} onBack={runs} />; break;
     case "review-inbox": content = <ReviewInboxView onSelectScope={(runId, scopeId) => navigate(formatRunWorkspaceHash(runId, scopeId))} />; break;
     case "new-run": content = <NewRunView onBack={runs} onCreated={run} onEdit={() => navigate("oakridge/def-new")} />; break;
     case "create-project": content = <CreateProjectView onBack={runs} />; break;

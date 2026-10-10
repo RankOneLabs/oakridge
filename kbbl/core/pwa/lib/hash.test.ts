@@ -77,6 +77,10 @@ describe("run scope routes", () => {
     });
   });
 
+  it.each(["session/sid-1", "artifact/rev-1"])("routes an unscoped %s link to the run list", (path) => {
+    expect(withHash(`#oakridge/${path}`)).toEqual({ view: "oakridge", route: { sub: "runs" } });
+  });
+
   const ROUND_TRIPS: ReadonlyArray<readonly [string, string, string | null]> = [
     ["a bare run", "run-1", null],
     ["a scope", "run-1", "scope-1"],

@@ -13,7 +13,5 @@ export const queryKeys = {
   definition: (runId: string) => ["operator", runId, "definition"] as const,
   scope: (runId: string, scopeId: string | null) => ["operator", runId, "scope", scopeId] as const,
   history: (runId: string, scopeId: string) => ["operator", runId, "scope", scopeId, "history"] as const,
-  artifact: (revisionId: string) => ["operator", "artifact", revisionId] as const,
-  sessionLocation: (sessionId: string) => ["operator", "session-location", sessionId] as const,
   threads: (runId: string, scopeId: string, revisionId: string) => ["operator", runId, "scope", scopeId, "revision", revisionId, "threads"] as const,
 };

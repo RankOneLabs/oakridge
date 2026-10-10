@@ -60,9 +60,6 @@ export type OakridgeSubRoute =
   | { sub: "review-inbox" }
   /** A run can address its workspace pane, or a scope needing attention. */
   | { sub: "run"; id: string; pane?: RoutePaneTarget | null; scope_id?: string | null }
-  | { sub: "artifact"; id: string }
-  /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
-  | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
   | { sub: "projects" }
   | { sub: "create-project" }
@@ -116,18 +113,6 @@ export function formatRunWorkspaceHash(runId: string, target: RoutePaneTarget | 
     : `${base}/artifact/${encodeURIComponent(target.artifact_id)}`;
 }
 
-/**
- * Swap the current hash for another without pushing a history entry, so Back
- * skips the legacy URL that was redirected away from instead of bouncing the
- * operator straight back into the redirect. `replaceState` doesn't fire
- * `hashchange`, so sibling hash hooks are nudged manually — same reason as
- * `writeHashSid`.
- */
-export function replaceHashRoute(hash: string): void {
-  history.replaceState(null, "", `#${hash}`);
-  window.dispatchEvent(new Event("hashchange"));
-}
-
 export function readHashRoute(
   rawHash = window.location.hash,
   search = window.location.search,
@@ -142,22 +127,6 @@ export function readHashRoute(
     if (rest.startsWith("/run/")) {
       const route = parseRunRoute(rest);
       if (route) return { view: "oakridge", route };
-    }
-    if (rest.startsWith("/session/")) {
-      const raw = rest.slice("/session/".length);
-      if (raw) {
-        return {
-          view: "oakridge",
-          route: { sub: "session", session_id: tryDecode(raw) as Sid },
-        };
-      }
-    }
-    if (rest.startsWith("/artifact/")) {
-      const raw = rest.slice("/artifact/".length);
-      if (raw) {
-        const id = tryDecode(raw);
-        return { view: "oakridge", route: { sub: "artifact", id } };
-      }
     }
     if (rest === "/new-run") {
       return { view: "oakridge", route: { sub: "new-run" } };
