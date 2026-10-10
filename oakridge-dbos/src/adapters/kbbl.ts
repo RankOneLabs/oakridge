@@ -399,10 +399,22 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   }
 
   async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
+    const result = await this.deliver_collaboration_input(execution_id,delivery_key,input,external_reference);
+    if (result.kind !== "acknowledged") throw new Error(result.detail);
+  }
+
+  /** Keyed input uses kbbl's durable dedup; classify refusal separately from uncertain transport. */
+  async deliver_collaboration_input(execution_id: ExecutionId, delivery_key: string, input: string,
+    external_reference: ExternalExecutionReference): Promise<ProviderResult<void>> {
     const sessionId = sessionIdOf(external_reference, execution_id);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
-    });
-    if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
+    try {
+      const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
+      });
+      if (response.ok) return { kind: "acknowledged", value: undefined };
+      const detail = `kbbl input delivery failed (${response.status}): ${await response.text()}`;
+      return response.status >= 500 || response.status === 408 || response.status === 429 ? { kind: "uncertain", detail }
+        : { kind: "permanently_rejected", code: "input_refused", detail };
+    } catch (error) { return { kind: "uncertain", detail: `kbbl input delivery uncertain: ${String(error)}` }; }
   }
 }

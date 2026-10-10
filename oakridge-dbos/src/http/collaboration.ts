@@ -15,11 +15,12 @@ export interface CollaborationApiDependencies {
 interface PingCommand { readonly run_id: string; readonly scope_id: string; readonly thread_id: string;
   readonly revision_id: string; readonly message_id: string; readonly request_key: string; readonly text: string }
 interface PinnedCollaborationSession { readonly request: PinnedSessionStart; readonly session_id: string }
-class CollaborationEnsureUncertainError extends Error {}
+class CollaborationDeliveryUncertainError extends Error {}
 export interface CollaborationDeliveryPort {
   ensure(request: PinnedSessionStart): Promise<{ readonly kind: "ok"; readonly session_id: string }
     | { readonly kind: "error"; readonly reason: string } | { readonly kind: "uncertain"; readonly reason: string }>;
-  send(session_id: string, delivery_key: string, text: string): Promise<void>;
+  send(session_id: string, delivery_key: string, text: string): Promise<{ readonly kind: "ok" }
+    | { readonly kind: "error"; readonly reason: string } | { readonly kind: "uncertain"; readonly reason: string }>;
 }
 
 async function pinnedSession(db: SqlExecutor, execution_id: string): Promise<PinnedCollaborationSession | null> {
@@ -47,10 +48,12 @@ export async function deliverCollaborationPing(db: SqlExecutor, port: Collaborat
   const request = await read_pinned(db,target.execution_id);
   if (!request) return fail(`no pinned resumable session exists for execution ${target.execution_id}`);
   const ensured = await port.ensure(request.request);
-  if (ensured.kind === "uncertain") throw new CollaborationEnsureUncertainError(`session ensure uncertain: ${ensured.reason}`);
+  if (ensured.kind === "uncertain") throw new CollaborationDeliveryUncertainError(`session ensure uncertain: ${ensured.reason}`);
   if (ensured.kind === "error") return fail(`session ensure failed: ${ensured.reason}`);
   if (ensured.session_id !== request.session_id) return fail(`session ensure returned ${ensured.session_id} instead of pinned session ${request.session_id}`);
-  await port.send(ensured.session_id,id,command.text);
+  const sent = await port.send(ensured.session_id,id,command.text);
+  if (sent.kind === "uncertain") throw new CollaborationDeliveryUncertainError(`session input uncertain: ${sent.reason}`);
+  if (sent.kind === "error") return fail(`session input refused: ${sent.reason}`);
   return recordCollaborationDelivery(db, { id, run_id: command.run_id, scope_id: command.scope_id,
     message_id: command.message_id,
     payload: { status: "delivered", session_id: ensured.session_id, reason: null, request_key: command.request_key } });
@@ -68,8 +71,11 @@ export function kbblDeliveryPort(base_url: string): CollaborationDeliveryPort {
           : { kind: "error", reason: result.kind === "acknowledged" ? "kbbl returned no session" : result.detail };
     },
     async send(session_id, delivery_key, text) {
-      await adapter.deliver_input("collaboration" as import("../domain/primitives").ExecutionId,
+      const result = await adapter.deliver_collaboration_input("collaboration" as import("../domain/primitives").ExecutionId,
         delivery_key,text,{ kind: "kbbl_session", session_id });
+      return result.kind === "acknowledged" ? { kind: "ok" }
+        : result.kind === "uncertain" || result.kind === "transiently_unavailable"
+          ? { kind: "uncertain", reason: result.detail } : { kind: "error", reason: result.detail };
     },
   };
 }
@@ -83,7 +89,7 @@ const deliverStep = DBOS.registerStep(async (command: PingCommand): Promise<Deli
     return { kind: "recorded", record: await deliverCollaborationPing(
       workflow_dependencies.db,kbblDeliveryPort(workflow_dependencies.kbbl_base_url),command) };
   } catch (error) {
-    if (error instanceof CollaborationEnsureUncertainError) return { kind: "uncertain", reason: error.message };
+    if (error instanceof CollaborationDeliveryUncertainError) return { kind: "uncertain", reason: error.message };
     throw error;
   }
 }, { name: "oakridgeCollaborationDelivery" });
@@ -131,7 +137,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     const run_id = param(c,"run_id"), scope_id = param(c,"scope_id"), thread_id = param(c,"thread_id");
     const id = `message:${collaborationRecordId(thread_id,raw.request_key)}`;
     const result = await addCollaborationMessage(deps.db,{ id,run_id,scope_id,thread_id,
-      body: { text: raw.text, author: raw.author } });
+      body: { text: raw.text, author: raw.author, ping: raw.ping === true } });
     if (result.kind !== "written" && result.kind !== "replayed") return c.json({ error: result.kind },status(result.kind));
     if (!raw.ping) return c.json({ message: result.value },result.kind === "written" ? 201 : 200);
     const threads = await deps.db.query<{ readonly artifact_revision_id: string }>(

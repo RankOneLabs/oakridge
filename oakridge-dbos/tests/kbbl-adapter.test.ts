@@ -251,6 +251,14 @@ test("kbbl adapter reports generalized input delivery failures", async () => {
     .rejects.toThrow("kbbl input delivery failed (503): unavailable");
 });
 
+test("collaboration input classifies transport uncertainty without losing the delivery key", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build",
+    fetch: async () => { throw new Error("socket closed"); } });
+  const result = await adapter.deliver_collaboration_input("execution-1" as ExecutionId, "review-1", "Please respond.",
+    { kind: "kbbl_session", session_id: "session-1" });
+  expect(result).toMatchObject({ kind: "uncertain", detail: expect.stringContaining("socket closed") });
+});
+
 const recordingAdapter = (urls: string[], status = 204) =>
   new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input) => {
     urls.push(String(input));

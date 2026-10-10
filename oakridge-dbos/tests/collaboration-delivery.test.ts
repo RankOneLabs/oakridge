@@ -29,11 +29,12 @@ function deliveryDatabase(): { db: SqlExecutor; deliveries: CollaborationDeliver
 }
 
 async function withKbbl(initial_status: "live" | "ended" | "failed", run: (url: string,
-  observations: { readonly ensures: string[]; readonly inputs: string[] }) => Promise<void>,
-  behavior: "preserve" | "replace" | "transient" = "preserve"): Promise<void> {
+  observations: { readonly ensures: string[]; readonly inputs: string[]; readonly input_attempts: string[] }) => Promise<void>,
+  behavior: "preserve" | "replace" | "transient" | "send_transient" | "send_refused" = "preserve"): Promise<void> {
   let status = initial_status;
   let ensure_count = 0;
-  const observations = { ensures: [] as string[], inputs: [] as string[] };
+  const observations = { ensures: [] as string[], inputs: [] as string[], input_attempts: [] as string[] };
+  const accepted_inputs = new Map<string,string>();
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (request.method === "PUT" && url.pathname === "/sessions/resumable/pinned-key") {
@@ -45,7 +46,18 @@ async function withKbbl(initial_status: "live" | "ended" | "failed", run: (url: 
       return Response.json({ kind: "attached", session: { sid: behavior === "replace" && status === "live" ? "fresh-session" : "pinned-session", status } });
     }
     if (request.method === "PUT" && url.pathname.startsWith("/sessions/resumable/pinned-session/input/")) {
-      observations.inputs.push((await request.json() as { text: string }).text);
+      const key = url.pathname.split("/").at(-1) ?? "";
+      const input = (await request.json() as { text: string }).text;
+      observations.input_attempts.push(key);
+      if (behavior === "send_refused") return Response.json({ error: "session refused input" }, { status: 409 });
+      const previous = accepted_inputs.get(key);
+      if (previous !== undefined && previous !== input) return Response.json({ error: "delivery_key_conflict" }, { status: 409 });
+      if (previous === undefined) {
+        accepted_inputs.set(key,input);
+        observations.inputs.push(input);
+      }
+      if (behavior === "send_transient" && observations.input_attempts.length === 1)
+        return Response.json({ error: "response lost" }, { status: 503 });
       return Response.json({ accepted: true });
     }
     return Response.json({ error: "session_not_found" }, { status: 404 });
@@ -105,4 +117,28 @@ test("ensure failure records an explicit reason", async () => {
     expect(delivery.payload.reason).toContain("worktree unavailable");
     expect(deliveries).toHaveLength(1);
   });
+});
+
+test("permanent input refusal records a failed delivery with a reason", async () => {
+  const { db, deliveries } = deliveryDatabase();
+  await withKbbl("live", async (url, observations) => {
+    const delivery = await deliverCollaborationPing(db,kbblDeliveryPort(url),command,async () => pinned);
+    expect(delivery.payload).toMatchObject({ status: "failed", reason: expect.stringContaining("session refused input") });
+    expect(observations.inputs).toEqual([]);
+    expect(deliveries).toHaveLength(1);
+  }, "send_refused");
+});
+
+test("uncertain input retries the same delivery key without a second turn", async () => {
+  const { db, deliveries } = deliveryDatabase();
+  await withKbbl("live", async (url, observations) => {
+    const port = kbblDeliveryPort(url);
+    await expect(deliverCollaborationPing(db,port,command,async () => pinned)).rejects.toThrow("session input uncertain");
+    expect(deliveries).toHaveLength(0);
+    const delivery = await deliverCollaborationPing(db,port,command,async () => pinned);
+    expect(delivery.payload.status).toBe("delivered");
+    expect(observations.input_attempts).toHaveLength(2);
+    expect(observations.inputs).toEqual([command.text]);
+    expect(deliveries).toHaveLength(1);
+  }, "send_transient");
 });

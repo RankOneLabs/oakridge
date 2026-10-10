@@ -19,7 +19,7 @@ The writer column names the mutation-service entry and the function that execute
 | Execution identity, result, status, publication secret hash | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:138` and `oakridge-dbos/src/storage/commit.ts:164`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:73` | `execution.result` duplicates the terminal checked value stored in an invocation-keyed fact. |
 | Artifact revision body and predecessor | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:88` | Immutable publication history. |
 | Current output revision | `createMutationService.decide` → `writeOutputs`, `oakridge-dbos/src/storage/commit.ts:89` and `oakridge-dbos/src/storage/commit.ts:90`; `writeDecision`, `oakridge-dbos/src/storage/commit.ts:106` | Pointer into artifact history, cleared by a decision mutation. |
-| Revision collaboration | `createCollaborationThread`, `oakridge-dbos/src/storage/collaboration.ts:77`; `addCollaborationMessage`, `oakridge-dbos/src/storage/collaboration.ts:112`; `addReviewItem`, `oakridge-dbos/src/storage/collaboration.ts:138`; `recordCollaborationDelivery`, `oakridge-dbos/src/storage/collaboration.ts:156` | Threads and review items retain their reviewed revision; keyed delivery records retain the result and failure reason. |
+| Revision collaboration | `createCollaborationThread`, `oakridge-dbos/src/storage/collaboration.ts:77`; `addCollaborationMessage`, `oakridge-dbos/src/storage/collaboration.ts:114`; `addReviewItem`, `oakridge-dbos/src/storage/collaboration.ts:153`; `recordCollaborationDelivery`, `oakridge-dbos/src/storage/collaboration.ts:171` | Threads and review items retain their reviewed revision; keyed delivery records retain the result and failure reason. |
 | Trigger and terminal-result facts | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:168`; `persistEffectResult`, `oakridge-dbos/src/storage/effect-results.ts:70` | Trigger facts feed decisions; invocation-keyed terminal facts mirror `execution.result`. |
 | Transition decision | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:170` | Decision record; its terminal outcome also appears on `scope_instance`. |
 | Ingress receipt | `createMutationService.decide` → `writeDecision`, `oakridge-dbos/src/storage/commit.ts:174` | Idempotent command/publication response. |
@@ -92,6 +92,6 @@ These citations keep the authority inventory aligned with the startup, encryptio
 - `setRunArchived` `oakridge-dbos/src/storage/archive.ts:6`
 - `setDefinitionArchived` `oakridge-dbos/src/storage/archive.ts:13`
 - `createCollaborationThread` `oakridge-dbos/src/storage/collaboration.ts:77`
-- `addCollaborationMessage` `oakridge-dbos/src/storage/collaboration.ts:112`
-- `addReviewItem` `oakridge-dbos/src/storage/collaboration.ts:138`
-- `recordCollaborationDelivery` `oakridge-dbos/src/storage/collaboration.ts:156`
+- `addCollaborationMessage` `oakridge-dbos/src/storage/collaboration.ts:114`
+- `addReviewItem` `oakridge-dbos/src/storage/collaboration.ts:153`
+- `recordCollaborationDelivery` `oakridge-dbos/src/storage/collaboration.ts:171`

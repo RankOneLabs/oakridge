@@ -1,5 +1,5 @@
 import type { StageOperatorRole } from "./workflow";
-import type { CollaborationMessageBody, CollaborationThreadContext, ReviewItemBody } from "../storage/json-column-types";
+import type { CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, ReviewItemBody } from "../storage/json-column-types";
 
 /**
  * Adapter-owned name for why a role is being launched. Core carries the name
@@ -38,6 +38,6 @@ export interface ReviewItemRow {
 }
 export interface CollaborationDeliveryRecord {
   readonly id: string; readonly run_id: string; readonly scope_id: string; readonly message_id: string;
-  readonly payload: { readonly status: "delivered" | "failed"; readonly session_id: string | null; readonly reason: string | null; readonly request_key: string };
+  readonly payload: CollaborationDeliveryPayload;
   readonly created_at: string;
 }

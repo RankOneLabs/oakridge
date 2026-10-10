@@ -102,10 +102,12 @@ export async function addCollaborationMessage(db: TransactionalSqlExecutor, inpu
   readonly thread_id: string; readonly body: CollaborationMessageBody;
 }): Promise<CollaborationWriteResult<CollaborationMessageRow>> {
   return db.transaction(async (tx) => {
+    const matches = (row: CollaborationMessageRow): boolean => row.run_id === input.run_id
+      && row.scope_id === input.scope_id && row.thread_id === input.thread_id
+      && row.body.text === input.body.text && row.body.author === input.body.author
+      && (row.body.ping ?? false) === (input.body.ping ?? false);
     const existing = (await tx.query<CollaborationMessageRow>("SELECT id,run_id,scope_id,thread_id,body,created_at::text AS created_at FROM authority.collaboration_message WHERE id=$1", [input.id]))[0];
-    if (existing) return existing.run_id === input.run_id && existing.thread_id === input.thread_id
-      && JSON.stringify(existing.body) === JSON.stringify(input.body)
-      ? { kind: "replayed", value: existing } : { kind: "conflict" };
+    if (existing) return matches(existing) ? { kind: "replayed", value: existing } : { kind: "conflict" };
     const writable = await writableThread(tx, input.run_id, input.scope_id, input.thread_id);
     if (!writable) return { kind: "missing" };
     if (writable.kind === "superseded") return { kind: "superseded" };
@@ -115,12 +117,25 @@ export async function addCollaborationMessage(db: TransactionalSqlExecutor, inpu
       [input.id,input.run_id,input.scope_id,input.thread_id,JSON.stringify(input.body)]))[0];
     if (!row) {
       const concurrent = (await tx.query<CollaborationMessageRow>("SELECT id,run_id,scope_id,thread_id,body,created_at::text AS created_at FROM authority.collaboration_message WHERE id=$1",[input.id]))[0];
-      return concurrent?.run_id === input.run_id && concurrent.thread_id === input.thread_id
-        && JSON.stringify(concurrent.body) === JSON.stringify(input.body)
-        ? { kind: "replayed", value: concurrent } : { kind: "conflict" };
+      return concurrent && matches(concurrent) ? { kind: "replayed", value: concurrent } : { kind: "conflict" };
     }
     return { kind: "written", value: row };
   });
+}
+
+function groupByThread<Row extends { readonly thread_id: string }>(rows: readonly Row[]): ReadonlyMap<string, readonly Row[]> {
+  const by_thread = new Map<string, Row[]>();
+  for (const row of rows) {
+    const group = by_thread.get(row.thread_id) ?? [];
+    group.push(row);
+    by_thread.set(row.thread_id,group);
+  }
+  return by_thread;
+}
+
+function deliveryRecord(row: CollaborationDeliveryRecord & { readonly thread_id: string }): CollaborationDeliveryRecord {
+  return { id: row.id, run_id: row.run_id, scope_id: row.scope_id, message_id: row.message_id,
+    payload: row.payload, created_at: row.created_at };
 }
 
 export async function addReviewItem(db: TransactionalSqlExecutor, input: {
@@ -174,16 +189,21 @@ export async function readCollaborationThreads(db: SqlExecutor, run_id: string, 
     JOIN authority.artifact_revision r ON r.id=t.artifact_revision_id
     JOIN authority.output_slot s ON s.scope_id=r.scope_id AND s.output_key=r.output_key AND s.collection_key=r.collection_key
     WHERE t.run_id=$1 AND t.scope_id=$2 ORDER BY chain.depth DESC,t.created_at,t.id`, [run_id,scope_id,revision_id]);
-  return Promise.all(threads.map(async (thread) => {
-    const [messages, review_items, deliveries] = await Promise.all([
-      db.query<CollaborationMessageRow>(`SELECT id,run_id,scope_id,thread_id,body,created_at::text AS created_at
-        FROM authority.collaboration_message WHERE thread_id=$1 ORDER BY created_at,id`, [thread.id]),
-      db.query<ReviewItemRow>(`SELECT id,run_id,scope_id,artifact_revision_id,thread_id,body,created_at::text AS created_at
-        FROM authority.review_item WHERE thread_id=$1 ORDER BY created_at,id`, [thread.id]),
-      db.query<CollaborationDeliveryRecord>(`SELECT d.id,d.run_id,d.scope_id,d.message_id,d.payload,d.created_at::text AS created_at
-        FROM authority.collaboration_delivery d JOIN authority.collaboration_message m ON m.id=d.message_id
-        WHERE m.thread_id=$1 ORDER BY d.created_at DESC,d.id DESC`, [thread.id]),
-    ]);
-    return selectCollaborationThreadView(thread,messages,review_items,deliveries);
-  }));
+  if (threads.length === 0) return [];
+  const thread_ids = threads.map((thread) => thread.id);
+  const [messages, review_items, deliveries] = await Promise.all([
+    db.query<CollaborationMessageRow>(`SELECT id,run_id,scope_id,thread_id,body,created_at::text AS created_at
+      FROM authority.collaboration_message WHERE thread_id=ANY($1::text[]) ORDER BY thread_id,created_at,id`, [thread_ids]),
+    db.query<ReviewItemRow>(`SELECT id,run_id,scope_id,artifact_revision_id,thread_id,body,created_at::text AS created_at
+      FROM authority.review_item WHERE thread_id=ANY($1::text[]) ORDER BY thread_id,created_at,id`, [thread_ids]),
+    db.query<CollaborationDeliveryRecord & { readonly thread_id: string }>(`SELECT d.id,d.run_id,d.scope_id,d.message_id,d.payload,d.created_at::text AS created_at,m.thread_id
+      FROM authority.collaboration_delivery d JOIN authority.collaboration_message m ON m.id=d.message_id
+      WHERE m.thread_id=ANY($1::text[]) ORDER BY m.thread_id,d.created_at DESC,d.id DESC`, [thread_ids]),
+  ]);
+  const messages_by_thread = groupByThread(messages);
+  const reviews_by_thread = groupByThread(review_items);
+  const deliveries_by_thread = groupByThread(deliveries);
+  return threads.map((thread) => selectCollaborationThreadView(thread,
+    messages_by_thread.get(thread.id) ?? [],reviews_by_thread.get(thread.id) ?? [],
+    (deliveries_by_thread.get(thread.id) ?? []).map(deliveryRecord)));
 }
