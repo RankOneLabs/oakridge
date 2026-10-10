@@ -196,7 +196,7 @@ test("recovery replays the pinned prompt verbatim and its secret publishes witho
       try {
         const headers = { "content-type": "application/json", authorization: "Bearer operator-only" };
         const created = await composition.app.request("/runs", { method: "POST", headers,
-          body: JSON.stringify({ bundle: await developmentBundle(), input: { brief, repository, push_remote_owner: repository.forge.owner } }) });
+          body: JSON.stringify({ bundle: await developmentBundle(), input: { brief, repository, push_remote_owner: repository.forge.owner, admission: {} } }) });
         expect({ status: created.status, body: await created.clone().json() }).toMatchObject({ status: 201 });
         const run: StartedRun = await created.json();
         const scope_path = `/api/runs/${run.run_id}/scopes/${run.root_scope_id}`;
