@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { RunEventCursor } from "../projections/run-event";
 import { selectOperatorFrame } from "../projections/operator-event";
-import { readLatestEventCursor, readOperatorEventsAfter } from "../storage/projection-reader";
+import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/projection-reader";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
 /** The SSE id is the base64url JSON cursor; Last-Event-ID hands it back on reconnect. */
@@ -33,17 +33,17 @@ export function installEventStream(app: Hono, deps: { readonly db: Transactional
     if (resume && cursor === null) return c.json({ error: "malformed_request", detail: "invalid event cursor" }, 400);
     return streamSSE(c, async (stream) => {
       // Fix the starting point before signalling ready, so every commit after ready is delivered.
-      const boundary = await readLatestEventCursor(deps.db);
+      const boundary = await readEventStreamBoundary(deps.db);
       const is_reconnect = cursor !== null;
-      cursor ??= boundary;
+      cursor ??= boundary.cursor;
       await stream.write(": ready\n\n");
       let last_write = Date.now();
       while (!stream.aborted && !stream.closed) {
-        const rows = await readOperatorEventsAfter(deps.db, cursor, PAGE);
+        const rows = await readOperatorEventsAfter(deps.db, cursor, PAGE, is_reconnect ? boundary.snapshot : null);
         for (const row of rows) {
           cursor = { commit_txid: row.commit_txid, id: row.id };
           const frame = selectOperatorFrame(row);
-          const replay = is_reconnect && BigInt(row.commit_txid) < BigInt(boundary.commit_txid);
+          const replay = is_reconnect && row.was_visible_at_subscription;
           await stream.writeSSE({ event: frame.event, id: encodeEventCursor(cursor), data: JSON.stringify({ ...frame.data, replay }) });
           last_write = Date.now();
         }

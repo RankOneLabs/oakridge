@@ -13,6 +13,11 @@ export interface OperatorEventRow {
   readonly payload: OperatorEventPayload;
 }
 
+/** An outbox row annotated with visibility in the subscriber's starting snapshot. */
+export interface OperatorEventDeliveryRow extends OperatorEventRow {
+  readonly was_visible_at_subscription: boolean;
+}
+
 export type OperatorFrame =
   | { readonly event: "run_event"; readonly data: RunEvent }
   | { readonly event: "invalidate"; readonly data: { readonly kind: "invalidate"; readonly target: "run" | "runs" | "definitions" | "projects"; readonly run_id: RunId | null } };

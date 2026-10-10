@@ -33,9 +33,8 @@ test("deleting a run leaves a durable invalidate row with its run key", async ()
 
 interface Frame { readonly id: string; readonly event: RunEvent }
 interface RawFrame { readonly id: string; readonly event: string; readonly data: { readonly replay: boolean; readonly [key: string]: unknown } }
-/** Reads SSE frames until `count` run_event frames arrive, then cancels the stream. */
-async function readAnyFrames(response: Response, count: number): Promise<readonly RawFrame[]> {
-  const reader = response.body!.getReader();
+/** Reads SSE frames from an already subscribed stream. */
+async function readAnyFramesFromReader(reader: ReadableStreamDefaultReader<Uint8Array>, count: number): Promise<readonly RawFrame[]> {
   const decoder = new TextDecoder();
   const frames: RawFrame[] = [];
   let buffer = "";
@@ -51,8 +50,12 @@ async function readAnyFrames(response: Response, count: number): Promise<readonl
       if (field("event") && field("id") && field("data")) frames.push({ id: field("id")!, event: field("event")!, data: JSON.parse(field("data")!) });
     }
   }
-  await reader.cancel();
   return frames;
+}
+async function readAnyFrames(response: Response, count: number): Promise<readonly RawFrame[]> {
+  const reader = response.body!.getReader();
+  try { return await readAnyFramesFromReader(reader, count); }
+  finally { await reader.cancel(); }
 }
 async function readFrames(response: Response, count: number): Promise<readonly Frame[]> {
   const frames = await readAnyFrames(response, count);
@@ -98,4 +101,35 @@ test("one Last-Event-ID replays invalidate and run_event frames in order", async
     const resumed = await readAnyFrames(await app.request("/events", { headers: { "last-event-id": frames[0]!.id } }), 1);
     expect(resumed[0]!.id).toBe(frames[1]!.id);
   } finally { f.core.close(); }
+}));
+
+test("reconnect marks committed backlog as replay despite an older open transaction", async () => withDatabase(async ({ db }) => {
+  await writeOperatorEvent(db, null, "baseline", { kind: "invalidate", data: { target: "definitions", run_id: null } });
+  const baseline = (await db.query<{ id: string; commit_txid: string }>(
+    "SELECT id,commit_txid::text AS commit_txid FROM authority.operator_event WHERE run_key='baseline'", []))[0]!;
+  let signal_inserted: () => void = () => undefined;
+  let release_transaction: () => void = () => undefined;
+  const inserted = new Promise<void>((resolve) => { signal_inserted = resolve; });
+  const held = new Promise<void>((resolve) => { release_transaction = resolve; });
+  const transaction = db.transaction(async (tx) => {
+    await writeOperatorEvent(tx, null, "older", { kind: "invalidate", data: { target: "runs", run_id: null } });
+    signal_inserted();
+    await held;
+  });
+  await inserted;
+  const app = new Hono();
+  installEventStream(app, { db, timing: { poll_ms: 20, heartbeat_ms: 1_000 } });
+  const cursor = Buffer.from(JSON.stringify(baseline)).toString("base64url");
+  try {
+    await writeOperatorEvent(db, null, "newer", { kind: "invalidate", data: { target: "projects", run_id: null } });
+    const response = await app.request("/events", { headers: { "last-event-id": cursor } });
+    const reader = response.body!.getReader();
+    try {
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain(": ready");
+      release_transaction();
+      await transaction;
+      const frames = await readAnyFramesFromReader(reader, 2);
+      expect(frames.map((frame) => [frame.data.target, frame.data.replay])).toEqual([["runs", false], ["projects", true]]);
+    } finally { await reader.cancel(); }
+  } finally { release_transaction(); await transaction; }
 }));

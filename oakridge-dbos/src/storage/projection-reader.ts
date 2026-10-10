@@ -1,7 +1,7 @@
 import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import type { RunEventCursor } from "../projections/run-event";
-import type { OperatorEventRow } from "../projections/operator-event";
+import type { OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
 import { currentPrefill, currentTargetRevisions } from "./command-selection";
@@ -94,15 +94,18 @@ export async function listProjects(db: TransactionalSqlExecutor): Promise<readon
  * transactions older than every one still open: those are all committed or
  * gone, so no later commit can land behind the cursor.
  */
-export async function readOperatorEventsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly OperatorEventRow[]> {
-  return db.query<OperatorEventRow>(`SELECT e.id,e.event_key,e.payload,e.commit_txid::text AS commit_txid
+export async function readOperatorEventsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number, subscription_snapshot: string | null = null): Promise<readonly OperatorEventDeliveryRow[]> {
+  return db.query<OperatorEventDeliveryRow>(`SELECT e.id,e.event_key,e.payload,e.commit_txid::text AS commit_txid,
+      CASE WHEN $4::pg_snapshot IS NULL THEN false ELSE pg_visible_in_snapshot(e.commit_txid::text::xid8,$4::pg_snapshot) END AS was_visible_at_subscription
     FROM authority.operator_event e
     WHERE (e.commit_txid,e.id)>($1::bigint,$2::text) AND e.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint
-    ORDER BY e.commit_txid,e.id LIMIT $3`, [after.commit_txid, after.id, limit]);
+    ORDER BY e.commit_txid,e.id LIMIT $3`, [after.commit_txid, after.id, limit, subscription_snapshot]);
 }
-/** The oldest open transaction, so a fresh subscriber starts from now rather than replaying history. */
-export async function readLatestEventCursor(db: TransactionalSqlExecutor): Promise<RunEventCursor> {
-  const row = (await db.query<{ commit_txid: string }>("SELECT pg_snapshot_xmin(pg_current_snapshot())::text AS commit_txid", []))[0];
+export interface EventStreamBoundary { readonly cursor: RunEventCursor; readonly snapshot: string }
+/** Capture one snapshot for the safe starting cursor and reconnect replay classification. */
+export async function readEventStreamBoundary(db: TransactionalSqlExecutor): Promise<EventStreamBoundary> {
+  const row = (await db.query<{ commit_txid: string; snapshot: string }>(
+    "WITH boundary AS MATERIALIZED (SELECT pg_current_snapshot() AS snapshot) SELECT pg_snapshot_xmin(snapshot)::text AS commit_txid,snapshot::text AS snapshot FROM boundary", []))[0];
   if (!row) throw new Error("current snapshot unavailable");
-  return { commit_txid: row.commit_txid, id: "" };
+  return { cursor: { commit_txid: row.commit_txid, id: "" }, snapshot: row.snapshot };
 }
