@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { selectRunEvent, type RunEventCursor } from "../projections/run-event";
-import { readLatestEventCursor, readTransitionsAfter } from "../storage/projection-reader";
+import type { RunEventCursor } from "../projections/run-event";
+import { selectOperatorFrame } from "../projections/operator-event";
+import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/projection-reader";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 
 /** The SSE id is the base64url JSON cursor; Last-Event-ID hands it back on reconnect. */
@@ -20,10 +21,9 @@ const DEFAULT_EVENT_TIMING: EventStreamTiming = { poll_ms: 1_000, heartbeat_ms: 
 const PAGE = 100;
 
 /**
- * GET /events streams committed transitions as `run_event` frames. Each frame's
+ * GET /events streams committed outbox rows as `run_event` or `invalidate` frames. Each frame's
  * id is its resume cursor, so a reconnect with Last-Event-ID continues where it
- * stopped; a new subscriber starts from now. It reads the transition log, so it
- * adds no write path and no coordination with the run workflows.
+ * stopped; a new subscriber starts from now.
  */
 export function installEventStream(app: Hono, deps: { readonly db: TransactionalSqlExecutor; readonly timing?: EventStreamTiming }): void {
   const timing = deps.timing ?? DEFAULT_EVENT_TIMING;
@@ -33,14 +33,18 @@ export function installEventStream(app: Hono, deps: { readonly db: Transactional
     if (resume && cursor === null) return c.json({ error: "malformed_request", detail: "invalid event cursor" }, 400);
     return streamSSE(c, async (stream) => {
       // Fix the starting point before signalling ready, so every commit after ready is delivered.
-      cursor ??= await readLatestEventCursor(deps.db);
+      const boundary = await readEventStreamBoundary(deps.db);
+      const is_reconnect = cursor !== null;
+      cursor ??= boundary.cursor;
       await stream.write(": ready\n\n");
       let last_write = Date.now();
       while (!stream.aborted && !stream.closed) {
-        const rows = await readTransitionsAfter(deps.db, cursor, PAGE);
+        const rows = await readOperatorEventsAfter(deps.db, cursor, PAGE, is_reconnect ? boundary.snapshot : null);
         for (const row of rows) {
           cursor = { commit_txid: row.commit_txid, id: row.id };
-          await stream.writeSSE({ event: "run_event", id: encodeEventCursor(cursor), data: JSON.stringify(selectRunEvent(row)) });
+          const frame = selectOperatorFrame(row);
+          const replay = is_reconnect && row.was_visible_at_subscription;
+          await stream.writeSSE({ event: frame.event, id: encodeEventCursor(cursor), data: JSON.stringify({ ...frame.data, replay }) });
           last_write = Date.now();
         }
         if (rows.length === PAGE) continue;
