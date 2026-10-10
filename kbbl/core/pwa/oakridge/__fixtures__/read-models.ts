@@ -23,9 +23,16 @@ export function makeRunSessionAttempt(overrides: Partial<OperatorRunSessionAttem
 }
 
 export function makeArtifactDetail(overrides: Partial<OperatorArtifactDetail> = {}): OperatorArtifactDetail {
+  const emptyList = (schema: string) => ({ schema, data: { kind: "list" as const, items: [] } });
   return { run_id: "run-1", scope_id: "scope-1", output_key: "analysis", collection_key: "",
     slot_version: 1, revision_id: "revision-1", predecessor_id: null,
-    body: { schema: "analysis_body", data: { kind: "string", value: "Draft" } }, status: "draft",
+    body: { schema: "analysis_body", data: { kind: "record", fields: [
+      { field_id: 0, value: { schema: "text", data: { kind: "string", value: "Draft" } } },
+      { field_id: 1, value: emptyList("texts") },
+      { field_id: 2, value: emptyList("spec_findings") },
+      { field_id: 3, value: emptyList("requirements") },
+      { field_id: 4, value: emptyList("risks") },
+    ], dictionary: [] } }, status: "draft",
     presentation: { artifact_type: "analysis", viewer: "document",
       capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true } },
     ...overrides };
