@@ -91,6 +91,14 @@ export interface OperatorScopeCommandRequest {
   readonly targets: readonly OperatorTargetRevision[];
 }
 
+export interface OperatorEditCommandPayload {
+  readonly output_key: string;
+  readonly collection_key: string;
+  readonly reviewed_revision_id: string;
+  readonly prev_value: OperatorCheckedValue;
+  readonly body: OperatorCheckedValue;
+}
+
 export interface OperatorProjectDraft {
   readonly name: string;
   readonly repo_dir: string;

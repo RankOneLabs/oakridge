@@ -1,11 +1,13 @@
-import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import type { CoreClient } from "../core-client/client";
-import { requestEvaluation, type MutationService } from "../storage/mutation-service";
+import { checkPublications, requestEvaluation, type MutationService } from "../storage/mutation-service";
+import type { OutputPublication } from "../storage/commit";
+import { stagePublications } from "../storage/stage-publications";
 import { readSnapshot } from "../storage/snapshot-reader";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { findReceipt, requestDigest } from "../storage/receipts";
-import { availableCommand, currentTargetRevisions, targetsMatch, type TargetRevision } from "../storage/command-selection";
+import { availableCommand, currentOutputRevision, currentTargetRevisions, targetsMatch, type TargetRevision } from "../storage/command-selection";
 export { availableCommand, currentTargetRevisions, targetsMatch, type TargetRevision } from "../storage/command-selection";
 
 export interface ScopeCommandRequest {
@@ -15,6 +17,14 @@ export interface ScopeCommandRequest {
   readonly scope_id: ScopeId;
   readonly expected_scope_version: number;
   readonly targets: readonly TargetRevision[];
+}
+/** The reviewed artifact is an edit precondition, carried in the command payload. */
+export interface EditCommandPayload {
+  readonly output_key: string;
+  readonly collection_key: string;
+  readonly reviewed_revision_id: string;
+  readonly prev_value: CheckedValue;
+  readonly body: CheckedValue;
 }
 export type CommandError = MalformedRequestError | InvalidPayloadError | MissingEntityError | ConflictError | TransientServiceError | InternalFaultError;
 export type CommandResult = { readonly ok: true; readonly value: PendingWork } | { readonly ok: false; readonly error: CommandError };
@@ -31,6 +41,14 @@ export class PendingWork implements CommandReceipt { readonly kind = "accepted_p
 
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => value !== null && typeof value === "object" && !Array.isArray(value);
 const isVersion = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+function parseEditPayload(value: unknown): EditCommandPayload | MalformedRequestError {
+  if (!isObject(value) || typeof value.output_key !== "string" || !value.output_key
+    || typeof value.collection_key !== "string" || typeof value.reviewed_revision_id !== "string" || !value.reviewed_revision_id
+    || !isObject(value.prev_value) || typeof value.prev_value.schema !== "string" || !isObject(value.prev_value.data)
+    || !isObject(value.body) || typeof value.body.schema !== "string" || !isObject(value.body.data))
+    return new MalformedRequestError("edit payload requires output_key, collection_key, reviewed_revision_id, prev_value and body");
+  return value as unknown as EditCommandPayload;
+}
 export function parseScopeCommand(value: unknown, scope_id: ScopeId): ScopeCommandRequest | MalformedRequestError {
   if (!isObject(value) || typeof value.command_key !== "string" || !value.command_key || typeof value.request_id !== "string" || !value.request_id
     || value.scope_id !== scope_id || !isVersion(value.expected_scope_version) || !("payload" in value) || !Array.isArray(value.targets)
@@ -58,19 +76,41 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
     const command = availableCommand(bundle, source.owner.scope_key, source.owner.local_state, request.command_key);
     if (!command) return { ok: false, error: new InvalidPayloadError("command is undeclared or unavailable in current state") };
     if (request.targets.length !== command.targets.length) return { ok: false, error: new InvalidPayloadError("target count differs from pinned definition") };
-    const checked = await deps.core.request("validate_payload", { bundle, schema: command.payload_schema, payload: request.payload });
+    const output_definition = bundle.scopes.find((item) => item.key === source.owner.scope_key)?.outputs.find((item) => item.edit_trigger === request.command_key);
+    let outputs: readonly OutputPublication[] = [];
+    if (output_definition) {
+      const edit = parseEditPayload(request.payload);
+      if (edit instanceof MalformedRequestError) return { ok: false, error: edit };
+      if (edit.output_key !== output_definition.key || edit.body.schema !== output_definition.schema
+        || edit.prev_value.schema !== output_definition.schema)
+        return { ok: false, error: new InvalidPayloadError(`output ${edit.output_key} does not match declared schema`) };
+      const current = await currentOutputRevision(deps.db, request.scope_id, edit.output_key, edit.collection_key);
+      if (!current || current.revision_id !== edit.reviewed_revision_id || requestDigest(current.body) !== requestDigest(edit.prev_value))
+        return { ok: false, error: new ConflictError(`output ${edit.output_key} changed since review`) };
+      outputs = [{ scope_id: request.scope_id, output_key: edit.output_key, collection_key: edit.collection_key,
+        body: edit.body, revision_id: crypto.randomUUID(),
+        predecessor_id: edit.reviewed_revision_id, expected_slot_version: current.slot_version,
+        execution_id: null }];
+      const publication_check = await checkPublications(deps.core, bundle, source.owner.scope_key, outputs);
+      if (!publication_check.ok) return { ok: false, error: new TransientServiceError(publication_check.error.detail) };
+      if (publication_check.value.kind === "mismatch")
+        return { ok: false, error: new InvalidPayloadError(`output ${publication_check.value.output_key} does not match declared schema`) };
+    }
+    const checked = await deps.core.request("validate_payload", { bundle, schema: command.payload_schema, payload: output_definition ? {} : request.payload });
     if (!checked.ok) return { ok: false, error: checked.error.kind === "transport" ? new TransientServiceError(checked.error.detail.detail) : new InvalidPayloadError(checked.error.detail.detail) };
     if (checked.value.kind !== "validated") return { ok: false, error: new InternalFaultError("core returned unexpected validation result") };
     const trigger: Trigger = { id: request.request_id, key: request.command_key, payload: checked.value.value };
     const decision_source = { ...source, snapshot: { ...source.snapshot, trigger } };
-    const evaluated = await requestEvaluation(deps.core, { bundle, source: decision_source });
+    const staged = outputs.length ? stagePublications(bundle, decision_source, outputs) : null;
+    if (staged && !staged.ok) return { ok: false, error: new InvalidPayloadError(staged.error.detail) };
+    const evaluated = await requestEvaluation(deps.core, { bundle, source: staged?.ok ? staged.value : decision_source });
     if (!evaluated.ok) return { ok: false, error: evaluated.error.kind === "transport" ? new TransientServiceError(evaluated.error.detail.detail) : new InvalidPayloadError(evaluated.error.detail.detail) };
     if (evaluated.value.kind !== "evaluated") return { ok: false, error: new InternalFaultError("core returned unexpected evaluation result") };
     if (evaluated.value.value.kind === "reject") return { ok: false, error: new InvalidPayloadError(evaluated.value.value.error) };
     const current_targets = await currentTargetRevisions(deps.db, request.scope_id, command, source.snapshot.observations);
     if (command.targets.length && !targetsMatch(command, evaluated.value.value, request.targets, current_targets)) return { ok: false, error: new ConflictError("target revisions changed") };
     const decided = await deps.mutations.decide({ run_id, scope_id: request.scope_id, ingress_id: request.request_id, trigger,
-      operator_version: request.expected_scope_version,
+      operator_version: request.expected_scope_version, outputs,
       prepared: { request_digest, decision: { source: decision_source, outcome: evaluated.value.value }, target_revisions: request.targets } });
     if (!decided.ok) return { ok: false, error: new InternalFaultError(decided.error.detail) };
     if (decided.value.kind === "Conflict") return { ok: false, error: new ConflictError(decided.value.detail) };
@@ -82,10 +122,9 @@ export async function submitScopeCommand(deps: CommandDependencies, run_id: RunI
 
 export function commandStatus(result: CommandResult): 202 | 400 | 404 | 409 | 422 | 500 | 503 {
   if (result.ok) return 202;
-  if (result.error instanceof MalformedRequestError) return 400;
-  if (result.error instanceof InvalidPayloadError) return 422;
-  if (result.error instanceof MissingEntityError) return 404;
-  if (result.error instanceof ConflictError) return 409;
-  if (result.error instanceof TransientServiceError) return 503;
-  return 500;
+  return COMMAND_STATUS[result.error.kind];
 }
+export const COMMAND_STATUS = {
+  malformed_request: 400, invalid_payload: 422, missing_entity: 404, conflict: 409,
+  transient_service: 503, internal_fault: 500,
+} as const satisfies Readonly<Record<CommandError["kind"], 400 | 404 | 409 | 422 | 500 | 503>>;

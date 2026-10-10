@@ -52,8 +52,8 @@ function archivedQuery(raw: string | undefined): boolean | MalformedRequestError
   if (raw === undefined || raw === "false") return false;
   return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
 }
-function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
-  return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
+function errorResponse(error: CommandError): { readonly error: string; readonly code: CommandError["kind"]; readonly trace_id?: string } {
+  return error instanceof InternalFaultError ? { error: "internal fault", code: error.kind, trace_id: error.trace_id } : { error: error.detail, code: error.kind };
 }
 function response(result: CommandResult): Response {
   return Response.json(result.ok ? result.value : errorResponse(result.error), { status: commandStatus(result) });
