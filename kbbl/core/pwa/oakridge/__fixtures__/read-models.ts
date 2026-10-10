@@ -1,6 +1,6 @@
 import type {
   OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorDecision,
-  OperatorOutputSlotView, OperatorReviewInbox, OperatorRunDetail,
+  OperatorInboxItem, OperatorOutputSlotView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSessionLocation, OperatorScopeView,
 } from "../operator-contracts";
 
@@ -72,4 +72,19 @@ export function makeDecision(overrides: Partial<OperatorDecision> = {}): Operato
 
 export function makeReviewInbox(overrides: Partial<OperatorReviewInbox> = {}): OperatorReviewInbox {
   return { cursor: [], items: [], next_cursor: null, ...overrides };
+}
+
+export function makeInboxCommand(overrides: Partial<Extract<OperatorInboxItem, { kind: "command" }>> = {}): Extract<OperatorInboxItem, { kind: "command" }> {
+  return { kind: "command", run_id: "run-1", scope_id: "scope-1", scope_version: 1,
+    key: "approve", label: "Approve", consequence: "Approve the current revision", ...overrides };
+}
+
+export function makeInboxWait(overrides: Partial<Extract<OperatorInboxItem, { kind: "wait" }>> = {}): Extract<OperatorInboxItem, { kind: "wait" }> {
+  return { kind: "wait", run_id: "run-1", scope_id: "scope-1", scope_version: 1,
+    reason: "handoff_downstream", label: "Waiting for build", ...overrides };
+}
+
+export function makeInboxDiagnostic(overrides: Partial<Extract<OperatorInboxItem, { kind: "diagnostic" }>> = {}): Extract<OperatorInboxItem, { kind: "diagnostic" }> {
+  return { kind: "diagnostic", run_id: "run-1", scope_id: "scope-1", scope_version: 1,
+    detail: "pull request mismatch", ...overrides };
 }

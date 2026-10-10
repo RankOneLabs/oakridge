@@ -28,7 +28,31 @@ deleted. A passing test does not resolve an unportable entry.
 | Translated | `expect(screen.queryByText("← Back")).toBeNull();` | `expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();` | Review navigation is now an explicit overview action on the review shell. This is a changed interaction, so the old absence assertion cannot be preserved literally. |
 
 The first suite has 4 passing tests. The unportable assertions above remain
-open parity decisions; no other source file is claimed as ported yet.
+open parity decisions.
+
+## `kbbl/core/pwa/oakridge/lib/run-attention.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect([...counts]).toEqual([["run-a", 2], ["run-b", 1]]);` | `expect([...counts]).toEqual([["run-a", 2], ["run-b", 1]]);` | Inputs now come from the generated inbox command variant through `makeInboxCommand`; the run grouping claim is identical. |
+| Translated | `expect(counts.get("run-a")).toBeUndefined();` | `expect(counts.get("run-a")).toBeUndefined();` | A generated `wait` item with reason `handoff_downstream` replaces the former blocked review item. The selector was corrected to exclude waits. |
+| Translated | `expect(counts.get("run-a")).toBe(1);` | `expect(counts.get("run-a")).toBe(1);` | The generated `diagnostic` variant replaces the former `pull_request_mismatch` item; both require operator attention. |
+| Unportable | `expect([cohorts.get(selectReviewCohortKey(gate)), cohorts.get(selectReviewCohortKey(admission))]).toEqual(["gate stage", "admission stage"]);` | No equivalent assertion. | The generated inbox does not project `stage_instance_id`, `unit_id`, or the former review cohort key; scope IDs replace those identities. |
+
+## `kbbl/core/pwa/oakridge/lib/decision-queue.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(selectStableDecisionQueue([live("a"), live("b"), live("c")], [gate("b"), gate("c")])).toEqual([{ kind: "settled", item: gate("a") }, live("b"), live("c")]);` | No equivalent assertion. | The generated inbox has no stable settled-row model; the current queue derives live commands from scopes. This loss of row position coverage remains open. |
+| Unportable | `expect(selectStableDecisionQueue([live("a"), live("b")], [gate("assessment"), gate("a"), gate("b")])).toEqual([live("a"), live("b"), live("assessment")]);` | No equivalent assertion. | The current selector does not retain previous rows between projections. |
+| Translated | `expect(selectStableDecisionQueue([], [gate("b"), gate("a")])).toEqual([live("b"), live("a")]);` | `expect(selectActionableScopes(scopes).map((scope) => scope.scope_id)).toEqual(["first", "last"]);` | Initial display order still follows the projection order; idle scopes are omitted. |
+
+## `kbbl/core/pwa/oakridge/lib/status-tone.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect(selectStatusTone(status as StatusToneSource)).toBe(tone);` | `for (const [status, tone] of cases) expect(selectStatusTone(status)).toBe(tone);` | The former hand-written status unions are gone. The new table retains every distinct old status and expected tone, including `pending`, `cancelled`, and `closed`; the selector was updated to preserve those colors. |
+| Translated | `expect(selectStatusTone("superseded" as StatusToneSource)).toBe("muted");` | `expect(selectStatusTone("superseded")).toBe("muted");` | The generated selector accepts strings; unknown statuses still display muted. |
 
 ## Surface checklist
 

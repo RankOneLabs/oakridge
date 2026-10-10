@@ -4,7 +4,10 @@ import { selectDraftKey } from "./operator-selectors";
 
 export const selectRunAttentionCounts = (items: readonly OperatorInboxItem[]): ReadonlyMap<string, number> => {
   const counts = new Map<string, number>();
-  for (const item of items) counts.set(item.run_id, (counts.get(item.run_id) ?? 0) + 1);
+  for (const item of items) {
+    if (item.kind === "wait") continue;
+    counts.set(item.run_id, (counts.get(item.run_id) ?? 0) + 1);
+  }
   return counts;
 };
 
