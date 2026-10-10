@@ -1117,6 +1117,25 @@ fn publication_trigger_requires_declared_fact() {
     );
 }
 #[test]
+fn agent_publication_trigger_cannot_double_as_an_edit_trigger() {
+    reject(
+        fixture(),
+        |source| {
+            let trigger = source["scopes"][0]["outputs"][0]["publication_trigger"].clone();
+            source["scopes"][0]["outputs"][0]["edit_trigger"] = trigger;
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
+fn output_edit_trigger_requires_a_declared_edit_command() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["outputs"][0]["edit_trigger"] = json!("edit_report"),
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
 fn collection_projection_cannot_read_an_undeclared_output() {
     reject(
         fixture(),

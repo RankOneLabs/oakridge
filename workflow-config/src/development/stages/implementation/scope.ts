@@ -11,6 +11,12 @@ export const implementation = defineScope({
   outcome_schema: "result",
   errors: [{ key: "invalid_command", payload_schema: "text" }],
   commands: [
+    { key: "edit_build_result", payload_schema: "unit", available_in: ["review"], required: false,
+      targets: [], label: "Edit build result", consequence: "publish an edited build result", field_presentation: [] },
+    { key: "edit_pr_summary", payload_schema: "unit", available_in: ["review"], required: false,
+      targets: [], label: "Edit PR summary", consequence: "publish an edited PR summary", field_presentation: [] },
+    { key: "edit_assessment", payload_schema: "unit", available_in: ["assessment_review"], required: false,
+      targets: [], label: "Edit assessment", consequence: "publish an edited assessment", field_presentation: [] },
     { key: "admit", payload_schema: "unit", available_in: ["waiting_admission"], required: true, targets: [],
       label: "Admit", consequence: "admit", field_presentation: [] },
     {
@@ -184,7 +190,8 @@ export const implementation = defineScope({
       policy: { kind: "append_revision" },
       producers: ["build"],
       collection_key: null,
-      publication_trigger: "build_submitted"
+      publication_trigger: "build_submitted",
+      edit_trigger: "edit_build_result"
     },
     {
       key: "pr_summary",
@@ -192,7 +199,8 @@ export const implementation = defineScope({
       policy: { kind: "append_revision" },
       producers: ["build"],
       collection_key: null,
-      publication_trigger: "build_submitted"
+      publication_trigger: "build_submitted",
+      edit_trigger: "edit_pr_summary"
     },
     {
       key: "assessment",
@@ -200,7 +208,8 @@ export const implementation = defineScope({
       policy: { kind: "append_revision" },
       producers: ["assessment"],
       collection_key: null,
-      publication_trigger: "assessment_submitted"
+      publication_trigger: "assessment_submitted",
+      edit_trigger: "edit_assessment"
     }
   ],
   workers: workers,

@@ -11,6 +11,8 @@ export const final_integration = defineScope({
   outcome_schema: "result",
   errors: [{ key: "invalid_command", payload_schema: "text" }],
   commands: [
+    { key: "edit_pr_summary", payload_schema: "unit", available_in: ["review"], required: false,
+      targets: [], label: "Edit PR summary", consequence: "publish an edited PR summary", field_presentation: [] },
     { key: "admit", payload_schema: "unit", available_in: ["waiting_admission"], required: true, targets: [],
       label: "Admit", consequence: "admit", field_presentation: [] },
     {
@@ -106,7 +108,8 @@ export const final_integration = defineScope({
       policy: { kind: "append_revision" },
       producers: ["integrator"],
       collection_key: null,
-      publication_trigger: "submitted"
+      publication_trigger: "submitted",
+      edit_trigger: "edit_pr_summary"
     }
   ],
   workers: workers,

@@ -184,6 +184,20 @@ pub fn validate_bundle(
             schema(bundle, &export.schema)?;
         }
         for output in &owner.outputs {
+            if let Some(edit_trigger) = &output.edit_trigger {
+                if output.publication_trigger.as_ref() == Some(edit_trigger)
+                    || !owner
+                        .commands
+                        .iter()
+                        .any(|command| command.key == *edit_trigger)
+                {
+                    return Err(error(
+                        DomainErrorKind::UndeclaredTrigger,
+                        edit_trigger.to_string(),
+                        "output edit trigger requires a distinct declared command",
+                    ));
+                }
+            }
             let key = output.publication_trigger.as_ref().ok_or_else(|| {
                 error(
                     DomainErrorKind::UnsupportedPublication,

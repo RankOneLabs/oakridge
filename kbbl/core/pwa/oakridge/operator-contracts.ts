@@ -189,7 +189,7 @@ export type OperatorFactDefinition = { readonly "key": string; readonly "payload
 
 export type OperatorExportDefinition = { readonly "key": string; readonly "schema": string };
 
-export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "key": string; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
+export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "edit_trigger"?: string | null; readonly "key": string; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
 
 export type OperatorCapacityPool = { readonly "key": string; readonly "limit": number };
 
