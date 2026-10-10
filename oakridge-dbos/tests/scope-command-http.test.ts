@@ -153,6 +153,13 @@ test("scope API exposes output bodies and observed non-output command targets", 
   } });
 });
 
+test("decision endpoint returns the named scope decision projection", async () => {
+  const api = await harness();
+  const response = await api.app.request("/api/runs/run-1/scopes/scope-1/decision");
+  expect({ status: response.status, body: await response.json() }).toEqual({ status: 200,
+    body: { decision: null, cursor: { scope_version: 4, transition_id: null } } });
+});
+
 test("operator workspace history starts empty for its existing scope", async () => {
   const api = await harness({ operator_workspace: true });
   const response = await api.app.request("/api/runs/run-1/scopes/scope-1/history");

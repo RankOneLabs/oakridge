@@ -19,9 +19,9 @@ export interface ScopeView {
   readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor;
 }
 /** The latest evaluator decision shown beside the scope state. */
-export interface Decision { readonly scope_id: ScopeId; readonly outcome: DecisionOutcome | null; readonly cursor: ProjectionCursor }
+export interface Decision { readonly decision: DecisionOutcome | null; readonly cursor: ProjectionCursor }
 export function selectDecision(view: ScopeView): Decision {
-  return { scope_id: view.scope_id, outcome: view.decision, cursor: view.cursor };
+  return { decision: view.decision, cursor: view.cursor };
 }
 export interface TransitionRow { readonly id: string; readonly decision: DecisionOutcome }
 export function selectAvailableCommands(bundle: DefinitionBundle, scope: ScopeInstanceRecord): readonly CommandDefinition[] {

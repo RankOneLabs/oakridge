@@ -39,7 +39,7 @@ export function makeArtifactDetail(overrides: Partial<OperatorArtifactDetail> = 
 }
 
 export function makeDecision(overrides: Partial<OperatorDecision> = {}): OperatorDecision {
-  return { scope_id: "scope-1", outcome: null, cursor: { scope_version: 1, transition_id: null }, ...overrides };
+  return { decision: null, cursor: { scope_version: 1, transition_id: null }, ...overrides };
 }
 
 export function makeReviewInbox(overrides: Partial<OperatorReviewInbox> = {}): OperatorReviewInbox {

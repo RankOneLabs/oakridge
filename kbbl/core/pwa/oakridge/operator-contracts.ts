@@ -31,7 +31,7 @@ export interface OperatorScopeView {
   readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor;
 }
 
-export interface OperatorDecision { readonly scope_id: string; readonly outcome: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor }
+export interface OperatorDecision { readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor }
 
 export type OperatorInboxItem =
   | { readonly kind: "command"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly key: string; readonly label: string; readonly consequence: string }
