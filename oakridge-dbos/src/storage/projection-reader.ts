@@ -1,6 +1,7 @@
 import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
 import type { TransactionalSqlExecutor } from "./sql-executor";
-import type { RunEventCursor, TransitionEventRow } from "../projections/run-event";
+import type { RunEventCursor } from "../projections/run-event";
+import type { OperatorEventRow } from "../projections/operator-event";
 import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
 import { readScopeObservations } from "./snapshot-reader";
 import { currentPrefill, currentTargetRevisions } from "./command-selection";
@@ -89,15 +90,15 @@ export async function listProjects(db: TransactionalSqlExecutor): Promise<readon
 }
 
 /**
- * Transitions after the cursor in writing-transaction order, limited to
+ * Operator events after the cursor in writing-transaction order, limited to
  * transactions older than every one still open: those are all committed or
  * gone, so no later commit can land behind the cursor.
  */
-export async function readTransitionsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly TransitionEventRow[]> {
-  return db.query<TransitionEventRow>(`SELECT t.id,t.run_id,t.scope_id,s.scope_key,t.decision,t.commit_txid::text AS commit_txid,to_json(t.created_at)#>>'{}' AS created_at
-    FROM authority.transition t JOIN authority.scope_instance s ON s.id=t.scope_id
-    WHERE (t.commit_txid,t.id)>($1::bigint,$2::text) AND t.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint
-    ORDER BY t.commit_txid,t.id LIMIT $3`, [after.commit_txid, after.id, limit]);
+export async function readOperatorEventsAfter(db: TransactionalSqlExecutor, after: RunEventCursor, limit: number): Promise<readonly OperatorEventRow[]> {
+  return db.query<OperatorEventRow>(`SELECT e.id,e.event_key,e.payload,e.commit_txid::text AS commit_txid
+    FROM authority.operator_event e
+    WHERE (e.commit_txid,e.id)>($1::bigint,$2::text) AND e.commit_txid<pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+    ORDER BY e.commit_txid,e.id LIMIT $3`, [after.commit_txid, after.id, limit]);
 }
 /** The oldest open transaction, so a fresh subscriber starts from now rather than replaying history. */
 export async function readLatestEventCursor(db: TransactionalSqlExecutor): Promise<RunEventCursor> {

@@ -17,6 +17,7 @@ import type { Result as SharedResult } from "../domain/primitives";
 import { sealEffectPayload } from "./effect-secret";
 import { revokeStarts } from "./revocation";
 import { validateDecision, validateStorageAuthority } from "./storage-validator";
+import { selectRunEvent, type RunEvent } from "../projections/run-event";
 
 export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string; readonly reason?: CommitRejectionReason }
 /** A storage result: the shared Result with a traced domain error. */
@@ -96,7 +97,7 @@ async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: 
   await revokeStarts(tx, [scope_id], worker);
 }
 
-async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot, definition: { source: DefinitionBundle; checked_program: CompiledBundle }): Promise<CommitReceipt> {
+async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot, definition: { source: DefinitionBundle; checked_program: CompiledBundle }, write_event?: (tx: SqlExecutor, event: RunEvent) => Promise<void>): Promise<CommitReceipt> {
   const scope_id = source.owner.id;
   const execution_ids: string[] = [];
   if (request.decision.kind === "apply") {
@@ -167,15 +168,18 @@ async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: Au
   }
   await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);
   const transition_id = crypto.randomUUID();
-  await tx.query("INSERT INTO authority.transition (id,scope_id,trigger_id,decision) VALUES ($1,$2,$3,$4)", [transition_id, scope_id, source.snapshot.trigger.id, JSON.stringify(request.decision)]);
+  const transitions = await tx.query<{ created_at: string }>("INSERT INTO authority.transition (id,scope_id,trigger_id,decision) VALUES ($1,$2,$3,$4) RETURNING to_json(created_at)#>>'{}' AS created_at", [transition_id, scope_id, source.snapshot.trigger.id, JSON.stringify(request.decision)]);
   await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [scope_id]);
   const owners = await tx.query<{ version: string | number }>("SELECT version FROM authority.scope_instance WHERE id=$1", [scope_id]);
   const receipt = { transition_id, scope_version: Number(owners[0]!.version) };
   await tx.query("INSERT INTO authority.ingress_receipt (id,run_id,scope_id,ingress_id,request_digest,result) VALUES ($1,$2,$3,$4,$5,$6)", [crypto.randomUUID(), request.identity.run_id, scope_id, request.identity.ingress_id, request.identity.request_digest, JSON.stringify(receipt)]);
+  if (write_event) await write_event(tx, selectRunEvent({ id: transition_id, run_id: source.owner.run_id as import("./schema-records").RunId,
+    scope_id: scope_id as ScopeId, scope_key: source.owner.scope_key, decision: request.decision,
+    created_at: transitions[0]?.created_at ?? new Date().toISOString() }));
   return receipt;
 }
 
-export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot): Promise<Result<CommitResult>> {
+export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot, write_event?: (tx: SqlExecutor, event: RunEvent) => Promise<void>): Promise<Result<CommitResult>> {
   const checked = validateDecision(request, source);
   if (!checked.ok) return checked;
   if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "read set owner differs from decision owner" } };
@@ -217,9 +221,9 @@ export async function commitDecision(db: TransactionalSqlExecutor, request: Comm
         ) SELECT id FROM descendants WHERE id=$2`, [request.identity.scope_id, child.source.owner.id]);
         if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
           fail({ kind: "Rejected", reason: "invalid", detail: "cancellation target is not an active owned descendant" });
-        await writeDecision(tx, child.request, child.source, definition);
+        await writeDecision(tx, child.request, child.source, definition, write_event);
       }
-      const committed = await writeDecision(tx, request, source, definition);
+      const committed = await writeDecision(tx, request, source, definition, write_event);
       await measureWrittenSnapshots(tx, source, request.child_cancellations, definition);
       return { kind: "Committed", receipt: committed };
     });
