@@ -2,6 +2,36 @@ import { expect, test } from "bun:test";
 import { withDatabase } from "./effect-fixture";
 import { developmentBundle, runtimeFixture, brief, repository } from "./development-runtime-fixture";
 import { importProjects } from "../scripts/import-projects";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import ts from "typescript";
+
+test("all seven operator read models are reachable in generated PWA contracts", () => {
+  const contracts = readFileSync(resolve(import.meta.dir, "../../kbbl/core/pwa/oakridge/operator-contracts.ts"), "utf8");
+  for (const name of ["RunSummary", "RunDetail", "RunSessionAttempt", "SessionLocation", "ArtifactDetail", "Decision", "ReviewInbox"])
+    expect(contracts).toMatch(new RegExp(`export (?:interface|type) Operator${name}\\b`));
+});
+
+test("PWA read-model fixtures are constructed only in the shared factory", () => {
+  const root = resolve(import.meta.dir, "../../kbbl/core/pwa");
+  const models = new Set(["OperatorRunSummary", "OperatorRunDetail", "OperatorRunSessionAttempt", "OperatorSessionLocation",
+    "OperatorArtifactDetail", "OperatorDecision", "OperatorReviewInbox"]);
+  const files = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory() ? files(resolve(directory, entry.name)) : /\.(?:test|spec)\.tsx?$/.test(entry.name) ? [resolve(directory, entry.name)] : []);
+  for (const file of files(root)) {
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const visit = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && node.initializer && ts.isObjectLiteralExpression(node.initializer)
+        && node.type && ts.isTypeReferenceNode(node.type) && models.has(node.type.typeName.getText(source)))
+        throw new Error(`${file}: construct ${node.type.typeName.getText(source)} with __fixtures__/read-models.ts`);
+      if ((ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) && ts.isObjectLiteralExpression(node.expression)
+        && ts.isTypeReferenceNode(node.type) && models.has(node.type.typeName.getText(source)))
+        throw new Error(`${file}: construct ${node.type.typeName.getText(source)} with __fixtures__/read-models.ts`);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+});
 
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const project = { name: "oakridge", repo_dir: "/home/steve/codes/rol/oakridge", forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" }, integration_branch: "main" };

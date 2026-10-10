@@ -69,6 +69,7 @@ export interface OperatorArtifactDetail {
   readonly predecessor_id: string | null;
   readonly body: OperatorCheckedValue | null;
   readonly status: OperatorArtifactRevisionStatus;
+  readonly presentation: OperatorArtifactPresentation;
 }
 
 export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
@@ -138,6 +139,12 @@ export type OperatorDecisionOutcome = { readonly "explanation": OperatorExplanat
 
 export interface OperatorProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
 
+export interface OperatorArtifactPresentation {
+  readonly artifact_type: string;
+  readonly viewer: "document" | "report";
+  readonly capabilities: OperatorArtifactCapabilities;
+}
+
 export interface OperatorTransitionHistory<Timestamp> extends Omit<OperatorStoredTransitionHistory<Timestamp>, "version"> { readonly version: number }
 
 export interface OperatorScopeFactHistory { readonly id: string; readonly fact_key: string; readonly payload: OperatorCheckedValue }
@@ -194,6 +201,13 @@ export type OperatorExplanation = { readonly "bundle_digest": string; readonly "
 export type OperatorInvocation = { readonly "definition": OperatorInvocationContract; readonly "input": OperatorCheckedValue; readonly "prompt_key"?: string | null; readonly "selection": OperatorActionSelection };
 
 export type OperatorMutationValue = { readonly "kind": "set_state"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "export"; readonly "value": OperatorCheckedValue } | { readonly "input": OperatorCheckedValue; readonly "key": string; readonly "kind": "activate_child" } | { readonly "key": string; readonly "kind": "activate_collection"; readonly "materialization": OperatorMaterialization } | { readonly "key": string; readonly "kind": "cancel_children" } | { readonly "key": string; readonly "kind": "clear_output" } | { readonly "kind": "acquire"; readonly "pool": string } | { readonly "kind": "release"; readonly "pool": string } | { readonly "kind": "revoke"; readonly "worker": string } | { readonly "kind": "stop"; readonly "worker": string } | { readonly "key": string; readonly "kind": "bind_resource"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "clear_resource" } | { readonly "kind": "observe"; readonly "resource": string };
+
+export interface OperatorArtifactCapabilities {
+  readonly reviewable: boolean;
+  readonly commentable: boolean;
+  readonly atom_editable: boolean;
+  readonly review_items: boolean;
+}
 
 export interface OperatorStoredTransitionHistory<Timestamp> {
   readonly id: string; readonly trigger_id: string; readonly decision: OperatorDecisionOutcome;
