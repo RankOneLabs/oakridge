@@ -8,7 +8,8 @@ export const runSchemas: Schema[] = [
     field("analysis", "session_config"),
     field("planning", "session_config"),
     field("briefs", "session_config"),
-    optionalField("title", "text")
+    optionalField("title", "text"),
+    optionalField("slug", "ident")
   ]),
   recordSchema("prepare_member", [field("key", "ident"), field("input", "repo_input"), field("dependencies", "ids")]),
   { key: "prepare_members", shape: { kind: "list", item: "prepare_member", max_items: 100 } },
