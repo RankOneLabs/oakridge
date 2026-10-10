@@ -2,11 +2,10 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Context } from "hono";
 import { KbblExecutorAdapter } from "../adapters/kbbl";
 import type { PinnedSessionStart } from "../adapters/kbbl";
+import type { CollaborationDeliveryRecord } from "../domain/delegated-session";
 import { readIntent } from "../effects/intents";
-import { readCollaborationThreads } from "../projections/collaboration-view";
 import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread,
-  findCollaborationDelivery, readRevisionCollaborationTarget, recordCollaborationDelivery,
-  type CollaborationDeliveryRecord } from "../storage/collaboration";
+  findCollaborationDelivery, readCollaborationThreads, readRevisionCollaborationTarget, recordCollaborationDelivery } from "../storage/mutation-service";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../storage/sql-executor";
 
 export interface CollaborationApiDependencies {

@@ -260,3 +260,6 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
 // Run cancellation/deletion and observed results share the mutation entry.
 export { cancelRun, deleteRun, type ScopeCancellationPayload } from "./run-lifecycle";
 export { persistEffectResult } from "./effect-results";
+/** Collaboration writes share this mutation boundary with scope decisions. */
+export { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread,
+  findCollaborationDelivery, readCollaborationThreads, readRevisionCollaborationTarget, recordCollaborationDelivery } from "./collaboration";

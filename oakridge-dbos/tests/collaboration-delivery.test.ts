@@ -16,11 +16,11 @@ function deliveryDatabase(): { db: SqlExecutor; deliveries: CollaborationDeliver
     ] as unknown as Row[];
     if (sql.includes("INSERT INTO authority.collaboration_delivery")) {
       const stored = { id: args[0], run_id: args[1], scope_id: args[2], message_id: args[3],
-        payload: JSON.parse(args[4] as string), created_at: new Date() } as CollaborationDeliveryRecord;
+        payload: JSON.parse(args[4] as string), created_at: new Date().toISOString() } as CollaborationDeliveryRecord;
       deliveries.push(stored);
       return [stored] as unknown as Row[];
     }
-    if (sql.includes("SELECT * FROM authority.collaboration_delivery"))
+    if (sql.includes("FROM authority.collaboration_delivery WHERE id"))
       return deliveries.filter((delivery) => delivery.id === args[0]) as unknown as Row[];
     throw new Error(`unexpected SQL: ${sql}`);
   } };
