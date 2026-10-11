@@ -221,13 +221,18 @@ fn observation_reads(owner: &ScopeDefinition) -> Vec<ReferenceRoot> {
             Expression::Variant { value, .. }
             | Expression::IsVariant { value, .. }
             | Expression::Not { value }
+            | Expression::Len { value }
             | Expression::Field { value, .. } => expression(value, roots),
             Expression::Optional { value, .. } => {
                 if let Some(value) = value {
                     expression(value, roots);
                 }
             }
-            Expression::Equals { left, right } => {
+            Expression::Equals { left, right }
+            | Expression::GreaterThan { left, right }
+            | Expression::GreaterOrEqual { left, right }
+            | Expression::LessThan { left, right }
+            | Expression::LessOrEqual { left, right } => {
                 expression(left, roots);
                 expression(right, roots);
             }

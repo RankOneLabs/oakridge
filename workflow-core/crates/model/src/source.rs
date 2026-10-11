@@ -435,6 +435,11 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    Len { value: Box<Expression> },
+    GreaterThan { left: Box<Expression>, right: Box<Expression> },
+    GreaterOrEqual { left: Box<Expression>, right: Box<Expression> },
+    LessThan { left: Box<Expression>, right: Box<Expression> },
+    LessOrEqual { left: Box<Expression>, right: Box<Expression> },
     IsVariant {
         value: Box<Expression>,
         variant: String,
