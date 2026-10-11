@@ -14,7 +14,7 @@ const selection = { definition: { operation: "run", contract_version: 1, deadlin
   max_attempts: 2, outputs: [], settings: [], tools: [] }, input: { schema: "input", data: { kind: "string", value: "pinned" } },
   selection: { worker: "agent", action: "build" } } satisfies Invocation;
 const start: EffectPayload = { action: "start", handle: null,
-  invocation: selectedInvocation("invocation" as InvocationId, "execution", selection) };
+  invocation: selectedInvocation("invocation" as InvocationId, "execution", selection, null) };
 process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 async function prepare(db: TransactionalSqlExecutor, payload: EffectPayload, provider: EffectProvider): Promise<void> {
   await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
@@ -86,4 +86,27 @@ test("persisted definite failures settle reservations without creating cleanup o
   const stops = await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.effect_intent WHERE payload->>'action'='stop'", []);
   expect({ calls, cleanup: await pendingCleanupCount(db, "run"), stops: stops[0]?.count })
     .toEqual({ calls: 2, cleanup: 0, stops: "0" });
+}));
+
+test("start retry replays pinned settings after the project policy changes", async () => withDatabase(async ({ db }) => {
+  const settings = { runtime: "codex" as const, model: "gpt-6-sol", effort: "high", policy_version: 1 };
+  const invocation = selectedInvocation("pinned" as InvocationId, "execution", selection, settings);
+  const payload: EffectPayload = { action: "start", handle: null, invocation };
+  const seen: string[] = [];
+  await prepare(db, payload, { ...idle, start: async (selected) => {
+    seen.push(selected.bytes);
+    return seen.length === 1 ? { kind: "transiently_unavailable", detail: "busy" }
+      : { kind: "acknowledged", value: { kind: "kbbl_session", session_id: "session" } };
+  } });
+  await db.query("INSERT INTO authority.project (id,name,repo_dir,session_policy) VALUES ('project','Replay','/tmp',$1)",
+    [JSON.stringify({ version: 1, entries: [] })]);
+  await db.query("UPDATE authority.run SET project_id='project' WHERE id='run'", []);
+  const first = await performStartAttempt("start");
+  if (!first || first.kind !== "retry") throw new Error("first start must be retryable");
+  await persistEffectResult(db, { intent_id: "start", status: "pending", payload: first.payload, terminal_result: null });
+  await db.query("UPDATE authority.project SET session_policy=$1 WHERE id='project'", [JSON.stringify({ version: 2, entries: [] })]);
+  const second = await performStartAttempt("start");
+  expect(second?.kind).toBe("acknowledged");
+  expect(seen).toEqual([invocation.bytes, invocation.bytes]);
+  expect(JSON.parse(seen[1]!).session_settings).toEqual(settings);
 }));

@@ -2,6 +2,9 @@ import { observationRootKey, selectObservationRoots } from "../core-client/obser
 import type { CheckedValue, CompiledBundle, DefinitionBundle, ReferenceRoot, Snapshot, Trigger, VersionedValue } from "../core-client/generated-contracts";
 import type { CapacityPoolRecord, OutputSlotRecord, RevisionId, ResourceBindingRecord, ScopeExportRecord, ScopeId, ScopeInstanceRecord } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import type { SessionPolicy } from "../domain/session-settings";
+import { policyFromRunInput } from "../domain/run-session-policy";
+import { plainValue } from "../core-client/plain-value";
 
 export const READ_RELATIONS = ["scope_instance", "scope_export", "child_collection", "execution_selection", "execution", "output_slot", "artifact_revision", "resource_binding", "capacity_pool", "capacity_reservation"] as const;
 export type ReadRelation = typeof READ_RELATIONS[number];
@@ -9,11 +12,44 @@ export type ReadRelation = typeof READ_RELATIONS[number];
 export const CAPACITY_READ_RELATIONS: readonly ReadRelation[] = ["capacity_pool", "capacity_reservation"];
 export interface ReadWitness { readonly relation: ReadRelation; readonly id: string; readonly version: number }
 export interface MembershipWitness { readonly relation: ReadRelation; readonly run_id: string; readonly signature: string }
-export interface ReadSet { readonly scope_id: ScopeId; readonly pool_keys: readonly string[]; readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[] }
+export interface PolicyWitness { readonly relation: "session_policy"; readonly id: string; readonly version: number }
+export interface ReadSet { readonly scope_id: ScopeId; readonly pool_keys: readonly string[]; readonly rows: readonly ReadWitness[]; readonly membership: readonly MembershipWitness[]; readonly policy: PolicyWitness }
 export interface AuthoritySnapshot { readonly snapshot: Snapshot; readonly reads: readonly ReferenceRoot[]; readonly read_set: ReadSet; readonly owner: ScopeInstanceRecord; readonly pools: readonly CapacityPoolRecord[]; readonly current_outputs: readonly CurrentOutput[] }
 export interface CurrentOutput extends OutputSlotRecord { readonly current_revision_id: RevisionId; readonly body: VersionedValue["value"] }
 interface ImportedExport extends ScopeExportRecord { readonly child_key: string; readonly child_id: string; readonly collection_key: string | null }
 interface VersionRow { readonly id: string; readonly version: string | number }
+interface RunPolicyRow { readonly run_id: string; readonly project_id: string | null; readonly session_policy: SessionPolicy | null }
+interface RootSessionInputRow { readonly input: CheckedValue; readonly source: DefinitionBundle }
+
+function hasRunSessionInput(bundle: DefinitionBundle): boolean {
+  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+  const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
+  if (shape?.kind !== "record") return false;
+  const sessions = shape.fields.find((field) => field.key === "sessions");
+  const session_shape = bundle.schemas.find((schema) => schema.key === sessions?.schema)?.shape;
+  return session_shape?.kind === "record" && ["planner", "worker"].every((key) =>
+    session_shape.fields.some((field) => field.key === key && field.schema === "session_settings"));
+}
+
+export async function readRunPolicy(tx: SqlExecutor, run_id: string): Promise<{ readonly policy: SessionPolicy; readonly witness: PolicyWitness }> {
+  const row = (await tx.query<RunPolicyRow>("SELECT r.id AS run_id,p.id AS project_id,p.session_policy FROM authority.run r LEFT JOIN authority.project p ON p.id=r.project_id WHERE r.id=$1", [run_id]))[0];
+  if (!row) throw new Error(`run ${run_id} missing while reading session policy`);
+  const root = (await tx.query<RootSessionInputRow>(`SELECT s.input,d.source FROM authority.scope_instance s
+    JOIN authority.run r ON r.id=s.run_id JOIN authority.definition_bundle d ON d.id=r.definition_bundle_id
+    WHERE s.run_id=$1 AND s.parent_id IS NULL LIMIT 1`, [run_id]))[0];
+  let run_policy: SessionPolicy = { version: 0, entries: [] };
+  if (root && hasRunSessionInput(root.source)) {
+    const input = plainValue(root.input, root.source);
+    if (!input.ok) throw new Error(`${input.error.operation}: ${input.error.detail}`);
+    const parsed = policyFromRunInput(input.value);
+    if (!parsed.ok) throw new Error(`${parsed.error.entity_id}: ${parsed.error.detail}`);
+    run_policy = parsed.value;
+  }
+  const project_policy = row.session_policy;
+  const policy: SessionPolicy = { version: project_policy?.version ?? 0,
+    entries: [...run_policy.entries, ...(project_policy?.entries ?? [])] };
+  return { policy, witness: { relation: "session_policy", id: row.project_id ?? row.run_id, version: policy.version } };
+}
 
 const membershipSql: { readonly [Relation in ReadRelation]: string } = {
   scope_instance: "SELECT id,version FROM authority.scope_instance WHERE id=ANY($1::text[]) ORDER BY id",
@@ -41,7 +77,8 @@ export async function readWitnesses(tx: SqlExecutor, run_id: string, scope_id: S
     membership.push({ relation, run_id, signature });
     for (const row of found) rows.push({ relation, id: row.id, version: Number(row.version) });
   }
-  return { scope_id, pool_keys, rows, membership };
+  const { witness: policy } = await readRunPolicy(tx, run_id);
+  return { scope_id, pool_keys, rows, membership, policy };
 }
 
 interface ScopeObservations { readonly observations: VersionedValue[]; readonly current_outputs: readonly CurrentOutput[] }
@@ -132,5 +169,7 @@ export async function hasSameReadSet(tx: SqlExecutor, read_set: ReadSet): Promis
   if (!run_id || read_set.membership.length !== expected_relations.length
     || expected_relations.some((relation) => !read_set.membership.some((item) => item.relation === relation))) return false;
   const current = await readWitnesses(tx, run_id, read_set.scope_id, read_set.pool_keys);
-  return current.membership.every((item, index) => item.relation === read_set.membership[index]?.relation && item.signature === read_set.membership[index]?.signature);
+  return current.policy.relation === read_set.policy?.relation && current.policy.id === read_set.policy.id
+    && current.policy.version === read_set.policy.version
+    && current.membership.every((item, index) => item.relation === read_set.membership[index]?.relation && item.signature === read_set.membership[index]?.signature);
 }

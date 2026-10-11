@@ -20,6 +20,19 @@ export interface PromptGroup {
 }
 export type StageTable = readonly StageRow[];
 
+/** A child's automatic entry consults only its pinned input; admission is an operator command. */
+export function admissionGate(stage: string, phase: string, begin: DecisionTree): DecisionTree {
+  const flag = reference({ kind: "input" }, ["admission", stage]);
+  const start = (suffix: string): DecisionTree => ({ ...begin, id: `${stage}_begin_${suffix}` });
+  const waiting: DecisionTree = { kind: "apply", id: `${stage}_await_admission`,
+    mutations: [{ kind: "set_state", value: variant({ schema: phase, variant: "waiting_admission", value: literal("unit", {}) }) }],
+    actions: [], outcome: null };
+  return { kind: "match", id: `${stage}_admission_flag_present`, value: flag,
+    cases: [{ variant: "some", node: { kind: "if", id: `${stage}_admission_required`,
+      condition: { kind: "equals", left: flag, right: literal("flag", true) },
+      then: waiting, otherwise: start("without_gate") } }], otherwise: start("flag_unset") };
+}
+
 /** Ordered stages are the source for child dependencies, completion routing and cancellation. */
 export const STAGE_TABLE: StageTable = [
   { key: "prepare", phase: "preparing", next_phase: "analyzing", next_child: "analysis", completion: "standard", dependencies: [], prompt_groups: [], child: {
@@ -58,7 +71,8 @@ export const STAGE_TABLE: StageTable = [
           value: reference({ kind: "children", key: "prepare", export: "references", schema: "repository_refs" }, [])
         },
         { key: "analysis", value: optional("optional_analysis", null) },
-        { key: "plan", value: optional("optional_plan", null) }
+        { key: "plan", value: optional("optional_plan", null) },
+        { key: "admission", value: reference({ kind: "input" }, ["admission"]) }
       ]),
       imports: ["accepted", "body"],
       collection: null,
@@ -76,7 +90,8 @@ export const STAGE_TABLE: StageTable = [
           value: reference({ kind: "children", key: "prepare", export: "references", schema: "repository_refs" }, [])
         },
         { key: "analysis", value: optional("optional_analysis", reference({ kind: "child", key: "analysis", export: "body" }, [])) },
-        { key: "plan", value: optional("optional_plan", null) }
+        { key: "plan", value: optional("optional_plan", null) },
+        { key: "admission", value: reference({ kind: "input" }, ["admission"]) }
       ]),
       imports: ["accepted", "body"],
       collection: null,
@@ -94,7 +109,8 @@ export const STAGE_TABLE: StageTable = [
           value: reference({ kind: "children", key: "prepare", export: "references", schema: "repository_refs" }, [])
         },
         { key: "analysis", value: optional("optional_analysis", reference({ kind: "child", key: "analysis", export: "body" }, [])) },
-        { key: "plan", value: optional("optional_plan", reference({ kind: "child", key: "plan", export: "body" }, [])) }
+        { key: "plan", value: optional("optional_plan", reference({ kind: "child", key: "plan", export: "body" }, [])) },
+        { key: "admission", value: reference({ kind: "input" }, ["admission"]) }
       ]),
       imports: ["accepted", "briefs"],
       collection: null,
@@ -150,7 +166,8 @@ export const STAGE_TABLE: StageTable = [
                     },
                     key: "push_remote_owner"
                   }
-                }
+                },
+                { key: "admission", value: reference({ kind: "input" }, ["admission"]) }
               ])
             },
             { key: "dependencies", value: reference({ kind: "item" }, ["depends_on"]) }
@@ -196,7 +213,9 @@ export const STAGE_TABLE: StageTable = [
                   }
                 },
                 { key: "forge", value: reference({ kind: "item" }, ["forge"]) },
-                { key: "push_remote_owner", value: reference({ kind: "item" }, ["push_remote_owner"]) }
+                { key: "push_remote_owner", value: reference({ kind: "item" }, ["push_remote_owner"]) },
+                { key: "admission", value: reference({ kind: "input" }, ["admission"]) },
+                { key: "final_merge_policy", value: reference({ kind: "input" }, ["final_merge_policy"]) }
               ])
             },
             { key: "dependencies", value: literal("ids", []) }
@@ -336,10 +355,17 @@ function integrationGate(table: StageTable, row: StageRow): DecisionTree {
   if (!implementation) throw new Error("Integration requires an implementation stage");
   const complete: DecisionTree = { kind: "apply", id: "root_complete", mutations: [], actions: [],
     outcome: variant({ schema: "run_result", variant: "complete", value: literal("unit", {}) }) };
+  const closed: DecisionTree = { kind: "apply", id: "root_closed_without_merge", mutations: [], actions: [],
+    outcome: variant({ schema: "run_result", variant: "closed_without_merge", value: literal("unit", {}) }) };
+  const anyClosed: DecisionTree = { kind: "if", id: "integration_any_closed_without_merge",
+    condition: { kind: "not", value: { kind: "every",
+      source: reference({ kind: "children", key: row.key, export: "accepted", schema: "flags" }, []),
+      predicate: { kind: "equals", left: reference({ kind: "item" }, []), right: literal("flag", true) } } },
+    then: closed, otherwise: complete };
   const aggregate: DecisionTree = { kind: "apply", id: "root_aggregate_failures", mutations: [], actions: [],
     outcome: failureOutcome(implementation.key) };
   const allImplementations: DecisionTree = { kind: "if", id: "all_implementations_success",
-    condition: allSuccessful(implementation.key), then: complete, otherwise: aggregate };
+    condition: allSuccessful(implementation.key), then: anyClosed, otherwise: aggregate };
   const success: DecisionTree = { kind: "if", id: "integration_success", condition: allSuccessful(row.key),
     then: allImplementations, otherwise: failure(table, row, "integration_failure", implementation.key) };
   const terminal: DecisionTree = { kind: "if", id: "integration_all_terminal",

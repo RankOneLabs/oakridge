@@ -1027,23 +1027,63 @@ fn prompt_content_digest_is_part_of_bundle_pin() {
     );
 }
 
+/// One RFC 6902 operation; the invalid corpus needs only these three.
+#[derive(serde::Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum PatchOperation {
+    Add { path: String, value: Value },
+    Remove { path: String },
+    Replace { path: String, value: Value },
+}
+
+impl PatchOperation {
+    fn apply(self, document: &mut Value) {
+        let (path, value) = match self {
+            PatchOperation::Add { path, value } => (path, Some((value, true))),
+            PatchOperation::Replace { path, value } => (path, Some((value, false))),
+            PatchOperation::Remove { path } => (path, None),
+        };
+        let (parent, token) = path.rsplit_once('/').unwrap();
+        let token = token.replace("~1", "/").replace("~0", "~");
+        match (document.pointer_mut(parent).unwrap(), value) {
+            (Value::Array(items), Some((value, true))) => {
+                items.insert(token.parse().unwrap(), value)
+            }
+            (Value::Array(items), Some((value, false))) => {
+                items[token.parse::<usize>().unwrap()] = value
+            }
+            (Value::Array(items), None) => drop(items.remove(token.parse().unwrap())),
+            (Value::Object(fields), Some((value, _))) => drop(fields.insert(token, value)),
+            (Value::Object(fields), None) => drop(fields.remove(&token)),
+            (other, _) => panic!("{path}: parent is not a container: {other}"),
+        }
+    }
+}
+
 #[test]
 fn invalid_shared_corpus_has_stable_diagnostic_kinds() {
     #[derive(serde::Deserialize)]
     struct InvalidCase {
-        file: String,
+        case: String,
+        base: String,
         expected: DomainErrorKind,
+        patch: Vec<PatchOperation>,
     }
     let cases: Vec<InvalidCase> =
-        serde_json::from_str(include_str!("../../../fixtures/invalid/manifest.json")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/invalid");
+        serde_json::from_str(include_str!("../../../fixtures/invalid.json")).unwrap();
+    let bundles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/bundles");
     for case in cases {
-        let b = decode_bundle(&std::fs::read(root.join(&case.file)).unwrap()).unwrap();
+        let base = std::fs::read(bundles.join(format!("{}.json", case.base))).unwrap();
+        let mut source: Value = serde_json::from_slice(&base).unwrap();
+        for operation in case.patch {
+            operation.apply(&mut source);
+        }
+        let b = decode_bundle(&serde_json::to_vec(&source).unwrap()).unwrap();
         assert_eq!(
             compile(&b, &b.operations).unwrap_err().kind,
             case.expected,
             "{}",
-            case.file
+            case.case
         );
     }
 }
@@ -1113,6 +1153,25 @@ fn publication_trigger_requires_declared_fact() {
     reject(
         fixture(),
         |source| source["scopes"][0]["outputs"][0]["publication_trigger"] = json!("undeclared"),
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
+fn agent_publication_trigger_cannot_double_as_an_edit_trigger() {
+    reject(
+        fixture(),
+        |source| {
+            let trigger = source["scopes"][0]["outputs"][0]["publication_trigger"].clone();
+            source["scopes"][0]["outputs"][0]["edit_trigger"] = trigger;
+        },
+        DomainErrorKind::UndeclaredTrigger,
+    );
+}
+#[test]
+fn output_edit_trigger_requires_a_declared_edit_command() {
+    reject(
+        fixture(),
+        |source| source["scopes"][0]["outputs"][0]["edit_trigger"] = json!("edit_report"),
         DomainErrorKind::UndeclaredTrigger,
     );
 }

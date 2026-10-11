@@ -113,7 +113,7 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
       ingress_id: body.request_id, operator_version: null, trigger: { id: body.request_id, key, payload: trigger.value.value },
       outputs: [{ scope_id, output_key, collection_key: body.collection_key, body: checked.value.value,
         revision_id, predecessor_id: body.predecessor_id, expected_slot_version: slot ? Number(slot.version) : null, execution_id }] });
-    if (!result.ok) return c.json({ error: result.error }, 422);
+    if (!result.ok) return c.json({ error: result.error }, result.error.operation === "validate_publication_protocol" ? 500 : 422);
     if (result.value.kind === "Conflict") return c.json(result.value, 409);
     if (result.value.kind === "Rejected") return c.json(result.value, 422);
     if (result.value.kind === "snapshot_too_large") return c.json(result.value, 413);

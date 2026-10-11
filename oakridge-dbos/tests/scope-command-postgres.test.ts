@@ -57,7 +57,7 @@ async function withAuthority(operation: (authority: TestAuthority) => Promise<vo
     await operation({ db, core, mutations, bundle, run, database_url: url.href, request, closeReaders });
   } finally {
     await closeReaders();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end();
+    await admin.query(`DROP DATABASE ${name}`); await admin.end();
   }
 }
 function api(authority: TestAuthority, mutations = authority.mutations): Hono {

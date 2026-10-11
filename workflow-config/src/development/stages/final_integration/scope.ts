@@ -11,6 +11,10 @@ export const final_integration = defineScope({
   outcome_schema: "result",
   errors: [{ key: "invalid_command", payload_schema: "text" }],
   commands: [
+    { key: "edit_pr_summary", payload_schema: "unit", available_in: ["review"], required: false,
+      targets: [], label: "Edit PR summary", consequence: "publish an edited PR summary", field_presentation: [] },
+    { key: "admit", payload_schema: "unit", available_in: ["waiting_admission"], required: true, targets: [],
+      label: "Admit", consequence: "admit", field_presentation: [] },
     {
       key: "begin",
       payload_schema: "unit",
@@ -53,6 +57,12 @@ export const final_integration = defineScope({
       field_presentation: [],
       prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) }, { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) }, { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }]
     },
+    { key: "closed_without_merge", payload_schema: "final_target", available_in: ["review"], required: true,
+      targets: [reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, [])],
+      label: "Close without merge", consequence: "close without merge", field_presentation: [],
+      prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "pr_summary", schema: "revision" }, []) },
+        { key: "pr_url", value: reference({ kind: "resource", key: "pull_request" }, ["url"]) },
+        { key: "head_sha", value: reference({ kind: "resource", key: "pull_request" }, ["head_sha"]) }] },
     {
       key: "cancel",
       payload_schema: "unit",
@@ -98,7 +108,8 @@ export const final_integration = defineScope({
       policy: { kind: "append_revision" },
       producers: ["integrator"],
       collection_key: null,
-      publication_trigger: "submitted"
+      publication_trigger: "submitted",
+      edit_trigger: "edit_pr_summary"
     }
   ],
   workers: workers,

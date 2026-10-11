@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { repository } from "./development-runtime-fixture";
+import { brief, repository } from "./development-runtime-fixture";
 import { CoreClient } from "../src/core-client/client";
 import { promptWithActionInput } from "../src/effects/operations/selected-request";
+import { pinProviderRequest, resolveSelectedSessionSettings } from "../src/effects/operations/selected-request";
+import { selectedInvocation, type InvocationId } from "../src/effects/provider";
+import type { RunId, ScopeId } from "../src/storage/schema-records";
 import { readAuthoredPrompt } from "../src/storage/prompt-content";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { DefinitionSummary } from "../src/projections/definition-view";
@@ -116,11 +119,41 @@ test("development prompt lookup preserves the rendered prompt bytes", () => {
   expect(promptWithActionInput(reread.value.content, action_input)).toBe(previous);
 });
 
+test("selected child session pins policy model and effort in the provider bytes", async () => {
+  const core = client();
+  try {
+    const action = bundle.scopes.find((scope) => scope.key === "implementation")!.workers.find((worker) => worker.key === "build")!.actions.find((item) => item.operation === "session.run")!;
+    const input = await checked(core, "session_action", { selector: { stage_key: "implementation", cohort_key: "c02", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    const selection = { definition: action, selection: { worker: "build", action: action.key }, input };
+    const scope = { id: "child" as ScopeId, run_id: "run" as RunId, scope_key: "implementation", child_key: "c02", collection_key: "cohorts" };
+    const policy = { version: 3, entries: [{ selector: { kind: "cohort" as const, stage_key: "implementation", cohort_key: "c02" },
+      settings: { runtime: null, model: "gpt-6-sol", effort: "high" } }] };
+    const settings = resolveSelectedSessionSettings(bundle, selection, scope, policy);
+    expect(settings).toMatchObject({ ok: true, value: { model: "gpt-6-sol", effort: "high", policy_version: 3 } });
+    const mismatched = await checked(core, "session_action", { selector: { stage_key: "planning", cohort_key: "c02", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    expect(resolveSelectedSessionSettings(bundle, { ...selection, input: mismatched }, scope, policy))
+      .toMatchObject({ ok: false, error: { detail: "session selector disagrees with selected action" } });
+    const wrong_cohort = await checked(core, "session_action", { selector: { stage_key: "implementation", cohort_key: "c01", worker_key: "build", action_key: action.key },
+      config: { runtime: "codex", workdir: "/tmp", session_name: "build" }, context: {} });
+    expect(resolveSelectedSessionSettings(bundle, { ...selection, input: wrong_cohort }, scope, policy))
+      .toMatchObject({ ok: false, error: { detail: "session selector disagrees with selected action" } });
+    if (!settings.ok) throw new Error(settings.error.detail);
+    const selected = selectedInvocation("invocation" as InvocationId, "execution", selection, settings.value);
+    const pinned = pinProviderRequest({ invocation: selected, bundle, prompts: new Map([[action.prompt!, "Build the cohort"]]), scope, publication_secret: "secret" });
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) throw new Error(pinned.error.detail);
+    expect(pinned.value.session_settings).toEqual(settings.value);
+    expect(JSON.parse(pinned.value.bytes)).toMatchObject({ runtime: "codex", model: "gpt-6-sol", effort: "high" });
+  } finally { core.close(); }
+});
+
 test("root selects repository preparation from the repository configuration collection", async () => {
   const core = client();
   try {
     const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
-    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [repository], analysis: config, planning: config, briefs: config });
+    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [repository], analysis: config, planning: config, briefs: config, admission: {}, final_merge_policy: "require_merge" });
     const result = await core.request("evaluate", { bundle,
       snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
     expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "apply", mutations: expect.arrayContaining([expect.objectContaining({ kind: "activate_collection", key: "prepare" })]) } } });
@@ -131,9 +164,68 @@ test("a run that names no repository is refused at begin rather than starting an
   const core = client();
   try {
     const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
-    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config });
+    const root_input = await checked(core, "run_input", { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config, admission: {}, final_merge_policy: "require_merge" });
     const result = await core.request("evaluate", { bundle,
       snapshot: snapshot("development", root_input, "phase_root", "ready", "begin") });
     expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "reject", error: "invalid_command" } } });
+  } finally { core.close(); }
+});
+
+test("each configured admission flag waits for admit and an unset flag begins work", async () => {
+  const core = client();
+  const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
+  const task = { config, spec: "Feature", repositories: [repository], repository_refs: [], analysis: null, plan: null };
+  const inputs = [
+    { key: "spec_analysis", schema: "task_input", phase: "phase_review", value: task },
+    { key: "planning", schema: "task_input", phase: "phase_review", value: task },
+    { key: "brief_writing", schema: "task_input", phase: "phase_review", value: task },
+    { key: "implementation", schema: "implementation_input", phase: "phase_impl", value: { brief, repository, push_remote_owner: "owner" } },
+    { key: "final_integration", schema: "integration_input", phase: "phase_final", value: { repository_key: "repo", config, completed_work: [], forge: repository.forge, push_remote_owner: "owner", final_merge_policy: "require_merge" } },
+  ] as const;
+  try {
+    for (const stage of inputs) {
+      const definition = bundle.scopes.find((scope) => scope.key === stage.key)!;
+      expect(definition.commands.filter((command) => command.available_in.includes("waiting_admission")).map((command) => command.key)).toEqual(["admit"]);
+      for (const admission of [{}, { [stage.key]: true }]) {
+        const input = await checked(core, stage.schema, { ...stage.value, admission });
+        const result = await core.request("evaluate", { bundle, snapshot: snapshot(stage.key, input, stage.phase, "ready", "begin") });
+        if (!result.ok || result.value.kind !== "evaluated" || result.value.value.kind !== "apply") throw new Error(JSON.stringify(result));
+        expect(result.value.value.mutations.find((mutation) => mutation.kind === "set_state"))
+          .toMatchObject({ value: { data: { variant: stage.key in admission ? "waiting_admission" : "working" } } });
+        if (stage.key in admission) {
+          const admitted = await core.request("evaluate", { bundle, snapshot: snapshot(stage.key, input, stage.phase, "waiting_admission", "admit") });
+          if (!admitted.ok || admitted.value.kind !== "evaluated" || admitted.value.value.kind !== "apply") throw new Error(JSON.stringify(admitted));
+          expect(admitted.value.value.mutations.find((mutation) => mutation.kind === "set_state"))
+            .toMatchObject({ value: { data: { variant: "working" } } });
+        }
+      }
+    }
+  } finally { core.close(); }
+});
+
+test("session and provider start failures leave each affected stage working with retry available", async () => {
+  const core = client();
+  const config = { runtime: "codex", workdir: "/tmp", session_name: "development" };
+  const task = { config, spec: "Feature", repositories: [repository], repository_refs: [], analysis: null, plan: null, admission: {} };
+  const inputs = [
+    { key: "repository_preparation", schema: "repo_input", phase: "phase_simple", value: repository.preparation, facts: ["provider_start_failed"], retry: "retry_preparation" },
+    { key: "spec_analysis", schema: "task_input", phase: "phase_review", value: task, facts: ["session_failed"], retry: "retry" },
+    { key: "planning", schema: "task_input", phase: "phase_review", value: task, facts: ["session_failed"], retry: "retry" },
+    { key: "brief_writing", schema: "task_input", phase: "phase_review", value: task, facts: ["session_failed"], retry: "retry" },
+    { key: "implementation", schema: "implementation_input", phase: "phase_impl", value: { brief, repository, push_remote_owner: "owner", admission: {} }, facts: ["session_failed", "provider_start_failed"], retry: "retry_build" },
+    { key: "final_integration", schema: "integration_input", phase: "phase_final", value: { repository_key: "repo", config, completed_work: [], forge: repository.forge, push_remote_owner: "owner", admission: {}, final_merge_policy: "require_merge" }, facts: ["session_failed", "provider_start_failed"], retry: "retry" },
+  ] as const;
+  try {
+    const detail = await checked(core, "text", "provider failed");
+    for (const stage of inputs) {
+      const definition = bundle.scopes.find((scope) => scope.key === stage.key)!;
+      expect(definition.commands.find((command) => command.key === stage.retry)?.available_in).toContain("working");
+      const input = await checked(core, stage.schema, stage.value);
+      for (const fact of stage.facts) {
+        const result = await core.request("evaluate", { bundle,
+          snapshot: snapshot(stage.key, input, stage.phase, "working", fact, detail) });
+        expect(result).toMatchObject({ ok: true, value: { kind: "evaluated", value: { kind: "wait" } } });
+      }
+    }
   } finally { core.close(); }
 });

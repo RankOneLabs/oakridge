@@ -19,7 +19,7 @@ export const brief = { cohort_id: "first", repository_key: "repo", title: "Build
 export const build_body = { repository_key: "repo", summary: "Built", changed_files: ["src"], tests: { passed: 1, failed: 0, output: null, summary: null, cargo_test_output: null }, delegated_session_metadata: { cohort_id: "first", session_id: null, branch: "work" }, known_issues: [] };
 export const pr_body = { pr_url: "https://github.com/owner/repo/pull/1", branch: "work", summary: "Feature", review_status: null };
 export const forge = { provider: "github", owner: "owner", name: "repo", number: 1, url: pr_body.pr_url, head_branch: "work", base_branch: "cohort", head_sha: "head1", state: "open", source: "forge", observed_at: "2026-10-05", merged_at: null };
-export const launch = { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session };
+export const launch = { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: {}, final_merge_policy: "require_merge" };
 export async function developmentBundle(root = "implementation", independent = false): Promise<DefinitionBundle> {
   const source: DefinitionBundle = await Bun.file(resolve(import.meta.dir, `../../workflow-config/definitions/development${independent ? "-independent-siblings" : ""}.json`)).json();
   return { ...source, root, scopes: root === source.root ? source.scopes : source.scopes.filter((scope) => scope.key === root) };
@@ -30,7 +30,7 @@ export async function runtimeFixture(db: TransactionalSqlExecutor, bundle: Defin
   const core = started.value;
   const mutations = createMutationService(db, core, { check_github: async () => ({ ok: true, value: true }) });
   const scoped_input = bundle.root === "implementation" && input && typeof input === "object" && !Array.isArray(input)
-    ? { ...input, push_remote_owner: repository.forge.owner } : input;
+    ? { admission: {}, ...input, push_remote_owner: repository.forge.owner } : input;
   const run = await mutations.startRun({ bundle, input: scoped_input });
   if (!run.ok) { core.close(); throw new Error(JSON.stringify(run.error)); }
   const app = new Hono();

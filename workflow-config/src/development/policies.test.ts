@@ -8,6 +8,46 @@ import { buildRootDispatch } from "./run/decisions";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { buildBundle } from "../build-bundle";
+import type { WorkflowAuthoring } from "../authoring";
+
+test("versioned authoring survives JSON serialization with identical bundle bytes", () => {
+  const authored: WorkflowAuthoring = { authoring_version: 1, template: "development",
+    key: VERIFICATION_POLICY.key, implementation_capacity: VERIFICATION_POLICY.implementation_capacity,
+    sibling_failure: VERIFICATION_POLICY.sibling_failure, wire_field_order: VERIFICATION_POLICY.contract_field_order,
+    stage_layout: "verification" };
+  const first = buildBundle(authored);
+  const second = buildBundle(JSON.parse(JSON.stringify(authored)));
+  expect(first.ok && second.ok ? JSON.stringify(first.value) === JSON.stringify(second.value) : false).toBe(true);
+});
+
+test("invalid authoring identifies the offending field", () => {
+  const result = buildBundle({ authoring_version: 1, template: "development", key: "development",
+    implementation_capacity: 0, sibling_failure: "cancel", wire_field_order: "canonical", stage_layout: "standard" });
+  expect(result.ok ? null : result.error.field_path).toBe("implementation_capacity");
+});
+
+test("prompt bindings target a fixed stage action and report unknown controls", () => {
+  const base = { authoring_version: 1, template: "development", key: "development",
+    implementation_capacity: 4, sibling_failure: "cancel", wire_field_order: "canonical", stage_layout: "standard" };
+  const binding = { stage_key: "analysis", worker_key: "author", action_key: "initial", prompt_key: "planning_author_initial_v3" };
+  const changed = buildBundle({ ...base, prompt_bindings: [binding] });
+  expect(changed.ok ? changed.value.scopes.find((scope) => scope.key === "spec_analysis")?.workers[0]?.actions[0]?.prompt : null)
+    .toBe("planning_author_initial_v3");
+  const invalid = buildBundle({ ...base, prompt_bindings: [{ ...binding, stage_key: "missing" }] });
+  expect(invalid.ok ? null : invalid.error.field_path).toBe("prompt_bindings[0].stage_key");
+});
+
+test("buildBundle is the only module that calls defineBundle", async () => {
+  const glob = new Bun.Glob("**/*.{ts,tsx}");
+  const root = resolve(import.meta.dir, "../../..");
+  const packages = ["workflow-config", "oakridge-dbos", "kbbl"];
+  const callers = packages.flatMap((pack) => [...glob.scanSync(resolve(root, pack))]
+    .map((path) => `${pack}/${path}`))
+    .filter((path) => path !== "workflow-config/src/builder.ts"
+      && /\bdefineBundle\s*\(/.test(readFileSync(resolve(root, path), "utf8")));
+  expect(callers).toEqual(["workflow-config/src/build-bundle.ts"]);
+});
 
 test("stage table regenerates the shipped completion gates", () => {
   const root = buildDevelopmentRun(DEVELOPMENT_POLICY).scopes.find((scope) => scope.key === "development");

@@ -2,8 +2,8 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt } from "./operator-contracts";
-import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow } from "./operator-contracts";
+import type { WorkflowAuthoring } from "../../../../workflow-config/src/authoring";
 import type { OperatorCommandSubmission } from "./lib/operator-drafts";
 
 export { selectFailureDetail } from "./lib/client-errors";
@@ -44,7 +44,22 @@ export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
 export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
 export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
+
+const revisionThreadsPath = (runId: string, scopeId: string, revisionId: string): string =>
+  `/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/revisions/${encodeURIComponent(revisionId)}/threads`;
+const scopeThreadPath = (runId: string, scopeId: string, threadId: string): string =>
+  `/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/threads/${encodeURIComponent(threadId)}`;
+
+export const fetchOperatorThreads = (runId: string, scopeId: string, revisionId: string): Promise<readonly OperatorCollaborationThreadView[]> =>
+  get(revisionThreadsPath(runId, scopeId, revisionId));
+export const createOperatorThread = (input: { readonly run_id: string; readonly scope_id: string; readonly revision_id: string; readonly request_key: string; readonly title: string; readonly anchor: string | null }): Promise<OperatorCollaborationThreadRow> =>
+  post(revisionThreadsPath(input.run_id, input.scope_id, input.revision_id), { request_key: input.request_key, title: input.title, anchor: input.anchor });
+export const addOperatorMessage = (input: { readonly run_id: string; readonly scope_id: string; readonly thread_id: string; readonly request_key: string; readonly text: string; readonly author: string; readonly ping: boolean }): Promise<{ readonly message: OperatorCollaborationMessageRow }> =>
+  post(`${scopeThreadPath(input.run_id, input.scope_id, input.thread_id)}/messages`, { request_key: input.request_key, text: input.text, author: input.author, ping: input.ping });
+export const addOperatorReviewItem = (input: { readonly run_id: string; readonly scope_id: string; readonly thread_id: string; readonly request_key: string; readonly title: string; readonly detail: string; readonly status: string }): Promise<OperatorReviewItemRow> =>
+  post(`${scopeThreadPath(input.run_id, input.scope_id, input.thread_id)}/review-items`, { request_key: input.request_key, title: input.title, detail: input.detail, status: input.status });
 export const fetchOperatorDefinitions = (is_archived = false): Promise<OperatorDefinitionSummary[]> => readAllPages(is_archived ? "/api/definitions?archived=true" : "/api/definitions");
+export const fetchOperatorDefinitionDetail = (bundleId: string): Promise<unknown> => get(`/api/definitions/${encodeURIComponent(bundleId)}`);
 export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> => is_archived
   ? post(`/api/runs/${encodeURIComponent(runId)}/archive`, {}) : post(`/api/runs/${encodeURIComponent(runId)}/unarchive`, {});
 export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boolean): Promise<unknown> => is_archived
@@ -52,7 +67,9 @@ export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boo
 export const fetchOperatorProjects = async (): Promise<readonly OperatorProjectView[]> => (await get<OperatorProjectList>("/api/projects")).items;
 export const createOperatorProject = (draft: OperatorProjectDraft): Promise<OperatorProjectView> => post("/api/projects", draft);
 export const updateOperatorProject = (projectId: string, draft: OperatorProjectDraft): Promise<OperatorProjectView> => put(`/api/projects/${encodeURIComponent(projectId)}`, draft);
-export const pinOperatorDefinition = (source: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", source);
+/** Compilation is a separate authority check before the UI enables pinning. */
+export const compileOperatorDefinition = (authoring: WorkflowAuthoring): Promise<unknown> => post("/api/definitions/compile", { authoring });
+export const pinOperatorDefinition = (authoring: WorkflowAuthoring): Promise<OperatorDefinitionSummary> => post("/api/definitions", { authoring });
 export const launchOperatorRun = (request: OperatorStartPinnedRunRequest): Promise<OperatorStartedRun> => post("/runs", request);
 const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
 /**

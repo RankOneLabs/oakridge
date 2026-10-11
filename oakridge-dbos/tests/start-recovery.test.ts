@@ -4,10 +4,21 @@ import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { CoreClient } from "../src/core-client/client";
 import { createEffectProvider, recoverConfiguredFailure, recoverStartFailure } from "../src/effects/operations/production-provider";
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
-import type { InvocationId, StableInvocation } from "../src/effects/provider";
+import { deliberateRetry, selectedInvocation, type InvocationId, type StableInvocation } from "../src/effects/provider";
 import type { SqlExecutor } from "../src/storage/sql-executor";
 
 const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
+
+test("deliberate retries retain pinned settings and require a fresh invocation id", () => {
+  const action = bundle.scopes.flatMap((scope) => scope.workers.flatMap((worker) => worker.actions)).find((item) => item.operation === "session.run")!;
+  const selection: StableInvocation["selection"] = { definition: action, selection: { worker: "author", action: action.key },
+    input: { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } } };
+  const settings = { runtime: "codex" as const, model: "gpt-5.6-sol", effort: "high", policy_version: 7 };
+  const first = selectedInvocation("first" as InvocationId, "execution", selection, settings);
+  expect(() => deliberateRetry(first, first.id, settings)).toThrow();
+  expect(deliberateRetry(first, "next" as InvocationId, settings)).toEqual(selectedInvocation("next" as InvocationId, "execution", selection, settings));
+  expect(JSON.parse(first.bytes).session_settings).toEqual(settings);
+});
 
 function boundedRecoveryBundle(max_length: number): DefinitionBundle {
   const recovery_facts = new Set(bundle.operations.flatMap((operation) => operation.recovery?.map((mapping) => mapping.fact) ?? []));
@@ -67,6 +78,7 @@ test("direct provider rejections retain their full diagnostic and bounded recove
   const action = worker?.actions.find((action) => action.operation === "repository.prepare");
   if (!worker || !action) throw new Error("repository preparation fixture missing");
   const invocation: StableInvocation = { id: "bounded-provider" as InvocationId, execution_id: "execution",
+    session_settings: null,
     selection: { selection: { worker: worker.key, action: action.key }, definition: action,
       input: { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } } },
     request: { version: 1, kind: "repository_preparation" }, bytes: JSON.stringify({ repository_path: "/missing", expected_head: null }) };

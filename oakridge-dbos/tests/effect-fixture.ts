@@ -30,7 +30,13 @@ export async function withDatabase(operation: (database: TestDatabase) => Promis
   await admin.query(`CREATE DATABASE ${name}`);
   const db = PgPostgresExecutor.connect(url.href);
   try { await migrateEmptyDatabase(db); await operation({ url: url.href, db }); }
-  finally { await db.close(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); }
+  finally {
+    try {
+      await db.close();
+      // A forced drop can terminate a still-closing pg client and surface as an unhandled 57P01.
+      await admin.query(`DROP DATABASE ${name}`);
+    } finally { await admin.end(); }
+  }
 }
 interface Started { readonly run_id: RunId; readonly root_scope_id: ScopeId }
 export async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {

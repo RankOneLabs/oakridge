@@ -1,5 +1,5 @@
 import { queryKeys } from "../queryKeys";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinitions, fetchOperatorProjects, launchOperatorRun } from "../client";
 import { selectProjectLaunchDrafts } from "../lib/project-launch";
@@ -8,14 +8,18 @@ import { Button } from "../../components/atoms/Button";
 import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import type { OperatorStartPinnedRunRequest, OperatorSchema } from "../operator-contracts";
-import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+import type { OperatorStartPinnedRunRequest, OperatorSchema, OperatorDefinitionBundle } from "../operator-contracts";
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
+import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfigState } from "../../hooks/useServerConfig";
+import { coerceRoleSelection, initialSelectionForRole } from "../lib/runtime-selection";
+import { supportsRoleSessionInput, withRoleSessionInput } from "../lib/launch-role-settings";
+import { RoleSettingsFields } from "../components/organisms/RoleSettingsFields";
+import { readBriefNotesFile } from "../lib/brief-notes";
 
 
-function selectInputFields(source: WorkflowDefinitionDescriptor | undefined): readonly InputField[] | null {
+function selectInputFields(source: OperatorDefinitionBundle | undefined): readonly InputField[] | null {
   if (!source || !Array.isArray(source.scopes) || !Array.isArray(source.schemas)) return null;
   const root = source.scopes.find((scope) => scope.key === source.root);
   const shape = source.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
@@ -45,14 +49,32 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [digest, setDigest] = useState("");
   const [input, setInput] = useState("{}");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDrafts>({});
+  const [loadedSpecFile, setLoadedSpecFile] = useState<string | null>(null);
+  const specFileReadVersion = useRef(0);
   const [rawMode, setRawMode] = useState(false);
+  const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole("planner", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole("worker", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [plannerRuntimeTouched, setPlannerRuntimeTouched] = useState(false);
+  const [workerRuntimeTouched, setWorkerRuntimeTouched] = useState(false);
   const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
+  useEffect(() => {
+    specFileReadVersion.current += 1;
+    return () => { specFileReadVersion.current += 1; };
+  }, [selected]);
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
+  const supportsRoleSettings = supportsRoleSessionInput(selectedDefinition?.source);
+  const { config: serverConfig, error: configError } = useServerConfigState(supportsRoleSettings && pending === null);
+  const descriptors = runtimeDescriptorsForConfig(serverConfig);
+  const defaultRuntimeId = defaultRuntimeIdForConfig(serverConfig);
+  const planner = coerceRoleSelection("planner", plannerSelection, descriptors, defaultRuntimeId, plannerRuntimeTouched);
+  const worker = coerceRoleSelection("worker", workerSelection, descriptors, defaultRuntimeId, workerRuntimeTouched);
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
+    specFileReadVersion.current += 1;
+    setLoadedSpecFile(null);
     setError(null);
     try {
       if (!rawMode) { setInput(JSON.stringify(buildRootInput(input, fields, fieldDrafts), null, 2)); setFieldDrafts({}); }
@@ -69,8 +91,13 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     catch (cause) { setIsStorageUnreadable(true); setError(String(cause)); return; }
     let request: OperatorStartPinnedRunRequest;
     try {
-      request = retained ?? { request_id: randomUuid(), digest: selected,
-        input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts) };
+      if (retained) request = retained;
+      else {
+        if (supportsRoleSettings && serverConfig === null) throw new Error("Model settings are not available yet.");
+        const rootInput = rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts);
+        request = { request_id: randomUuid(), digest: selected,
+          input: supportsRoleSettings ? withRoleSessionInput(rootInput, { planner, worker }) : rootInput };
+      }
       savePendingLaunch(request);
       setPending(request);
     } catch (cause) { setError(String(cause)); return; }
@@ -93,7 +120,8 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const discard = () => {
     try { discardPendingLaunch(); } catch (cause) { setError(String(cause)); return; }
     setPending(null); setIsStorageUnreadable(false); setError(null);
-    setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false);
+    specFileReadVersion.current += 1;
+    setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
   };
   return <main className="or-page" data-testid="or-new-run">
     <header className="or-page-header"><Button variant="secondary" onClick={onBack}>Back</Button><h1 className="or-page-title">Launch pinned run</h1></header>
@@ -102,7 +130,8 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     <form onSubmit={(event) => void launch(event)}>
       <label htmlFor="operator-digest">Definition digest</label>
       <select id="operator-digest" value={selected} disabled={pending !== null || launching} onChange={(event) => {
-        setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false);
+        specFileReadVersion.current += 1;
+        setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
       }}>
         {selected === "" && <option value="" disabled>Select a definition…</option>}
         {pending && !definitions.data?.some((item) => item.digest === pending.digest)
@@ -116,21 +145,33 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
       {fields && !rawMode && pending === null && isPickingProject && (projects.data?.length ?? 0) > 0 && <label className="flex flex-col gap-1">Start from project
         <select aria-label="Start from project" value="" disabled={launching} onChange={(event) => {
           const project = projects.data?.find((item) => item.id === event.target.value);
-          if (project && selectedDefinition) setFieldDrafts((current) => ({ ...current,
-            ...selectProjectLaunchDrafts(project, fields, selectedDefinition.source.schemas) }));
+          if (project && selectedDefinition) {
+            specFileReadVersion.current += 1;
+            setLoadedSpecFile(null);
+            setFieldDrafts((current) => ({ ...current,
+              ...selectProjectLaunchDrafts(project, fields, selectedDefinition.source.schemas) }));
+          }
         }}>
           <option value="">Choose a project…</option>
           {projects.data?.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.repo_dir}</option>)}
         </select></label>}
       {fields && <label className="flex items-center gap-2"><input type="checkbox" checked={rawMode} disabled={pending !== null || launching}
         onChange={toggleRaw} />Raw JSON</label>}
+      {supportsRoleSettings && pending === null && serverConfig === null && <p role={configError ? "alert" : "status"}>
+        {configError ? `Could not load model settings: ${configError.message}` : "Loading model settings…"}</p>}
+      {supportsRoleSettings && pending === null && serverConfig !== null && <RoleSettingsFields serverConfig={serverConfig} planner={planner} worker={worker}
+        onPlannerChange={setPlannerSelection} onWorkerChange={setWorkerSelection}
+        onPlannerRuntimeTouched={setPlannerRuntimeTouched} onWorkerRuntimeTouched={setWorkerRuntimeTouched} isPending={launching} />}
       {(rawMode || fields === null || pending !== null) ? <>
         <label htmlFor="operator-input">Root input JSON</label>
         <textarea id="operator-input" value={pending ? JSON.stringify(pending.input, null, 2) : input} disabled={pending !== null || launching}
           onChange={(event) => setInput(event.target.value)} className="w-full min-h-48 rounded-md border p-3 font-mono text-xs" />
       </> : <div className="flex flex-col gap-3">{fields.map(({ field, schema }) => {
         const value = fieldDrafts[field.key] ?? fieldText(inputValues[field.key], schema);
-        const setValue = (next: string) => setFieldDrafts((current) => ({ ...current, [field.key]: next }));
+        const setValue = (next: string) => {
+          if (field.key === "spec") { specFileReadVersion.current += 1; setLoadedSpecFile(null); }
+          setFieldDrafts((current) => ({ ...current, [field.key]: next }));
+        };
         const label = `${field.key}${schema && !["string", "integer", "boolean", "enum"].includes(schema.shape.kind) ? " JSON" : ""}`;
         const id = `operator-root-${field.key}`;
         return <div key={field.key} className="flex flex-col gap-1"><label htmlFor={id}>{label}</label>
@@ -143,12 +184,29 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           : schema?.shape.kind === "string" ? <input id={id} type="text" value={value} required={field.required && schema.shape.min_length > 0}
             minLength={schema.shape.min_length} maxLength={schema.shape.max_length} onChange={(event) => setValue(event.target.value)} />
           : <textarea id={id} value={value} required={field.required} onChange={(event) => setValue(event.target.value)}
-            className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}</div>;
+            className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}
+          {field.key === "spec" && schema?.shape.kind === "string" && <>
+            <label htmlFor="operator-spec-file">Load spec from file</label>
+            <input id="operator-spec-file" type="file" disabled={launching} onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              const readVersion = ++specFileReadVersion.current;
+              setLoadedSpecFile(null);
+              void readBriefNotesFile(file).then((result) => {
+                if (readVersion !== specFileReadVersion.current) return;
+                if (!result.ok) { setError(result.error.detail); return; }
+                setFieldDrafts((current) => ({ ...current, spec: result.value.text }));
+                setLoadedSpecFile(result.value.file_name); setError(null);
+              });
+            }} />
+            {loadedSpecFile && <p role="status">Loaded {loadedSpecFile}</p>}
+          </>}
+        </div>;
       })}</div>}
       {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result, or discard it to compose a new launch. Discarding forgets the retry identity, and the earlier attempt may still have created a run; check the runs list.</p>}
       {isStorageUnreadable && !pending && <p role="status">Stored launch state is unreadable. Discard it to compose a new launch; any earlier attempt may still have created a run, so check the runs list.</p>}
       {error && <p role="alert">{error}</p>}
-      <Button type="submit" disabled={!selected || launching}>{pending ? "Retry launch" : "Launch"}</Button>
+      <Button type="submit" disabled={!selected || launching || (pending === null && supportsRoleSettings && serverConfig === null)}>{pending ? "Retry launch" : "Launch"}</Button>
       {(pending || isStorageUnreadable) && <Button variant="secondary" onClick={discard} disabled={launching}>Discard</Button>}
     </form>
   </main>;

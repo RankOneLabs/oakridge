@@ -1,21 +1,27 @@
 import { installSelectedEvidenceApi } from "./selected-evidence";
 import { installSelectedPublicationApi } from "./selected-publication";
 import { installProjectApi } from "./projects";
+import { collaborationHandlers } from "./collaboration";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
+import type { CoreFailure } from "../core-client/transport-errors";
 import { selectMutationIdentity, type MutationInput, type MutationService } from "../storage/mutation-service";
 import { findReceipt } from "../storage/receipts";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
-import { listDefinitions, readPinnedDefinition } from "./definition-inspection";
+import { listDefinitions, readDefinition, readPinnedDefinition } from "./definition-inspection";
+import { buildBundle } from "../../../workflow-config/src/build-bundle";
+import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
+import { listPromptCatalog } from "../../../workflow-config/src/development/prompts";
 import type { DefinitionBundle } from "../core-client/generated-contracts";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
 import { plainValue } from "../core-client/plain-value";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, TransientServiceError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
+import { selectDecision } from "../projections/scope-view";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -52,8 +58,8 @@ function archivedQuery(raw: string | undefined): boolean | MalformedRequestError
   if (raw === undefined || raw === "false") return false;
   return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
 }
-function errorResponse(error: CommandError): { readonly error: string; readonly detail: string; readonly trace_id?: string } {
-  return error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
+function errorResponse(error: CommandError): { readonly error: string; readonly code: CommandError["kind"]; readonly trace_id?: string } {
+  return error instanceof InternalFaultError ? { error: "internal fault", code: error.kind, trace_id: error.trace_id } : { error: error.detail, code: error.kind };
 }
 function response(result: CommandResult): Response {
   return Response.json(result.ok ? result.value : errorResponse(result.error), { status: commandStatus(result) });
@@ -62,10 +68,30 @@ function fault(cause: unknown): Response { return response({ ok: false, error: n
 async function body(request: Request): Promise<unknown | MalformedRequestError> {
   try { return await request.json(); } catch { return new MalformedRequestError("invalid JSON"); }
 }
+function compileFailure(detail: string): Response {
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (parsed && typeof parsed === "object" && "kind" in parsed
+      && "detail" in parsed && parsed.detail && typeof parsed.detail === "object") {
+      const failure = parsed as CoreFailure;
+      if (failure.kind === "domain") return Response.json({ error: failure.detail.detail ?? detail,
+        field_path: failure.detail.path ?? "bundle" }, { status: 422 });
+      if (failure.kind === "transport" && (failure.detail.kind === "terminated_child"
+        || failure.detail.kind === "unresponsive_child" || failure.detail.kind === "queue_full"))
+        return response({ ok: false, error: new TransientServiceError(failure.detail.detail ?? detail) });
+    }
+  } catch { /* A transport or storage error may be plain text. */ }
+  return fault(detail);
+}
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installSelectedPublicationApi(app, deps);
   installSelectedEvidenceApi(app, deps);
   installProjectApi(app, deps);
+  const collaboration = collaborationHandlers({ db: deps.db, kbbl_base_url: process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788" });
+  app.get("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.getThreads);
+  app.post("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.createThread);
+  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/messages", collaboration.addMessage);
+  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/review-items", collaboration.addReviewItem);
   app.get("/api/runs", async (c) => { try {
     const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
     if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
@@ -93,9 +119,34 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     return Response.json(await listDefinitions(deps.db, after, page.limit, is_archived));
   }
     catch (cause) { return fault(cause); } });
+  app.get("/api/prompts", () => { try { return Response.json(listPromptCatalog()); }
+    catch (cause) { return fault(cause); } });
+  app.get("/api/definitions/:bundle_id", async (c) => { try {
+    const definition = await readDefinition(deps.db, c.req.param("bundle_id"));
+    return definition ? c.json(definition) : response({ ok: false, error: new MissingEntityError("definition not found") });
+  } catch (cause) { return fault(cause); } });
+  app.post("/api/definitions/compile", async (c) => { try {
+    const source = await body(c.req.raw);
+    if (source instanceof MalformedRequestError) return response({ ok: false, error: source });
+    const authored = source && typeof source === "object" && "authoring" in source ? source.authoring : source;
+    const built = buildBundle(authored);
+    if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
+    const compiled = await deps.mutations.compile({ bundle: built.value, authoring: authored as WorkflowAuthoring });
+    return compiled.ok ? Response.json(compiled.value)
+      : compileFailure(compiled.error.detail);
+  } catch (cause) { return fault(cause); } });
   app.post("/api/definitions", async (c) => {
     const source = await body(c.req.raw);
     if (source instanceof MalformedRequestError) return response({ ok: false, error: source });
+    const authored = source && typeof source === "object" && "authoring" in source ? source.authoring : source;
+    if (authored && typeof authored === "object" && "authoring_version" in authored) {
+      const built = buildBundle(authored);
+      if (!built.ok) return Response.json({ error: built.error.detail, field_path: built.error.field_path }, { status: 422 });
+      const pinned = await deps.mutations.pinDefinition({ bundle: built.value, authoring: authored as WorkflowAuthoring });
+      return pinned.ok ? Response.json(pinned.value, { status: 201 })
+        : pinned.error.operation === "compile" ? compileFailure(pinned.error.detail)
+          : Response.json({ error: pinned.error.detail, field_path: "bundle" }, { status: 422 });
+    }
     if (!source || typeof source !== "object" || !("key" in source) || typeof source.key !== "string")
       return response({ ok: false, error: new InvalidPayloadError("invalid definition bundle") });
     const pinned = await deps.mutations.pinDefinition({ bundle: source as DefinitionBundle });
@@ -142,7 +193,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/scopes/:scope_id/decision", async (c) => { try {
     const view = await readScopeView(deps.db, c.req.param("scope_id") as ScopeId);
-    return view && view.run_id === c.req.param("run_id") ? c.json({ decision: view.decision, cursor: view.cursor }) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
+    return view && view.run_id === c.req.param("run_id") ? c.json(selectDecision(view)) : response({ ok: false, error: new MissingEntityError("scope not found in run") });
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/scopes/:scope_id/history", async (c) => { try {
     const history = await readScopeHistory(deps.db, c.req.param("run_id"), c.req.param("scope_id"));

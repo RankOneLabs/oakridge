@@ -43,6 +43,7 @@ export async function harness(options: HarnessOptions = {}) {
       else if (sql === "SELECT id FROM authority.scope_instance WHERE run_id=$1 AND id=$2")
         rows = !options.missing_scope && parameters[0] === owner.run_id && parameters[1] === owner.id ? [{ id: owner.id }] : [];
       else if (sql === "SELECT * FROM authority.run WHERE id=$1") rows = [{ id: run_id, version: 1, definition_bundle_id: "bundle-1" }];
+      else if (sql.startsWith("SELECT r.id AS run_id,p.id AS project_id,p.session_policy")) rows = [{ run_id, project_id: null, session_policy: null }];
       else if (sql === "SELECT * FROM authority.scope_instance WHERE run_id=$1 ORDER BY id") rows = [owner];
       else if (sql.startsWith("SELECT source,digest") || sql.startsWith("SELECT b.id AS bundle_id")) rows = [{ source: bundle, digest: "pinned", bundle_id: "bundle-1" }];
       else if (sql.startsWith("SELECT b.source")) rows = [{ source: bundle, checked_program: { scopes: [{ key: bundle.root, reads: [{ kind: "result", worker: "potter" }, { kind: "output", key: "specimen" }] }] } }];

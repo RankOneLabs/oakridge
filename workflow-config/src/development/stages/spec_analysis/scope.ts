@@ -11,6 +11,8 @@ export const spec_analysis = defineScope({
   outcome_schema: "result",
   errors: [{ key: "invalid_command", payload_schema: "text" }],
   commands: [
+    { key: "admit", payload_schema: "unit", available_in: ["waiting_admission"], required: true, targets: [],
+      label: "Admit", consequence: "admit", field_presentation: [] },
     {
       key: "begin",
       payload_schema: "unit",
@@ -32,6 +34,8 @@ export const spec_analysis = defineScope({
       field_presentation: [],
       prefill: [{ key: "revision", value: reference({ kind: "output_revision", key: "analysis", schema: "revision" }, []) }]
     },
+    { key: "edit_analysis", payload_schema: "unit", available_in: ["review"], required: false,
+      targets: [], label: "Edit analysis", consequence: "publish an edited analysis", field_presentation: [] },
     {
       key: "request_changes",
       payload_schema: "feedback",
@@ -82,7 +86,8 @@ export const spec_analysis = defineScope({
       policy: { kind: "append_revision" },
       producers: ["author"],
       collection_key: null,
-      publication_trigger: "submitted"
+      publication_trigger: "submitted",
+      edit_trigger: "edit_analysis"
     }
   ],
   workers: workers,

@@ -8,6 +8,7 @@ import { resolve } from "node:path";
  * The import-graph test checks this manifest when engine dependencies change.
  */
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
+  "../../kbbl/core/runtime.ts",
   "adapters/kbbl.ts",
   "core-client/bundle-content-hash.ts",
   "core-client/client.ts",
@@ -17,6 +18,8 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/transport-errors.ts",
   "domain/execution.ts",
   "domain/primitives.ts",
+  "domain/run-session-policy.ts",
+  "domain/session-settings.ts",
   "effects/evidence.ts",
   "effects/intents.ts",
   "effects/operations/production-provider.ts",
@@ -27,7 +30,9 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "effects/outcomes.ts",
   "effects/provider.ts",
   "effects/provider-catalog.ts",
+  "projections/collaboration-view.ts",
   "projections/record-selectors.ts",
+  "projections/run-event.ts",
   "projections/scope-view.ts",
   "runtime/advance-children.ts",
   "runtime/git-command-runner.ts",
@@ -36,6 +41,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/archive.ts",
   "storage/capacity.ts",
   "storage/child-cancellation.ts",
+  "storage/collaboration.ts",
   "storage/command-selection.ts",
   "storage/commit.ts",
   "storage/effect-results.ts",
@@ -43,6 +49,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/launch-receipts.ts",
   "storage/lifecycle-trigger.ts",
   "storage/mutation-service.ts",
+  "storage/operator-events.ts",
   "storage/projects.ts",
   "storage/prompt-content.ts",
   "storage/receipts.ts",

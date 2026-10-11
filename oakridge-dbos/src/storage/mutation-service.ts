@@ -1,5 +1,6 @@
-import { createProject, updateProject } from "./projects";
+import { createProject, setSessionPolicy, updateProject, type SessionPolicyWriteError } from "./projects";
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
+import type { SessionPolicy } from "../domain/session-settings";
 import { setDefinitionArchived, setRunArchived } from "./archive";
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
 import type { DefinitionSummary } from "../projections/definition-view";
@@ -16,8 +17,12 @@ import type { ProjectId, ProjectRecord, RunId, ScopeId } from "./schema-records"
 import type { Result as SharedResult } from "../domain/primitives";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { resolveBundlePrompts, storePromptContents, type PromptContent } from "./prompt-content";
+import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
+import { writeOperatorEvent } from "./operator-events";
+import { inTransaction } from "./sql-executor";
+import { deleteRun as deleteStoredRun, type DeleteRunResult } from "./run-lifecycle";
 
-export interface CompileRequest { readonly bundle: DefinitionBundle }
+export interface CompileRequest { readonly bundle: DefinitionBundle; readonly authoring?: WorkflowAuthoring }
 export interface CompileResult { readonly program: CompiledBundle }
 export interface StartRunRequest extends CompileRequest { readonly input: unknown; readonly request_id?: string }
 export interface StartPinnedRunRequest { readonly digest: string; readonly input: unknown; readonly request_id: string }
@@ -31,6 +36,7 @@ export interface MutationService { compile(request: CompileRequest): Promise<Res
   /** Operator registry and visibility writes; none of them is read by evaluation. */
   createProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
   updateProject(id: ProjectId, draft: ProjectDraft): Promise<SharedResult<ProjectRecord, ProjectWriteError>>;
+  setSessionPolicy(id: ProjectId, policy: SessionPolicy): Promise<SharedResult<SessionPolicy, SessionPolicyWriteError>>;
   setRunArchived(run_id: RunId, is_archived: boolean): Promise<boolean>;
   setDefinitionArchived(bundle_id: string, is_archived: boolean): Promise<boolean> }
 export interface ProviderCapabilityInput { readonly bundle: DefinitionBundle; readonly input: unknown }
@@ -65,7 +71,7 @@ export async function compileBundle(core: CoreClient, request: CompileRequest): 
   return { ok: true, value: { program: response.value.value } };
 }
 /** Whether every published output still matches its declared schema. */
-export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string };
+export type PublicationCheck = { readonly kind: "valid" } | { readonly kind: "mismatch"; readonly output_key: string } | { readonly kind: "internal_fault"; readonly output_key: string; readonly detail: string };
 /**
  * Published outputs arrive as checked values from outside the core, so the
  * core rechecks each against the schema its scope declares. Undeclared
@@ -77,7 +83,7 @@ export async function checkPublications(core: CoreClient, bundle: DefinitionBund
     const declared = scope?.outputs.find((item) => item.key === output.output_key);
     if (!declared) continue;
     const checked = await core.request("validate_value", { bundle, schema: declared.schema, value: output.body });
-    if (checked.ok) continue;
+    if (checked.ok) { if (checked.value.kind === "validated") continue; return { ok: true, value: { kind: "internal_fault", output_key: output.output_key, detail: "core returned unexpected validation result" } }; }
     if (checked.error.kind === "transport") return error("validate_publication", output.output_key, checked.error.detail.detail);
     return { ok: true, value: { kind: "mismatch", output_key: output.output_key } };
   }
@@ -107,10 +113,31 @@ export function prepareCommit(input: MutationInput, decision: Decision): Result<
 export function createMutationService(db: TransactionalSqlExecutor, core: CoreClient, provider_capabilities?: ProviderCapabilities): MutationService {
   return {
     compile: (request) => compileBundle(core, request),
-    createProject: (id, draft) => createProject(db, id, draft),
-    updateProject: (id, draft) => updateProject(db, id, draft),
-    setRunArchived: (run_id, is_archived) => setRunArchived(db, run_id, is_archived),
-    setDefinitionArchived: (bundle_id, is_archived) => setDefinitionArchived(db, bundle_id, is_archived),
+    createProject: (id, draft) => db.transaction(async (tx) => {
+      const result = await createProject(tx, id, draft);
+      if (result.ok) await writeOperatorEvent(tx, null, id, { kind: "invalidate", data: { target: "projects", run_id: null } });
+      return result;
+    }),
+    updateProject: (id, draft) => db.transaction(async (tx) => {
+      const result = await updateProject(tx, id, draft);
+      if (result.ok) await writeOperatorEvent(tx, null, id, { kind: "invalidate", data: { target: "projects", run_id: null } });
+      return result;
+    }),
+    setSessionPolicy: (id, policy) => db.transaction(async (tx) => {
+      const result = await setSessionPolicy(inTransaction(tx), id, policy);
+      if (result.ok) await writeOperatorEvent(tx, null, id, { kind: "invalidate", data: { target: "projects", run_id: null } });
+      return result;
+    }),
+    setRunArchived: (run_id, is_archived) => db.transaction(async (tx) => {
+      const changed = await setRunArchived(tx, run_id, is_archived);
+      if (changed) await writeOperatorEvent(tx, run_id, run_id, { kind: "invalidate", data: { target: "run", run_id } });
+      return changed;
+    }),
+    setDefinitionArchived: (bundle_id, is_archived) => db.transaction(async (tx) => {
+      const changed = await setDefinitionArchived(tx, bundle_id, is_archived);
+      if (changed) await writeOperatorEvent(tx, null, bundle_id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
+      return changed;
+    }),
     async pinDefinition(request) {
       const prompts = await bundlePrompts(db, request.bundle, "pin_definition");
       if (!prompts.ok) return prompts;
@@ -127,8 +154,13 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
         const bundle_id = crypto.randomUUID();
         const rows = await db.transaction(async (tx) => {
           await storePromptContents(tx, prompts.value);
-          await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING",
-            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+          const inserted = await tx.query<{ id: string }>("INSERT INTO authority.definition_bundle (id,digest,source,checked_program,authoring) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (digest) DO NOTHING RETURNING id",
+            [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program), request.authoring ? JSON.stringify(request.authoring) : null]);
+          const enriched = !inserted.length && request.authoring
+            ? await tx.query<{ id: string }>("UPDATE authority.definition_bundle SET authoring=$2 WHERE digest=$1 AND authoring IS NULL RETURNING id",
+              [compiled.value.program.digest, JSON.stringify(request.authoring)]) : [];
+          const changed = inserted[0] ?? enriched[0];
+          if (changed) await writeOperatorEvent(tx, null, changed.id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
           return tx.query<DefinitionSummary>("SELECT id AS bundle_id,digest,source,archived_at FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
         });
         if (!rows[0]) return error("pin_definition", compiled.value.program.digest, "stored definition missing");
@@ -175,7 +207,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
             if (prior) return prior;
           }
           await storePromptContents(tx, prompts.value);
-          await tx.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING", [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+          const inserted = await tx.query<{ id: string }>("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ($1,$2,$3,$4) ON CONFLICT (digest) DO NOTHING RETURNING id", [bundle_id, compiled.value.program.digest, JSON.stringify(request.bundle), JSON.stringify(compiled.value.program)]);
+          if (inserted.length) await writeOperatorEvent(tx, null, bundle_id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
           const stored = await tx.query<{ id: string }>("SELECT id FROM authority.definition_bundle WHERE digest=$1", [compiled.value.program.digest]);
           const actual_bundle_id = stored[0]!.id;
           await tx.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ($1,$2)", [run_id, actual_bundle_id]);
@@ -191,6 +224,7 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (request.request_id !== undefined) await tx.query(
             "INSERT INTO authority.launch_receipt (request_id,request_digest,run_id,root_scope_id,bundle_id) VALUES ($1,$2,$3,$4,$5)",
             [request.request_id, request_digest, run_id, root_scope_id, actual_bundle_id]);
+          await writeOperatorEvent(tx, run_id, run_id, { kind: "invalidate", data: { target: "runs", run_id } });
           return { ok: true, value: run };
         });
       } catch (cause) { return error("start_run_storage", run_id, String(cause)); }
@@ -222,7 +256,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (attempt === 0) {
             const publications = await checkPublications(core, bundle, source.owner.scope_key, staged_input.outputs ?? []);
             if (!publications.ok) return publications;
-            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "output schema mismatch" } };
+            if (publications.value.kind === "internal_fault") return error("validate_publication_protocol", publications.value.output_key, publications.value.detail);
+            if (publications.value.kind === "mismatch") return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: `output ${publications.value.output_key} schema mismatch` } };
           }
           const staged = stagePublications(bundle, source, staged_input.outputs ?? []);
           if (!staged.ok) return staged;
@@ -244,7 +279,8 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
           if (!request.ok) return request;
           const children = await prepareChildCancellations(db, core, bundle, input, { source, outcome: evaluated.value.decision });
           if (!children.ok) return children;
-          const committed = await commitDecision(db, { ...request.value, child_cancellations: children.value }, source);
+          const committed = await commitDecision(db, { ...request.value, child_cancellations: children.value }, source,
+            (tx, event) => writeOperatorEvent(tx, event.run_id, event.run_id, { kind: "run_event", data: event }));
           if (!committed.ok || committed.value.kind !== "Conflict") return committed;
         }
         return { ok: true, value: { kind: "Conflict", detail: "read set changed repeatedly; refresh decision" } };
@@ -254,5 +290,15 @@ export function createMutationService(db: TransactionalSqlExecutor, core: CoreCl
 }
 
 // Run cancellation/deletion and observed results share the mutation entry.
-export { cancelRun, deleteRun, type ScopeCancellationPayload } from "./run-lifecycle";
+export { cancelRun, type ScopeCancellationPayload } from "./run-lifecycle";
+export async function deleteRun(db: TransactionalSqlExecutor, run_id: string): Promise<DeleteRunResult> {
+  return db.transaction(async (tx) => {
+    const result = await deleteStoredRun(inTransaction(tx), run_id);
+    if (result.kind === "deleted") await writeOperatorEvent(tx, null, run_id, { kind: "invalidate", data: { target: "run", run_id: run_id as RunId } });
+    return result;
+  });
+}
 export { persistEffectResult } from "./effect-results";
+/** Collaboration writes share this mutation boundary with scope decisions. */
+export { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread,
+  findCollaborationDelivery, readCollaborationThreads, readRevisionCollaborationTarget, recordCollaborationDelivery } from "./collaboration";

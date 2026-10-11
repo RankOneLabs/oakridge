@@ -7,8 +7,13 @@ export interface OperatorStartedRun { readonly run_id: string; readonly root_sco
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
-export interface OperatorRunView { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
-  readonly created_at: string; readonly archived_at: string | null; readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
+export interface OperatorRunView extends OperatorRunSummary {
+  readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly OperatorRunScopeSummary[] }
+
+export interface OperatorRunSummary { readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
+  readonly created_at: string; readonly archived_at: string | null }
+
+export type OperatorRunDetail = OperatorRunView;
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
@@ -26,6 +31,8 @@ export interface OperatorScopeView {
   readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor;
 }
 
+export interface OperatorDecision { readonly decision: OperatorDecisionOutcome | null; readonly cursor: OperatorProjectionCursor }
+
 export type OperatorInboxItem =
   | { readonly kind: "command"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly key: string; readonly label: string; readonly consequence: string }
   | { readonly kind: "wait"; readonly run_id: string; readonly scope_id: string; readonly scope_version: number; readonly reason: string; readonly label: string }
@@ -34,6 +41,51 @@ export type OperatorInboxItem =
 export interface OperatorInboxPage {
   readonly cursor: readonly { readonly scope_id: string; readonly version: number }[];
   readonly items: readonly OperatorInboxItem[]; readonly next_cursor: string | null;
+}
+
+export type OperatorReviewInbox = OperatorInboxPage;
+
+export interface OperatorSessionLocation {
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly execution_id: string;
+}
+
+export interface OperatorRunSessionAttempt {
+  readonly location: OperatorSessionLocation;
+  readonly worker_key: string;
+  readonly generation: number;
+  readonly status: OperatorExecutionView["status"];
+  readonly result: OperatorExecutionView["result"];
+}
+
+export interface OperatorArtifactDetail {
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly output_key: string;
+  readonly collection_key: string;
+  readonly slot_version: number;
+  readonly revision_id: string | null;
+  readonly predecessor_id: string | null;
+  readonly body: OperatorCheckedValue | null;
+  readonly status: OperatorArtifactRevisionStatus;
+  readonly presentation: OperatorArtifactPresentation;
+}
+
+export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
+
+export interface OperatorCollaborationThreadView {
+  readonly id: string;
+  readonly run_id: string;
+  readonly scope_id: string;
+  readonly artifact_revision_id: string;
+  readonly context: OperatorCollaborationThreadRow["context"];
+  readonly created_at: string;
+  readonly capabilities: { readonly can_write: boolean };
+  readonly messages: readonly OperatorCollaborationMessageRow[];
+  readonly review_items: readonly OperatorReviewItemRow[];
+  readonly deliveries: readonly OperatorCollaborationDeliveryRecord[];
+  readonly last_delivery_failure_reason: string | null;
 }
 
 export interface OperatorScopeHistory {
@@ -51,6 +103,14 @@ export interface OperatorScopeCommandRequest {
   readonly scope_id: string;
   readonly expected_scope_version: number;
   readonly targets: readonly OperatorTargetRevision[];
+}
+
+export interface OperatorEditCommandPayload {
+  readonly output_key: string;
+  readonly collection_key: string;
+  readonly reviewed_revision_id: string;
+  readonly prev_value: OperatorCheckedValue;
+  readonly body: OperatorCheckedValue;
 }
 
 export interface OperatorProjectDraft {
@@ -100,6 +160,35 @@ export type OperatorCommandPrefill = Readonly<{ readonly [field_key: string]: Op
 export type OperatorDecisionOutcome = { readonly "explanation": OperatorExplanation; readonly "invocations": (OperatorInvocation)[]; readonly "kind": "apply"; readonly "mutations": (OperatorMutationValue)[]; readonly "outcome"?: OperatorCheckedValue | null; readonly "targets": (OperatorCheckedValue)[] } | { readonly "attention"?: OperatorAttentionMetadata | null; readonly "continuations": (string)[]; readonly "explanation": OperatorExplanation; readonly "kind": "wait"; readonly "reason": string } | { readonly "detail": OperatorCheckedValue; readonly "error": string; readonly "explanation": OperatorExplanation; readonly "kind": "reject" };
 
 export interface OperatorProjectionCursor { readonly scope_version: number; readonly transition_id: string | null }
+
+export interface OperatorArtifactPresentation {
+  readonly artifact_type: string;
+  readonly viewer: "document" | "report";
+  readonly capabilities: OperatorArtifactCapabilities;
+}
+
+export interface OperatorCollaborationThreadRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly artifact_revision_id: string; readonly context: OperatorCollaborationThreadContext;
+  readonly created_at: string;
+}
+
+export interface OperatorCollaborationMessageRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly body: OperatorCollaborationMessageBody; readonly created_at: string;
+}
+
+export interface OperatorReviewItemRow {
+  readonly id: string; readonly run_id: string; readonly scope_id: string;
+  readonly thread_id: string; readonly artifact_revision_id: string;
+  readonly body: OperatorReviewItemBody; readonly created_at: string;
+}
+
+export interface OperatorCollaborationDeliveryRecord {
+  readonly id: string; readonly run_id: string; readonly scope_id: string; readonly message_id: string;
+  readonly payload: OperatorCollaborationDeliveryPayload;
+  readonly created_at: string;
+}
 
 export interface OperatorTransitionHistory<Timestamp> extends Omit<OperatorStoredTransitionHistory<Timestamp>, "version"> { readonly version: number }
 
@@ -158,6 +247,23 @@ export type OperatorInvocation = { readonly "definition": OperatorInvocationCont
 
 export type OperatorMutationValue = { readonly "kind": "set_state"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "export"; readonly "value": OperatorCheckedValue } | { readonly "input": OperatorCheckedValue; readonly "key": string; readonly "kind": "activate_child" } | { readonly "key": string; readonly "kind": "activate_collection"; readonly "materialization": OperatorMaterialization } | { readonly "key": string; readonly "kind": "cancel_children" } | { readonly "key": string; readonly "kind": "clear_output" } | { readonly "kind": "acquire"; readonly "pool": string } | { readonly "kind": "release"; readonly "pool": string } | { readonly "kind": "revoke"; readonly "worker": string } | { readonly "kind": "stop"; readonly "worker": string } | { readonly "key": string; readonly "kind": "bind_resource"; readonly "value": OperatorCheckedValue } | { readonly "key": string; readonly "kind": "clear_resource" } | { readonly "kind": "observe"; readonly "resource": string };
 
+export interface OperatorArtifactCapabilities {
+  readonly reviewable: boolean;
+  readonly commentable: boolean;
+  readonly atom_editable: boolean;
+  readonly review_items: boolean;
+}
+
+export interface OperatorCollaborationThreadContext { readonly title: string; readonly anchor: string | null }
+
+export interface OperatorCollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }
+
+export interface OperatorReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
+
+export type OperatorCollaborationDeliveryPayload =
+  | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
+  | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
+
 export interface OperatorStoredTransitionHistory<Timestamp> {
   readonly id: string; readonly trigger_id: string; readonly decision: OperatorDecisionOutcome;
   readonly created_at: Timestamp; readonly version: OperatorSqlVersion;
@@ -170,6 +276,8 @@ export interface OperatorProject {
   /** @type {ForgeRepository} */
   forge_repository: OperatorForgeRepository | null;
   integration_branch: string | null;
+  /** @type {SessionPolicy} */
+  session_policy: OperatorSessionPolicy | null;
   created_at: string;
 }
 
@@ -187,7 +295,7 @@ export type OperatorFactDefinition = { readonly "key": string; readonly "payload
 
 export type OperatorExportDefinition = { readonly "key": string; readonly "schema": string };
 
-export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "key": string; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
+export type OperatorOutputDefinition = { readonly "collection_key"?: string | null; readonly "edit_trigger"?: string | null; readonly "key": string; readonly "policy": OperatorPublicationPolicy; readonly "producers": (string)[]; readonly "publication_trigger"?: string | null; readonly "schema": string };
 
 export type OperatorCapacityPool = { readonly "key": string; readonly "limit": number };
 
@@ -222,6 +330,8 @@ export interface OperatorExecution {
   status: OperatorExecutionStatus;
   /** @type {CheckedValue} */
   result: OperatorCheckedValue | null;
+  created_at: string;
+  completed_at: string | null;
   publication_secret_hash: string | null;
   version: number;
 }
@@ -246,6 +356,7 @@ export interface OperatorArtifactRevision {
   /** @type {CheckedValue} */
   body: OperatorCheckedValue;
   predecessor_id: string | null;
+  created_at: string;
   version: number;
 }
 
@@ -260,6 +371,8 @@ export type OperatorActionSelection = { readonly "action": string; readonly "wor
 export type OperatorMaterialization = { readonly "children": (OperatorMaterializedChild)[] };
 
 export type OperatorSqlVersion = OperatorVersion | string;
+
+export interface OperatorSessionPolicy { readonly version: number; readonly entries: readonly OperatorSessionPolicyEntry[] }
 
 export type OperatorSchemaField = { readonly "key": string; readonly "required": boolean; readonly "schema": string };
 
@@ -293,8 +406,25 @@ export type OperatorMaterializedChild = { readonly "depends_on": (string)[]; rea
 
 export type OperatorVersion = number;
 
+export interface OperatorSessionPolicyEntry { readonly selector: OperatorSessionScopeSelector; readonly settings: OperatorSessionSettings }
+
 export type OperatorCheckedExpressionNode = { readonly "kind": "literal"; readonly "value": OperatorCheckedValue } | { readonly "kind": "reference"; readonly "root": OperatorReferenceRoot; readonly "selectors": (OperatorSelector)[] } | { readonly "fields": (OperatorCheckedFieldExpression)[]; readonly "kind": "record" } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "list" } | { readonly "kind": "variant"; readonly "value": OperatorCheckedExpression; readonly "variant": string } | { readonly "kind": "equals"; readonly "left": OperatorCheckedExpression; readonly "right": OperatorCheckedExpression } | { readonly "kind": "is_variant"; readonly "value": OperatorCheckedExpression; readonly "variant": string } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "all" } | { readonly "items": (OperatorCheckedExpression)[]; readonly "kind": "any" } | { readonly "kind": "not"; readonly "value": OperatorCheckedExpression } | { readonly "kind": "map"; readonly "source": OperatorCheckedExpression; readonly "value": OperatorCheckedExpression } | { readonly "kind": "optional"; readonly "value"?: OperatorCheckedExpression | null } | { readonly "index": number; readonly "kind": "field"; readonly "value": OperatorCheckedExpression } | { readonly "key": OperatorCheckedExpression; readonly "key_field": number; readonly "kind": "filter_by"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "contains"; readonly "source": OperatorCheckedExpression; readonly "value": OperatorCheckedExpression } | { readonly "key": OperatorCheckedExpression; readonly "key_field": number; readonly "kind": "lookup"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "filter"; readonly "predicate": OperatorCheckedExpression; readonly "source": OperatorCheckedExpression } | { readonly "key_field": number; readonly "kind": "unique_by"; readonly "source": OperatorCheckedExpression } | { readonly "dependencies_field": number; readonly "key_field": number; readonly "kind": "check_collection"; readonly "source": OperatorCheckedExpression } | { readonly "kind": "every"; readonly "predicate": OperatorCheckedExpression; readonly "source": OperatorCheckedExpression };
+
+export type OperatorSessionScopeSelector =
+  | { readonly kind: "run" }
+  | { readonly kind: "stage"; readonly stage_key: string }
+  | { readonly kind: "cohort"; readonly stage_key: string; readonly cohort_key: string }
+  | { readonly kind: "stage_worker"; readonly stage_key: string; readonly worker_key: string }
+  | { readonly kind: "stage_worker_action"; readonly stage_key: string; readonly worker_key: string; readonly action_key: string };
+
+export interface OperatorSessionSettings {
+  readonly runtime: OperatorRuntimeId | null;
+  readonly model: string | null;
+  readonly effort: string | null;
+}
 
 export type OperatorSelector = { readonly "index": number; readonly "kind": "field" } | { readonly "index": number; readonly "kind": "optional_field"; readonly "schema": string } | { readonly "kind": "optional" } | { readonly "kind": "variant"; readonly "variant": string };
 
 export type OperatorCheckedFieldExpression = { readonly "field_id": number; readonly "value": OperatorCheckedExpression };
+
+export type OperatorRuntimeId = "claude-code" | "codex";

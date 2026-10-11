@@ -14,6 +14,8 @@ interface Props { readonly scope: OperatorScopeView; readonly command: OperatorC
 
 export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Props) {
   const key = selectDraftKey(scope, command);
+  const isMounted = useRef(true);
+  useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; }; }, []);
   const [draft, setDraft] = useState(() => key ? readOperatorDraft(key) : "");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,17 +32,21 @@ export function OperatorCommandForm({ scope, command, schemas, onRefresh }: Prop
       await submitOperatorCommand(input);
       clearPendingCommand(input);
       clearOperatorDraft(input);
-      setDraft("");
-      setIsAccepted(true);
-      setError("");
-      onRefresh();
+      if (isMounted.current) {
+        setDraft("");
+        setIsAccepted(true);
+        setError("");
+        onRefresh();
+      }
     } catch (cause) {
       if (isDefinitiveRequestRejection(cause)) {
         clearPendingCommand(input);
-        onRefresh();
-        setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Your input is kept.`);
-      } else setError(`Delivery is uncertain. Request ${input.request_id} will be retried with the same payload.`);
-    } finally { setIsSubmitting(false); }
+        if (isMounted.current) {
+          onRefresh();
+          setError(`${cause instanceof Error ? cause.message : "Command rejected"}. Your input is kept.`);
+        }
+      } else if (isMounted.current) setError(`Delivery is uncertain. Request ${input.request_id} will be retried with the same payload.`);
+    } finally { if (isMounted.current) setIsSubmitting(false); }
   }
 
   useEffect(() => {

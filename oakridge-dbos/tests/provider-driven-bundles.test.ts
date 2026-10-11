@@ -61,7 +61,7 @@ for (const name of names) test(`${name}: shipped bundle starts through the produ
         integration: { runtime: "codex", workdir: repository_path, session_name: "integration" },
         forge: { owner: "owner", name: "repo", build_base: "cohort", final_base: "main" } };
       const session = { runtime: "codex", workdir: repository_path, session_name: "test" };
-      const input = { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session,
+      const input = { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: {}, final_merge_policy: "require_merge",
         ...(name === "development-verification" ? { verification_note: "verify" } : {}) };
       const options = { database_url: url, core_binary: binary, host: "127.0.0.1",
         kbbl_base_url: kbbl.url.href, pull_requests,

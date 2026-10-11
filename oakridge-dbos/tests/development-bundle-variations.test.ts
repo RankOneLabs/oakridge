@@ -22,7 +22,7 @@ test("both policy and capacity variants compile through the same binary", async 
     const outcomes = [];
     for (const bundle of bundles) {
       const validated = await core.request("validate_payload", { bundle, schema: "run_input",
-        payload: { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config } });
+        payload: { spec: "Implement feature", repositories: [], analysis: config, planning: config, briefs: config, admission: {}, final_merge_policy: "require_merge" } });
       if (!validated.ok || validated.value.kind !== "validated") throw new Error(JSON.stringify(validated));
       const snapshot: Snapshot = { owner: "root", scope: "development", version: 1, input: validated.value.value,
         state: { schema: "phase_root", data: { kind: "variant", variant: "implementing", value: unit } },

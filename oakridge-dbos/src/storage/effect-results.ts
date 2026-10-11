@@ -70,7 +70,7 @@ export async function persistEffectResult(db: TransactionalSqlExecutor, input: E
       const facts = await tx.query<{ id: string }>(`INSERT INTO authority.fact (id,scope_id,fact_key,payload) SELECT $1,$2,$3,$4
         WHERE NOT EXISTS (SELECT 1 FROM authority.fact WHERE scope_id=$2 AND fact_key=$3) RETURNING id`, [crypto.randomUUID(), written.scope_id, payload.invocation.id, JSON.stringify(terminal_result)]);
       if (facts.length) {
-        await tx.query("UPDATE authority.execution SET result=$1,status='terminal',version=version+1 WHERE id=$2", [JSON.stringify(terminal_result), written.execution_id]);
+        await tx.query("UPDATE authority.execution SET result=$1,status='terminal',completed_at=now(),version=version+1 WHERE id=$2", [JSON.stringify(terminal_result), written.execution_id]);
         await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [written.scope_id]);
       }
     }

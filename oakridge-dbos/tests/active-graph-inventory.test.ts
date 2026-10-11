@@ -10,7 +10,7 @@ const nodes = reachable(graph, entry);
 const files = nodes.map((node) => relative(root, node.path));
 const deleted = [
   "kbbl/core/pwa/oakridge/review-command-types.ts", "kbbl/core/pwa/oakridge/lib/worker-review-actions.ts",
-  "kbbl/core/pwa/oakridge/components/organisms/RunWorkspace.tsx", "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
+  "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
   "oakridge-dbos/src/validation", "oakridge-dbos/src/adapters/dev-flow.ts",
 ];
 test("production entry reaches one evaluator bridge and one mutation authority", () => {
@@ -32,10 +32,11 @@ test("active schema and symbols reflect the scope authority", () => {
   const tables = [...sql.matchAll(/CREATE TABLE\s+([\w.]+)/g)].map((match) => match[1]);
   expect(tables).toEqual([
     "authority.schema_baseline",
-    "authority.definition_bundle", "authority.prompt_content", "authority.run", "authority.scope_instance", "authority.launch_receipt", "authority.scope_export",
+    "authority.definition_bundle", "authority.project", "authority.prompt_content", "authority.run", "authority.scope_instance", "authority.launch_receipt", "authority.scope_export",
     "authority.child_collection", "authority.execution_selection", "authority.execution", "authority.artifact_revision",
     "authority.output_slot", "authority.fact", "authority.transition", "authority.ingress_receipt",
-    "authority.effect_intent", "authority.capacity_pool", "authority.capacity_reservation", "authority.resource_binding", "authority.project",
+    "authority.effect_intent", "authority.capacity_pool", "authority.capacity_reservation", "authority.resource_binding",
+    "authority.operator_event", "authority.collaboration_thread", "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
   expect(activeSource).toContain("createMutationService");

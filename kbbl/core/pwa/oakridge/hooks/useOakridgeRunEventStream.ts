@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { LiveSubscription } from "../../lib/live-stream";
 import type { OperatorRunEvent } from "../operator-contracts";
+import { useQueryClient } from "@tanstack/react-query";
+import { invalidateOperatorFrame } from "./useOakridgeInvalidationStream";
 
 function parseOperatorEvent(data: string): OperatorRunEvent | null {
   try {
@@ -12,6 +14,7 @@ function parseOperatorEvent(data: string): OperatorRunEvent | null {
 
 /** Committed transitions from the authority (GET /events), relayed through kbbl's shared live connection. */
 export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event: OperatorRunEvent) => void): void {
+  const client = useQueryClient();
   const subscriberRef = useRef(subscriber);
   subscriberRef.current = subscriber;
   useEffect(() => {
@@ -19,8 +22,10 @@ export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event
     const subscription = new LiveSubscription("/oakridge/api/events");
     subscription.addEventListener("run_event", (message) => {
       const event = parseOperatorEvent(message.data);
-      if (event) subscriberRef.current(event);
+      if (!event) return;
+      if ("replay" in event && event.replay === true) invalidateOperatorFrame(client, event);
+      else subscriberRef.current(event);
     });
     return () => subscription.close();
-  }, [isEnabled]);
+  }, [client, isEnabled]);
 }

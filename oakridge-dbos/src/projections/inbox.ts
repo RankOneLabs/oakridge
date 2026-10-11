@@ -32,3 +32,5 @@ export interface InboxPage {
   readonly cursor: readonly { readonly scope_id: string; readonly version: number }[];
   readonly items: readonly InboxItem[]; readonly next_cursor: string | null;
 }
+/** Review work and diagnostics from the existing inbox projection. */
+export type ReviewInbox = InboxPage;

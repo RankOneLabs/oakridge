@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { chromium } from "@playwright/test";
 import { createProductionComposition } from "../src/runtime/compose";
+import type { ScopeCommandRequest } from "../src/http/scope-commands";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { PullRequestObservation } from "../src/domain/pull-request";
 import type { PullRequestBranchQuery, PullRequestReader } from "../src/runtime/github-pull-requests";
@@ -16,6 +18,7 @@ import { withDatabase } from "./effect-fixture";
 // publishes through the selected publication contract its prompt carries.
 
 const binary = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
+const pwa_dist = resolve(import.meta.dir, "../../kbbl/core/pwa/dist");
 const cohort = { id: "first", branch: "work", pr_url: "https://github.com/owner/repo/pull/1" };
 const final_pr = { branch: "cohort", pr_url: "https://github.com/owner/repo/pull/2" };
 
@@ -46,9 +49,10 @@ const OUTPUT_BODIES: { readonly [output_key: string]: (stage: string) => unknown
   assessment: () => ({ verdict: "pass", findings: [], test_evidence: null, recommended_next_actions: [] }),
 };
 /** Commands an operator issues to move work forward, in preference order. */
-const FORWARD_COMMANDS = ["begin", "accept", "accept_build", "accept_assessment", "review_pr", "confirm_merged"] as const;
+const FORWARD_COMMANDS = ["admit", "begin", "accept", "accept_build", "accept_assessment", "review_pr", "confirm_merged", "closed_without_merge"] as const;
 
 interface SessionStart { readonly secret: string; readonly endpoint: string; readonly outputs: readonly { readonly key: string; readonly collection_key: string | null }[] }
+interface StartedSessionSettings { readonly stage: string; readonly worker: string | null; readonly runtime: string; readonly model: string | null; readonly effort: string | null }
 function readSessionStart(prompt: string): SessionStart {
   const secret = prompt.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/)?.[1];
   const endpoint = prompt.match(/PUT (\S+)\/outputs\/<output-key>/)?.[1];
@@ -57,7 +61,7 @@ function readSessionStart(prompt: string): SessionStart {
   return { secret, endpoint: new URL(endpoint).pathname, outputs: JSON.parse(outputs) };
 }
 
-test("the shipped development bundle runs from launch to completion with operator evidence from the projection", async () => {
+for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] as const) test(`the shipped development bundle reaches ${final_merge_policy} with every run field`, async () => {
   const repository_path = localRepository();
   const pull_requests = new Map<string, PullRequestObservation>();
   const opened = (query: PullRequestBranchQuery, url: string) => pull_requests.set(query.head_branch, { provider: "github", owner: query.owner, name: query.name,
@@ -71,14 +75,17 @@ test("the shipped development bundle runs from launch to completion with operato
       return { ok: true, value: [pull_requests.get(query.head_branch)!] };
     },
   };
-  const merge = (branch: string) => {
+  const close = (branch: string) => {
     const pr = pull_requests.get(branch);
-    if (pr && pr.state !== "merged") pull_requests.set(branch, { ...pr, state: "merged", merged_at: new Date().toISOString() });
+    if (pr && pr.state !== "closed_unmerged") pull_requests.set(branch, { ...pr, state: "closed_unmerged" });
   };
 
-  let app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> } | null = null;
+  let app: Awaited<ReturnType<typeof createProductionComposition>>["app"] | null = null;
   const sessions = new Map<string, { completed: boolean }>();
   const sids = new Map<string, string>();
+  const resumed_after_end: string[] = [];
+  const ping_inputs: string[] = [];
+  const started_settings: StartedSessionSettings[] = [];
   const publish = async (start: SessionStart, stage: string, sid: string) => {
     for (const output of start.outputs) {
       const response = await app!.request(`${start.endpoint}/outputs/${output.key}`, { method: "PUT",
@@ -91,16 +98,39 @@ test("the shipped development bundle runs from launch to completion with operato
   };
   const agent_failures: string[] = [];
   const kbbl = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
-    const segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const url = new URL(request.url);
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (url.pathname === "/") return new Response(Bun.file(resolve(pwa_dist, "index.html")), { headers: { "content-type": "text/html" } });
+    if (url.pathname.startsWith("/assets/")) return new Response(Bun.file(resolve(pwa_dist, url.pathname.slice(1))));
+    if (url.pathname === "/oakridge/config") return Response.json({ available: true, fallback_refresh_ms: 5_000 });
+    if (url.pathname === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "codex", runtimes: [] });
+    if (url.pathname === "/sessions" && request.method === "GET") return Response.json({ sessions: [] });
+    if (url.pathname === "/inbox") return Response.json({ sessions: [] });
+    if (url.pathname.startsWith("/oakridge/api/") && app) {
+      const path = url.pathname.slice("/oakridge/api".length) + url.search;
+      return app.request(new Request(`http://localhost${path}`, request));
+    }
     const target = segments[0] === "sessions" && segments[1] === "resumable" ? segments[2] ?? "" : segments[1] ?? "";
+    if (request.method === "PUT" && segments[0] === "sessions" && segments[1] === "resumable" && segments[3] === "input") {
+      ping_inputs.push((await request.json() as { text: string }).text);
+      return Response.json({ accepted: true });
+    }
     if (request.method === "PUT") {
       const known = sids.get(target);
-      if (known) return Response.json({ kind: "attached", session: { sid: known, status: "live" } });
+      if (known) {
+        if (request.headers.get("x-oakridge-collaboration-resume") === "true" && sessions.get(known)?.completed)
+          resumed_after_end.push(known);
+        return Response.json({ kind: "attached", session: { sid: known, status: "live" } });
+      }
       const sid = crypto.randomUUID();
       sids.set(target, sid);
       sessions.set(sid, { completed: false });
-      const { initial_prompt } = await request.json() as { initial_prompt: string };
+      const { initial_prompt, runtime, model, effort, workflow } = await request.json() as {
+        initial_prompt: string; runtime: string; model?: string; effort?: string; workflow?: { operator_role?: string } };
       const stage = initial_prompt.match(/Stage: (\S+)/)?.[1] ?? "";
+      const stage_key = initial_prompt.match(/"stage_key":\s*"([^"]+)"/)?.[1] ?? stage;
+      const worker = initial_prompt.match(/"worker_key":\s*"([^"]+)"/)?.[1] ?? workflow?.operator_role ?? null;
+      started_settings.push({ stage: stage_key, worker, runtime, model: model ?? null, effort: effort ?? null });
       void publish(readSessionStart(initial_prompt), stage, sid).catch((cause) => agent_failures.push(String(cause)));
       return Response.json({ kind: "attached", session: { sid, status: "live" } });
     }
@@ -110,11 +140,17 @@ test("the shipped development bundle runs from launch to completion with operato
   } });
 
   try {
-    await withDatabase(async ({ url }) => {
+      await withDatabase(async ({ url, db }) => {
       const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
       const session = { runtime: "codex", workdir: repository_path, session_name: "test" };
       const repository = { key: "repo", preparation: { repository_path, expected_head: null },
         build: session, integration: session, forge: { owner: "owner", name: "repo", build_base: "cohort", final_base: "main" } };
+      const previous_allowed_origins = process.env.OAKRIDGE_ALLOWED_ORIGINS;
+      const previous_kbbl_base_url = process.env.KBBL_BASE_URL;
+      process.env.OAKRIDGE_ALLOWED_ORIGINS = new URL(kbbl.url.href).origin;
+      // The collaboration HTTP handler reads this env var at composition time.
+      // Keep it on the stub so an end-to-end test cannot start a real ACP session.
+      process.env.KBBL_BASE_URL = kbbl.url.href;
       const composition = await createProductionComposition({ database_url: url, core_binary: binary, host: "127.0.0.1",
         kbbl_base_url: kbbl.url.href, pull_requests: reader,
         provider_capabilities: { probe: async () => ({ ok: true as const, value: true as const }), check_github: async () => ({ ok: true as const, value: true as const }) },
@@ -122,13 +158,92 @@ test("the shipped development bundle runs from launch to completion with operato
       app = composition.app;
       try {
         const created = await app.request("/runs", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session } }) });
+          body: JSON.stringify({ bundle, input: { spec: "Feature", repositories: [repository], analysis: session, planning: session, briefs: session, admission: { spec_analysis: true }, final_merge_policy, title: "Feature", slug: "feature", base_branch: "main", sessions: {
+            planner: { runtime: "codex", model: "gpt-6-astra", effort: "high" }, worker: { runtime: "codex", model: "gpt-6-luna", effort: "low" },
+            spec_analysis: { runtime: "codex", model: "gpt-6-sol", effort: "medium" },
+          } } }) });
         expect(created.status).toBe(201);
         const { run_id, root_scope_id }: { run_id: string; root_scope_id: string } = await created.json();
         const read = async <T,>(path: string): Promise<T> => {
           const response = await app!.request(path);
           if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
           return response.json() as Promise<T>;
+        };
+        let browser_walked = false;
+        const browserWalk = async (scope: ScopeView): Promise<void> => {
+          const result = scope.outputs.find((item) => item.output_key === "build_result" && item.collection_key === "");
+          const agentRevision = result?.current_revision;
+          if (!agentRevision || agentRevision.body.data.kind !== "record") throw new Error("build result revision not ready for browser walk");
+          const browser = await chromium.launch({ args: ["--no-sandbox"] });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          try {
+            const page = await context.newPage();
+            page.setDefaultTimeout(10_000);
+            const base = kbbl.url.href;
+            const visit = async (hash: string, ready: string): Promise<void> => {
+              await page.goto(`${base}#${hash}`);
+              await page.locator(ready).waitFor();
+            };
+            await visit(`oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
+            // Force one stale-cursor response, then let the UI retry against the
+            // real authority. This covers the reload path even when the runtime
+            // happens not to advance the scope during the first edit.
+            let rejectedFirstEdit = false;
+            await page.route(`**/scopes/${scope.scope_id}/commands`, async (route) => {
+              if (!rejectedFirstEdit && route.request().method() === "POST") {
+                const command = route.request().postDataJSON() as ScopeCommandRequest;
+                if (command.command_key !== "edit_build_result") throw new Error(`unexpected browser command ${command.command_key}`);
+                rejectedFirstEdit = true;
+                await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "scope version changed" }) });
+              } else await route.continue();
+            });
+            let editStatus = 409;
+            for (let attempt = 0; attempt < 5 && editStatus === 409; attempt++) {
+              if (attempt === 0) await page.goto(`${base}#oakridge/run/${run_id}/artifact/${agentRevision.id}`);
+              // A hash-only navigation leaves the edit form open after a 409. Reload
+              // so the next attempt uses the newly projected scope version.
+              else await page.reload();
+              await page.getByTestId("or-artifact-review").waitFor();
+              await page.getByRole("button", { name: "Edit artifact" }).click();
+              await page.getByLabel("summary", { exact: true }).fill("Edited by operator");
+              const editResponse = page.waitForResponse((reply) => reply.url().includes(`/scopes/${scope.scope_id}/commands`)
+                && reply.request().method() === "POST");
+              await page.getByRole("button", { name: "Save edit" }).click();
+              const edit = await editResponse;
+              editStatus = edit.status();
+              if (editStatus !== 202 && editStatus !== 409) throw new Error(`operator edit failed: ${editStatus} ${await edit.text()}`);
+            }
+            expect(rejectedFirstEdit).toBe(true);
+            if (editStatus !== 202) throw new Error(`operator edit remained in conflict after five UI attempts`);
+            let editRevision: NonNullable<typeof agentRevision> | null = null;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              const projected = await read<ScopeView>(`/api/runs/${run_id}/scopes/${scope.scope_id}`);
+              const current = projected.outputs.find((item) => item.output_key === "build_result")?.current_revision;
+              if (current && current.id !== agentRevision.id) { editRevision = current; break; }
+              await Bun.sleep(50);
+            }
+            if (!editRevision) throw new Error("operator edit did not project a new revision");
+            const revisionRows = await db.query<{ execution_id: string | null; predecessor_id: string | null }>(
+              "SELECT execution_id, predecessor_id FROM authority.artifact_revision WHERE id=$1", [editRevision.id]);
+            expect(revisionRows).toEqual([{ execution_id: null, predecessor_id: agentRevision.id }]);
+            await page.goto(`${base}#oakridge/run/${run_id}/artifact/${editRevision.id}`);
+            await page.getByTestId("or-artifact-review").waitFor();
+            await page.getByLabel("New thread title").fill("Review the operator edit");
+            await page.getByRole("button", { name: "Start thread" }).click();
+            await page.getByText("Review the operator edit").waitFor();
+            await page.getByRole("button", { name: "Reply" }).click();
+            await page.getByLabel("Reply").fill("Please review the changed summary");
+            await page.getByLabel("Ping agent").check();
+            const response = page.waitForResponse((reply) => reply.url().includes("/messages") && reply.request().method() === "POST");
+            await page.getByRole("button", { name: "Send reply" }).click();
+            const delivered: { delivery: { payload: { status: string; reason: string | null } } } = await (await response).json();
+            if (delivered.delivery.payload.status !== "delivered") throw new Error(`ping delivery failed: ${JSON.stringify(delivered.delivery)}`);
+            expect(resumed_after_end).toHaveLength(1);
+            expect(ping_inputs).toEqual(["Please review the changed summary"]);
+            await visit("oakridge/review-inbox", '[data-testid="or-review-inbox"]');
+            await visit("oakridge/defs", 'h1:has-text("Pinned definitions")');
+            await visit("oakridge/def-new", '[data-testid="or-def-editor"]');
+          } finally { await context.close(); await browser.close(); }
         };
         const issued: string[] = [];
         const deadline = Date.now() + 90_000;
@@ -141,11 +256,21 @@ test("the shipped development bundle runs from launch to completion with operato
             const scope = await read<ScopeView>(`/api/runs/${run_id}/scopes/${summary.scope_id}`);
             if (scope.is_terminal) continue;
             const state = scope.state.data.kind === "variant" ? scope.state.data.variant : null;
+            if (scope.scope_key === "spec_analysis" && state === "waiting_admission")
+              expect(scope.commands.map((item) => item.key)).toEqual(["admit"]);
             // The forge merges once the operator has accepted the work it is waiting on.
-            if (scope.scope_key === "implementation" && state === "awaiting_merge") merge(cohort.branch);
-            if (scope.scope_key === "final_integration" && state === "review") merge(final_pr.branch);
+            if (scope.scope_key === "final_integration" && state === "review") {
+              if (final_merge_policy === "allow_close_without_merge") close(final_pr.branch);
+            }
+            if (!browser_walked && final_merge_policy === "require_merge" && scope.scope_key === "implementation"
+              && state === "review" && scope.outputs.some((item) => item.output_key === "build_result" && item.current_revision)) {
+              await browserWalk(scope);
+              browser_walked = true;
+              continue;
+            }
             // Like the PWA, a command waits until every prefilled field has been observed.
-            const command = FORWARD_COMMANDS.map((key) => scope.commands.find((item) => item.key === key))
+            const command = FORWARD_COMMANDS.filter((key) => key !== (final_merge_policy === "require_merge" ? "closed_without_merge" : "confirm_merged") || scope.scope_key === "implementation")
+              .map((key) => scope.commands.find((item) => item.key === key))
               .find((item) => item !== undefined && (item.prefill ?? []).every((entry) => entry.key in (scope.command_prefill[item.key] ?? {})));
             if (!command) continue;
             const response = await app.request(`/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, { method: "POST",
@@ -155,7 +280,7 @@ test("the shipped development bundle runs from launch to completion with operato
             if (response.status === 202) { issued.push(`${scope.scope_key}.${command.key}`); continue; }
             // A merge confirmation waits on a fresh PR observation; anything else is a defect.
             const detail = await response.text();
-            if (command.key === "confirm_merged" && response.status === 422 && scope.commands.some((item) => item.key === "refresh_pr")) {
+            if ((command.key === "confirm_merged" || command.key === "closed_without_merge") && response.status === 422 && scope.commands.some((item) => item.key === "refresh_pr")) {
               await app.request(`/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, { method: "POST", headers: { "content-type": "application/json" },
                 body: JSON.stringify({ command_key: "refresh_pr", payload: {}, request_id: crypto.randomUUID(), scope_id: scope.scope_id,
                   expected_scope_version: scope.cursor.scope_version, targets: [] }) });
@@ -167,10 +292,25 @@ test("the shipped development bundle runs from launch to completion with operato
         }
         const root = await read<ScopeView>(`/api/runs/${run_id}/scopes/${root_scope_id}`);
         expect({ is_terminal: root.is_terminal, outcome: root.outcome?.data, reviews: issued.filter((item) => !item.endsWith(".begin")) }).toMatchObject({
-          is_terminal: true, outcome: { kind: "variant", variant: "complete" },
-          reviews: ["spec_analysis.accept", "planning.accept", "brief_writing.accept", "implementation.accept_build", "implementation.accept_assessment",
-            "implementation.confirm_merged", "final_integration.review_pr", "final_integration.confirm_merged"] });
-      } finally { await composition.close(); }
+          is_terminal: true, outcome: { kind: "variant", variant: final_merge_policy === "require_merge" ? "complete" : "closed_without_merge" },
+          reviews: ["spec_analysis.admit", "spec_analysis.accept", "planning.accept", "brief_writing.accept", "implementation.accept_build", "implementation.accept_assessment",
+            "implementation.confirm_merged", "final_integration.review_pr", `final_integration.${final_merge_policy === "require_merge" ? "confirm_merged" : "closed_without_merge"}`] });
+        expect(started_settings.filter(({ stage, worker }) => stage === "spec_analysis" && worker === "author")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-sol", effort: "medium" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "planning" && worker === "author")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-astra", effort: "high" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "implementation" && worker === "build")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-luna", effort: "low" });
+        expect(started_settings.filter(({ stage, worker }) => stage === "implementation" && worker === "assessment")
+          .map(({ model, effort }) => ({ model, effort }))).toContainEqual({ model: "gpt-6-astra", effort: "high" });
+        if (final_merge_policy === "require_merge") expect(browser_walked).toBe(true);
+      } finally {
+        await composition.close();
+        if (previous_allowed_origins === undefined) delete process.env.OAKRIDGE_ALLOWED_ORIGINS;
+        else process.env.OAKRIDGE_ALLOWED_ORIGINS = previous_allowed_origins;
+        if (previous_kbbl_base_url === undefined) delete process.env.KBBL_BASE_URL;
+        else process.env.KBBL_BASE_URL = previous_kbbl_base_url;
+      }
     });
   } finally { kbbl.stop(true); rmSync(repository_path, { recursive: true, force: true }); }
 }, 120_000);

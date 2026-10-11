@@ -5,6 +5,11 @@ import type { EffectIntent } from "../src/effects/intents";
 import type { MutationService } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { CommitRejectionReason } from "../src/storage/commit";
+import type { CommitRequest } from "../src/storage/commit";
+import type { AuthoritySnapshot } from "../src/storage/snapshot-reader";
+import type { SqlExecutor } from "../src/storage/sql-executor";
+import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import { validateStorageAuthority } from "../src/storage/storage-validator";
 
 const rejectionDetailMatch = /\b(?:outcome|rejection|commit_result|result\.value)\.detail\s*(?:===|!==|==|!=|\.startsWith\s*\(|\.includes\s*\()/;
 
@@ -34,4 +39,20 @@ test("evidence delivery treats the reason as authoritative when detail text chan
     { decide: async () => ({ ok: true, value: { kind: "Rejected", reason, detail } }) } as unknown as MutationService, intent);
   expect(await deliver("owner_terminal", "the wording changed")).toEqual({ kind: "delivered" });
   expect(await deliver("invalid", "owner is terminal")).toEqual({ kind: "deferred", detail: "owner is terminal" });
+});
+
+test("only the declared edit trigger permits a publication without an execution", async () => {
+  const bundle: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
+  const source = { owner: { id: "scope", run_id: "run", scope_key: "implementation" },
+    snapshot: { trigger: { key: "build_submitted" } } } as AuthoritySnapshot;
+  const request = { decision: { kind: "wait" }, outputs: [{ output_key: "build_result", collection_key: "",
+    execution_id: null, predecessor_id: "previous" }], capacity: [] } as unknown as CommitRequest;
+  const tx = { query: async () => [] } as unknown as SqlExecutor;
+  expect(await validateStorageAuthority(tx, request, source, bundle)).toMatchObject({ ok: false,
+    error: { detail: "producer execution required" } });
+  const edit_source = { ...source, snapshot: { ...source.snapshot, trigger: { key: "edit_build_result" } } } as AuthoritySnapshot;
+  expect(await validateStorageAuthority(tx, request, edit_source, bundle)).toMatchObject({ ok: true });
+  const missing_predecessor = { ...request, outputs: [{ ...request.outputs[0]!, predecessor_id: null }] };
+  expect(await validateStorageAuthority(tx, missing_predecessor, edit_source, bundle)).toMatchObject({ ok: false,
+    error: { detail: "edit publication requires predecessor" } });
 });

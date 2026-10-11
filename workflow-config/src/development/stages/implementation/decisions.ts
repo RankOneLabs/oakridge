@@ -1,4 +1,5 @@
 import type { DecisionTree } from "../../../source-contracts";
+import { admissionGate } from "../../run/stage-table";
 import { literal, reference, variant } from "../../../primitives/expressions";
 import { github_auth_failure, begin_build, build_pair_complete, build_open_pr, feedback_open_pr, retry_retained_exact } from "./build";
 import { assessment_submission_context, assessment_accept_context, discussion_context, unchanged_context, implementation_feedback_context, retry_assessment_context } from "./assessment";
@@ -46,18 +47,28 @@ const implementation_wait: DecisionTree = {
   attention: { label: "Awaiting work or review", trigger: "accept_build" }
 };
 
+const assessment_edit_wait: DecisionTree = {
+  kind: "wait",
+  id: "assessment_edit_wait",
+  continuations: ["accept_assessment", "discuss_assessment", "request_implementation_changes"],
+  reason: "awaiting assessment review",
+  attention: { label: "Review assessment", trigger: "accept_assessment" }
+};
+
 export const implementation_dispatch: DecisionTree = {
   kind: "match",
   id: "implementation_dispatch",
   value: reference({ kind: "trigger" }, []),
   cases: [
     { variant: "auth", node: github_auth_failure },
-    { variant: "begin", node: begin_build },
+    { variant: "begin", node: admissionGate("implementation", "phase_impl", begin_build) },
+    { variant: "admit", node: { ...begin_build, id: "implementation_admitted" } },
     { variant: "build_submitted", node: build_pair_complete },
     { variant: "accept_build", node: build_open_pr },
     { variant: "request_build_changes", node: feedback_open_pr },
     { variant: "retry_build", node: retry_retained_exact },
     { variant: "assessment_submitted", node: assessment_submission_context },
+    { variant: "edit_assessment", node: assessment_edit_wait },
     { variant: "accept_assessment", node: assessment_accept_context },
     { variant: "discuss_assessment", node: discussion_context },
     { variant: "assessment_unchanged", node: unchanged_context },
@@ -67,8 +78,8 @@ export const implementation_dispatch: DecisionTree = {
     { variant: "confirm_merged", node: merge_context },
     { variant: "cancel", node: implementation_cancel },
     { variant: "abandon", node: implementation_abandon },
-    { variant: "session_failed", node: { ...implementation_abandon, id: "implementation_session_failed" } },
-    { variant: "provider_start_failed", node: { ...implementation_abandon, id: "implementation_provider_start_failed" } },
+    { variant: "session_failed", node: { kind: "apply", id: "implementation_session_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_impl", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
+    { variant: "provider_start_failed", node: { kind: "apply", id: "implementation_provider_start_failed", mutations: [{ kind: "set_state", value: variant({ schema: "phase_impl", variant: "working", value: literal("unit", {}) }) }], actions: [], outcome: null } },
     { variant: "refresh_pr", node: refresh_pr },
     { variant: "pr_observed", node: matching_pr_observation }
   ],
