@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 38 of the 48 `main` PWA test files. The remaining 10 are
+This branch has mapped and tested 39 of the 48 `main` PWA test files. The remaining 9 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -531,6 +531,37 @@ The v15 overview joined separate run, gate and executor-attempt reads. The gener
 
 The current suite also asserts that only published current revisions appear in the artifact list and that a scope without executions contributes no sidebar session. Those are generated-surface assertions, not substitutes for historical release ordering or session-read failures.
 
+## `kbbl/core/pwa/oakridge/__tests__/workflowdefs.test.tsx`
+
+The list and editor now operate on generated pinned definition summaries and stored authoring choices. The source v15 stage graph and slot-binding editor are not part of this authoring surface. All test read models come from the shared factory. Whitespace in multi-line original assertions is normalized for the table.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect(screen.getByTestId("or-def-list-loading")).toBeTruthy();` | `expect(screen.getByRole("status").textContent).toContain("Loading definitions");` | The generated catalog reports its pending query as a status message. |
+| Translated | `expect(rows).toHaveLength(2);` | `expect((await screen.findAllByRole("button", { name: /development v/ })).length).toBe(2);` | Two pinned summaries built by the shared factory render two catalog entries. |
+| Translated | `expect(await screen.findByTestId("or-def-list-empty")).toBeTruthy();` | `expect(await screen.findByText("No pinned definitions.")).toBeTruthy();` | The empty pinned catalog remains explicit. |
+| Translated | `expect(await screen.findByTestId("or-def-list-error")).toBeTruthy();` | `expect((await screen.findByRole("alert")).textContent).toContain("server down");` | Failed catalog reads remain visible to the operator. |
+| Translated | `expect(onNew).toHaveBeenCalled();` | `expect(onNew).toHaveBeenCalledOnce();` | The new-authoring navigation callback still fires. |
+| Replacement | `expect(onClone).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));` | `expect(onClone).toHaveBeenCalledWith("bundle-1");` | The callback now carries the pinned bundle ID instead of a full v15 definition object. The old object payload is retired. |
+| Replacement | `expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));` | `expect(onSelect).toHaveBeenCalledWith("bundle-1");` | Selection now routes by pinned bundle ID rather than a v15 definition object. |
+| Translated | `expect(await screen.findByTestId("or-def-detail")).toBeTruthy();` | `expect(detail.textContent).toContain("Root scope: development");` | The detail panel still appears after the catalog loads. |
+| Replacement | `expect(screen.getAllByTestId("or-def-stage")).toHaveLength(1);` | `expect(detail.querySelectorAll("li").length).toBeGreaterThan(0);` | The detail lists generated scopes, rather than an editable v15 stage graph. |
+| Unportable | `expect(screen.getByText("plan")).toBeTruthy();` | No equivalent assertion. | The pinned detail does not display a v15 input slot named plan. |
+| Unportable | `expect(screen.getByText("result")).toBeTruthy();` | No equivalent assertion. | The pinned detail does not display a v15 output slot named result. |
+| Unportable | `expect(screen.getByText("No connections.")).toBeTruthy();` | No equivalent assertion. | The pinned detail has no hand-authored edge list or No connections state. |
+| Unportable | `expect(screen.getByText("Stage configuration")).toBeTruthy();` | No equivalent assertion. | The pinned detail does not expose individual v15 stage configuration. |
+| Translated | `expect(await screen.findByTestId("or-def-editor")).toBeTruthy();` | `expect(screen.getByTestId("or-def-editor")).toBeTruthy();` | A new pinned authoring form still opens. |
+| Translated | `expect(screen.getByTestId("or-def-editor-loading")).toBeTruthy();` | `expect(screen.getByRole("status").textContent).toContain("Loading definition");` | Clone-source loading remains visible. |
+| Translated | `expect(await screen.findByTestId("or-def-editor-load-error")).toBeTruthy();` | `expect((await screen.findByRole("alert")).textContent).toContain("not found");` | A failed clone-source request remains visible. |
+| Replacement | `expect(btn.disabled).toBe(true);` | `expect(screen.getByRole<HTMLButtonElement>("button", { name: "Compile definition" }).disabled).toBe(false);` | The pinned development template owns its scopes, so compilation is available without manually defining stages. The old disable rule is retired. |
+| Replacement | `expect(screen.getByTestId("or-def-validation-errors")).toBeTruthy();` | `expect(key.checkValidity()).toBe(false);` | The required authoring key uses native form validity rather than a v15 validation-errors panel. |
+| Translated | `expect(await screen.findByTestId("or-def-editor")).toBeTruthy();` | `expect((await screen.findByDisplayValue("v2-staged-copy"))).toBeTruthy();` | The editor appears after stored authoring is loaded. |
+| Unportable | `expect(parseInt(versionInput.value, 10)).toBe(DEF_WITH_STAGES.version + 1);` | No equivalent assertion. | The backend versions pinned bundles; the authoring form has no editable version number to increment. |
+| Replacement | `expect(nameInput.value).toBe(DEF_WITH_STAGES.name);` | `expect((await screen.findByDisplayValue("v2-staged-copy"))).toBeTruthy();` | Clone authoring receives a new key instead of preserving the v15 name. Other choices, including implementation capacity, are retained. |
+| Unportable | `expect(screen.getByLabelText("Slot binding key")).toBe(keyInput);` | No equivalent assertion. | The pinned high-level authoring form has no slot-binding row; the old input-lookup editor contract is retired. |
+
+The restored detail additionally checks the pinned root scope and visible scope labels. The clone test checks that the generated authoring keeps implementation capacity while assigning a new key.
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -541,14 +572,13 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 10 files and 156 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 9 files and 141 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

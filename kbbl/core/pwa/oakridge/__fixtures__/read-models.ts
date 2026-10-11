@@ -147,6 +147,12 @@ export function makeDefinitionSummary(overrides: Partial<OperatorDefinitionSumma
     archived_at: null, ...overrides };
 }
 
+/** Mirrors the authority's definition-detail projection for authoring clone tests. */
+export function makeDefinitionDetail(overrides: { readonly authoring?: WorkflowAuthoring | null } = {}) {
+  return { ...makeDefinitionSummary(), authoring: overrides.authoring === undefined ? makeWorkflowAuthoring() : overrides.authoring,
+    graph: { nodes: [], edges: [] } };
+}
+
 export function makeStartPinnedRunRequest(overrides: Partial<OperatorStartPinnedRunRequest> = {}): OperatorStartPinnedRunRequest {
   return { digest: "digest-1", input: { project_id: "project-1" }, request_id: "launch-1", ...overrides };
 }
