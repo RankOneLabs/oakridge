@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 35 of the 48 `main` PWA test files. The remaining 13 are
+This branch has mapped and tested 36 of the 48 `main` PWA test files. The remaining 12 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -441,6 +441,21 @@ The file handle in every assertion is now made by `makeBriefNotesFile` in the sh
 
 The launch integration additionally checks that selecting `brief.md` places its exact text in the generated `spec` field and displays the filename.
 
+## `kbbl/core/pwa/oakridge/lib/stage-unit-params.test.ts`
+
+The original suite used a captured `/runs/:id` v15 payload to catch a handwritten `StageUnitParams` type that compiled but missed the real nested brief. Current scope outputs carry a checked revision, and the sidebar uses `selectRunArtifacts` to expose it. The new factory builds the same field values from the pinned `brief_body` schema. This is **relaxed** relative to the old live-payload regression guard: it does not prove that an external payload has the expected shape.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(brief?.title).toBe("End-to-end, browser, offline and packaging acceptance");` | `expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "title")).toBe("End-to-end, browser, offline and packaging acceptance");` | The exact title is retained in a generated checked revision, but the original captured response is no longer exercised. |
+| **Relaxed** | `expect(brief?.repository_key).toBe("assay");` | `expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "repository_key")).toBe("assay");` | The generated brief projects the same repository key; live-payload shape coverage is lost. |
+| **Relaxed** | `expect(brief?.goal).toContain("Close out the required cases");` | `expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "goal")).toContain("Close out the required cases");` | The goal claim remains, but uses a schema-built fixture. |
+| **Relaxed** | `expect(brief?.files_in_scope).toContain("tests/test_review_acceptance.py");` | `expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "files_in_scope").map(selectCheckedText)).toContain("tests/test_review_acceptance.py");` | The file is present in the checked list; the original response mapping is untested. |
+| **Relaxed** | `expect(brief?.depends_on).toEqual(["review-cli", "frontend-bundle"]);` | `expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "depends_on").map(selectCheckedText)).toEqual(["review-cli", "frontend-bundle"]);` | Dependency order survives in the checked list, with the same fixture limitation. |
+| Replacement | `expect(selectCohortBrief(makeUnit({}))).toBeNull();` | `expect(selectRunArtifacts([makeScopeView({ outputs: [] })]).find((artifact) => artifact.output.output_key === "brief")).toBeUndefined();` | The replacement surface has no `params`; a scope with no output has no brief in the sidebar. |
+| Replacement | `expect(selectCohortBrief(makeUnit(assessorParams as StageUnit["params"]))).toBeNull();` | `expect(selectRunArtifacts([artifactScope(result.body, "build_result")]).find((artifact) => artifact.revision.body.schema === "brief_body")).toBeUndefined();` | An assessor's checked build result is a distinct output schema. |
+| Replacement | `expect(selectCohortBrief(makeUnit(null))).toBeNull();` | `expect(selectRunArtifacts([scope]).find((artifact) => artifact.output.output_key === "brief")).toBeUndefined();` | An output slot without a revision is not shown as an artifact. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -459,9 +474,8 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
-| `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 13 files and 205 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 12 files and 201 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
