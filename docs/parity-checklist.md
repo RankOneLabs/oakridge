@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 19 of the 48 `main` PWA test files. The remaining 29 are
+This branch has mapped and tested 20 of the 48 `main` PWA test files. The remaining 28 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -214,6 +214,17 @@ The new suite separately checks the builder's reported passed and failed counts.
 
 The current client suite also tests generated run and definition pagination, config fallback, and scope-command idempotency with shared factory values. These are additional current-contract tests, not replacements for the retired endpoint assertions above.
 
+## `kbbl/core/pwa/oakridge/lib/launch-selection.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect(next).toEqual({ runtime: "claude-code", model: "claude-opus-4-8", effort: undefined });` | `expect(next).toEqual(makeRuntimeSelection());` | `coerceRoleSelection` still drops a stale effort while preserving the model for both advertised and empty-model descriptors. The expected value and descriptors are built in the shared factory. |
+| Translated | `expect(next.effort).toBe(effort);` | Same assertion. | Null and undefined still remain no-override values in both parameterized cases. |
+| Translated | `expect(next.effort).toBe("high");` | Same assertion. | A valid selected effort survives when the default runtime differs. |
+| Translated | `expect(next.effort).toBeUndefined();` after a stale model and effort | Same assertion. | A replaced descriptor still drops an effort it does not advertise. |
+| Translated | `expect(next.runtime).toBe("claude-code");` | Same assertion. | An untouched selection still follows the default runtime. |
+| Translated | `expect(next.effort).toBeUndefined();` after a runtime change | Same assertion. | The effort from the previous runtime is cleared. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -235,7 +246,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/build-result.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/launch-config.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/launch-selection.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/request-identity.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-accent.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -250,7 +260,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 29 files and 317 named test declarations; parameterized cases may expand further. The ported plan, PR-summary, viewer and client suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 28 files and 313 named test declarations as previously counted; parameterized cases may expand further. The ported plan, PR-summary, viewer and client suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

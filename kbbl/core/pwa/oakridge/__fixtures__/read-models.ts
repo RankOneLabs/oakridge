@@ -8,6 +8,7 @@ import type {
 import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
 import type { OperatorCommandSubmission } from "../lib/operator-drafts";
 import type { OakridgeConfig } from "../types";
+import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
@@ -147,6 +148,16 @@ export function makeCommandReceipt(overrides: Partial<OperatorCommandReceipt> = 
 
 export function makeOakridgeConfig(overrides: Partial<OakridgeConfig> = {}): OakridgeConfig {
   return { available: true, core_url: "http://oakridge.test", fallback_refresh_ms: 5_000, ...overrides };
+}
+
+export function makeRuntimeDescriptor(overrides: Partial<RuntimeDescriptor> = {}): RuntimeDescriptor {
+  return { id: "claude-code", label: "Claude Code", models: [{ value: "claude-opus-4-8", label: "opus 4.8" }],
+    efforts: [{ value: "medium", label: "medium" }, { value: "high", label: "high" }],
+    supportsCompaction: true, ...overrides };
+}
+
+export function makeRuntimeSelection(overrides: Partial<RuntimeModelSelection> = {}): RuntimeModelSelection {
+  return { runtime: "claude-code", model: "claude-opus-4-8", effort: undefined, ...overrides };
 }
 
 export function makeExecutionView(overrides: Partial<OperatorExecutionView> = {}): OperatorExecutionView {
