@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 20 of the 48 `main` PWA test files. The remaining 28 are
+This branch has mapped and tested 21 of the 48 `main` PWA test files. The remaining 27 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -225,6 +225,25 @@ The current client suite also tests generated run and definition pagination, con
 | Translated | `expect(next.runtime).toBe("claude-code");` | Same assertion. | An untouched selection still follows the default runtime. |
 | Translated | `expect(next.effort).toBeUndefined();` after a runtime change | Same assertion. | The effort from the previous runtime is cleared. |
 
+## `kbbl/core/pwa/oakridge/lib/run-sessions.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(rows.map((row) => ({ id: row.attempt.work_order_id, is_current: row.is_current, of: row.attempt_count }))).toEqual([{ id: "work-1", is_current: true, of: 1 }]);` | No equivalent current-attempt assertion. | The authority projection exposes executions and generations, not v15 work-order attempts or an `is_current` marker. |
+| Unportable | `expect(currentWorkOrderIds(attempts)).toEqual(["work-2"]);` when a newer attempt was abandoned | No equivalent assertion. | The generated execution status has `pending` or `terminal`, with no `abandoned` work-order state. |
+| Unportable | `expect(currentWorkOrderIds(attempts)).toEqual(["work-2"]);` when all attempts completed | No equivalent assertion. | The selector returns all projected executions, without selecting a current work order. |
+| Unportable | `expect(currentWorkOrderIds(attempts)).toEqual(["work-2"]);` across the DST fold | No equivalent assertion. | Generated `OperatorExecutionView` has a generation but no rendered `created_at` field. The old timestamp-order fallback is retired. |
+| Unportable | `expect(currentWorkOrderIds(attempts)).toEqual(["work-2"]);` when all attempts were abandoned | No equivalent assertion. | Abandonment and current work-order selection are not in the generated projection. |
+| Replacement | `expect(currentWorkOrderIds(attempts)).toEqual(["work-1", "work-2"]);` for separate units | `expect(rows.map((row) => [row.scope_id, row.execution.id])).toEqual([["scope-build", "execution-build"], ["scope-assess", "execution-assess"]]);` | Scope identity keeps executions distinct, but this does not assert v15 unit current-attempt selection. Both scopes and executions come from the shared factory. |
+| Unportable | `expect(selectRunSessionRows(attempts).map((row) => \`${row.attempt.unit_id} ${row.attempt_number}/${row.attempt_count}\`)).toEqual(["api 1/2", "web 1/1", "api 2/2"]);` | No equivalent assertion. | The current sidebar shows executions by scope; it does not number attempts within v15 units. |
+| Translated | `expect(selectRunSessionRows(attempts).map((row) => row.attempt.work_order_id)).toEqual(["work-1", "work-2"]);` | `expect(rows.map((row) => row.execution.id)).toEqual(["execution-1", "execution-2", "execution-3"]);` | The selector preserves server projection order within and across scopes; the identity changed from work order to execution. |
+| Translated | `expect(selectRunSessionRows([])).toEqual([]);` | `expect(selectRunExecutions([makeScopeView(), makeScopeView({ scope_id: "scope-2" })])).toEqual([]);` | Scopes with no executions produce no sidebar rows. |
+| Replacement | `expect(runUnitKeyOf(build)).not.toBe(runUnitKeyOf(assess)); expect(currentWorkOrderIds([build, assess])).toEqual(["work-1", "work-2"]);` | `expect(rows.map((row) => [row.scope_id, row.execution.id])).toEqual([["scope-build", "execution-build"], ["scope-assess", "execution-assess"]]);` | Generated scope IDs distinguish work in different scopes. The old stage-instance/unit composite key and current selection are retired. |
+| Unportable | `expect(selectRunSessionsRead({ attempts: undefined, is_pending: true, is_error: false })).toEqual({ kind: "pending" });` | No equivalent selector assertion. | React Query owns the scope read state; `selectRunSessionsRead` was removed. |
+| Unportable | `expect(selectRunSessionsRead({ attempts: undefined, is_pending: false, is_error: true })).toEqual({ kind: "unavailable" });` | No equivalent selector assertion. | Scope-read errors are handled by the query boundary, not a session-attempt read union. |
+| Unportable | `expect(selectRunSessionsRead({ attempts: ATTEMPTS, is_pending: false, is_error: true })).toEqual({ kind: "loaded", attempts: ATTEMPTS });` | No equivalent selector assertion. | Stale-data retention is delegated to React Query and is not asserted by this pure execution selector. |
+| Unportable | `expect(selectRunSessionsRead({ attempts: [], is_pending: false, is_error: false })).toEqual({ kind: "loaded", attempts: [] });` | No equivalent read-state assertion. | The current selector accepts already loaded scopes and returns an empty row list; it does not represent pending, error or loaded states. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -251,7 +270,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/run-sessions.test.ts` | 14 | The old work-order attempt and health model differs from the generated session projection; no assertion-preserving mapping has been established. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
@@ -260,7 +278,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 28 files and 313 named test declarations as previously counted; parameterized cases may expand further. The ported plan, PR-summary, viewer and client suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 27 files and 299 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
