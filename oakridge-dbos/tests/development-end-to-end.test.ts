@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import { chromium } from "@playwright/test";
 import { createProductionComposition } from "../src/runtime/compose";
+import type { ScopeCommandRequest } from "../src/http/scope-commands";
 import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import type { PullRequestObservation } from "../src/domain/pull-request";
 import type { PullRequestBranchQuery, PullRequestReader } from "../src/runtime/github-pull-requests";
@@ -196,9 +197,24 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
             };
             mkdirSync(screenshots, { recursive: true });
             await capture("run-overview", `oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
+            // Force one stale-cursor response, then let the UI retry against the
+            // real authority. This covers the reload path even when the runtime
+            // happens not to advance the scope during the first edit.
+            let rejectedFirstEdit = false;
+            await page.route(`**/scopes/${scope.scope_id}/commands`, async (route) => {
+              if (!rejectedFirstEdit && route.request().method() === "POST") {
+                const command = route.request().postDataJSON() as ScopeCommandRequest;
+                if (command.command_key !== "edit_build_result") throw new Error(`unexpected browser command ${command.command_key}`);
+                rejectedFirstEdit = true;
+                await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "scope version changed" }) });
+              } else await route.continue();
+            });
             let editStatus = 409;
             for (let attempt = 0; attempt < 5 && editStatus === 409; attempt++) {
-              await page.goto(`${base}#oakridge/run/${run_id}/artifact/${agentRevision.id}`);
+              if (attempt === 0) await page.goto(`${base}#oakridge/run/${run_id}/artifact/${agentRevision.id}`);
+              // A hash-only navigation leaves the edit form open after a 409. Reload
+              // so the next attempt uses the newly projected scope version.
+              else await page.reload();
               await page.getByTestId("or-artifact-review").waitFor();
               await page.getByRole("button", { name: "Edit artifact" }).click();
               await page.getByLabel("summary", { exact: true }).fill("Edited by operator");
@@ -209,6 +225,7 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
               editStatus = edit.status();
               if (editStatus !== 202 && editStatus !== 409) throw new Error(`operator edit failed: ${editStatus} ${await edit.text()}`);
             }
+            expect(rejectedFirstEdit).toBe(true);
             if (editStatus !== 202) throw new Error(`operator edit remained in conflict after five UI attempts`);
             let editRevision: NonNullable<typeof agentRevision> | null = null;
             for (let attempt = 0; attempt < 100; attempt++) {
