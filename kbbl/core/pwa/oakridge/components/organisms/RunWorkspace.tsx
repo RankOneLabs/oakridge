@@ -77,6 +77,7 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
         onOpenArtifact={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
       <div className="or-run-workspace__panes" data-testid="or-run-panes">
         {routePane?.kind === "artifact" ? <ArtifactReview revisionId={routePane.artifact_id} scopes={scopes} schemas={schemas}
+          scopeDefinitions={definition.data?.source.scopes ?? []}
           onBack={() => navigate(scopeId)} onRefresh={refresh} onRevised={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
           : routePane?.kind === "session" ? <RunSessionPane sessionId={routePane.session_id} onOpenSession={(id) => navigate({ kind: "session", session_id: id })} />
           : <><RunOverviewPane run={run} scopes={scopes} schemas={schemas} onOpenScope={(id) => navigate(id)} />
