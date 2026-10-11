@@ -41,7 +41,7 @@ test("handlers, adapters and observers cannot reach domain writes without crossi
   expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
 });
 test("state ownership inventory covers every production authority write with its named writer", () => {
-  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  const inventory = readFileSync(resolve(import.meta.dir, "state-ownership-inventory.md"), "utf8");
   const sites = reachable(graph, dbosMain).flatMap(authorityWriteSites);
   expect(sites.length).toBeGreaterThan(0);
   expect(undocumentedAuthorityWrites({ root, nodes: reachable(graph, dbosMain), inventory })).toEqual([]);
@@ -53,7 +53,7 @@ test("an additional production writer cannot hide behind existing inventory cita
     }
   `);
   expect(authorityWriteSites(node)).toEqual([{ path: node.path, line: 3, writer: "unlistedWriter" }]);
-  const inventory = readFileSync(resolve(root, "comms/oakridge-state-ownership-inventory.md"), "utf8");
+  const inventory = readFileSync(resolve(import.meta.dir, "state-ownership-inventory.md"), "utf8");
   expect(undocumentedAuthorityWrites({ root, nodes: [node], inventory })).toEqual(authorityWriteSites(node));
 });
 
