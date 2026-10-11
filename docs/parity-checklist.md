@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 32 of the 48 `main` PWA test files. The remaining 16 are
+This branch has mapped and tested 33 of the 48 `main` PWA test files. The remaining 15 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -194,10 +194,10 @@ The new suite separately checks the builder's reported passed and failed counts.
 | Classification | Original assertion (`main`) | New assertion | Reason |
 | --- | --- | --- | --- |
 | Unportable | `expect(attention.getByText("2.")).toBeTruthy();` | No equivalent assertion. | The current viewer has only `assessment_body`; it cannot align a finding with the position of its criterion in a separate brief. |
-| Unportable | `expect(screen.queryByText("Snapshot test passes.")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ })); expect(screen.getByText("Snapshot test passes.")).toBeTruthy();` | No equivalent disclosure assertion. | Checked findings are rendered directly with no met-criterion fold control. The old collapsed-by-default interaction is retired. |
+| Translated | `expect(screen.queryByText("Snapshot test passes.")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ })); expect(screen.getByText("Snapshot test passes.")).toBeTruthy();` | Same assertion. | The checked assessment viewer now keeps met findings folded until the operator asks. |
 | Unportable | `expect(screen.getByTestId("or-assessment-builder-tests").textContent).toContain("1409 passed");` | No equivalent builder-result assertion. | The current viewer receives only the assessment's own `test_evidence`, not a cross-output build result. The new suite asserts its independent `1274` count separately. |
-| Translated | `expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");` | `expect(screen.getByText("fail")).toBeTruthy();` | The checked `verdict` enum remains visible through `StatusBadge`; its casing and test ID changed. |
-| Translated | `expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();` | `expect(findings.getByText("Every fixture exists.")).toBeTruthy(); expect(findings.getByText("B, E, F and G are missing.")).toBeTruthy();` | The finding remains visible with its evidence from `makeAssessmentFixture` even though the current viewer has no brief lookup. |
+| Unchanged | `expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");` | Same assertion. | The checked verdict now retains the old visible capitalization and test ID while its raw enum still controls tone. |
+| Translated | `expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();` | `expect(findings.getByText("Every fixture exists.")).toBeTruthy(); expect(findings.getByText("B, E, F and G are missing.")).toBeTruthy();` | The finding remains visible with its evidence from `makeAssessmentFixture` without a brief lookup. |
 
 ## `kbbl/core/pwa/oakridge/client.test.ts`
 
@@ -392,6 +392,24 @@ The current client suite also tests generated run and definition pagination, con
 | Translated | `expect(view.tally.status_counts).toEqual([{ status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 }, { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 }]);` | `expect(view.status_counts).toEqual([{ status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 }, { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 }]);` | The same statuses and counts remain in the same urgency order. |
 | Translated | `expect(onlyInfo.tally.status_counts).toEqual([{ status: "info", count: 1 }]);` | `expect(selectCheckedSpecAnalysisView(onlyInfo.body, onlyInfo.schemas).status_counts).toEqual([{ status: "info", count: 1 }]);` | The tally still omits zero-count statuses. |
 
+## `kbbl/core/pwa/oakridge/lib/assessment.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(parseAssessment(body).ok).toBe(true);` | `expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");` in `AssessmentViewer.test.tsx` | A checked assessment from `makeAssessmentFixture` renders, but raw-body validation has moved to the compiler. |
+| **Relaxed** | `expect(parsed.ok && parsed.value.test_evidence).toBeNull();` | `expect(selectCheckedField(body, schemas, "test_evidence")?.data).toEqual({ kind: "optional", value: null });` | The optional checked field remains null. This no longer tests parsing a raw `test_evidence: null` body. |
+| Unportable | `expect(parsed.ok ? null : parsed.error.field).toBe("findings[1].status");` | No equivalent PWA validation assertion. | The compiler rejects an unknown `criterion_status` enum before projection. |
+| Unportable | `expect(parsed.ok ? null : parsed.error.field).toBe("findings[0].evidence");` | No equivalent PWA validation assertion. | The pinned `optional_text` schema rejects numeric evidence before projection. |
+| **Relaxed** | `expect(parsed.ok && [parsed.value.findings[0]?.status, parsed.value.findings[0]?.description]).toEqual([null, null]);` | `expect(finding && [selectFieldText(finding, schemas, "status"), selectFieldText(finding, schemas, "description")]).toEqual([null, null]);` | Omitted optional values are null in the checked record; the PWA no longer supplies parser defaults for missing raw properties. |
+| Unportable | `expect(parsed.ok ? null : parsed.error.field).toBe("test_evidence.passed");` | No equivalent PWA validation assertion. | The compiler validates the pinned integer count and reports the raw-body error before publication. |
+| Unportable | `expect(parseAssessment({ ...body, verdict: "maybe" }).ok).toBe(false);` | No equivalent PWA validation assertion. | The pinned verdict enum rejects unknown variants before the PWA reads it. |
+| **Relaxed** | `expect(report.needs_attention.map(label)).toEqual(["#1", "Extra.", "#4", "#3"]);` | `expect(view.needs_attention.map((finding) => selectFieldText(finding, report.schemas, "criterion"))).toEqual(["One.", "Extra.", "Four."]);` | Unmet findings precede partial findings, but the viewer has no brief criteria with which to number them or infer unassessed criterion `#3`. |
+| **Relaxed** | `expect(report.met.map(label)).toEqual(["#2"]);` | `expect(view.met.map((finding) => selectFieldText(finding, report.schemas, "criterion"))).toEqual(["Two."]);` | Met findings remain separate and folded in the viewer, but brief position numbering is no longer available. |
+| **Relaxed** | `expect(report.tally).toEqual({ met: 1, partial: 1, not_met: 2, unassessed: 1 });` | `expect(selectCheckedAssessmentView(report.body, report.schemas).status_counts).toEqual([{ status: "not_met", count: 2 }, { status: "partial", count: 1 }, { status: "met", count: 1 }]);` | Every explicit finding is counted with the same status, but unassessed brief criterion `#3` cannot be inferred without the brief. |
+| Unportable | `expect(drifted.met.map(label)).toEqual(["#1"]);` | No equivalent brief-matching assertion. | The checked assessment viewer does not receive brief criteria, so whitespace-normalized matching is unavailable. |
+| Translated | `expect(selectCriterionReport(null, [finding("Alone.", "partial")]).needs_attention.map(label)).toEqual(["Alone."]);` | `expect(selectCheckedAssessmentView(body, schemas).needs_attention.map((finding) => selectFieldText(finding, schemas, "criterion"))).toEqual(["Alone."]);` | A finding remains visible without loading a brief. |
+| Translated | `expect(selectCriterionCounts({ met: 3, partial: 0, not_met: 1, unassessed: 0 })).toEqual([{ status: "not_met", count: 1 }, { status: "met", count: 3 }]);` | `expect(selectCheckedAssessmentView(body, schemas).status_counts).toEqual([{ status: "not_met", count: 1 }, { status: "met", count: 3 }]);` | Zero counts are omitted and the worst nonzero status leads. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -405,7 +423,6 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
@@ -415,7 +432,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 16 files and 235 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 15 files and 222 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

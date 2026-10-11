@@ -1,12 +1,27 @@
+import { useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
 import { selectCheckedField, selectFieldText } from "../../artifact-types";
+import { selectCheckedAssessmentView } from "../../lib/assessment";
 import { OperatorTypedValue } from "./OperatorTypedValue";
 import { ArtifactSection } from "./ArtifactSection";
 import { StatusBadge } from "../atoms/StatusBadge";
+import { Button } from "../../../components/atoms/Button";
 export function AssessmentViewer({ body, schemas }: ViewerProps) {
+  const [showMet, setShowMet] = useState(false);
+  const assessment = selectCheckedAssessmentView(body, schemas);
+  const verdict = selectFieldText(body, schemas, "verdict") ?? "assessment";
+  const verdictLabel = `${verdict.charAt(0).toUpperCase()}${verdict.slice(1).replaceAll("_", " ")}`;
   return <article className="flex flex-col gap-4" data-testid="or-assessment-viewer">
-    <StatusBadge status={selectFieldText(body, schemas, "verdict") ?? "assessment"} />
-    {(["findings", "test_evidence", "recommended_next_actions"] as const).map((key) => <ArtifactSection key={key} title={key.replaceAll("_", " ")} testId={`or-assessment-${key}`}>
+    <StatusBadge status={verdict} label={verdictLabel} testId="or-assessment-verdict" />
+    <ArtifactSection title="findings" testId="or-assessment-findings">
+      <div data-testid="or-assessment-attention"><ol>{assessment.needs_attention.map((finding, index) =>
+        <li key={index}><OperatorTypedValue value={finding} schemas={schemas} /></li>)}</ol></div>
+      {assessment.met.length > 0 && <><Button variant="secondary" aria-expanded={showMet} onClick={() => setShowMet((visible) => !visible)}>
+        {showMet ? "Hide" : "Show"} met criteria ({assessment.met.length})
+      </Button>{showMet && <ol>{assessment.met.map((finding, index) => <li key={index}><OperatorTypedValue value={finding} schemas={schemas} /></li>)}</ol>}</>}
+      <p>{assessment.status_counts.map((entry) => `${entry.status}: ${entry.count}`).join(" · ")}</p>
+    </ArtifactSection>
+    {(["test_evidence", "recommended_next_actions"] as const).map((key) => <ArtifactSection key={key} title={key.replaceAll("_", " ")} testId={`or-assessment-${key}`}>
       <OperatorTypedValue value={selectCheckedField(body, schemas, key) ?? body} schemas={schemas} />
     </ArtifactSection>)}
   </article>;
