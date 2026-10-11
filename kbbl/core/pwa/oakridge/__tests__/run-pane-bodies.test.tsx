@@ -10,30 +10,16 @@ import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import { RunSessionPane } from "../components/organisms/RunSessionPane";
 import { useStore } from "../../state/store";
 import type { ArtifactId, Sid } from "../../lib/ids";
+import { EventSourceStub, renderWithQuery } from "./run-pane-fixtures";
 
 const sessionId = "sid-c1" as Sid;
 const revisionId = "revision-1" as ArtifactId;
-const renderSession = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-  <RunSessionPane sessionId={sessionId} onOpenSession={() => undefined} />
-</QueryClientProvider>);
-
-class SessionEvents {
-  static readonly CLOSED = 2;
-  static instances: SessionEvents[] = [];
-  readonly url: string;
-  readyState = 1;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(url: string) { this.url = url; SessionEvents.instances.push(this); }
-  addEventListener() {}
-  removeEventListener() {}
-  close() { this.readyState = SessionEvents.CLOSED; }
-}
+const renderSession = () => renderWithQuery(<RunSessionPane sessionId={sessionId} onOpenSession={() => undefined} />);
 
 beforeEach(() => {
   Element.prototype.scrollTo = () => undefined;
-  vi.stubGlobal("EventSource", SessionEvents);
-  SessionEvents.instances = [];
+  vi.stubGlobal("EventSource", EventSourceStub);
+  EventSourceStub.instances = [];
   vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
   useStore.setState(useStore.getInitialState());
 });
@@ -65,7 +51,7 @@ it("a session route embeds the existing transcript surface", async () => {
   const host = screen.getByTestId("or-run-pane-session");
   expect(host.getAttribute("data-session-id")).toBe("sid-c1");
   expect(host.querySelector(".events")).toBeTruthy();
-  expect(SessionEvents.instances.some((source) => source.url.includes("sid-c1"))).toBe(true);
+  expect(EventSourceStub.instances.some((source) => source.url.includes("sid-c1"))).toBe(true);
   expect(host.querySelector(".app")?.classList.contains("session-surface--embedded")).toBe(true);
   expect(host.querySelector(".bottom-stack")).toBeTruthy();
   expect(document.body.querySelectorAll(".bottom-stack")).toHaveLength(1);
@@ -91,7 +77,7 @@ it("resuming an ended session replaces the transcript in the same pane", async (
     const [selected, setSelected] = useState<Sid>(sessionId);
     return <RunSessionPane sessionId={selected} onOpenSession={setSelected} />;
   }
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Pane /></QueryClientProvider>);
+  renderWithQuery(<Pane />);
   fireEvent.click(await screen.findByText("Resume in new session"));
   await waitFor(() => expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe("sid-resumed"));
 });

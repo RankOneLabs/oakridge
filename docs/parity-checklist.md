@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 42 of the 48 `main` PWA test files. The remaining 6 are
+This branch has mapped and tested 43 of the 48 `main` PWA test files. The remaining 5 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -653,6 +653,23 @@ The v15 workspace saved a primary and optional secondary pane in local storage. 
 | Replacement | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after prune | `expect(readHashRoute(\`#${formatRunWorkspaceHash(makeRunSummary().run_id, null)}\`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null } });` | Navigating to the base run URL selects the overview; there is no stored entry to prune. |
 | Unportable | `expect(() => pruneStoredRunWorkspace("run-1")).not.toThrow();` | No equivalent assertion. | No local-storage prune operation remains. |
 
+## `kbbl/core/pwa/oakridge/lib/run-session-availability.test.ts`
+
+The v15 selector joined run work-order attempts, a live ACP inventory and an archive seed to decide which saved session panes to prune. The current ACP store owns the inventory/seed race, while run executions remain separate authority projections. The replacement suite tests the store boundary with snapshots from the shared factory. It cannot reconstruct a deletion for an ACP session that the store never observed merely because a run execution names it.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(restored().should_prune_stored).toBe(false);` before the archive seed | No equivalent assertion. | The restored workspace has no stored pane arrangement or prune flag. The explicit session URL can remain while its snapshot loads. |
+| Replacement | `expect(restored().state).toEqual(storedState);` before the archive seed | `expect(session("legacy")?.name).toBe("Archived attempt");` after the seed | The delayed legacy snapshot becomes available without a stored-pane restoration step. The old state equality is retired. |
+| Unportable | `expect(restored().should_prune_stored).toBe(false);` after the archive seed | No equivalent assertion. | The current ACP store does not decide local-storage pane pruning. |
+| Replacement | `expect(restored().state).toEqual(storedState);` after the archive seed | `expect(useStore.getState().removedSids.has("legacy" as Sid)).toBe(false);` | A legacy archive session survives the live snapshot; pane arrangement equality is no longer available. |
+| Unportable | `expect(purgedIds()).toEqual(new Set(["deleted"]));` after live and archive reads | No equivalent assertion. | The generated run execution does not provide the old work-order-to-ACP deletion join. An unseen session cannot be marked removed by the ACP store. |
+| Replacement | `expect(purgedIds()).toEqual(new Set());` when archive seed arrives first | `expect(session("legacy")?.source).toBe("legacy_archive");` after an empty live snapshot | The legacy entry remains; the old run-specific purge set is retired. |
+| Unportable | `expect(purgedIds()).toEqual(new Set(["deleted"]));` after inbox arrival | No equivalent assertion. | The current store has not observed `deleted` as an ACP row, and the generated execution projection is not joined to the inventory. |
+| **Relaxed** | `expect(purgedIds()).toEqual(new Set(["legacy", "deleted"]));` for an empty archive inventory | `expect(useStore.getState().hasSessionSeed).toBe(true); expect(useStore.getState().sessions.size).toBe(0);` | A successful empty seed is recorded, but the new store cannot classify unseen work-order session IDs as purged. |
+| Translated | `expect(purgedIds()).toEqual(new Set());` while the archive request remains pending | `expect(useStore.getState().removedSids.size).toBe(0);` | Repeated empty live snapshots do not invent a removal. |
+| Translated | `expect(purgedIds()).toEqual(new Set(["deleted"]));` after an observed ACP deletion | `expect(useStore.getState().removedSids.has("deleted" as Sid)).toBe(true);` | An ACP session seen and then absent from the next live snapshot is remembered as removed. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -662,11 +679,10 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 6 files and 110 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 5 files and 105 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
