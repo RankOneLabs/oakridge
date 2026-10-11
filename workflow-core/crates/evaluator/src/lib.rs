@@ -1459,20 +1459,11 @@ mod v2_step {
         #[test]
         fn fan_out_stall_variant_keeps_failed_attempt_and_held_slot() {
             let program = sample("fan-out");
-            let trace: Value =
-                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
-                    .unwrap();
             let variant: Value =
                 serde_json::from_str(include_str!("../../../fixtures/traces/fan-out-stall.json"))
                     .unwrap();
             let mut state = snapshot();
-            for (index, row_number) in variant["rows_from_fan_out"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .enumerate()
-            {
-                let row = &trace["rows"][row_number.as_u64().unwrap() as usize - 1];
+            for (index, row) in variant["rows"].as_array().unwrap().iter().enumerate() {
                 state = apply_row(&program, &state, row, index);
             }
             for (key, expected) in variant["status"].as_object().unwrap() {
@@ -1488,6 +1479,7 @@ mod v2_step {
                 .iter()
                 .any(|a| a.unit.0 == "run/work/b"
                     && matches!(a.status, AttemptStatus::Failed { .. })));
+            assert!(!state.attempts.iter().any(|a| a.unit.0 == "run/work/d"));
         }
         #[test]
         fn failed_attempt_stalls_until_retry_and_duplicates_change_nothing() {
