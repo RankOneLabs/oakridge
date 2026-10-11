@@ -1,6 +1,7 @@
 {
   "cases": [
     { "name": "1 unknown stage", "base": "review-loop", "pointer": "/run/units/document/stage", "value": "missing", "reason": "check 1" },
+    { "name": "1 unknown schema", "base": "review-loop", "pointer": "/stages/document/artifacts/draft/schema/body", "value": "missing_type", "reason": "check 1" },
     { "name": "2 neither stage nor group", "base": "review-loop", "pointer": "/run/units/document/stage", "value": null, "reason": "check 2" },
     { "name": "3 read outside after", "base": "fan-out", "pointer": "/run/units/work/after", "value": [], "reason": "check 3" },
     { "name": "4 group outcome reads private field", "base": "review-loop", "pointer": "/run/outcome/draft", "value": "document.outcome.secret", "reason": "check 4" },
@@ -17,5 +18,6 @@
     { "name": "10 review prompt undeclared input", "base": "review-loop", "prompt_override": "{{undeclared}}", "reason": "check 10" },
     { "name": "11 duplicate key", "raw": "{\"workflow\":\"a\",\"workflow\":\"b\"}", "reason": "duplicate" },
     { "name": "12 unknown code operation", "base": "fan-out", "pointer": "/stages/prepare/workers/git/operation", "value": "missing", "reason": "check 12" }
+    ,{ "name": "12 forbidden code prompts", "base": "fan-out", "pointer": "/stages/prepare/workers/git/prompts", "value": {}, "reason": "check 12" }
   ]
 }

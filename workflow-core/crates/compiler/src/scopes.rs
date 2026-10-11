@@ -453,8 +453,7 @@ pub mod workflow_v2 {
     fn parse_type(text: &str) -> TypeExpression {
         let text = text.trim();
         if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            let fields = inner
-                .split(',')
+            let fields = split_top_level(inner)
                 .filter_map(|field| {
                     let (key, value) = field.split_once(':')?;
                     Some((key.trim().to_owned(), parse_type(value)))
@@ -465,10 +464,64 @@ pub mod workflow_v2 {
             TypeExpression::Name(text.to_owned())
         }
     }
+    fn split_top_level(text: &str) -> impl Iterator<Item = &str> {
+        let mut depth = 0usize;
+        let mut start = 0usize;
+        let mut pieces = Vec::new();
+        for (index, ch) in text.char_indices() {
+            match ch {
+                '{' | '(' => depth += 1,
+                '}' | ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    pieces.push(text[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        pieces.push(text[start..].trim());
+        pieces.into_iter()
+    }
     fn inner_type<'a>(name: &'a str, function: &str) -> Option<&'a str> {
         name.strip_prefix(function)?
             .strip_prefix('(')?
             .strip_suffix(')')
+    }
+    fn validate_type(
+        ty: &TypeExpression,
+        aliases: &BTreeMap<String, TypeExpression>,
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<(), DomainError> {
+        match ty {
+            TypeExpression::Record(fields) => {
+                for (key, field) in fields {
+                    if key.is_empty() {
+                        return Err(reject(11, "empty schema field key"));
+                    }
+                    validate_type(field, aliases, visiting)?;
+                }
+            }
+            TypeExpression::Name(name)
+                if ["text", "ident", "repo_path", "integer", "boolean"]
+                    .contains(&name.as_str()) => {}
+            TypeExpression::Name(name)
+                if inner_type(name, "list").is_some() || inner_type(name, "optional").is_some() =>
+            {
+                let inner = inner_type(name, "list")
+                    .or_else(|| inner_type(name, "optional"))
+                    .unwrap();
+                validate_type(&parse_type(inner), aliases, visiting)?;
+            }
+            TypeExpression::Name(name) if aliases.contains_key(name) => {
+                if !visiting.insert(name.clone()) {
+                    return Err(reject(1, format!("recursive schema {name}")));
+                }
+                validate_type(&aliases[name], aliases, visiting)?;
+                visiting.remove(name);
+            }
+            TypeExpression::Name(name) => return Err(reject(1, format!("schema {name} absent"))),
+        }
+        Ok(())
     }
     fn resolve_type(
         ty: &TypeExpression,
@@ -1145,6 +1198,23 @@ pub mod workflow_v2 {
         operations: &[CodeOperation],
         prompts: &BTreeMap<String, String>,
     ) -> Result<CheckedWorkflow, DomainError> {
+        validate_type(&source.input, &source.schemas, &mut BTreeSet::new())?;
+        for ty in source.schemas.values() {
+            validate_type(ty, &source.schemas, &mut BTreeSet::new())?;
+        }
+        for stage in source.stages.values() {
+            validate_type(&stage.input, &source.schemas, &mut BTreeSet::new())?;
+            for artifact in stage.artifacts.values() {
+                validate_type(&artifact.schema, &source.schemas, &mut BTreeSet::new())?;
+            }
+            for review in stage.reviews.values() {
+                for decision in review.decisions.values() {
+                    if let Some(payload) = &decision.payload {
+                        validate_type(payload, &source.schemas, &mut BTreeSet::new())?;
+                    }
+                }
+            }
+        }
         let mut stages = Vec::new();
         let mut stage_outcomes = BTreeMap::new();
         for (key, stage) in &source.stages {
@@ -1164,6 +1234,28 @@ pub mod workflow_v2 {
     }
     pub fn decode_workflow(bytes: &[u8]) -> Result<Workflow, DomainError> {
         let value = crate::decode_unique_json(bytes)?;
+        if let Some(stages) = value.get("stages").and_then(serde_json::Value::as_object) {
+            for stage in stages.values() {
+                if let Some(workers) = stage.get("workers").and_then(serde_json::Value::as_object) {
+                    for (key, worker) in workers {
+                        let kind = worker
+                            .get("kind")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        let forbidden: &[&str] = match kind {
+                            "code" => &["prompts", "runtime", "workspace", "session", "reviews"],
+                            "agent" => &["operation", "every"],
+                            _ => &[],
+                        };
+                        if let Some(field) =
+                            forbidden.iter().find(|field| worker.get(**field).is_some())
+                        {
+                            return Err(reject(12, format!("worker {key} cannot set {field}")));
+                        }
+                    }
+                }
+            }
+        }
         serde_json::from_value(value).map_err(|error| reject(11, error.to_string()))
     }
 }

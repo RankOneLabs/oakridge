@@ -422,29 +422,62 @@ mod v2_step {
                     .iter()
                     .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v)))
             }),
-            TypeExpression::Name(name)
-                if name == "text" || name == "ident" || name == "repo_path" =>
-            {
+            TypeExpression::Name(name) if name == "text" || name == "repo_path" => {
                 value.is_string()
             }
+            TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(|text| {
+                !text.is_empty()
+                    && !text
+                        .chars()
+                        .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+            }),
             TypeExpression::Name(name) if name == "boolean" => value.is_boolean(),
             TypeExpression::Name(name) if name == "integer" => value.is_i64(),
-            TypeExpression::Name(name) if name.starts_with("optional(") => {
-                value.is_null()
-                    || check_type(
-                        &TypeExpression::Name(name[9..name.len() - 1].to_owned()),
-                        value,
-                    )
-            }
-            TypeExpression::Name(name) if name.starts_with("list(") => {
-                value.as_array().is_some_and(|items| {
-                    items.iter().all(|v| {
-                        check_type(&TypeExpression::Name(name[5..name.len() - 1].to_owned()), v)
+            TypeExpression::Name(name) if name.starts_with("optional(") => name
+                .strip_prefix("optional(")
+                .and_then(|s| s.strip_suffix(')'))
+                .is_some_and(|inner| value.is_null() || check_type(&inline_type(inner), value)),
+            TypeExpression::Name(name) if name.starts_with("list(") => name
+                .strip_prefix("list(")
+                .and_then(|s| s.strip_suffix(')'))
+                .is_some_and(|inner| {
+                    value.as_array().is_some_and(|items| {
+                        items
+                            .iter()
+                            .all(|item| check_type(&inline_type(inner), item))
                     })
-                })
+                }),
+            TypeExpression::Name(name) if name.starts_with('{') && name.ends_with('}') => {
+                check_type(&inline_type(name), value)
             }
-            _ => true,
+            _ => false,
         }
+    }
+    fn inline_type(text: &str) -> TypeExpression {
+        let text = text.trim();
+        let Some(body) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+            return TypeExpression::Name(text.into());
+        };
+        let mut fields = BTreeMap::new();
+        let mut depth = 0usize;
+        let mut start = 0usize;
+        for (index, ch) in body.char_indices() {
+            match ch {
+                '{' | '(' => depth += 1,
+                '}' | ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    if let Some((key, ty)) = body[start..index].split_once(':') {
+                        fields.insert(key.trim().into(), inline_type(ty));
+                    }
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        if let Some((key, ty)) = body[start..].split_once(':') {
+            fields.insert(key.trim().into(), inline_type(ty));
+        }
+        TypeExpression::Record(fields)
     }
     fn materialize_group(
         program: &CheckedWorkflow,
@@ -1621,6 +1654,39 @@ mod v2_step {
                 ),
                 Err(StepError::Rejected { .. })
             ));
+        }
+        #[test]
+        fn cancel_is_terminal_and_idempotent_across_the_group_tree() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=2].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let cancelled = step(
+                &program,
+                &state,
+                &incoming(Event::CancelRequested, "cancel"),
+            )
+            .unwrap();
+            assert!(matches!(
+                cancelled.snapshot.run.status,
+                UnitStatus::Cancelled
+            ));
+            assert!(cancelled.snapshot.units.iter().all(|unit| matches!(
+                unit.status,
+                UnitStatus::Done { .. } | UnitStatus::Cancelled
+            )));
+            assert!(cancelled.wanted.is_empty());
+            let duplicate = step(
+                &program,
+                &cancelled.snapshot,
+                &incoming(Event::CancelRequested, "cancel"),
+            )
+            .unwrap();
+            assert_eq!(duplicate.snapshot, cancelled.snapshot);
         }
     }
 }

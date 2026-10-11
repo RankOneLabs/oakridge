@@ -78,7 +78,6 @@ fn v2_rejection_manifest_names_every_section_three_class() {
                     .insert(key.into(), case["value"].clone());
             }
         }
-        let source: Workflow = serde_json::from_value(value).unwrap();
         let mut prompts = prompts.clone();
         if let Some(override_text) = case.get("prompt_override") {
             prompts.insert(
@@ -86,7 +85,10 @@ fn v2_rejection_manifest_names_every_section_three_class() {
                 override_text.as_str().unwrap().into(),
             );
         }
-        let error = compile_workflow(&source, &operations, &prompts).unwrap_err();
+        let error = match decode_workflow(&serde_json::to_vec(&value).unwrap()) {
+            Ok(source) => compile_workflow(&source, &operations, &prompts).unwrap_err(),
+            Err(error) => error,
+        };
         assert_eq!(&*error.entity_id, expected, "{name}: {error:?}");
     }
 }
