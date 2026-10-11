@@ -2,9 +2,12 @@ import type {
   OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCheckedValue, OperatorCommandDefinition, OperatorDecision,
   OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
-  OperatorRunEvent,
+  OperatorRunEvent, OperatorDefinitionSummary, OperatorExecutionView, OperatorCommandReceipt,
+  OperatorStartPinnedRunRequest, OperatorStartedRun,
 } from "../operator-contracts";
 import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
+import type { OperatorCommandSubmission } from "../lib/operator-drafts";
+import type { OakridgeConfig } from "../types";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
@@ -118,6 +121,37 @@ export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): Ope
 
 export function makeRunDetail(overrides: Partial<OperatorRunDetail> = {}): OperatorRunDetail {
   return { ...makeRunSummary(), cursor: [], scopes: [], ...overrides };
+}
+
+export function makeDefinitionSummary(overrides: Partial<OperatorDefinitionSummary> = {}): OperatorDefinitionSummary {
+  return { bundle_id: "bundle-1", digest: "digest-1", source: developmentDefinition as unknown as OperatorDefinitionSummary["source"],
+    archived_at: null, ...overrides };
+}
+
+export function makeStartPinnedRunRequest(overrides: Partial<OperatorStartPinnedRunRequest> = {}): OperatorStartPinnedRunRequest {
+  return { digest: "digest-1", input: { project_id: "project-1" }, request_id: "launch-1", ...overrides };
+}
+
+export function makeStartedRun(overrides: Partial<OperatorStartedRun> = {}): OperatorStartedRun {
+  return { run_id: "run-1", root_scope_id: "scope-1", bundle_id: "bundle-1", ...overrides };
+}
+
+export function makeCommandSubmission(overrides: Partial<OperatorCommandSubmission> = {}): OperatorCommandSubmission {
+  return { run_id: "run-1", scope_id: "scope-1", command_key: "approve", owner_version: 1,
+    targets: [], request_id: "request-1", payload: {}, ...overrides };
+}
+
+export function makeCommandReceipt(overrides: Partial<OperatorCommandReceipt> = {}): OperatorCommandReceipt {
+  return { kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 2, ...overrides };
+}
+
+export function makeOakridgeConfig(overrides: Partial<OakridgeConfig> = {}): OakridgeConfig {
+  return { available: true, core_url: "http://oakridge.test", fallback_refresh_ms: 5_000, ...overrides };
+}
+
+export function makeExecutionView(overrides: Partial<OperatorExecutionView> = {}): OperatorExecutionView {
+  return { id: "execution-1", scope_id: "scope-1", worker_key: "author", generation: 1,
+    status: "pending", result: null, version: 1, ...overrides };
 }
 
 export function makeRunEvent(overrides: Partial<OperatorRunEvent> = {}): OperatorRunEvent {

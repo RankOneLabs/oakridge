@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 18 of the 48 `main` PWA test files. The remaining 30 are
+This branch has mapped and tested 19 of the 48 `main` PWA test files. The remaining 29 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -199,6 +199,21 @@ The new suite separately checks the builder's reported passed and failed counts.
 | Translated | `expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");` | `expect(screen.getByText("fail")).toBeTruthy();` | The checked `verdict` enum remains visible through `StatusBadge`; its casing and test ID changed. |
 | Translated | `expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();` | `expect(findings.getByText("Every fixture exists.")).toBeTruthy(); expect(findings.getByText("B, E, F and G are missing.")).toBeTruthy();` | The finding remains visible with its evidence from `makeAssessmentFixture` even though the current viewer has no brief lookup. |
 
+## `kbbl/core/pwa/oakridge/client.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(parseOakridgeRunEventFrame(JSON.stringify({ ... continuation: null ... }))).toBeNull();` | No equivalent client assertion. | The generated `OperatorRunEvent` has a scope ID, decision and attention metadata, but no gate slot continuation. The old event variant and parser are retired. |
+| Translated | `expect(fetch).toHaveBeenCalledWith("/oakridge/api/workflow_runs", expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": "launch-1" }) }));` | `expect(fetch).toHaveBeenCalledWith("/oakridge/api/runs", expect.objectContaining({ method: "POST", body: expect.stringContaining('"request_id":"launch-1"') }));` | The caller still owns the launch key; the pinned-run API carries it as `request_id` in the body rather than an HTTP header. `makeStartPinnedRunRequest` and `makeStartedRun` build both read-model fixtures. |
+| Unportable | `await expect(fetchRun("run-1")).rejects.toThrow("oakridge /runs/run-1: parse repository key");` | No equivalent assertion. | `fetchOperatorRun` consumes a generated projection directly and does not run the v15 stage/unit transform or contextual repository-key parser. An invalid legacy run shape is outside this endpoint's contract. |
+| Replacement | `await expect(fetchRunSessions("run-1")).resolves.toEqual([expect.objectContaining({ session_id: "sid-1", reason: "operator_retry" })]);` | `expect(result.executions[0]).toMatchObject({ worker_key: "builder", generation: 2 });` | The generated scope projection exposes authority executions. It does not expose the old session-attempt reason and session ID, so this is an execution-read test and the old claim remains a coverage loss. The response comes from `makeScopeView` and `makeExecutionView`. |
+| Unportable | `await expect(fetchRunSessions("run-1")).rejects.toThrow("entry contained an unknown work order reason");` | No equivalent assertion. | The generated execution status has no v15 work-order reason parser. |
+| Unportable | `await expect(fetchSessionRun("sid-unknown")).resolves.toBeNull();` | No equivalent assertion. | The session-to-run lookup endpoint is absent from the authority client; session association is adapter-local and the PWA receives scope execution locations. |
+| Unportable | `await expect(fetchSessionRun("sid-1")).resolves.toEqual(expect.objectContaining({ run_id: "run-1", unit_id: "api" }));` | No equivalent assertion. | The v15 unit identity and reverse session lookup are retired. Generated scopes use `scope_id` and executions instead. |
+| Unportable | `await expect(confirmFinalPullRequest("run-1", repositoryKey, { idempotency_key: "confirm-1" })).rejects.toThrow("response contained an unknown outcome");` | No equivalent assertion. | Final reconciliation is an evaluator decision over checked scope facts, not a PWA client endpoint or response parser. |
+
+The current client suite also tests generated run and definition pagination, config fallback, and scope-command idempotency with shared factory values. These are additional current-contract tests, not replacements for the retired endpoint assertions above.
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -212,7 +227,6 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `client.test.ts` | 8 | The old run, session, and gate endpoints and event frame parser were replaced by scope commands and generated projections; the existing same-name suite exercises different client behavior. |
 | `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -236,7 +250,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 30 files and 325 named test declarations; parameterized cases may expand further. The ported plan, PR-summary and viewer suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 29 files and 317 named test declarations; parameterized cases may expand further. The ported plan, PR-summary, viewer and client suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
