@@ -225,13 +225,42 @@ test("in-flight bound refuses excess callers without discarding pending request"
   await first;
 }, 20, 1));
 
+/** One RFC 6902 operation; the invalid corpus needs only these three. */
+type PatchOperation =
+  | { readonly op: "add"; readonly path: string; readonly value: unknown }
+  | { readonly op: "replace"; readonly path: string; readonly value: unknown }
+  | { readonly op: "remove"; readonly path: string };
+/** A valid fixture bundle plus the patch that makes it fail with `expected`. */
+interface InvalidCase { readonly case: string; readonly base: string; readonly expected: string; readonly patch: readonly PatchOperation[] }
+type JsonContainer = { [key: string]: unknown } | unknown[];
+
+function applyPatch<T>(document: T, patch: readonly PatchOperation[]): T {
+  const result = structuredClone(document);
+  for (const operation of patch) {
+    const tokens = operation.path.split("/").slice(1).map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+    const last = tokens.pop();
+    if (last === undefined) throw new Error(`patch path must name a member: ${operation.path}`);
+    const parent = tokens.reduce<JsonContainer>((node, token) => (Array.isArray(node) ? node[Number(token)] : node[token]) as JsonContainer,
+      result as JsonContainer);
+    if (Array.isArray(parent)) {
+      const index = Number(last);
+      if (operation.op === "add") parent.splice(index, 0, operation.value);
+      else if (operation.op === "remove") parent.splice(index, 1);
+      else parent[index] = operation.value;
+    } else if (operation.op === "remove") delete parent[last];
+    else parent[last] = operation.value;
+  }
+  return result;
+}
+
 test("shared invalid compiler corpus retains typed diagnostics through the real binary", async () => {
-  const directory = resolve(import.meta.dir, "../../workflow-core/fixtures/invalid");
-  const cases: readonly { readonly file: string; readonly expected: string }[] = await Bun.file(resolve(directory, "manifest.json")).json();
+  const fixtures = resolve(import.meta.dir, "../../workflow-core/fixtures");
+  const cases: readonly InvalidCase[] = await Bun.file(resolve(fixtures, "invalid.json")).json();
   const client = startClient();
   try {
     for (const entry of cases) {
-      const source: DefinitionBundle = await Bun.file(resolve(directory, entry.file)).json();
+      const base: DefinitionBundle = await Bun.file(resolve(fixtures, "bundles", `${entry.base}.json`)).json();
+      const source = applyPatch(base, entry.patch);
       expect(await client.request("compile", { bundle: source }))
         .toMatchObject({ ok: false, error: { kind: "domain", detail: { kind: entry.expected } } });
     }

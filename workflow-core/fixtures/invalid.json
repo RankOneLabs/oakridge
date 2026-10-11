@@ -1,0 +1,347 @@
+[
+  {
+    "case": "missing-symbol",
+    "base": "minimal",
+    "expected": "missing_symbol",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/root",
+        "value": "absent"
+      }
+    ]
+  },
+  {
+    "case": "duplicate-symbol",
+    "base": "minimal",
+    "expected": "duplicate_symbol",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/schemas/12",
+        "value": {
+          "key": "unit",
+          "shape": {
+            "kind": "record",
+            "fields": [],
+            "dictionary": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "case": "invalid-schema",
+    "base": "minimal",
+    "expected": "invalid_schema",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/schemas/12",
+        "value": {
+          "key": "bad",
+          "shape": {
+            "kind": "integer",
+            "min": 2,
+            "max": 1
+          }
+        }
+      }
+    ]
+  },
+  {
+    "case": "private-read",
+    "base": "children-1",
+    "expected": "private_read",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/cases/1/node/condition/items/0/root/export",
+        "value": "private_state"
+      }
+    ]
+  },
+  {
+    "case": "nonexhaustive-match",
+    "base": "minimal",
+    "expected": "non_exhaustive_match",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/otherwise",
+        "value": null
+      }
+    ]
+  },
+  {
+    "case": "conflicting-write",
+    "base": "minimal",
+    "expected": "conflicting_write",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/scopes/0/tree/cases/0/node/mutations/2",
+        "value": {
+          "kind": "set_state",
+          "value": {
+            "kind": "literal",
+            "schema": "position",
+            "value": {
+              "kind": "waiting",
+              "value": {}
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "case": "unreachable-action",
+    "base": "minimal",
+    "expected": "unreachable_declaration",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/scopes/0/workers/0/actions/1",
+        "value": {
+          "key": "unused",
+          "operation": "produce",
+          "contract_version": 1,
+          "input_schema": "unit",
+          "input": {
+            "kind": "reference",
+            "root": {
+              "kind": "input"
+            },
+            "path": []
+          },
+          "prompt": "shared_content",
+          "settings": [
+            {
+              "key": "model",
+              "value": "example"
+            }
+          ],
+          "tools": [
+            "read"
+          ],
+          "outputs": [
+            "document"
+          ],
+          "deadline_ms": 1000,
+          "max_attempts": 2
+        }
+      }
+    ]
+  },
+  {
+    "case": "unhandled-command",
+    "base": "minimal",
+    "expected": "unhandled_command",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/scopes/0/commands/3",
+        "value": {
+          "key": "unsupported",
+          "payload_schema": "unit",
+          "available_in": [
+            "ready"
+          ],
+          "required": true,
+          "targets": [],
+          "label": "begin",
+          "consequence": "Interpret begin",
+          "field_presentation": []
+        }
+      },
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/otherwise/kind",
+        "value": "reject"
+      },
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/otherwise/id",
+        "value": "unhandled"
+      },
+      {
+        "op": "remove",
+        "path": "/scopes/0/tree/otherwise/continuations"
+      },
+      {
+        "op": "remove",
+        "path": "/scopes/0/tree/otherwise/reason"
+      },
+      {
+        "op": "remove",
+        "path": "/scopes/0/tree/otherwise/attention"
+      },
+      {
+        "op": "add",
+        "path": "/scopes/0/tree/otherwise/error",
+        "value": "invalid_command"
+      },
+      {
+        "op": "add",
+        "path": "/scopes/0/tree/otherwise/detail",
+        "value": "unsupported command"
+      }
+    ]
+  },
+  {
+    "case": "unsupported-provider",
+    "base": "minimal",
+    "expected": "unsupported_provider",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/scopes/0/workers/0/actions/0/settings/1",
+        "value": {
+          "key": "unsupported",
+          "value": "yes"
+        }
+      }
+    ]
+  },
+  {
+    "case": "unsupported-presentation",
+    "base": "minimal",
+    "expected": "unsupported_presentation",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/presentation/viewer",
+        "value": "unsupported"
+      }
+    ]
+  },
+  {
+    "case": "revision-loop-invalid-state",
+    "base": "revision-loop",
+    "expected": "invalid_payload",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/cases/2/node/mutations/0/value/schema",
+        "value": "flag"
+      }
+    ]
+  },
+  {
+    "case": "exact-review-wrong-target",
+    "base": "exact-review-target",
+    "expected": "invalid_assignment",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/commands/3/targets/0/kind",
+        "value": "literal"
+      },
+      {
+        "op": "remove",
+        "path": "/scopes/0/commands/3/targets/0/root"
+      },
+      {
+        "op": "remove",
+        "path": "/scopes/0/commands/3/targets/0/path"
+      },
+      {
+        "op": "add",
+        "path": "/scopes/0/commands/3/targets/0/schema",
+        "value": "flag"
+      },
+      {
+        "op": "add",
+        "path": "/scopes/0/commands/3/targets/0/value",
+        "value": true
+      }
+    ]
+  },
+  {
+    "case": "held-reservation-zero-capacity",
+    "base": "held-reservation",
+    "expected": "invalid_schema",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/pools/0/limit",
+        "value": 0
+      }
+    ]
+  },
+  {
+    "case": "terminal-replacement-no-observation",
+    "base": "terminal-replacement",
+    "expected": "missing_symbol",
+    "patch": [
+      {
+        "op": "remove",
+        "path": "/scopes/0/resources/0"
+      }
+    ]
+  },
+  {
+    "case": "publication-pair-foreign-producer",
+    "base": "publication-pair",
+    "expected": "unsupported_publication",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/outputs/0/producers/0",
+        "value": "unknown_potter"
+      }
+    ]
+  },
+  {
+    "case": "conflicting-child-activation",
+    "base": "children-1",
+    "expected": "conflicting_write",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/scopes/0/tree/cases/0/node/mutations/2",
+        "value": {
+          "kind": "cancel_children",
+          "key": "item_0"
+        }
+      }
+    ]
+  },
+  {
+    "case": "conflicting-resource-observation",
+    "base": "minimal",
+    "expected": "conflicting_write",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/scopes/0/tree/cases/0/node/mutations",
+        "value": [
+          {
+            "kind": "set_state",
+            "value": {
+              "kind": "literal",
+              "schema": "position",
+              "value": {
+                "kind": "waiting",
+                "value": {}
+              }
+            }
+          },
+          {
+            "kind": "acquire",
+            "pool": "work"
+          },
+          {
+            "kind": "observe",
+            "resource": "source"
+          },
+          {
+            "kind": "clear_resource",
+            "key": "source"
+          }
+        ]
+      }
+    ]
+  }
+]
