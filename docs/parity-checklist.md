@@ -10,7 +10,7 @@ deleted. A passing test does not resolve an unportable entry.
 
 This branch has mapped all 48 `main` PWA source files to passing replacement suites or an explicit per-assertion coverage-loss decision. The Unportable and Relaxed entries remain open parity gaps; a green replacement suite does not resolve them.
 
-The 48 source files contain 402 static `test`/`it` declarations on `main` and 222 in this branch. The 180-declaration difference is **open coverage loss**, not a completed one-for-one port; some old cases were consolidated into generated-model checks and others have no equivalent surface. The tables below record the original assertions that were translated, relaxed or left unportable so review can decide each loss explicitly.
+The 48 source files contain 402 static `test`/`it` declarations on `main` and 222 in this branch. The 180-declaration shortfall is an **open parity gap**, not a completed one-for-one port; some old cases were consolidated into generated-model checks and others have no equivalent surface. The tables below record the original assertions that were translated, relaxed or left unportable so review can decide each coverage loss explicitly.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
 
