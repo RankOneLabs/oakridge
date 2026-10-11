@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 14 of the 48 `main` PWA test files. The remaining 34 are
+This branch has mapped and tested 18 of the 48 `main` PWA test files. The remaining 30 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -154,6 +154,51 @@ not a hand-written Oakridge read model.
 | Replacement | `expect(selectRunFrameNotification(frame(false))).toEqual({ kind: "info", message: "Optional attention: Output published · build · c5", href: "#oakridge/run/run%2Fone" });` | `expect(selectEventNotification(operatorEvent({ run_id: "run/one" }))?.href).toBe("#oakridge/run/run%2Fone/scope/scope-one");` and `expect(selectEventNotification(operatorEvent())).toEqual({ kind: "info", message: "spec_analysis: Awaiting work or review", href: "#oakridge/run/run-one/scope/scope-one" });` | Current events identify a scope transition, not a v15 slot-release event. The notification still links the relevant surface and escapes run IDs, but its route and message come from the generated scope attention metadata. The old exact message and run-only link are retired. |
 | Translated, moved to hook test | `expect(selectRunFrameNotification(frame(true))).toBeNull();` | `expect(received.map((event) => event.transition_id)).toEqual(["transition-8"]);` after replay and live frames are emitted | The event-stream hook now withholds replayed frames from notification subscribers before the selector runs. The suppression claim is preserved at the stream boundary rather than in the pure notification selector. |
 
+## `kbbl/core/pwa/oakridge/components/molecules/SpecAnalysisViewer.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect([within(blockers).queryByText("Schema conflict"), within(blockers).queryByText("Needs upstream API")]).not.toContain(null);` | `expect(within(screen.getByTestId("or-spec-findings")).getByText("Schema conflict")).toBeTruthy(); expect(within(screen.getByTestId("or-spec-requirements")).getByText("Needs upstream API")).toBeTruthy();` | Both checked values appear, but the current viewer has no combined blocker callout. The alerting and grouping claim is lost. |
+| Translated | `expect(within(screen.getByTestId("or-risk-card")).getByText("Backfill in batches")).toBeTruthy();` | `expect(within(screen.getByTestId("or-risk-card")).getByText("Mitigation: Backfill in batches")).toBeTruthy();` | The risk's mitigation remains visible; the checked `risk` schema and record are built by `makeSpecAnalysisFixture`. |
+| Translated | `expect(screen.getAllByText("Schema conflict")).toHaveLength(1);` | Same assertion. | The checked finding is rendered once in its section; it is no longer duplicated in a blocker callout. |
+| Unportable | `expect(screen.getByTestId("or-spec-no-blockers")).toBeTruthy();` | No equivalent assertion. | The current viewer has no empty-blocker state or callout. Empty checked lists show empty sections instead; that does not communicate the old explicit “nothing blocking” status. |
+| **Relaxed** | `expect(screen.queryByText("Brief §2")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /1 source/ })); expect(screen.getByText("Brief §2")).toBeTruthy();` | `expect(within(screen.getByTestId("or-spec-sources")).getByText("Brief §2")).toBeTruthy();` | The source survives the checked projection, but the count and disclosure toggle are gone. The new assertion only proves visibility. |
+| Unportable | `expect(screen.getByRole("alert").textContent).toContain("does not match the registered contract");` | No equivalent PWA assertion. | The compiler validates `analysis_body` before the PWA receives `OperatorCheckedValue`; the current viewer has no raw invalid-body error surface. |
+
+## `kbbl/core/pwa/oakridge/components/molecules/BuildBriefViewer.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();` | No equivalent viewer assertion. | The read-only viewer no longer owns edit mode. `ArtifactReview` now owns the **Edit artifact** control; its UI edit submission is tested in `artifact-review.test.tsx`. The original “before toggle” state is retired. |
+| Unportable | `expect(screen.queryByRole("button", { name: "Edit brief" })).toBeNull();` | No equivalent viewer assertion. | Edit availability comes from the scope's `edit_${output_key}` command and revision capability at the review shell, not an `edit.enabled` prop on this viewer. The original disabled-prop claim is retired. |
+| **Relaxed** | `expect(onEdit).toHaveBeenCalledWith("/goal", "Make the brief reviewable.", "Make every brief reviewable.");` | `expect(screen.getByText("Make the brief reviewable.")).toBeTruthy();` and the existing `artifact-review.test.tsx` checks the edit command's `prev_value` and changed checked `body`. | The goal is visible and a checked atom can be submitted through the review UI, but the old RFC-6901 callback contract is gone. This suite does not prove a goal-specific edit command. |
+| **Relaxed** | `expect(onEdit).toHaveBeenNthCalledWith(1, "/files_in_scope/0", "kbbl/core/pwa/oakridge", "kbbl/core/pwa/oakridge/viewers");` | `expect([file?.value, rationale?.value]).toEqual(["kbbl/core/pwa/oakridge", "It is proven."]);` and the replacement-value assertion below | The shared checked-text editor finds and replaces the nested file atom; it no longer emits the old pointer callback. |
+| **Relaxed** | `expect(onEdit).toHaveBeenNthCalledWith(2, "/decisions_made/0/rationale", "It is proven.", "It preserves proven behavior.");` | `expect(selectCheckedTextFields(edited ?? fixture.body, fixture.schemas).filter((field) => field.label === file.label || field.label === rationale.label).map((field) => field.value)).toEqual(["kbbl/core/pwa/oakridge/viewers", "It preserves proven behavior."]);` | The checked value retains both nested edits and sibling fields; the command-level sequence and RFC-6901 callbacks are not asserted. The fixture is `makeBuildBriefFixture`. |
+
+The new brief viewer suite also checks the title, file list and acceptance criteria from the checked body. These are supplemental assertions; they do not close the old edit-control claims.
+
+## `kbbl/core/pwa/oakridge/components/molecules/BuildResultViewer.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(screen.getByRole("heading", { name: "Assemble the API" })).toBeTruthy();` | No equivalent assertion. | The current `build_body` viewer receives no brief lookup or brief title. The summary remains visible, but it is a different field. |
+| Unportable | `expect(within(screen.getByTestId("or-build-files-out-of-scope")).getByText("ci.yml")).toBeTruthy();` | No equivalent out-of-scope assertion. | The checked `build_body` lists changed files, while `brief_body` is a separate output; this viewer does not compare their file lists. |
+| Unportable | `expect(within(screen.getByTestId("or-build-acceptance")).getByText("The golden fixture matches.")).toBeTruthy();` | No equivalent assertion. | Brief acceptance criteria are not part of `build_body` and the viewer has no cross-output lookup. |
+| **Relaxed** | `expect(screen.getByRole("alert").textContent).toContain("Fixture table incomplete.");` | `expect(issues.getByText("Fixture table incomplete.")).toBeTruthy(); expect(issues.getByText("blocking")).toBeTruthy();` | The issue description and severity survive, but the current viewer does not raise a blocking issue as an accessible alert. |
+| **Relaxed** | `expect([screen.getByTestId("or-build-brief-note").textContent?.includes("cm-api"), !!screen.queryByText("ci.yml")]).toEqual([true, true]);` | `expect(files.getByText("src/api.py")).toBeTruthy(); expect(files.getByText("ci.yml")).toBeTruthy();` | Changed files remain visible without a brief; the old missing-brief note and cohort label are gone. The body comes from `makeBuildResultFixture`. |
+
+The new suite separately checks the builder's reported passed and failed counts. It does not imply a file-scope comparison.
+
+## `kbbl/core/pwa/oakridge/components/molecules/AssessmentViewer.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(attention.getByText("2.")).toBeTruthy();` | No equivalent assertion. | The current viewer has only `assessment_body`; it cannot align a finding with the position of its criterion in a separate brief. |
+| Unportable | `expect(screen.queryByText("Snapshot test passes.")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ })); expect(screen.getByText("Snapshot test passes.")).toBeTruthy();` | No equivalent disclosure assertion. | Checked findings are rendered directly with no met-criterion fold control. The old collapsed-by-default interaction is retired. |
+| Unportable | `expect(screen.getByTestId("or-assessment-builder-tests").textContent).toContain("1409 passed");` | No equivalent builder-result assertion. | The current viewer receives only the assessment's own `test_evidence`, not a cross-output build result. The new suite asserts its independent `1274` count separately. |
+| Translated | `expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");` | `expect(screen.getByText("fail")).toBeTruthy();` | The checked `verdict` enum remains visible through `StatusBadge`; its casing and test ID changed. |
+| Translated | `expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();` | `expect(findings.getByText("Every fixture exists.")).toBeTruthy(); expect(findings.getByText("B, E, F and G are missing.")).toBeTruthy();` | The finding remains visible with its evidence from `makeAssessmentFixture` even though the current viewer has no brief lookup. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -168,11 +213,7 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `client.test.ts` | 8 | The old run, session, and gate endpoints and event frame parser were replaced by scope commands and generated projections; the existing same-name suite exercises different client behavior. |
-| `components/molecules/AssessmentViewer.test.tsx` | 5 | The old viewer cross-references brief and build result, numbers unmet criteria, and folds met criteria; the current checked viewer receives only the assessment body. |
-| `components/molecules/BuildBriefViewer.test.tsx` | 4 | The old atom-edit toggle and RFC-6901 edit callbacks are absent from the restored viewer. |
-| `components/molecules/BuildResultViewer.test.tsx` | 5 | The old viewer cross-references a brief for out-of-scope files and acceptance criteria; the current checked viewer receives only one body. |
 | `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `components/molecules/SpecAnalysisViewer.test.tsx` | 6 | The old blocker callout, source toggle, and untyped validation alert are absent; current checked-schema content needs a separate parity decision. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -195,7 +236,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 34 files and 345 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
+This register covers 30 files and 325 named test declarations; parameterized cases may expand further. The ported plan, PR-summary and viewer suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

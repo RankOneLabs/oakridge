@@ -4,6 +4,111 @@ import type {
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
   OperatorRunEvent,
 } from "../operator-contracts";
+import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
+
+/** Materialize test bodies from the same pinned schema that the compiler checks. */
+const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
+
+function checkedFixtureValue(schemaKey: string, input: unknown): OperatorCheckedValue {
+  const shape = developmentSchemas.find((schema) => schema.key === schemaKey)?.shape;
+  if (!shape) throw new Error(`Missing development schema ${schemaKey}`);
+  if (shape.kind === "string") {
+    if (typeof input !== "string") throw new Error(`${schemaKey} must be text`);
+    return { schema: schemaKey, data: { kind: "string", value: input } };
+  }
+  if (shape.kind === "integer") {
+    if (typeof input !== "number" || !Number.isInteger(input)) throw new Error(`${schemaKey} must be an integer`);
+    return { schema: schemaKey, data: { kind: "integer", value: input } };
+  }
+  if (shape.kind === "boolean") {
+    if (typeof input !== "boolean") throw new Error(`${schemaKey} must be boolean`);
+    return { schema: schemaKey, data: { kind: "boolean", value: input } };
+  }
+  if (shape.kind === "enum") {
+    if (typeof input !== "string" || !shape.variants.includes(input)) throw new Error(`${schemaKey} has an unknown variant`);
+    return { schema: schemaKey, data: { kind: "enum", variant: input } };
+  }
+  if (shape.kind === "list") {
+    if (!Array.isArray(input)) throw new Error(`${schemaKey} must be a list`);
+    return { schema: schemaKey, data: { kind: "list", items: input.map((item) => checkedFixtureValue(shape.item, item)) } };
+  }
+  if (shape.kind === "optional") {
+    return { schema: schemaKey, data: { kind: "optional", value: input == null ? null : checkedFixtureValue(shape.item, input) } };
+  }
+  if (shape.kind === "record") {
+    if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error(`${schemaKey} must be a record`);
+    const record = input as Readonly<{ [key: string]: unknown }>;
+    return { schema: schemaKey, data: { kind: "record", fields: shape.fields.map((field, field_id) => {
+      if (!(field.key in record)) throw new Error(`${schemaKey}.${field.key} is missing`);
+      return { field_id, value: checkedFixtureValue(field.schema, record[field.key]) };
+    }), dictionary: [] } };
+  }
+  throw new Error(`No fixture materializer for ${schemaKey} (${shape.kind})`);
+}
+
+export interface CheckedArtifactFixture { readonly body: OperatorCheckedValue; readonly schemas: readonly OperatorSchema[] }
+
+function developmentFixture(schemaKey: string, input: unknown): CheckedArtifactFixture {
+  return { body: checkedFixtureValue(schemaKey, input), schemas: developmentSchemas };
+}
+
+interface SpecFindingInput { readonly id: string; readonly description: string; readonly severity: "blocking" | "warning" | "info" }
+interface RequirementInput { readonly id: string; readonly description: string; readonly status: "blocked" | "ambiguous" | "implementable" }
+interface RiskInput { readonly description: string; readonly mitigation: string }
+interface SpecAnalysisInput { readonly summary: string; readonly source_spec_refs: readonly string[]; readonly findings: readonly SpecFindingInput[];
+  readonly requirements: readonly RequirementInput[]; readonly risks: readonly RiskInput[] }
+
+export function makeSpecAnalysisFixture(overrides: Partial<SpecAnalysisInput> = {}): CheckedArtifactFixture {
+  return developmentFixture("analysis_body", { summary: "The brief is mostly implementable.", source_spec_refs: ["Brief §2"],
+    findings: [{ id: "f1", description: "Schema conflict", severity: "blocking" },
+      { id: "f2", description: "Naming drift", severity: "warning" }],
+    requirements: [{ id: "r1", description: "Needs upstream API", status: "blocked" },
+      { id: "r2", description: "Add the column", status: "implementable" }],
+    risks: [{ description: "Migration locks the table", mitigation: "Backfill in batches" }], ...overrides });
+}
+
+interface BriefDecisionInput { readonly decision: string; readonly rationale: string }
+interface RejectedApproachInput { readonly approach: string; readonly reason: string }
+interface BuildBriefInput { readonly cohort_id: string; readonly repository_key: string; readonly title: string;
+  readonly depends_on: readonly string[]; readonly goal: string; readonly files_in_scope: readonly string[];
+  readonly decisions_made: readonly BriefDecisionInput[]; readonly approaches_rejected: readonly RejectedApproachInput[];
+  readonly acceptance_criteria: readonly string[]; readonly next_action: string }
+
+export function makeBuildBriefFixture(overrides: Partial<BuildBriefInput> = {}): CheckedArtifactFixture {
+  return developmentFixture("brief_body", { cohort_id: "brief-ui", repository_key: "oakridge", title: "Build brief review UI",
+    depends_on: [], goal: "Make the brief reviewable.", files_in_scope: ["kbbl/core/pwa/oakridge"],
+    decisions_made: [{ decision: "Reuse v1", rationale: "It is proven." }], approaches_rejected: [],
+    acceptance_criteria: ["Operator can approve the artifact."], next_action: "Open the brief artifact.", ...overrides });
+}
+
+interface TestEvidenceInput { readonly passed: number; readonly failed: number; readonly output: string | null;
+  readonly summary: string | null; readonly cargo_test_output: string | null }
+interface BuildMetadataInput { readonly cohort_id: string; readonly session_id: string | null; readonly branch: string | null }
+interface BuildIssueInput { readonly severity: "blocking" | "warning" | "info"; readonly description: string }
+interface BuildResultInput { readonly repository_key: string | null; readonly summary: string; readonly changed_files: readonly string[];
+  readonly tests: TestEvidenceInput; readonly delegated_session_metadata: BuildMetadataInput | null;
+  readonly known_issues: readonly BuildIssueInput[] }
+
+export function makeBuildResultFixture(overrides: Partial<BuildResultInput> = {}): CheckedArtifactFixture {
+  return developmentFixture("build_body", { repository_key: "assay", summary: "Built the API.",
+    changed_files: ["src/api.py", "ci.yml"], tests: { passed: 78, failed: 0, output: "78 passed", summary: null, cargo_test_output: null },
+    delegated_session_metadata: { cohort_id: "cm-api", session_id: null, branch: null },
+    known_issues: [{ severity: "blocking", description: "Fixture table incomplete." }], ...overrides });
+}
+
+interface AssessmentFindingInput { readonly criterion: string | null; readonly status: "met" | "not_met" | "partial" | null;
+  readonly evidence: string | null; readonly description: string | null }
+interface AssessmentInput { readonly verdict: "pass" | "pass_with_notes" | "fail";
+  readonly findings: readonly AssessmentFindingInput[]; readonly test_evidence: TestEvidenceInput | null;
+  readonly recommended_next_actions: readonly string[] }
+
+export function makeAssessmentFixture(overrides: Partial<AssessmentInput> = {}): CheckedArtifactFixture {
+  return developmentFixture("assessment_body", { verdict: "fail",
+    findings: [{ criterion: "The CLI prints JSON.", status: "met", evidence: "Snapshot test passes.", description: null },
+      { criterion: "Every fixture exists.", status: "not_met", evidence: "B, E, F and G are missing.", description: null }],
+    test_evidence: { passed: 1274, failed: 0, output: null, summary: "Independently re-run.", cargo_test_output: null },
+    recommended_next_actions: ["Supply the missing fixtures."], ...overrides });
+}
 
 /** Shared defaults for operator read-model tests; callers override only the behavior under test. */
 export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): OperatorRunSummary {
