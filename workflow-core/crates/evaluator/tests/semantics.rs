@@ -297,6 +297,34 @@ fn dynamic_collection_materializes_whole_dependency_graph() {
     );
 }
 #[test]
+fn computed_collection_key_materializes_without_a_key_field_index() {
+    let mut b = bundle("dynamic");
+    b.schemas.push(Schema {
+        key: SchemaId::from("key_wrapper"),
+        shape: SchemaShape::Record { fields: vec![SchemaField {
+            key: "value".into(), schema: SchemaId::from("ident"), required: true,
+        }], dictionary: None },
+    });
+    let member_key = Expression::Reference { root: ReferenceRoot::Item, path: vec!["key".into()] };
+    let collection = b.scopes[0].children[0].collection.as_mut().unwrap();
+    collection.key = Some(Expression::Field {
+        value: Box::new(Expression::Record { schema: SchemaId::from("key_wrapper"), fields: vec![
+            FieldExpression { key: "value".into(), value: member_key },
+        ] }),
+        key: "value".into(),
+    });
+    collection.after = Some(Expression::Reference { root: ReferenceRoot::Item, path: vec!["dependencies".into()] });
+    collection.key_field.clear();
+    collection.dependencies_field.clear();
+    let p = compile(&b, &b.operations).unwrap();
+    let s = snapshot(&b, json!([
+        {"key":"first","input":{},"dependencies":[]},
+        {"key":"second","input":{},"dependencies":["first"]}
+    ]), "ready", "begin");
+    let children = materialize(&p, &s, &SymbolKey::from("items")).unwrap().children;
+    assert_eq!(children[1].depends_on, vec!["first"]);
+}
+#[test]
 fn invalid_dynamic_dependency_returns_no_partial_batch() {
     let b = bundle("dynamic");
     let p = compile(&b, &b.operations).unwrap();

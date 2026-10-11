@@ -118,7 +118,12 @@ pub(crate) fn materialize_with_budget(
     let mut keys = BTreeSet::new();
     let mut children = Vec::new();
     for item in &items {
-        let key = text(field(item, collection.key_field)?, context.budget)?;
+        let key_value = if let Some(expression) = &collection.key {
+            let mut member = EvaluationContext { program, snapshot, item: Some(item), budget: &mut *context.budget };
+            Some(evaluate_expression(expression, &mut member)?)
+        } else { None };
+        let key_source = if let Some(value) = &key_value { value } else { field(item, collection.key_field)? };
+        let key = text(key_source, context.budget)?;
         if key.is_empty()
             || key.len() > 256
             || key.chars().any(|c| c.is_control() || c == '/' || c == '\\')
@@ -130,9 +135,14 @@ pub(crate) fn materialize_with_budget(
                 "empty, illegal or duplicate member key",
             ));
         }
+        let after_value = if let Some(expression) = &collection.after {
+            let mut member = EvaluationContext { program, snapshot, item: Some(item), budget: &mut *context.budget };
+            Some(evaluate_expression(expression, &mut member)?)
+        } else { None };
+        let after_source = if let Some(value) = &after_value { value } else { field(item, collection.dependencies_field)? };
         let CheckedData::List {
             items: dependencies,
-        } = &field(item, collection.dependencies_field)?.data
+        } = &after_source.data
         else {
             return Err(failure(
                 DomainErrorKind::InvalidTemplate,

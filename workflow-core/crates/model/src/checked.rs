@@ -59,6 +59,8 @@ pub struct CheckedChild {
 #[serde(deny_unknown_fields)]
 pub struct CheckedCollection {
     pub source: CheckedExpression,
+    pub key: Option<CheckedExpression>,
+    pub after: Option<CheckedExpression>,
     #[serde(with = "crate::wire_numbers::index")]
     #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub key_field: usize,

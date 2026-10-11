@@ -300,8 +300,14 @@ pub struct ChildDefinition {
 #[serde(deny_unknown_fields)]
 pub struct CollectionDefinition {
     pub source: Expression,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<Expression>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Expression>,
+    #[serde(default)]
     pub key_field: String,
     pub input_field: String,
+    #[serde(default)]
     pub dependencies_field: String,
     /// At least one: a stage always runs something, so an empty collection is
     /// never valid. Configuration refuses empty work before activating it.

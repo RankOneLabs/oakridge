@@ -73,10 +73,10 @@ pub fn compile_scope(
                         )
                     })
             };
-            let (key_field, key) = field(&c.key_field)?;
+            let key_field = if c.key.is_some() { 0 } else { field(&c.key_field)?.0 };
             let (input_field, input) = field(&c.input_field)?;
-            let (dependencies_field, deps) = field(&c.dependencies_field)?;
-            if !matches!(schema(bundle, &key.schema)?, SchemaShape::String { .. }) {
+            let dependencies_field = if c.after.is_some() { 0 } else { field(&c.dependencies_field)?.0 };
+            if c.key.is_none() && !matches!(schema(bundle, &field(&c.key_field)?.1.schema)?, SchemaShape::String { .. }) {
                 return Err(error(
                     DomainErrorKind::InvalidTemplate,
                     child.key.to_string(),
@@ -93,26 +93,24 @@ pub fn compile_scope(
                 e.kind = DomainErrorKind::InvalidTemplate;
                 e
             })?;
-            let SchemaShape::List {
-                item: dependency, ..
-            } = schema(bundle, &deps.schema)?
-            else {
-                return Err(error(
-                    DomainErrorKind::InvalidTemplate,
-                    child.key.to_string(),
-                    "dependencies must be a string list",
-                ));
+            context.item = Some(item.clone());
+            let key = c.key.as_ref().map(|expr| compile_expression(bundle, owner, expr, &context, 0)).transpose()?;
+            let after = c.after.as_ref().map(|expr| compile_expression(bundle, owner, expr, &context, 0)).transpose()?;
+            let key_schema = if let Some(value) = &key { &value.schema } else { &field(&c.key_field)?.1.schema };
+            if !matches!(schema(bundle, key_schema)?, SchemaShape::String { .. }) {
+                return Err(error(DomainErrorKind::InvalidTemplate, child.key.to_string(), "member key must be a string"));
+            }
+            let after_schema = if let Some(value) = &after { &value.schema } else { &field(&c.dependencies_field)?.1.schema };
+            let SchemaShape::List { item: dependency, .. } = schema(bundle, after_schema)? else {
+                return Err(error(DomainErrorKind::InvalidTemplate, child.key.to_string(), "dependencies must be a string list"));
             };
             if !matches!(schema(bundle, dependency)?, SchemaShape::String { .. }) {
-                return Err(error(
-                    DomainErrorKind::InvalidTemplate,
-                    child.key.to_string(),
-                    "dependency key must be a string",
-                ));
+                return Err(error(DomainErrorKind::InvalidTemplate, child.key.to_string(), "dependency key must be a string"));
             }
-            context.item = Some(item.clone());
             Some(CheckedCollection {
                 source,
+                key,
+                after,
                 key_field,
                 input_field,
                 dependencies_field,
