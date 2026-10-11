@@ -75,7 +75,7 @@ test("baseline creates constrained authority relations and accepts a matching se
     await expect(migrateEmptyDatabase(db)).rejects.toThrow(`recorded ${"0".repeat(64)}, current ${digest}`);
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });

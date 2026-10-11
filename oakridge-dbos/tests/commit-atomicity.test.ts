@@ -79,7 +79,7 @@ test("a fault after state, output and reservation writes rolls the entire decisi
     expect({ result: retried.ok && retried.value.kind, snapshots }).toEqual({ result: "Committed", snapshots: 2 });
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });

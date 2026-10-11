@@ -1,9 +1,11 @@
 import { queryKeys } from "../queryKeys";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOperatorInbox } from "../client";
 import { Button } from "../../components/atoms/Button";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 import { WorkItem } from "../components/organisms/WorkItem";
+import { selectStableOperatorDecisionQueue, type OperatorDecisionQueueEntry } from "../lib/decision-queue";
 
 interface ReviewInboxViewProps {
   /** Opens the run at the scope that needs attention, not at its root. */
@@ -12,6 +14,10 @@ interface ReviewInboxViewProps {
 
 export function ReviewInboxView({ onSelectScope }: ReviewInboxViewProps) {
   const query = useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox });
+  const [queue, setQueue] = useState<readonly OperatorDecisionQueueEntry[]>([]);
+  useEffect(() => {
+    if (query.data) setQueue((previous) => selectStableOperatorDecisionQueue(previous, query.data.items));
+  }, [query.data]);
   if (!query.data) return query.error
     ? <FeedbackMessage tone="danger" testId="or-review-inbox-error">{String(query.error)}</FeedbackMessage>
     : <FeedbackMessage testId="or-review-inbox-loading">Loading review work…</FeedbackMessage>;
@@ -20,6 +26,7 @@ export function ReviewInboxView({ onSelectScope }: ReviewInboxViewProps) {
     <h1>Work requiring your attention</h1>
     <Button variant="secondary" onClick={() => { void query.refetch(); }}>Refresh</Button>
     {query.data.items.length === 0 && <FeedbackMessage tone="empty" testId="or-review-inbox-empty">Nothing needs attention.</FeedbackMessage>}
-    {query.data.items.map((item, index) => <WorkItem key={`${item.scope_id}:${index}`} item={item} onOpen={onSelectScope} />)}
+    {queue.map((entry, index) => <WorkItem key={`${entry.item.scope_id}:${entry.item.kind}:${index}`}
+      item={entry.item} isSettled={entry.kind === "settled"} onOpen={onSelectScope} />)}
   </main>;
 }

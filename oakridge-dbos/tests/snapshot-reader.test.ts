@@ -80,7 +80,7 @@ test("snapshot records output, export, resource, collection and capacity members
     expect(await db.transaction((tx) => hasSameReadSet(tx, before_membership_change.read_set))).toBe(false);
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });

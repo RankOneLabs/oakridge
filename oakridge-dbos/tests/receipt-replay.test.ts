@@ -44,7 +44,7 @@ test("exact ingress replay returns its receipt after terminal state; changed dig
     expect(transitions[0]?.count).toBe("1");
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });

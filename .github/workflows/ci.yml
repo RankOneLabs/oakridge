@@ -147,6 +147,7 @@ jobs:
       - run: chmod +x workflow-core/target/debug/workflow-cli
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: cd oakridge-dbos && bunx playwright install --with-deps chromium
       - name: Check generated storage records
         if: matrix.shard == 0
         run: bun oakridge-dbos/scripts/generate-storage-records.ts --check

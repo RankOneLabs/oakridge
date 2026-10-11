@@ -39,7 +39,7 @@ async function runCapacityCase(pool_keys: readonly [string, string]) {
     return { committed: outcomes.filter((result) => result.ok && result.value.kind === "Committed").length, active: Number(active[0]?.count ?? 0) };
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 }
