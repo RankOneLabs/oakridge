@@ -2,7 +2,7 @@ import type {
   OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCheckedValue, OperatorCommandDefinition, OperatorDecision,
   OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
-  OperatorRunEvent, OperatorDefinitionSummary, OperatorExecutionView, OperatorCommandReceipt,
+  OperatorRunEvent, OperatorDefinitionSummary, OperatorExecutionView, OperatorCommandReceipt, OperatorRunScopeSummary,
   OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorDecisionOutcome, OperatorScopeHistory,
 } from "../operator-contracts";
 import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
@@ -135,6 +135,11 @@ export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): Ope
 
 export function makeRunDetail(overrides: Partial<OperatorRunDetail> = {}): OperatorRunDetail {
   return { ...makeRunSummary(), cursor: [], scopes: [], ...overrides };
+}
+
+export function makeRunScopeSummary(overrides: Partial<OperatorRunScopeSummary> = {}): OperatorRunScopeSummary {
+  return { scope_id: "scope-1", scope_key: "development", label: "Development", version: 1,
+    is_terminal: false, available_commands: [], ...overrides };
 }
 
 export function makeDefinitionSummary(overrides: Partial<OperatorDefinitionSummary> = {}): OperatorDefinitionSummary {
