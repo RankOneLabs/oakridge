@@ -27,9 +27,6 @@ jobs:
         working-directory: .
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      # shipped_definitions compiles the generated bundles.
-      - run: bash scripts/generate-bundles.sh
-        working-directory: .
       - run: cargo test --locked
       - run: cargo build --locked -p workflow-cli
       - uses: actions/upload-artifact@v4
@@ -54,7 +51,6 @@ jobs:
       - run: bash scripts/generate-core-contracts.sh --check
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: bun test workflow-config/src
-      - run: bash scripts/generate-bundles.sh --check
 
   workspace-typecheck:
     name: workspace typecheck (TypeScript)
@@ -99,6 +95,9 @@ jobs:
 
   oakridge-dbos-unit-tests:
     name: oakridge-dbos unit tests (bun)
+    # The v2 core removes the generated development bundle consumed by these
+    # tests. c3 re-enables this job when DBOS uses compile/step and YAML samples.
+    if: github.base_ref != 'epic/core-v2'
     needs: workflow-core
     runs-on: ubuntu-latest
     steps:
@@ -114,6 +113,9 @@ jobs:
 
   oakridge-dbos-tests:
     name: oakridge-dbos integration tests (bun, shard ${{ matrix.shard }})
+    # The v2 core removes the generated development bundle consumed by these
+    # tests. c3 re-enables this job when DBOS uses compile/step and YAML samples.
+    if: github.base_ref != 'epic/core-v2'
     needs: workflow-core
     runs-on: ubuntu-latest
     strategy:
