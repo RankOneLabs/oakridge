@@ -4,11 +4,26 @@ use workflow_model::*;
 
 fn prompts() -> BTreeMap<String, String> {
     [
-        ("review-loop/write.md", "{{topic}}"),
-        ("review-loop/revise.md", "{{topic}} {{feedback}}"),
-        ("review-loop/critique.md", "{{subject}}"),
-        ("review-loop/editor.md", "{{draft}} {{critique}}"),
-        ("fan-out/item.md", "{{text}}"),
+        (
+            "review-loop/write.md",
+            include_str!("../../../../workflow-config/prompts/review-loop/write.md"),
+        ),
+        (
+            "review-loop/revise.md",
+            include_str!("../../../../workflow-config/prompts/review-loop/revise.md"),
+        ),
+        (
+            "review-loop/critique.md",
+            include_str!("../../../../workflow-config/prompts/review-loop/critique.md"),
+        ),
+        (
+            "review-loop/editor.md",
+            include_str!("../../../../workflow-config/prompts/review-loop/editor.md"),
+        ),
+        (
+            "fan-out/item.md",
+            include_str!("../../../../workflow-config/prompts/fan-out/item.md"),
+        ),
     ]
     .into_iter()
     .map(|(key, value)| (key.into(), value.into()))

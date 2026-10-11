@@ -49,6 +49,7 @@ jobs:
         with:
           workspaces: workflow-core
       - run: bash scripts/generate-core-contracts.sh --check
+      - run: bun workflow-config/src/generate.ts --check
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: bun test workflow-config/src
 

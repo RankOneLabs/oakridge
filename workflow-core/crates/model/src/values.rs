@@ -319,3 +319,25 @@ pub enum StepError {
     Rejected { reason: String },
     Invalid { detail: String },
 }
+
+#[cfg(test)]
+mod v2_shape_tests {
+    use super::{Action, Event, ScopedSnapshot, UnitStatus};
+
+    #[test]
+    fn unit_and_action_contracts_have_no_failure_or_ask_variants() {
+        let unit = serde_json::to_string(&schemars::schema_for!(UnitStatus)).unwrap();
+        let action = serde_json::to_string(&schemars::schema_for!(Action)).unwrap();
+        let snapshot = serde_json::to_string(&schemars::schema_for!(ScopedSnapshot)).unwrap();
+        assert!(!unit.contains("\"failed\""));
+        assert!(!action.contains("\"fail\""));
+        assert!(!action.contains("\"ask\""));
+        assert!(!snapshot.contains("NeedsOperator"));
+    }
+
+    #[test]
+    fn event_contract_has_the_seven_kinds_swept_by_evaluator_invariants() {
+        let schema = serde_json::to_value(schemars::schema_for!(Event)).unwrap();
+        assert_eq!(schema["oneOf"].as_array().unwrap().len(), 7);
+    }
+}

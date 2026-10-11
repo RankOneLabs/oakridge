@@ -1156,11 +1156,26 @@ mod v2_step {
             };
             let source: Workflow = serde_json::from_str(content).unwrap();
             let prompts: BTreeMap<String, String> = [
-                ("review-loop/write.md", "{{topic}}"),
-                ("review-loop/revise.md", "{{feedback}}"),
-                ("review-loop/critique.md", "{{subject}}"),
-                ("review-loop/editor.md", "{{draft}}"),
-                ("fan-out/item.md", "{{text}}"),
+                (
+                    "review-loop/write.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/write.md"),
+                ),
+                (
+                    "review-loop/revise.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/revise.md"),
+                ),
+                (
+                    "review-loop/critique.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/critique.md"),
+                ),
+                (
+                    "review-loop/editor.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/editor.md"),
+                ),
+                (
+                    "fan-out/item.md",
+                    include_str!("../../../../workflow-config/prompts/fan-out/item.md"),
+                ),
             ]
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -1262,6 +1277,39 @@ mod v2_step {
                 UnitStatus::Cancelled => "cancelled",
             }
         }
+        fn status_rank(status: &UnitStatus) -> u8 {
+            match status {
+                UnitStatus::NotStarted | UnitStatus::Blocked { .. } => 0,
+                UnitStatus::Active => 1,
+                UnitStatus::Done { .. } | UnitStatus::Cancelled => 2,
+            }
+        }
+        fn assert_never_regresses(before: &ScopedSnapshot, after: &ScopedSnapshot) {
+            for old in &before.units {
+                let current = after.units.iter().find(|unit| unit.id == old.id).unwrap();
+                assert!(
+                    status_rank(&current.status) >= status_rank(&old.status),
+                    "{} regressed",
+                    old.id
+                );
+            }
+        }
+        fn assert_one_live_attempt_per_worker(state: &ScopedSnapshot) {
+            let mut live = BTreeSet::new();
+            for attempt in &state.attempts {
+                if matches!(
+                    attempt.status,
+                    AttemptStatus::Pending | AttemptStatus::Running
+                ) {
+                    assert!(
+                        live.insert((attempt.unit.clone(), attempt.worker.clone())),
+                        "two live attempts for {}:{}",
+                        attempt.unit,
+                        attempt.worker
+                    );
+                }
+            }
+        }
         fn apply_row(
             program: &CheckedWorkflow,
             state: &ScopedSnapshot,
@@ -1272,7 +1320,10 @@ mod v2_step {
             let before = state.attempts.len();
             for (index, spec) in row["events"].as_array().unwrap().iter().enumerate() {
                 let incoming = incoming(event(spec, &state), &format!("{row_number}:{index}"));
-                state = step(program, &state, &incoming).unwrap().snapshot;
+                let next = step(program, &state, &incoming).unwrap().snapshot;
+                assert_never_regresses(&state, &next);
+                assert_one_live_attempt_per_worker(&next);
+                state = next;
             }
             for (key, expected) in row["status"].as_object().unwrap() {
                 let actual = if key == "run" {
@@ -1320,24 +1371,88 @@ mod v2_step {
                 for (index, row) in rows.iter().enumerate() {
                     let before = state.clone();
                     state = apply_row(&program, &state, row, index);
-                    for old in &before.units {
-                        let current = state.units.iter().find(|u| u.id == old.id).unwrap();
-                        let rank = |s: &UnitStatus| match s {
-                            UnitStatus::NotStarted | UnitStatus::Blocked { .. } => 0,
-                            UnitStatus::Active => 1,
-                            UnitStatus::Done { .. } | UnitStatus::Cancelled => 2,
-                        };
-                        assert!(
-                            rank(&current.status) >= rank(&old.status),
-                            "{name} row {index} regressed {}",
-                            old.id
-                        );
-                    }
+                    assert_never_regresses(&before, &state);
                     let mut replay = snapshot();
                     for (prefix, row) in rows[..=index].iter().enumerate() {
                         replay = apply_row(&program, &replay, row, prefix);
                     }
                     assert_eq!(replay, state, "{name} prefix {index}");
+                }
+            }
+        }
+        #[test]
+        fn every_event_kind_preserves_unit_status_order() {
+            for (name, trace) in [
+                (
+                    "review-loop",
+                    include_str!("../../../fixtures/traces/review-loop.json"),
+                ),
+                (
+                    "fan-out",
+                    include_str!("../../../fixtures/traces/fan-out.json"),
+                ),
+            ] {
+                let program = sample(name);
+                let trace: Value = serde_json::from_str(trace).unwrap();
+                let mut state = snapshot();
+                for (index, row) in trace["rows"].as_array().unwrap().iter().enumerate() {
+                    let action = state
+                        .attempts
+                        .last()
+                        .map(|attempt| attempt.action_id.clone())
+                        .unwrap_or_else(|| ActionKey::from("absent"));
+                    let unit = state
+                        .units
+                        .iter()
+                        .find(|unit| unit.stage.is_some())
+                        .map(|unit| unit.id.clone())
+                        .unwrap_or_else(|| UnitId::from("absent"));
+                    // Keep this list exhaustive against Event's wire schema below.
+                    let candidates = [
+                        Event::Launched {
+                            input: serde_json::json!({"topic":"Oakridge"}),
+                        },
+                        Event::WorkerStarted {
+                            action: action.clone(),
+                            kbbl_session_id: None,
+                        },
+                        Event::WorkerEnded {
+                            action: action.clone(),
+                            result: WorkerResult::Succeeded,
+                        },
+                        Event::RevisionPublished {
+                            unit: unit.clone(),
+                            artifact: SymbolKey::from("draft"),
+                            body: serde_json::json!({"title":"x","body":"x"}),
+                            predecessor: None,
+                            subject: None,
+                            by: action,
+                        },
+                        Event::OperatorDecided {
+                            unit: unit.clone(),
+                            review: SymbolKey::from("editor"),
+                            decision: SymbolKey::from("approve"),
+                            target: RevisionId::from("draft:1"),
+                            payload: serde_json::json!({}),
+                        },
+                        Event::RetryRequested {
+                            unit,
+                            worker: WorkerKey::from("writer"),
+                        },
+                        Event::CancelRequested,
+                    ];
+                    assert_eq!(candidates.len(), 7);
+                    for (kind, candidate) in candidates.into_iter().enumerate() {
+                        if let Ok(result) = step(
+                            &program,
+                            &state,
+                            &incoming(candidate, &format!("probe:{name}:{index}:{kind}")),
+                        ) {
+                            assert_never_regresses(&state, &result.snapshot);
+                            assert_one_live_attempt_per_worker(&result.snapshot);
+                        }
+                    }
+                    state = apply_row(&program, &state, row, index);
                 }
             }
         }

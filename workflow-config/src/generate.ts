@@ -1,35 +1,23 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildBundle } from "./build-bundle";
-import { renderPromptFiles } from "./development/prompts";
-import { DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY } from "./development/policies";
+import YAML from "yaml";
 
-const root = resolve(import.meta.dir, "..");
-const variants = [DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY];
-const check = process.argv.includes("--check");
-const promptDrift = renderPromptFiles(check);
-for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
-if (promptDrift.length > 0) process.exit(1);
-// Bundles are generated, not committed; --check also writes them so the
-// compiler test below has them to read.
-for (const variant of variants) {
-  const result = buildBundle({ authoring_version: 1, template: "development", key: variant.key,
-    implementation_capacity: variant.implementation_capacity, sibling_failure: variant.sibling_failure,
-    wire_field_order: variant.contract_field_order, stage_layout: variant.stage_layout ?? "standard" });
-  if (!result.ok) throw new Error(`${result.error.field_path}: ${result.error.detail}`);
-  const path = resolve(root, "definitions", `${variant.key}.json`);
-  await Bun.write(path, JSON.stringify(result.value, null, 2) + "\n");
-}
-if (check) {
-  const stageTests = Bun.spawnSync({
-    cmd: ["bun", "test", "workflow-config/src/development/policies.test.ts"],
-    cwd: resolve(root, ".."),
-    stdout: "inherit", stderr: "inherit"
-  });
-  if (stageTests.exitCode !== 0) process.exit(stageTests.exitCode || 1);
-  const compiler = Bun.spawnSync({
-    cmd: ["cargo", "test", "-p", "workflow-compiler", "--test", "shipped_definitions"],
-    cwd: resolve(root, "../workflow-core"),
-    stdout: "inherit", stderr: "inherit"
-  });
-  if (compiler.exitCode !== 0) process.exit(compiler.exitCode || 1);
+const root = resolve(import.meta.dir, "../..");
+const isCheck = process.argv.includes("--check");
+
+for (const name of ["review-loop", "fan-out"] as const) {
+  const source = resolve(root, "workflow-config/samples", `${name}.yaml`);
+  const document = YAML.parseDocument(readFileSync(source, "utf8"), { uniqueKeys: true });
+  if (document.errors.length > 0) {
+    throw new Error(`${source}: ${document.errors.map((error) => error.message).join("; ")}`);
+  }
+  const fixture = JSON.stringify(document.toJS(), null, 2) + "\n";
+  const output = resolve(root, "workflow-core/fixtures/bundles", `${name}.json`);
+  if (isCheck) {
+    if (readFileSync(output, "utf8") !== fixture) {
+      throw new Error(`${output} differs from ${source}; run bun workflow-config/src/generate.ts`);
+    }
+  } else {
+    await Bun.write(output, fixture);
+  }
 }
