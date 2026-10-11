@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { selectFieldItems, selectFieldText, selectCheckedText } from "../artifact-types";
 import {
-  makeArtifactRevision, makeBuildBriefFixture, makeBuildResultFixture, makeOutputSlot, makeScopeView,
+  makeBuildBriefFixture, makeBuildResultFixture, makeOutputSlot, makeScopeView, makeScopeWithOutput,
 } from "../__fixtures__/read-models";
 import { selectRunArtifacts } from "./run-overview";
 
@@ -14,13 +14,9 @@ const brief = makeBuildBriefFixture({
   depends_on: ["review-cli", "frontend-bundle"],
 });
 
-const artifactScope = (body: ReturnType<typeof makeBuildBriefFixture>["body"], outputKey: string) =>
-  makeScopeView({ outputs: [makeOutputSlot({ output_key: outputKey,
-    current_revision: makeArtifactRevision({ output_key: outputKey, body }) })] });
-
 describe("build brief in generated scope outputs", () => {
   it("exposes the populated brief from its checked revision", () => {
-    const artifact = selectRunArtifacts([artifactScope(brief.body, "brief")])[0];
+    const artifact = selectRunArtifacts([makeScopeWithOutput({ body: brief.body, output_key: "brief" })])[0];
     expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "title"))
       .toBe("End-to-end, browser, offline and packaging acceptance");
     expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "repository_key")).toBe("assay");
@@ -38,7 +34,7 @@ describe("build brief in generated scope outputs", () => {
 
   it("does not mistake a build result for a brief", () => {
     const result = makeBuildResultFixture();
-    expect(selectRunArtifacts([artifactScope(result.body, "build_result")]).find((artifact) => artifact.revision.body.schema === "brief_body"))
+    expect(selectRunArtifacts([makeScopeWithOutput({ body: result.body, output_key: "build_result" })]).find((artifact) => artifact.revision.body.schema === "brief_body"))
       .toBeUndefined();
   });
 

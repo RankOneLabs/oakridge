@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 36 of the 48 `main` PWA test files. The remaining 12 are
+This branch has mapped and tested 37 of the 48 `main` PWA test files. The remaining 11 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -453,8 +453,28 @@ The original suite used a captured `/runs/:id` v15 payload to catch a handwritte
 | **Relaxed** | `expect(brief?.files_in_scope).toContain("tests/test_review_acceptance.py");` | `expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "files_in_scope").map(selectCheckedText)).toContain("tests/test_review_acceptance.py");` | The file is present in the checked list; the original response mapping is untested. |
 | **Relaxed** | `expect(brief?.depends_on).toEqual(["review-cli", "frontend-bundle"]);` | `expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "depends_on").map(selectCheckedText)).toEqual(["review-cli", "frontend-bundle"]);` | Dependency order survives in the checked list, with the same fixture limitation. |
 | Replacement | `expect(selectCohortBrief(makeUnit({}))).toBeNull();` | `expect(selectRunArtifacts([makeScopeView({ outputs: [] })]).find((artifact) => artifact.output.output_key === "brief")).toBeUndefined();` | The replacement surface has no `params`; a scope with no output has no brief in the sidebar. |
-| Replacement | `expect(selectCohortBrief(makeUnit(assessorParams as StageUnit["params"]))).toBeNull();` | `expect(selectRunArtifacts([artifactScope(result.body, "build_result")]).find((artifact) => artifact.revision.body.schema === "brief_body")).toBeUndefined();` | An assessor's checked build result is a distinct output schema. |
+| Replacement | `expect(selectCohortBrief(makeUnit(assessorParams as StageUnit["params"]))).toBeNull();` | `expect(selectRunArtifacts([makeScopeWithOutput({ body: result.body, output_key: "build_result" })]).find((artifact) => artifact.revision.body.schema === "brief_body")).toBeUndefined();` | An assessor's checked build result is a distinct output schema. |
 | Replacement | `expect(selectCohortBrief(makeUnit(null))).toBeNull();` | `expect(selectRunArtifacts([scope]).find((artifact) => artifact.output.output_key === "brief")).toBeUndefined();` | An output slot without a revision is not shown as an artifact. |
+
+## `kbbl/core/pwa/oakridge/lib/cohort-artifact.test.ts`
+
+The v15 run exposed a history of artifact revisions and supported a sibling lookup as of an arbitrary timestamp. The generated scope read model exposes each slot's **current** revision. `RunWorkspaceSidebar` uses `selectRunArtifacts`; `ArtifactReview` opens a revision found by `selectArtifactInScopes`. The replacement suite tests current output identity with shared checked fixtures. Historical sibling comparison is a recorded coverage loss: neither the current PWA client nor the scope projection supplies the old revision timeline.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Replacement | `expect(selectCohortArtifactId(run, "dev.build_brief", "cm-api")).toBe("brief-new");` | `expect(artifact && [artifact.output.collection_key, artifact.revision.body.schema]).toEqual(["cm-api", "brief_body"]);` for revision `brief-new` | The slot already projects its current revision. It does not prove the old latest-version reduction over historical entries. |
+| Replacement | `expect(selectCohortArtifactId(run, "dev.build_result", "cm-api")).toBe("result");` | `expect(artifact && [artifact.output.collection_key, artifact.revision.body.schema]).toEqual(["cm-api", "build_body"]);` for revision `result` | Output key, collection key and checked body schema distinguish result from brief. |
+| Replacement | `expect(selectCohortArtifactId(run, "dev.build_brief", "cm-ui")).toBeNull();` | `expect(selectRunArtifacts(scopes).find((artifact) => artifact.output.collection_key === "cm-ui")).toBeUndefined();` | No published output for that collection appears in the sidebar. |
+| Unportable | `expect(title(selectCohortArtifactLookup(sources, readBuildBrief))).toBe("Assemble the API");` | No as-of assertion. | The current projection has only the current revision and cannot select the brief as it stood at the viewed revision's timestamp. |
+| Unportable | `expect(title(selectCohortArtifactLookup({ ...sources, as_of: "2026-10-04T00:00:00Z" }, readBuildBrief))).toBe("Revised after the build");` | No as-of assertion. | Historical revisions are not projected to the PWA. |
+| Unportable | `expect(selectCohortArtifactLookup({ ...sources, as_of: "2026-09-30T00:00:00Z" }, readBuildBrief).kind).toBe("missing");` | No as-of assertion. | The current slot cannot answer whether a brief existed before its current revision. |
+| Replacement | `expect(selectCohortArtifactLookup({ ...sources, detail: loading }, readBuildBrief).kind).toBe("loading");` | No assertion in this suite. | The replacement surface loads scope projections. `RunWorkspace` renders a loading state for a scope request; there is no separate sibling artifact request. |
+| Replacement | `expect(selectCohortArtifactLookup({ ...sources, detail: failed }, readBuildBrief).kind).toBe("error");` | No assertion in this suite. | Scope load errors appear in the workspace instead of an artifact-detail query result. This exact sibling error distinction is retired. |
+| Replacement | `expect(selectCohortArtifactLookup({ ...sources, run: failed }, readBuildBrief).kind).toBe("error");` | No assertion in this suite. | A failed run query displays a run-load alert, already covered by the workspace boundary tests. |
+| Unportable | `expect(selectCohortArtifactLookup({ ...sources, detail: stale }, readBuildBrief).kind).toBe("found");` | No stale-sibling assertion. | There is no separate historical sibling query to retain after a refetch failure. Scope-query stale data behavior is a different contract. |
+| Replacement | `expect(selectCohortArtifactLookup({ ...sources, artifact_id: null }, readBuildBrief).kind).toBe("missing");` | `expect(selectRunArtifacts(scopes).find((artifact) => artifact.output.collection_key === "cm-ui")).toBeUndefined();` | A missing current output is absent from the sidebar; the old lookup result variant is retired. |
+| Unportable | `expect(selectCohortArtifactLookup({ ...sources, detail: broken }, readBuildBrief).kind).toBe("missing");` | No malformed-body assertion. | The compiler checks `brief_body` before publishing a revision, so the PWA does not parse raw invalid artifact bodies. |
+| Replacement | `expect(selectCohortArtifactLookup({ ...sources, cohort_label: null }, readBuildBrief).kind).toBe("missing");` | `expect(selectRunArtifacts(scopes).find((artifact) => artifact.output.collection_key === "cm-ui")).toBeUndefined();` | Current output collection keys are explicit; there is no nullable cohort lookup input. |
 
 ## Remaining `main` suite gap
 
@@ -468,14 +488,13 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 12 files and 201 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 11 files and 188 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

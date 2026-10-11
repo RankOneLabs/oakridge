@@ -260,6 +260,22 @@ export function makeOutputSlot(overrides: Partial<OperatorOutputSlotView> = {}):
     collection_key: "", current_revision_id: revision.id, current_revision: revision, version: 1, ...overrides };
 }
 
+interface ScopeOutputFixtureOptions {
+  readonly body: OperatorCheckedValue;
+  readonly output_key: string;
+  readonly collection_key?: string;
+  readonly revision_id?: string;
+  readonly created_at?: string;
+}
+
+export function makeScopeWithOutput(options: ScopeOutputFixtureOptions): OperatorScopeView {
+  const revision = makeArtifactRevision({ id: options.revision_id ?? "revision-1", body: options.body,
+    output_key: options.output_key, collection_key: options.collection_key ?? "",
+    created_at: options.created_at ?? "2026-07-01T09:00:00Z" });
+  return makeScopeView({ outputs: [makeOutputSlot({ output_key: options.output_key,
+    collection_key: options.collection_key ?? "", current_revision_id: revision.id, current_revision: revision })] });
+}
+
 export function makeCommand(overrides: Partial<OperatorCommandDefinition> = {}): OperatorCommandDefinition {
   return { key: "approve", label: "Approve", consequence: "Approve the current revision",
     payload_schema: "text", available_in: ["running"], required: false, field_presentation: [],
