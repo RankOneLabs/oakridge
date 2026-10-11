@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 41 of the 48 `main` PWA test files. The remaining 7 are
+This branch has mapped and tested 42 of the 48 `main` PWA test files. The remaining 6 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -629,6 +629,30 @@ The replacement suite mounts checked artifact review and the existing ACP sessio
 
 The current artifact test also checks that the checked build-result viewer renders its summary. This is generated-surface evidence; it does not restore the retired descriptor layout or second pane.
 
+## `kbbl/core/pwa/oakridge/lib/run-workspace-storage.test.ts`
+
+The v15 workspace saved a primary and optional secondary pane in local storage. The restored workspace has one addressable pane in the run URL. The replacement suite checks run isolation, session and artifact route round trips, encoding and unknown-suffix fallback. The old twin-pane persistence and storage-error contract are coverage losses.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Replacement | `expect(runWorkspaceStorageKey("run-1")).toBe("kbbl.oakridge.runWorkspace.run-1");` | `expect(first).toBe("oakridge/run/run-1");` | A run-specific hash replaces the run-specific storage key. |
+| Replacement | `expect(runWorkspaceStorageKey("run-2")).not.toBe(runWorkspaceStorageKey("run-1"));` | `expect(second).not.toBe(first);` | Routes for different run IDs remain distinct. |
+| Replacement | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` when nothing is stored | `expect(readHashRoute(\`#${formatRunWorkspaceHash(makeRunSummary().run_id, null)}\`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null } });` | A URL without a pane target opens the run overview. The default is now explicit in the URL. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after malformed JSON | No equivalent assertion. | The current route does not read a JSON pane arrangement from local storage. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after a stored array | No equivalent assertion. | No stored JSON shape is parsed. |
+| Replacement | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after an unknown primary kind | `expect(readHashRoute("#oakridge/run/run-1/terminal/unknown")).toEqual({ view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null } });` | An unknown route suffix opens the run overview; the old stored-state validation is retired. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after an artifact pane without an ID | No equivalent assertion. | The parser has no local-storage entity record to validate; malformed URL targets follow the hash parser's separate contract. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` when localStorage throws | No equivalent assertion. | URL parsing does not access local storage. This exact exception-handling claim is retired. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual(state);` for a twin arrangement | No equivalent assertion. | The route supports one target; side-by-side primary and secondary panes are retired. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual({ primary: LIST_PANE, secondary: null });` | No equivalent assertion. | There is no secondary pane record that can be corrupt while a primary remains readable. |
+| Unportable | `expect(readStoredRunWorkspace("run-1")).toEqual({ primary: { kind: "artifact", artifact_id: "art-1" }, secondary: null, });` | No equivalent assertion. | The single route cannot carry duplicate primary and secondary pane entries. |
+| Unportable | `expect(readStoredRunWorkspace("run-1").secondary).toEqual({ kind: "session", session_id: "sid-2", });` | No equivalent assertion. | A second session pane is no longer available. |
+| Replacement | `expect(readStoredRunWorkspace("run-1")).toEqual({ primary: LIST_PANE, secondary: OVERVIEW_PANE });` | `expect(first).toBe("oakridge/run/run-1");` | Each run's base route is independent, but the old two-pane arrangement is not preserved. |
+| Replacement | `expect(readStoredRunWorkspace("run-2")).toEqual({ primary: OVERVIEW_PANE, secondary: null });` | `expect(second).not.toBe(first);` | Distinct run URL identities replace distinct stored arrangements. |
+| Unportable | `expect(() => writeStoredRunWorkspace("run-1", DEFAULT_RUN_WORKSPACE_STATE)).not.toThrow();` | No equivalent assertion. | The current workspace does not write its layout to local storage. |
+| Replacement | `expect(readStoredRunWorkspace("run-1")).toEqual(DEFAULT_RUN_WORKSPACE_STATE);` after prune | `expect(readHashRoute(\`#${formatRunWorkspaceHash(makeRunSummary().run_id, null)}\`)).toEqual({ view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null } });` | Navigating to the base run URL selects the overview; there is no stored entry to prune. |
+| Unportable | `expect(() => pruneStoredRunWorkspace("run-1")).not.toThrow();` | No equivalent assertion. | No local-storage prune operation remains. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -640,10 +664,9 @@ The following original files are not ported. A similarly named current test, whe
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 7 files and 125 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 6 files and 110 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
