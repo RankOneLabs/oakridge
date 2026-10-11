@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 39 of the 48 `main` PWA test files. The remaining 9 are
+This branch has mapped and tested 40 of the 48 `main` PWA test files. The remaining 8 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -562,6 +562,20 @@ The list and editor now operate on generated pinned definition summaries and sto
 
 The restored detail additionally checks the pinned root scope and visible scope labels. The clone test checks that the generated authoring keeps implementation capacity while assigning a new key.
 
+## `kbbl/core/pwa/oakridge/__tests__/run-session-removal.test.tsx`
+
+The v15 sidebar joined executor attempts with the ACP session inventory and removed deleted session panes. The generated sidebar lists authority executions and opens their owning scopes; it does not identify an ACP session or persist a session pane. The replacement suite checks that a terminal execution opens the right scope and that an empty execution list is explicit. None of those new claims proves the old deletion reconciliation.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(visibleSessions()).toEqual(["existing"]);` | No equivalent assertion. | The generated execution row has no `session_id` and is not filtered by the ACP inventory. A deleted ACP session can still have an authority execution. |
+| Unportable | `expect(screen.queryByTestId("or-run-pane-session")).toBeNull();` | No equivalent assertion. | The current workspace does not restore saved session panes from the v15 pane store. |
+| Unportable | `expect(screen.getByTestId("or-sidebar-session-attempt").textContent).toBe("attempt 2 of 2");` | No equivalent assertion. | The execution row uses worker key and generation, not v15 attempt numbering after purge. |
+| Unportable | `expect(visibleSessions()).toEqual(["deleted", "existing"]);` | No equivalent assertion. | Authority executions are projected with scopes; the sidebar does not temporarily show an unknown ACP inventory as a session list. |
+| Unportable | `await waitFor(() => expect(visibleSessions()).toEqual(["existing"]));` | No equivalent assertion. | Applying an ACP snapshot does not remove an execution from the authority projection. |
+| Unportable | `expect(visibleSessions()).toEqual([]);` | No equivalent assertion. | An empty ACP inventory no longer controls the generated execution list. |
+| Unportable | `await waitFor(() => expect(visibleSessions()).toEqual([]));` | No equivalent assertion. | A deletion by another ACP client does not mutate the authority's execution record. The current row links to scope, not a deleted transcript. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -570,7 +584,6 @@ The following original files are not ported. A similarly named current test, whe
 | --- | ---: | --- |
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -578,7 +591,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 9 files and 141 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 8 files and 137 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
