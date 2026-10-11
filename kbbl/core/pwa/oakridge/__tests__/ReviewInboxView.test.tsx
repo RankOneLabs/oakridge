@@ -71,6 +71,8 @@ describe("ReviewInboxView generated work", () => {
     expect(screen.getAllByTestId("or-review-inbox-item").map((row) =>
       `${row.getAttribute("data-state")}:${row.querySelector("h2")?.textContent}`))
       .toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);
+    expect(screen.getAllByTestId("or-review-inbox-item").map((row) => row.classList.contains("or-work-item--settled")))
+      .toEqual([true, false, false]);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
