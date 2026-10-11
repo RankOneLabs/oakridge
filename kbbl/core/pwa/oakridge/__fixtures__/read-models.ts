@@ -2,6 +2,7 @@ import type {
   OperatorArtifactDetail, OperatorArtifactRevisionRecord, OperatorCheckedValue, OperatorCommandDefinition, OperatorDecision,
   OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
+  OperatorRunEvent,
 } from "../operator-contracts";
 
 /** Shared defaults for operator read-model tests; callers override only the behavior under test. */
@@ -12,6 +13,12 @@ export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): Ope
 
 export function makeRunDetail(overrides: Partial<OperatorRunDetail> = {}): OperatorRunDetail {
   return { ...makeRunSummary(), cursor: [], scopes: [], ...overrides };
+}
+
+export function makeRunEvent(overrides: Partial<OperatorRunEvent> = {}): OperatorRunEvent {
+  return { transition_id: "transition-1", run_id: "run-one", scope_id: "scope-one", scope_key: "spec_analysis",
+    decision: "wait", attention: { label: "Awaiting work or review", trigger: "accept" }, is_terminal: false,
+    occurred_at: "2026-10-09T00:00:00.000Z", ...overrides };
 }
 
 export function makeScopeView(overrides: Partial<OperatorScopeView> = {}): OperatorScopeView {

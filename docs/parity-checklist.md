@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch ports 12 of the 48 `main` PWA test files. The remaining 36 are
+This branch ports 13 of the 48 `main` PWA test files. The remaining 35 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -140,6 +140,13 @@ not a hand-written Oakridge read model.
 | Replacement | `expect(selectPullRequestLabel("https://gitlab.com/a/b/-/merge_requests/1")).toBeNull();` | `expect(selectHttpUrl("https://gitlab.com/a/b/-/merge_requests/1")).toBe("https://gitlab.com/a/b/-/merge_requests/1");` | Any safe HTTP URL is now linked. The old GitHub-only label rule is deliberately broadened. |
 | Translated | `expect(isWebUrl("javascript:alert(1)")).toBe(false);` | `expect(selectHttpUrl("javascript:alert(1)")).toBeNull();` | An unsafe scheme still cannot become a link. |
 
+## `kbbl/core/pwa/oakridge/hooks/useOakridgeRunEventStream.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(EventSourceStub.instances).toHaveLength(1);` | `expect(EventSourceStub.instances.filter((source) => source.readyState !== EventSourceStub.CLOSED)).toHaveLength(1);` | The shared live connection may reconnect as subscriptions mount; this only proves that one physical source stays active, rather than that only one was created. The event fixture now comes from `makeRunEvent` in the shared read-model factory. |
+| Replacement | `expect(received.map((event) => [event.sequence, event.replayed])).toEqual([["7", true], ["8", false]]);` | `expect(received.map((event) => event.transition_id)).toEqual(["transition-8"]); expect(invalidations).toHaveBeenCalledWith({ queryKey: queryKeys.run("run-one") });` | The generated authority event has a transition ID and replay metadata is envelope-only. Replayed frames refresh the query but are withheld from live notification subscribers; live frames are delivered. The old callback contract that delivered replayed frames is explicitly retired. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -160,7 +167,6 @@ The following original files are not ported. A similarly named current test, whe
 | `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `components/molecules/SpecAnalysisViewer.test.tsx` | 6 | The old blocker callout, source toggle, and untyped validation alert are absent; current checked-schema content needs a separate parity decision. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `hooks/useOakridgeRunEventStream.test.tsx` | 1 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/build-brief.test.ts` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -183,7 +189,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 36 files and 348 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
+This register covers 35 files and 347 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
