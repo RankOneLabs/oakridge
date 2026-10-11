@@ -10,7 +10,7 @@ deleted. A passing test does not resolve an unportable entry.
 
 This branch has mapped all 48 `main` PWA source files to passing replacement suites or an explicit per-assertion coverage-loss decision. The Unportable and Relaxed entries remain open parity gaps; a green replacement suite does not resolve them.
 
-The 48 source files contain 402 static `test`/`it` declarations on `main` and 222 in this branch. The 180-declaration shortfall is an **open parity gap**, not a completed one-for-one port; some old cases were consolidated into generated-model checks and others have no equivalent surface. The tables below record the original assertions that were translated, relaxed or left unportable so review can decide each coverage loss explicitly.
+The 48 source files contain 402 static `test`/`it` declarations on `main` and 223 in this branch. The 179-declaration shortfall is an **open parity gap**, not a completed one-for-one port; some old cases were consolidated into generated-model checks and others have no equivalent surface. The tables below record the original assertions that were translated, relaxed or left unportable so review can decide each coverage loss explicitly.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
 
@@ -34,8 +34,11 @@ The 48 source files contain 402 static `test`/`it` declarations on `main` and 22
 | Unportable | `expect(screen.queryByTestId("or-plan-cohorts")).toBeNull();` | No equivalent assertion in this file. | This checked-schema review no longer chooses a viewer from an artifact descriptor; the absence of a retired test ID would not prove a valid schema dispatch. |
 | **Relaxed** | `expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();` | `expect(screen.getByRole("status").textContent).toContain("unavailable in the current scope projection");` | The current review consumes the loaded scope projection. This checks missing-revision handling but no longer proves an artifact-fetch error is shown; scope-load failures are covered separately. |
 | Replacement | `expect(screen.queryByText("← Back")).toBeNull();` | `expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();` | Review navigation is now an explicit overview action on the review shell. The old absence claim is deliberately retired. |
+| Added | No assertion on `main` for a collection identity field in the review editor. | `expect(screen.getByLabelText<HTMLTextAreaElement>("cohort_id").readOnly).toBe(true);` | The pinned output's `collection_key` field remains visible but cannot be edited into a body that disagrees with the existing slot. |
+| Added | No assertion on `main` for a custom pinned edit trigger. | `expect(JSON.parse(request?.[1]?.body as string)).toMatchObject({ command_key: "revise_report", payload: { collection_key: "brief-ui" } });` | The editor submits the declared trigger even when it does not follow the `edit_<output>` naming convention. |
+| Added | No assertion on `main` for projection refresh after editing a collection member. | `await waitFor(() => expect(refresh).toHaveBeenCalledOnce());` | A successful collection edit refreshes the reviewed revision. |
 
-The first suite has 6 passing tests, including a UI edit submission and a check
+The first suite has 7 passing tests, including a UI edit submission and a check
 that the review follows the new revision. The old
 claims below are closed as explicit replacement-surface decisions, not as
 translations. An authority-owned fact is not inferred from a missing revision
@@ -340,6 +343,7 @@ The current client suite also tests generated run and definition pagination, con
 | Translated | `expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();` | `expect(detail.textContent).toContain("observed pull request belongs to another repository");` | The diagnostic preserves the reconciliation detail. |
 | Unportable | `expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();` | No equivalent inbox link assertion. | The diagnostic variant has only `detail`, run ID and scope ID; it does not carry a PR URL. The operator opens the scope for related outputs. |
 | Translated | `expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);` | Same assertion using generated command rows with `data-state`. | The row position and append behavior are preserved end to end. The test refreshes `ReviewInboxView` from the shared factory and checks all three positions. |
+| Added | No assertion on `main` for the current settled-row CSS modifier. | `expect(screen.getAllByTestId("or-review-inbox-item").map((row) => row.classList.contains("or-work-item--settled"))).toEqual([true, false, false]);` | The retained row receives its settled visual treatment while live rows do not. |
 | Unportable | `expect(screen.getByText("Merged · complete")).toBeTruthy();` | No equivalent inbox assertion. | Completed scopes no longer occupy the attention inbox. Their terminal outcome is shown in the run projection. |
 
 ## `kbbl/core/pwa/oakridge/lib/run-accent.test.ts`
