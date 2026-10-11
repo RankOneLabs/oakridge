@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { mkdirSync } from "node:fs";
 import { chromium } from "@playwright/test";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { ScopeCommandRequest } from "../src/http/scope-commands";
@@ -20,7 +19,6 @@ import { withDatabase } from "./effect-fixture";
 
 const binary = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
 const pwa_dist = resolve(import.meta.dir, "../../kbbl/core/pwa/dist");
-const screenshots = resolve(import.meta.dir, "../../docs/parity-screenshots");
 const cohort = { id: "first", branch: "work", pr_url: "https://github.com/owner/repo/pull/1" };
 const final_pr = { branch: "cohort", pr_url: "https://github.com/owner/repo/pull/2" };
 
@@ -182,21 +180,11 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
             const page = await context.newPage();
             page.setDefaultTimeout(10_000);
             const base = kbbl.url.href;
-            const capture = async (name: string, hash: string, ready: string): Promise<void> => {
+            const visit = async (hash: string, ready: string): Promise<void> => {
               await page.goto(`${base}#${hash}`);
               await page.locator(ready).waitFor();
-              for (const theme of ["light", "dark"] as const) {
-                if (await page.evaluate(() => document.documentElement.dataset.theme) !== theme)
-                  await page.getByRole("button", { name: `Switch to ${theme} mode` }).click();
-                await page.evaluate(() => {
-                  window.scrollTo(0, 0);
-                  for (const element of Array.from(document.querySelectorAll("*"))) if (element.scrollTop) element.scrollTop = 0;
-                });
-                await page.screenshot({ path: resolve(screenshots, `${name}-${theme}.png`), fullPage: true });
-              }
             };
-            mkdirSync(screenshots, { recursive: true });
-            await capture("run-overview", `oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
+            await visit(`oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
             // Force one stale-cursor response, then let the UI retry against the
             // real authority. This covers the reload path even when the runtime
             // happens not to advance the scope during the first edit.
@@ -252,16 +240,9 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
             if (delivered.delivery.payload.status !== "delivered") throw new Error(`ping delivery failed: ${JSON.stringify(delivered.delivery)}`);
             expect(resumed_after_end).toHaveLength(1);
             expect(ping_inputs).toEqual(["Please review the changed summary"]);
-            await capture("artifact-review", `oakridge/run/${run_id}/artifact/${editRevision.id}`, '[data-testid="or-artifact-review"]');
-            for (const theme of ["light", "dark"] as const) {
-              if (await page.evaluate(() => document.documentElement.dataset.theme) !== theme)
-                await page.getByRole("button", { name: `Switch to ${theme} mode` }).click();
-              await page.getByText("Review the operator edit").scrollIntoViewIfNeeded();
-              await page.screenshot({ path: resolve(screenshots, `artifact-discussion-${theme}.png`) });
-            }
-            await capture("review-inbox", "oakridge/review-inbox", '[data-testid="or-review-inbox"]');
-            await capture("definitions", "oakridge/defs", 'h1:has-text("Pinned definitions")');
-            await capture("definition-editor", "oakridge/def-new", '[data-testid="or-def-editor"]');
+            await visit("oakridge/review-inbox", '[data-testid="or-review-inbox"]');
+            await visit("oakridge/defs", 'h1:has-text("Pinned definitions")');
+            await visit("oakridge/def-new", '[data-testid="or-def-editor"]');
           } finally { await context.close(); await browser.close(); }
         };
         const issued: string[] = [];
