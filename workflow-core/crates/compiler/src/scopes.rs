@@ -489,6 +489,9 @@ pub mod workflow_v2 {
                 return field_type(ty, &rest.split('.').collect::<Vec<_>>(), scope.aliases).ok_or_else(|| reject(1, "validation body field absent"));
             }
         }
+        if text.contains(".input") || text.contains(".artifact") || text.contains(".state") {
+            return Err(reject(4, "expression reads inside another unit"));
+        }
         if let Some((unit, suffix)) = text.split_once(".outcome") {
             let ty = scope.outcomes.get(unit).ok_or_else(|| reject(1, format!("unit outcome {unit} absent or outside read scope")))?;
             return if suffix.is_empty() { Ok(ty.clone()) } else { field_type(ty, &suffix.strip_prefix('.').ok_or_else(|| reject(4, "outcome path malformed"))?.split('.').collect::<Vec<_>>(), scope.aliases).ok_or_else(|| reject(4, "unit outcome field absent")) };
@@ -568,8 +571,9 @@ pub mod workflow_v2 {
         for (review_key, review) in &stage.reviews {
             if !stage.artifacts.contains_key(&review.of.0) { return Err(reject(8, format!("review {review_key} artifact absent"))); }
             let _ = fields(&review.inputs, &base).map_err(|mut error| { error.entity_id = "check 8".into(); error })?;
-            if review.prompt.trim().is_empty() { return Err(reject(7, format!("review {review_key} lacks prompt"))); }
-            prompt(&review.prompt, &review.inputs, prompts)?;
+            let review_prompt = review.prompt.as_deref().ok_or_else(|| reject(7, format!("review {review_key} lacks prompt")))?;
+            if review_prompt.trim().is_empty() { return Err(reject(7, format!("review {review_key} lacks prompt"))); }
+            prompt(review_prompt, &review.inputs, prompts)?;
             for decision in review.decisions.values() {
                 let target = decision.on.as_ref().unwrap_or(&review.of);
                 let Some(owner) = owners.get(&target.0) else { return Err(reject(8, format!("decision target {target} absent"))); };
@@ -590,20 +594,33 @@ pub mod workflow_v2 {
             if unit.for_each.is_some() != unit.key.is_some() { return Err(reject(2, format!("collection {key} needs key"))); }
             if let Some(pool) = &unit.pool { if group.pools.get(&pool.0).is_none_or(|capacity| *capacity == 0) { return Err(reject(1, format!("pool {pool} absent or empty"))); } }
             if let UnitDependencies::Fixed(after) = &unit.after { for dependency in after { if !group.units.contains_key(&dependency.0) { return Err(reject(1, format!("unit {dependency} absent"))); } } }
-        }
-        // Static dependency cycles are rejected before any unit input is compiled.
-        for key in group.units.keys() {
-            let mut seen = BTreeSet::new();
-            let mut pending = vec![key.as_str()];
-            while let Some(next) = pending.pop() {
-                if !seen.insert(next) { return Err(reject(5, format!("dependency cycle through {next}"))); }
-                if let Some(UnitDependencies::Fixed(after)) = group.units.get(next).map(|u| &u.after) { pending.extend(after.iter().map(|v| v.0.as_str())); }
+            let allowed: BTreeSet<_> = match &unit.after { UnitDependencies::Fixed(after) => after.iter().map(|key| key.0.as_str()).collect(), _ => BTreeSet::new() };
+            for expression in unit.input.values() {
+                if let Some((other, _)) = expression.split_once(".outcome") {
+                    if !allowed.contains(other) { return Err(reject(3, format!("unit {key} reads {other} outside after"))); }
+                }
             }
         }
+        fn visit(key: &str, group: &Group, visiting: &mut BTreeSet<String>, done: &mut BTreeSet<String>, order: &mut Vec<String>) -> Result<(), DomainError> {
+            if done.contains(key) { return Ok(()); }
+            if !visiting.insert(key.to_owned()) { return Err(reject(5, format!("dependency cycle through {key}"))); }
+            if let Some(UnitDependencies::Fixed(after)) = group.units.get(key).map(|u| &u.after) {
+                for dependency in after { visit(&dependency.0, group, visiting, done, order)?; }
+            }
+            visiting.remove(key);
+            done.insert(key.to_owned());
+            order.push(key.to_owned());
+            Ok(())
+        }
+        let mut order = Vec::new();
+        let mut visiting = BTreeSet::new();
+        let mut done = BTreeSet::new();
+        for key in group.units.keys() { visit(key, group, &mut visiting, &mut done, &mut order)?; }
         let empty = BTreeMap::new();
         let mut outcomes = BTreeMap::<String,TypeExpression>::new();
         let mut checked_units = Vec::new();
-        for (key, unit) in &group.units {
+        for key in &order {
+            let unit = &group.units[key];
             let after_keys: Vec<_> = if let UnitDependencies::Fixed(after) = &unit.after { after.clone() } else { vec![] };
             let allowed: BTreeMap<_,_> = after_keys.iter().filter_map(|key| outcomes.get(&key.0).map(|ty| (key.0.clone(), ty.clone()))).collect();
             let mut scope = Scope { input, artifacts: &empty, outcomes: &allowed, each: None, aliases: &workflow.schemas, body: None, nonnull: false };

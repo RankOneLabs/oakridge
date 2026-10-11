@@ -323,3 +323,41 @@ fn check_acyclic(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use workflow_compiler::{check_value, compile};
+
+    #[test]
+    fn computed_key_and_after_expressions_materialize_members() {
+        let mut bundle: DefinitionBundle = serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+        bundle.schemas.push(Schema {
+            key: SchemaId::from("key_wrapper"),
+            shape: SchemaShape::Record { fields: vec![SchemaField { key: "value".into(), schema: SchemaId::from("ident"), required: true }], dictionary: None },
+        });
+        let collection = bundle.scopes[0].children[0].collection.as_mut().unwrap();
+        collection.key = Some(Expression::Field { value: Box::new(Expression::Record { schema: SchemaId::from("key_wrapper"), fields: vec![FieldExpression {
+            key: "value".into(), value: Expression::Reference { root: ReferenceRoot::Item, path: vec!["key".into()] },
+        }] }), key: "value".into() });
+        collection.after = Some(Expression::Reference { root: ReferenceRoot::Item, path: vec!["dependencies".into()] });
+        collection.key_field.clear();
+        collection.dependencies_field.clear();
+        let program = compile(&bundle, &bundle.operations).unwrap();
+        let owner = &bundle.scopes[0];
+        let payload = check_value(&bundle, &SchemaId::from("unit"), &json!({})).unwrap();
+        let snapshot = Snapshot {
+            owner: InstanceId::from("batch"), scope: owner.key.clone(), version: 1,
+            input: check_value(&bundle, &owner.input_schema, &json!([
+                {"key":"first","input":{},"dependencies":[]},
+                {"key":"second","input":{},"dependencies":["first"]}
+            ])).unwrap(),
+            state: check_value(&bundle, &owner.state_schema, &json!({"kind":"ready","value":{}})).unwrap(),
+            trigger: Trigger { id: TriggerId::from("begin"), key: SymbolKey::from("begin"), payload },
+            observations: vec![], timestamp_ms: 0, random_seed: 0,
+        };
+        let children = materialize(&program, &snapshot, &SymbolKey::from("items")).unwrap().children;
+        assert_eq!(children[1].depends_on, vec!["first"]);
+    }
+}

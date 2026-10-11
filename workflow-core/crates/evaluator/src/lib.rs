@@ -24,7 +24,10 @@ mod v2_step {
     fn attempt<'a>(state: &'a ScopedSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<&'a AttemptState> {
         state.attempts.iter().rev().find(|a| a.unit == *unit && a.worker == *worker)
     }
-    fn revision_id(state: &ScopedSnapshot) -> RevisionId { RevisionId(format!("r{}", state.revisions.len() + 1)) }
+    fn revision_id(state: &ScopedSnapshot, unit: &UnitId, artifact: &SymbolKey) -> RevisionId {
+        let seq = state.revisions.iter().filter(|revision| revision.unit == *unit && revision.artifact == *artifact).count() + 1;
+        RevisionId(format!("{}:{seq}", artifact.0))
+    }
     fn decision_id(state: &ScopedSnapshot) -> DecisionId { DecisionId(format!("d{}", state.decisions.len() + 1)) }
     fn path(value: &Value, parts: &[&str]) -> Option<Value> {
         let mut current = value;
@@ -265,6 +268,7 @@ mod v2_step {
                 let definition = stage(program, owner)?.clone();
                 let artifact_definition = definition.artifacts.get(&artifact.0).ok_or_else(|| rejected("artifact absent"))?;
                 if !check_type(&artifact_definition.schema, body) { return Err(rejected("artifact body fails schema")); }
+                if latest(state, unit, artifact).is_some_and(|revision| revision.by == *by && revision.body == *body) { return Ok(()); }
                 let attempt_index = state.attempts.iter().rposition(|a| a.action_id == *by && a.unit == *unit && matches!(a.status, AttemptStatus::Pending | AttemptStatus::Running)).ok_or_else(|| rejected("publication attempt is not current"))?;
                 let attempt = state.attempts[attempt_index].clone();
                 let producer = worker(&definition, &attempt.worker)?;
@@ -272,7 +276,7 @@ mod v2_step {
                 let previous = latest(state, unit, artifact);
                 if previous.is_some_and(|r| r.body == *body) { return Ok(()); }
                 if previous.map(|r| &r.id) != predecessor.as_ref() { return Err(rejected("stale predecessor")); }
-                let id = revision_id(state);
+                let id = revision_id(state, unit, artifact);
                 state.revisions.push(RevisionState { id: id.clone(), unit: unit.clone(), artifact: artifact.clone(), body: body.clone(), predecessor: predecessor.clone(), subject: subject.clone(), by: by.clone() });
                 let messages: Vec<_> = artifact_definition.validate.iter().filter(|check| eval(&check.check, owner, state, None, Some((&artifact.0, body))) != Some(Value::Bool(true))).map(|check| check.message.clone()).collect();
                 if !messages.is_empty() {
@@ -290,16 +294,21 @@ mod v2_step {
                 let definition = stage(program, owner)?;
                 let review_definition = definition.reviews.get(&review.0).ok_or_else(|| rejected("review absent"))?;
                 let decision_definition = review_definition.decisions.get(&decision.0).ok_or_else(|| rejected("decision absent"))?;
+                if state.decisions.iter().any(|d| d.unit == *unit && d.review == *review && d.decision == *decision && d.target == *target && d.payload == *payload) { return Ok(()); }
                 let current = latest(state, unit, &review_definition.of).ok_or_else(|| rejected("reviewed artifact unpublished"))?;
                 if current.id != *target { return Err(rejected("target is not latest revision")); }
-                if state.decisions.iter().any(|d| d.unit == *unit && d.review == *review && d.target == *target) { return Ok(()); }
+                if state.decisions.iter().any(|d| d.unit == *unit && d.review == *review && d.target == *target) { return Err(rejected("review already decided on latest revision")); }
                 if let Some(ty) = &decision_definition.payload { if !check_type(ty, payload) { return Err(rejected("decision payload fails schema")); } }
                 if decision_definition.effect == DecisionEffect::RequestChanges && payload.get("feedback").and_then(Value::as_str).is_none_or(str::is_empty) { return Err(rejected("request_changes requires feedback")); }
                 let id = decision_id(state);
                 state.decisions.push(DecisionState { id, unit: unit.clone(), review: review.clone(), decision: decision.clone(), effect: decision_definition.effect.clone(), target: target.clone(), payload: payload.clone() });
             }
             Event::RetryRequested { unit, worker } => {
+                if state.retry_events.iter().any(|(u, w, id)| u == unit && w == worker && incoming.ingress_id.as_deref() == Some(&id.0)) { return Ok(()); }
                 let previous = attempt(state, unit, worker).ok_or_else(|| rejected("worker has no attempt"))?;
+                if let Cause::Retry { event } = &previous.cause {
+                    if latest_retry(state, unit, worker) == Some(event) && !matches!(previous.status, AttemptStatus::Failed { .. }) { return Ok(()); }
+                }
                 if !matches!(previous.status, AttemptStatus::Failed { .. }) { return Err(rejected("latest attempt has not failed")); }
                 if let Some(last) = latest_retry(state, unit, worker) {
                     if matches!(&previous.cause, Cause::Retry { event } if event != last) { return Ok(()); }
@@ -387,8 +396,7 @@ mod v2_step {
         let mut state = snapshot.clone();
         reduce(program, &mut state, incoming)?;
         if !matches!(state.run.status, UnitStatus::Cancelled) {
-            let bound = state.units.len().saturating_mul(4).saturating_add(64);
-            for _ in 0..bound { if !advance(program, &mut state)? { break; } }
+            while advance(program, &mut state)? {}
             if let Some(root) = state.units.iter().find(|u| u.id == state.run.root) { state.run.status = root.status.clone(); }
         }
         let mut wanted = Vec::new();
@@ -411,6 +419,7 @@ mod v2_step {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use workflow_compiler::compile_workflow;
         fn program() -> CheckedWorkflow {
             let source: Workflow = serde_json::from_value(serde_json::json!({
                 "workflow":"simple", "input":{}, "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{"draft":"document.outcome.draft"}},
@@ -422,6 +431,106 @@ mod v2_step {
             ScopedSnapshot { run: RunState { id: "run".into(), root: UnitId::from("run"), status: UnitStatus::NotStarted, input: None }, units: vec![], attempts: vec![], revisions: vec![], decisions: vec![], retry_events: vec![] }
         }
         fn incoming(event: Event, id: &str) -> Incoming { Incoming { event, writer: Writer::Engine, ingress_id: Some(id.into()) } }
+        fn sample(name: &str) -> CheckedWorkflow {
+            let content = match name {
+                "review-loop" => include_str!("../../../fixtures/bundles/review-loop.json"),
+                "fan-out" => include_str!("../../../fixtures/bundles/fan-out.json"),
+                _ => panic!("unknown sample"),
+            };
+            let source: Workflow = serde_json::from_str(content).unwrap();
+            let prompts: BTreeMap<String,String> = [
+                ("review-loop/write.md", "{{topic}}"), ("review-loop/revise.md", "{{feedback}}"),
+                ("review-loop/critique.md", "{{subject}}"), ("review-loop/editor.md", "{{draft}}"),
+                ("fan-out/item.md", "{{text}}"),
+            ].into_iter().map(|(k,v)| (k.into(), v.into())).collect();
+            let operations = vec![CodeOperation { key: SymbolKey::from("repository.prepare"), version: 1,
+                input_schema: TypeExpression::Record([
+                    ("repository_path".into(), TypeExpression::Name("repo_path".into())),
+                    ("expected_head".into(), TypeExpression::Name("optional(text)".into())),
+                ].into()),
+                output_schema: TypeExpression::Record([
+                    ("repository_path".into(), TypeExpression::Name("repo_path".into())),
+                    ("push_remote_owner".into(), TypeExpression::Name("ident".into())),
+                    ("head".into(), TypeExpression::Name("ident".into())),
+                ].into()), error_codes: vec![] }];
+            compile_workflow(&source, &operations, &prompts).unwrap()
+        }
+        fn event(spec: &Value, state: &ScopedSnapshot) -> Event {
+            let unit = spec["unit"].as_str().unwrap_or("");
+            let worker = spec["worker"].as_str().unwrap_or("");
+            let action = || state.attempts.iter().rev().find(|a| a.unit.0 == unit && a.worker.0 == worker).unwrap().action_id.clone();
+            match spec["op"].as_str().unwrap() {
+                "launch" => Event::Launched { input: spec["input"].clone() },
+                "started" => Event::WorkerStarted { action: action(), kbbl_session_id: Some(format!("session:{unit}:{worker}")) },
+                "ended" => Event::WorkerEnded { action: action(), result: if spec["result"] == "succeeded" { WorkerResult::Succeeded } else { WorkerResult::Failed { code: "failed".into(), detail: "test failure".into() } } },
+                "publish" => Event::RevisionPublished { unit: UnitId::from(unit), artifact: SymbolKey::from(spec["artifact"].as_str().unwrap()), body: spec["body"].clone(),
+                    predecessor: spec["predecessor"].as_str().map(RevisionId::from), subject: spec["subject"].as_str().map(RevisionId::from), by: action() },
+                "decide" => Event::OperatorDecided { unit: UnitId::from(unit), review: SymbolKey::from(spec["review"].as_str().unwrap()), decision: SymbolKey::from(spec["decision"].as_str().unwrap()), target: RevisionId::from(spec["target"].as_str().unwrap()), payload: spec["payload"].clone() },
+                "retry" => Event::RetryRequested { unit: UnitId::from(unit), worker: WorkerKey::from(worker) },
+                _ => panic!("unknown event"),
+            }
+        }
+        fn status_name(status: &UnitStatus) -> &'static str {
+            match status { UnitStatus::NotStarted => "not_started", UnitStatus::Active => "active", UnitStatus::Blocked { .. } => "blocked", UnitStatus::Done { .. } => "done", UnitStatus::Cancelled => "cancelled" }
+        }
+        fn apply_row(program: &CheckedWorkflow, state: &ScopedSnapshot, row: &Value, row_number: usize) -> ScopedSnapshot {
+            let mut state = state.clone();
+            let before = state.attempts.len();
+            for (index, spec) in row["events"].as_array().unwrap().iter().enumerate() {
+                let incoming = incoming(event(spec, &state), &format!("{row_number}:{index}"));
+                state = step(program, &state, &incoming).unwrap().snapshot;
+            }
+            for (key, expected) in row["status"].as_object().unwrap() {
+                let actual = if key == "run" { &state.run.status } else { &state.units.iter().find(|u| u.id.0 == *key).unwrap().status };
+                assert_eq!(status_name(actual), expected.as_str().unwrap(), "row {row_number} {key}");
+            }
+            if let Some(expected) = row.get("new_workers") {
+                let actual: Vec<_> = state.attempts[before..].iter().map(|a| format!("{}:{}", a.unit.0, a.worker.0)).collect();
+                let expected: Vec<_> = expected.as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()).collect();
+                assert_eq!(actual, expected, "row {row_number} new workers");
+            }
+            state
+        }
+        #[test]
+        fn sample_traces_replay_every_prefix_and_never_regress_unit_status() {
+            for (name, trace) in [
+                ("review-loop", include_str!("../../../fixtures/traces/review-loop.json")),
+                ("fan-out", include_str!("../../../fixtures/traces/fan-out.json")),
+            ] {
+                let program = sample(name);
+                let trace: Value = serde_json::from_str(trace).unwrap();
+                let rows = trace["rows"].as_array().unwrap();
+                let mut state = snapshot();
+                for (index, row) in rows.iter().enumerate() {
+                    let before = state.clone();
+                    state = apply_row(&program, &state, row, index);
+                    for old in &before.units {
+                        let current = state.units.iter().find(|u| u.id == old.id).unwrap();
+                        let rank = |s: &UnitStatus| match s { UnitStatus::NotStarted | UnitStatus::Blocked { .. } => 0, UnitStatus::Active => 1, UnitStatus::Done { .. } | UnitStatus::Cancelled => 2 };
+                        assert!(rank(&current.status) >= rank(&old.status), "{name} row {index} regressed {}", old.id);
+                    }
+                    let mut replay = snapshot();
+                    for (prefix, row) in rows[..=index].iter().enumerate() { replay = apply_row(&program, &replay, row, prefix); }
+                    assert_eq!(replay, state, "{name} prefix {index}");
+                }
+            }
+        }
+        #[test]
+        fn fan_out_stall_variant_keeps_failed_attempt_and_held_slot() {
+            let program = sample("fan-out");
+            let trace: Value = serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json")).unwrap();
+            let variant: Value = serde_json::from_str(include_str!("../../../fixtures/traces/fan-out-stall.json")).unwrap();
+            let mut state = snapshot();
+            for (index, row_number) in variant["rows_from_fan_out"].as_array().unwrap().iter().enumerate() {
+                let row = &trace["rows"][row_number.as_u64().unwrap() as usize - 1];
+                state = apply_row(&program, &state, row, index);
+            }
+            for (key, expected) in variant["status"].as_object().unwrap() {
+                let actual = if key == "run" { &state.run.status } else { &state.units.iter().find(|u| u.id.0 == *key).unwrap().status };
+                assert_eq!(status_name(actual), expected.as_str().unwrap());
+            }
+            assert!(state.attempts.iter().any(|a| a.unit.0 == "run/work/b" && matches!(a.status, AttemptStatus::Failed { .. })));
+        }
         #[test]
         fn failed_attempt_stalls_until_retry_and_duplicates_change_nothing() {
             let program = program();
@@ -436,6 +545,61 @@ mod v2_step {
             let retry = step(&program, &ended.snapshot, &incoming(Event::RetryRequested { unit: UnitId::from("run/document"), worker: WorkerKey::from("writer") }, "retry")).unwrap();
             assert_eq!(retry.wanted[0].1.len(), 1);
             assert_eq!(retry.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
+            let source: Workflow = serde_json::from_value(serde_json::json!({
+                "workflow":"periodic", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
+                "stages":{"watch":{"input":{},"artifacts":{"observation":{"schema":"text"}},"workers":{"observer":{"kind":"code","operation":"observe","inputs":{},"creates":["observation"],"every":"1s"}},"done_when":"false","outcome":{}}}
+            })).unwrap();
+            let program = CheckedWorkflow { source, digest: BundleDigest("periodic".into()), stages: vec![], root: CheckedGroup { units: vec![], outcome: vec![] } };
+            let launched = step(&program, &snapshot(), &incoming(Event::Launched { input: serde_json::json!({}) }, "launch")).unwrap();
+            let mut state = launched.snapshot;
+            let action = state.attempts[0].action_id.clone();
+            for tick in 1..=3 {
+                state = step(&program, &state, &incoming(Event::WorkerStarted { action: action.clone(), kbbl_session_id: None }, &format!("start:{tick}"))).unwrap().snapshot;
+                state = step(&program, &state, &incoming(Event::WorkerEnded { action: action.clone(), result: WorkerResult::Succeeded }, &format!("end:{tick}"))).unwrap().snapshot;
+            }
+            assert_eq!(state.attempts.iter().map(|a| a.seq).collect::<Vec<_>>(), vec![1,2,3]);
+            assert!(state.attempts.iter().all(|a| a.action_id == action && matches!(a.status, AttemptStatus::Succeeded)));
+            assert_eq!(state.attempts.iter().map(|a| a.ended_at).collect::<Vec<_>>(), vec![Some(1),Some(2),Some(3)]);
+        }
+        #[test]
+        fn duplicate_event_vocabulary_keeps_the_snapshot_identical() {
+            let program = sample("review-loop");
+            let trace: Value = serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json")).unwrap();
+            let rows = trace["rows"].as_array().unwrap();
+            let launched = apply_row(&program, &snapshot(), &rows[0], 0);
+            let launch = event(&rows[0]["events"][0], &launched);
+            assert_eq!(step(&program, &launched, &incoming(launch, "0:0")).unwrap().snapshot, launched);
+            let published = apply_row(&program, &launched, &rows[1], 1);
+            let writer = published.attempts.iter().find(|a| a.worker.0 == "writer").unwrap().action_id.clone();
+            let started = Event::WorkerStarted { action: writer.clone(), kbbl_session_id: Some("session:run/document:writer".into()) };
+            assert_eq!(step(&program, &published, &incoming(started, "1:0")).unwrap().snapshot, published);
+            let publication = event(&rows[1]["events"][1], &published);
+            assert_eq!(step(&program, &published, &incoming(publication, "1:1")).unwrap().snapshot, published);
+            let settled = apply_row(&program, &published, &rows[2], 2);
+            let ended = Event::WorkerEnded { action: writer, result: WorkerResult::Succeeded };
+            assert_eq!(step(&program, &settled, &incoming(ended, "2:2")).unwrap().snapshot, settled);
+            let decided = apply_row(&program, &settled, &rows[3], 3);
+            let decision = event(&rows[3]["events"][0], &decided);
+            assert_eq!(step(&program, &decided, &incoming(decision, "3:0")).unwrap().snapshot, decided);
+            let mut state = decided;
+            for (index, row) in rows[4..=6].iter().enumerate() { state = apply_row(&program, &state, row, index + 4); }
+            let retry = event(&rows[6]["events"][0], &state);
+            assert_eq!(step(&program, &state, &incoming(retry, "6:0")).unwrap().snapshot, state);
+        }
+        #[test]
+        fn stale_review_retry_and_publication_are_rejected() {
+            let program = sample("review-loop");
+            let trace: Value = serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json")).unwrap();
+            let rows = trace["rows"].as_array().unwrap();
+            let launched = apply_row(&program, &snapshot(), &rows[0], 0);
+            assert!(matches!(step(&program, &launched, &incoming(Event::RetryRequested { unit: UnitId::from("run/document"), worker: WorkerKey::from("writer") }, "bad-retry")), Err(StepError::Rejected { .. })));
+            assert!(matches!(step(&program, &launched, &incoming(Event::RevisionPublished { unit: UnitId::from("run/document"), artifact: SymbolKey::from("draft"), body: serde_json::json!({"title":"x","body":"x"}), predecessor: None, subject: None, by: ActionKey::from("forged") }, "forged")), Err(StepError::Rejected { .. })));
+            let mut state = launched;
+            for (index, row) in rows[..=4].iter().enumerate().skip(1) { state = apply_row(&program, &state, row, index); }
+            assert!(matches!(step(&program, &state, &incoming(Event::OperatorDecided { unit: UnitId::from("run/document"), review: SymbolKey::from("editor"), decision: SymbolKey::from("approve"), target: RevisionId::from("draft:1"), payload: serde_json::json!({}) }, "stale")), Err(StepError::Rejected { .. })));
         }
     }
 }

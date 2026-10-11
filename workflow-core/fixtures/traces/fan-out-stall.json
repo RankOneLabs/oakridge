@@ -1,0 +1,6 @@
+{
+  "sample": "fan-out",
+  "variant": "stall before c finishes: b holds one of two slots",
+  "rows_from_fan_out": [1, 2, 3, 4],
+  "status": { "run/work/b": "active", "run/work/c": "active", "run/work/d": "blocked", "run/work": "active", "run": "active" }
+}

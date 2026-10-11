@@ -695,7 +695,7 @@ pub enum SessionMode { Resume, Fresh }
 pub struct Review {
     pub of: SymbolKey,
     pub by: ReviewBy,
-    pub prompt: String,
+    pub prompt: Option<String>,
     pub inputs: BTreeMap<String, String>,
     pub decisions: BTreeMap<String, ReviewDecision>,
 }
