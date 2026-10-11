@@ -416,3 +416,69 @@ pub struct MaterializedChild {
 pub struct Materialization {
     pub children: Vec<MaterializedChild>,
 }
+
+/// A v2 workflow after all names, scopes and expressions have been checked.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedWorkflow {
+    pub source: Workflow,
+    pub digest: BundleDigest,
+    pub stages: Vec<CheckedStage>,
+    pub root: CheckedGroup,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedGroup {
+    pub units: Vec<CheckedUnit>,
+    pub outcome: Vec<CheckedNamedExpression>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedUnit {
+    pub key: SymbolKey,
+    pub input: Vec<CheckedNamedExpression>,
+    pub after: Vec<SymbolKey>,
+    pub collection: Option<CheckedUnitCollection>,
+    pub group: Option<Box<CheckedGroup>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedUnitCollection {
+    pub source: CheckedExpression,
+    pub key: CheckedExpression,
+    pub after: CheckedExpression,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedStage {
+    pub key: SymbolKey,
+    pub workers: Vec<CheckedWorker>,
+    pub done_when: CheckedExpression,
+    pub outcome: Vec<CheckedNamedExpression>,
+    pub validations: Vec<CheckedArtifactValidation>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedWorker {
+    pub key: WorkerKey,
+    pub inputs: Vec<CheckedNamedExpression>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedNamedExpression {
+    pub key: String,
+    pub value: CheckedExpression,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedArtifactValidation {
+    pub artifact: SymbolKey,
+    pub checks: Vec<CheckedExpression>,
+}

@@ -100,5 +100,11 @@ id!(
     NodeId,
     InstanceId,
     TriggerId,
-    BundleDigest
+    BundleDigest,
+    UnitId,
+    RevisionId,
+    DecisionId,
+    EventId,
+    OperatorId,
+    SessionId
 );

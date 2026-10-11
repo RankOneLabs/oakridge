@@ -2,6 +2,7 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefinitionBundle {
@@ -567,3 +568,142 @@ pub struct ActionSelection {
     pub worker: WorkerKey,
     pub action: ActionKey,
 }
+
+// The v2 authoring model mirrors sections 2.1–2.3 of the core specification.
+// Expressions are source text here; the compiler resolves them to Expression.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Workflow {
+    pub workflow: SymbolKey,
+    pub input: TypeExpression,
+    #[serde(default)]
+    pub schemas: BTreeMap<String, TypeExpression>,
+    pub run: Group,
+    pub stages: BTreeMap<String, Stage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TypeExpression {
+    Name(String),
+    Record(BTreeMap<String, TypeExpression>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Group {
+    #[serde(default)]
+    pub pools: BTreeMap<String, u32>,
+    pub units: BTreeMap<String, Unit>,
+    pub outcome: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Unit {
+    pub stage: Option<SymbolKey>,
+    pub group: Option<Box<Group>>,
+    #[serde(default)]
+    pub input: BTreeMap<String, String>,
+    #[serde(default)]
+    pub after: UnitDependencies,
+    pub for_each: Option<String>,
+    pub key: Option<String>,
+    pub pool: Option<SymbolKey>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum UnitDependencies {
+    #[default]
+    None,
+    Fixed(Vec<SymbolKey>),
+    Each(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stage {
+    pub input: TypeExpression,
+    pub artifacts: BTreeMap<String, Artifact>,
+    pub workers: BTreeMap<String, Worker>,
+    #[serde(default)]
+    pub reviews: BTreeMap<String, Review>,
+    pub done_when: Option<String>,
+    pub outcome: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Artifact {
+    pub schema: TypeExpression,
+    #[serde(default)]
+    pub validate: Vec<ValidationCheck>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationCheck {
+    pub check: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Worker {
+    Agent {
+        prompts: BTreeMap<String, String>,
+        inputs: BTreeMap<String, String>,
+        creates: Vec<SymbolKey>,
+        reviews: Option<SymbolKey>,
+        runtime: Option<WorkerRuntime>,
+        workspace: Option<String>,
+        session: Option<SessionMode>,
+    },
+    Code {
+        operation: SymbolKey,
+        inputs: BTreeMap<String, String>,
+        creates: Vec<SymbolKey>,
+        every: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRuntime {
+    pub harness: String,
+    pub model: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMode { Resume, Fresh }
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Review {
+    pub of: SymbolKey,
+    pub by: ReviewBy,
+    pub prompt: String,
+    pub inputs: BTreeMap<String, String>,
+    pub decisions: BTreeMap<String, ReviewDecision>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewBy { Operator }
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewDecision {
+    pub effect: DecisionEffect,
+    pub on: Option<SymbolKey>,
+    pub label: String,
+    pub payload: Option<TypeExpression>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionEffect { Approve, RequestChanges }
