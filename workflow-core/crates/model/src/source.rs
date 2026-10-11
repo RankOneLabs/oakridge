@@ -593,7 +593,7 @@ pub struct Workflow {
     pub stages: BTreeMap<String, Stage>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum TypeExpression {
     Name(String),
@@ -718,3 +718,14 @@ pub struct ReviewDecision {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionEffect { Approve, RequestChanges }
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeOperation {
+    pub key: SymbolKey,
+    pub version: u32,
+    pub input_schema: TypeExpression,
+    pub output_schema: TypeExpression,
+    #[serde(default)]
+    pub error_codes: Vec<String>,
+}

@@ -7,6 +7,7 @@ mod references;
 mod schemas;
 mod scopes;
 mod trees;
+pub use scopes::workflow_v2::{compile_workflow, decode_workflow};
 pub use schemas::{check_value, validate_checked_value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;

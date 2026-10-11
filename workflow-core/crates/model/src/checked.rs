@@ -454,9 +454,9 @@ pub struct CheckedUnit {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedUnitCollection {
-    pub source: CheckedExpression,
-    pub key: CheckedExpression,
-    pub after: CheckedExpression,
+    pub source: CheckedStageExpression,
+    pub key: CheckedStageExpression,
+    pub after: CheckedStageExpression,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -464,7 +464,7 @@ pub struct CheckedUnitCollection {
 pub struct CheckedStage {
     pub key: SymbolKey,
     pub workers: Vec<CheckedWorker>,
-    pub done_when: CheckedExpression,
+    pub done_when: CheckedStageExpression,
     pub outcome: Vec<CheckedNamedExpression>,
     pub validations: Vec<CheckedArtifactValidation>,
 }
@@ -480,12 +480,19 @@ pub struct CheckedWorker {
 #[serde(deny_unknown_fields)]
 pub struct CheckedNamedExpression {
     pub key: String,
-    pub value: CheckedExpression,
+    pub value: CheckedStageExpression,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedArtifactValidation {
     pub artifact: SymbolKey,
-    pub checks: Vec<CheckedExpression>,
+    pub checks: Vec<CheckedStageExpression>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedStageExpression {
+    pub source: String,
+    pub value_type: TypeExpression,
 }
