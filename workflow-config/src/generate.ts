@@ -9,17 +9,15 @@ const check = process.argv.includes("--check");
 const promptDrift = renderPromptFiles(check);
 for (const path of promptDrift) console.error(`Prompt drift: ${path}`);
 if (promptDrift.length > 0) process.exit(1);
-// The checked-in bundles are byte-for-byte fixtures for every authoring change.
+// Bundles are generated, not committed; --check also writes them so the
+// compiler test below has them to read.
 for (const variant of variants) {
   const result = buildBundle({ authoring_version: 1, template: "development", key: variant.key,
     implementation_capacity: variant.implementation_capacity, sibling_failure: variant.sibling_failure,
     wire_field_order: variant.contract_field_order, stage_layout: variant.stage_layout ?? "standard" });
   if (!result.ok) throw new Error(`${result.error.field_path}: ${result.error.detail}`);
   const path = resolve(root, "definitions", `${variant.key}.json`);
-  const bytes = JSON.stringify(result.value, null, 2) + "\n";
-  if (check) {
-    if (await Bun.file(path).text() !== bytes) throw new Error(`Bundle drift: ${path}`);
-  } else await Bun.write(path, bytes);
+  await Bun.write(path, JSON.stringify(result.value, null, 2) + "\n");
 }
 if (check) {
   const stageTests = Bun.spawnSync({
