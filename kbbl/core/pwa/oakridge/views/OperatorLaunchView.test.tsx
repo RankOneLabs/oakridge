@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { OperatorLaunchView } from "./OperatorLaunchView";
 import { fetchOperatorDefinitions } from "../client";
-import { makeDefinitionSummary } from "../__fixtures__/read-models";
+import { makeBriefNotesFile, makeDefinitionSummary } from "../__fixtures__/read-models";
 
 vi.mock("../client", () => ({ fetchOperatorDefinitions: vi.fn(async () => []), fetchOperatorProjects: async () => [], launchOperatorRun: vi.fn() }));
 
@@ -43,4 +43,33 @@ test("the pinned spec field loads file text and shows the selected filename", as
   fireEvent.change(picker, { target: { files: [file] } });
   await screen.findByText("Loaded brief.md");
   expect(screen.getByLabelText<HTMLInputElement>("spec").value).toBe("# Ship");
+});
+
+test("an older file read cannot replace the newly selected spec file", async () => {
+  vi.mocked(fetchOperatorDefinitions).mockResolvedValue([makeDefinitionSummary()]);
+  renderView();
+  const picker = await screen.findByLabelText<HTMLInputElement>("Load spec from file");
+  let finishOldRead: (text: string) => void = () => { throw new Error("old read was not started"); };
+  const oldFile = makeBriefNotesFile("old.md", 5, () => new Promise<string>((resolve) => { finishOldRead = resolve; }));
+  fireEvent.change(picker, { target: { files: [oldFile] } });
+  fireEvent.change(picker, { target: { files: [makeBriefNotesFile("new.md", 5, "New spec")] } });
+  await screen.findByText("Loaded new.md");
+  await act(async () => { finishOldRead("Old spec"); });
+  expect(screen.getByLabelText<HTMLInputElement>("spec").value).toBe("New spec");
+  expect(screen.queryByText("Loaded old.md")).toBeNull();
+});
+
+test("switching definitions discards an unfinished spec file read", async () => {
+  vi.mocked(fetchOperatorDefinitions).mockResolvedValue([makeDefinitionSummary(), makeDefinitionSummary({ digest: "digest-2" })]);
+  renderView();
+  await screen.findByText(/digest-2/);
+  fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "digest-1" } });
+  const picker = await screen.findByLabelText<HTMLInputElement>("Load spec from file");
+  let finishRead: (text: string) => void = () => { throw new Error("read was not started"); };
+  fireEvent.change(picker, { target: { files: [makeBriefNotesFile("old.md", 5,
+    () => new Promise<string>((resolve) => { finishRead = resolve; }))] } });
+  fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "digest-2" } });
+  await act(async () => { finishRead("Old spec"); });
+  expect(screen.getByLabelText<HTMLInputElement>("spec").value).toBe("");
+  expect(screen.queryByText("Loaded old.md")).toBeNull();
 });

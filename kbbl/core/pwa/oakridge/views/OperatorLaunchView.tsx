@@ -1,5 +1,5 @@
 import { queryKeys } from "../queryKeys";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOperatorDefinitions, fetchOperatorProjects, launchOperatorRun } from "../client";
 import { selectProjectLaunchDrafts } from "../lib/project-launch";
@@ -50,6 +50,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [input, setInput] = useState("{}");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDrafts>({});
   const [loadedSpecFile, setLoadedSpecFile] = useState<string | null>(null);
+  const specFileReadVersion = useRef(0);
   const [rawMode, setRawMode] = useState(false);
   const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole("planner", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
   const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole("worker", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
@@ -58,6 +59,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
+  useEffect(() => {
+    specFileReadVersion.current += 1;
+    return () => { specFileReadVersion.current += 1; };
+  }, [selected]);
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
   const supportsRoleSettings = supportsRoleSessionInput(selectedDefinition?.source);
   const { config: serverConfig, error: configError } = useServerConfigState(supportsRoleSettings && pending === null);
@@ -68,6 +73,8 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const fields = selectInputFields(selectedDefinition?.source);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
+    specFileReadVersion.current += 1;
+    setLoadedSpecFile(null);
     setError(null);
     try {
       if (!rawMode) { setInput(JSON.stringify(buildRootInput(input, fields, fieldDrafts), null, 2)); setFieldDrafts({}); }
@@ -113,6 +120,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const discard = () => {
     try { discardPendingLaunch(); } catch (cause) { setError(String(cause)); return; }
     setPending(null); setIsStorageUnreadable(false); setError(null);
+    specFileReadVersion.current += 1;
     setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
   };
   return <main className="or-page" data-testid="or-new-run">
@@ -122,6 +130,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     <form onSubmit={(event) => void launch(event)}>
       <label htmlFor="operator-digest">Definition digest</label>
       <select id="operator-digest" value={selected} disabled={pending !== null || launching} onChange={(event) => {
+        specFileReadVersion.current += 1;
         setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
       }}>
         {selected === "" && <option value="" disabled>Select a definition…</option>}
@@ -136,8 +145,12 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
       {fields && !rawMode && pending === null && isPickingProject && (projects.data?.length ?? 0) > 0 && <label className="flex flex-col gap-1">Start from project
         <select aria-label="Start from project" value="" disabled={launching} onChange={(event) => {
           const project = projects.data?.find((item) => item.id === event.target.value);
-          if (project && selectedDefinition) setFieldDrafts((current) => ({ ...current,
-            ...selectProjectLaunchDrafts(project, fields, selectedDefinition.source.schemas) }));
+          if (project && selectedDefinition) {
+            specFileReadVersion.current += 1;
+            setLoadedSpecFile(null);
+            setFieldDrafts((current) => ({ ...current,
+              ...selectProjectLaunchDrafts(project, fields, selectedDefinition.source.schemas) }));
+          }
         }}>
           <option value="">Choose a project…</option>
           {projects.data?.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.repo_dir}</option>)}
@@ -155,7 +168,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           onChange={(event) => setInput(event.target.value)} className="w-full min-h-48 rounded-md border p-3 font-mono text-xs" />
       </> : <div className="flex flex-col gap-3">{fields.map(({ field, schema }) => {
         const value = fieldDrafts[field.key] ?? fieldText(inputValues[field.key], schema);
-        const setValue = (next: string) => setFieldDrafts((current) => ({ ...current, [field.key]: next }));
+        const setValue = (next: string) => {
+          if (field.key === "spec") { specFileReadVersion.current += 1; setLoadedSpecFile(null); }
+          setFieldDrafts((current) => ({ ...current, [field.key]: next }));
+        };
         const label = `${field.key}${schema && !["string", "integer", "boolean", "enum"].includes(schema.shape.kind) ? " JSON" : ""}`;
         const id = `operator-root-${field.key}`;
         return <div key={field.key} className="flex flex-col gap-1"><label htmlFor={id}>{label}</label>
@@ -174,9 +190,13 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
             <input id="operator-spec-file" type="file" disabled={launching} onChange={(event) => {
               const file = event.target.files?.[0];
               if (!file) return;
+              const readVersion = ++specFileReadVersion.current;
+              setLoadedSpecFile(null);
               void readBriefNotesFile(file).then((result) => {
+                if (readVersion !== specFileReadVersion.current) return;
                 if (!result.ok) { setError(result.error.detail); return; }
-                setValue(result.value.text); setLoadedSpecFile(result.value.file_name); setError(null);
+                setFieldDrafts((current) => ({ ...current, spec: result.value.text }));
+                setLoadedSpecFile(result.value.file_name); setError(null);
               });
             }} />
             {loadedSpecFile && <p role="status">Loaded {loadedSpecFile}</p>}
