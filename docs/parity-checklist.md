@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 31 of the 48 `main` PWA test files. The remaining 17 are
+This branch has mapped and tested 32 of the 48 `main` PWA test files. The remaining 16 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -158,11 +158,11 @@ not a hand-written Oakridge read model.
 
 | Classification | Original assertion (`main`) | New assertion | Reason |
 | --- | --- | --- | --- |
-| **Relaxed** | `expect([within(blockers).queryByText("Schema conflict"), within(blockers).queryByText("Needs upstream API")]).not.toContain(null);` | `expect(within(screen.getByTestId("or-spec-findings")).getByText("Schema conflict")).toBeTruthy(); expect(within(screen.getByTestId("or-spec-requirements")).getByText("Needs upstream API")).toBeTruthy();` | Both checked values appear, but the current viewer has no combined blocker callout. The alerting and grouping claim is lost. |
+| Translated | `expect([within(blockers).queryByText("Schema conflict"), within(blockers).queryByText("Needs upstream API")]).not.toContain(null);` | `expect(blockers.getByText("Schema conflict")).toBeTruthy(); expect(blockers.getByText("Needs upstream API")).toBeTruthy();` | The checked selector now restores one combined blocker callout for both source types. |
 | Translated | `expect(within(screen.getByTestId("or-risk-card")).getByText("Backfill in batches")).toBeTruthy();` | `expect(within(screen.getByTestId("or-risk-card")).getByText("Mitigation: Backfill in batches")).toBeTruthy();` | The risk's mitigation remains visible; the checked `risk` schema and record are built by `makeSpecAnalysisFixture`. |
 | Translated | `expect(screen.getAllByText("Schema conflict")).toHaveLength(1);` | Same assertion. | The checked finding is rendered once in its section; it is no longer duplicated in a blocker callout. |
-| Unportable | `expect(screen.getByTestId("or-spec-no-blockers")).toBeTruthy();` | No equivalent assertion. | The current viewer has no empty-blocker state or callout. Empty checked lists show empty sections instead; that does not communicate the old explicit “nothing blocking” status. |
-| **Relaxed** | `expect(screen.queryByText("Brief §2")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /1 source/ })); expect(screen.getByText("Brief §2")).toBeTruthy();` | `expect(within(screen.getByTestId("or-spec-sources")).getByText("Brief §2")).toBeTruthy();` | The source survives the checked projection, but the count and disclosure toggle are gone. The new assertion only proves visibility. |
+| Translated | `expect(screen.getByTestId("or-spec-no-blockers")).toBeTruthy();` | Same assertion. | The checked selector restores the explicit no-blockers state when both lists are empty. |
+| Translated | `expect(screen.queryByText("Brief §2")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /1 source/ })); expect(screen.getByText("Brief §2")).toBeTruthy();` | `expect(screen.queryByText("Brief §2")).toBeNull(); fireEvent.click(screen.getByRole("button", { name: /1 source/ })); expect(within(screen.getByTestId("or-spec-sources")).getByText("Brief §2")).toBeTruthy();` | The source count, collapsed default and reveal interaction are restored from the checked source list. |
 | Unportable | `expect(screen.getByRole("alert").textContent).toContain("does not match the registered contract");` | No equivalent PWA assertion. | The compiler validates `analysis_body` before the PWA receives `OperatorCheckedValue`; the current viewer has no raw invalid-body error surface. |
 
 ## `kbbl/core/pwa/oakridge/components/molecules/BuildBriefViewer.test.tsx`
@@ -376,6 +376,22 @@ The current client suite also tests generated run and definition pagination, con
 | Translated | `expect(ordered.map((issue) => issue.description)).toEqual(["b", "c", "a"]);` | `expect(selectOrderedCheckedIssues(body, schemas).map((issue) => selectFieldText(issue, schemas, "description"))).toEqual(["b", "c", "a"]);` | Checked issues keep blocking, warning, info order. `BuildResultViewer` uses this selector, and its component suite checks rendered order. |
 | Unportable | `expect(selectTestEvidenceText({ passed: 1, failed: 0, output: "ok", summary: " ", cargo_test_output: null })).toEqual(["ok"]);` | No equivalent assertion. | The current generic typed viewer renders the checked test-evidence record, including its optional fields; it has no nonblank-text selector. This is a presentation coverage loss. |
 
+## `kbbl/core/pwa/oakridge/lib/spec-analysis.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(isSpecAnalysis(analysis)).toBe(true);` | `expect(view.status_counts).toEqual([{ status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 }, { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 }]);` | The checked body from `makeSpecAnalysisFixture` is usable by the viewer, but the PWA no longer validates raw JSON; the compiler checks publication. |
+| **Relaxed** | `expect(isSpecAnalysis({ ...analysis, findings: [], requirements: [], risks: [], source_spec_refs: [] })).toBe(true);` | `expect(screen.getByTestId("or-spec-no-blockers")).toBeTruthy();` in `SpecAnalysisViewer.test.tsx` | Empty checked lists render an explicit no-blockers state, but this does not validate the old raw-body shape. |
+| Unportable | `expect(isSpecAnalysis({ ...analysis, risks: [{ description: "No plan" }] })).toBe(false);` | No equivalent PWA validation assertion. | The pinned `risk` record requires mitigation before a checked value can be published. |
+| Unportable | `expect(isSpecAnalysis({ ...analysis, findings: [{ id: "f1", description: "x", severity: "critical" }] })).toBe(false);` | No equivalent PWA validation assertion. | `severity` is a pinned enum; the compiler rejects `critical`. |
+| Unportable | `expect(isSpecAnalysis({ ...analysis, requirements: [{ id: "r1", description: "x", status: "done" }] })).toBe(false);` | No equivalent PWA validation assertion. | `requirement_status` is a pinned enum; the compiler rejects `done`. |
+| Unportable | `expect(isSpecAnalysis(rest)).toBe(false);` where `rest` omits `source_spec_refs` | No equivalent PWA validation assertion. | The compiler requires the source list field. The checked viewer never receives a record without it. |
+| Translated | `expect(view.blockers.map((blocker) => blocker.kind === "finding" ? blocker.finding.id : blocker.requirement.id)).toEqual(["f2", "r2"]);` | `expect(view.blockers.map((blocker) => selectFieldText(blocker.value, analysis.schemas, "id"))).toEqual(["f2", "r2"]);` | The checked selector groups the same blockers once, reading IDs through schema field positions. |
+| Translated | `expect(view.findings.map((finding) => finding.id)).toEqual(["f3", "f1"]);` | `expect(view.findings.map((finding) => selectFieldText(finding, analysis.schemas, "id"))).toEqual(["f3", "f1"]);` | Nonblocking findings retain warning-before-info order. |
+| Translated | `expect(view.requirements.map((requirement) => requirement.id)).toEqual(["r3", "r1"]);` | `expect(view.requirements.map((requirement) => selectFieldText(requirement, analysis.schemas, "id"))).toEqual(["r3", "r1"]);` | Nonblocked requirements retain ambiguous-before-implementable order. |
+| Translated | `expect(view.tally.status_counts).toEqual([{ status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 }, { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 }]);` | `expect(view.status_counts).toEqual([{ status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 }, { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 }]);` | The same statuses and counts remain in the same urgency order. |
+| Translated | `expect(onlyInfo.tally.status_counts).toEqual([{ status: "info", count: 1 }]);` | `expect(selectCheckedSpecAnalysisView(onlyInfo.body, onlyInfo.schemas).status_counts).toEqual([{ status: "info", count: 1 }]);` | The tally still omits zero-count statuses. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -397,10 +413,9 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
-| `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 17 files and 246 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 16 files and 235 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
