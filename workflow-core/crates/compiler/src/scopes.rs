@@ -569,6 +569,188 @@ pub mod workflow_v2 {
         }
         Some(current)
     }
+    /// A stage expression parsed once, so type-checking reads a shape with a
+    /// typed payload per variant rather than re-scanning the source text.
+    #[derive(Clone, Debug)]
+    enum StageExpr {
+        /// All four integer comparisons share one typing rule, so the
+        /// operator itself does not survive parsing.
+        Compare {
+            left: Box<StageExpr>,
+            right: Box<StageExpr>,
+        },
+        Len(Box<StageExpr>),
+        Published(String),
+        Approved(String),
+        ChangesRequested(String),
+        Latest {
+            artifact: String,
+            path: Vec<String>,
+        },
+        Input(Vec<String>),
+        Each(Vec<String>),
+        /// A bare name and field path: the validate-check binding when the name
+        /// matches the artifact under validation, and otherwise unresolvable.
+        Name {
+            head: String,
+            path: Vec<String>,
+        },
+        Outcome {
+            unit: String,
+            path: Vec<String>,
+        },
+        Boolean,
+        Integer,
+        Text,
+    }
+    /// The argument of `function(..)` and whatever trails its closing paren,
+    /// matched at depth so a nested call does not end the argument early.
+    fn split_call<'a>(text: &'a str, function: &str) -> Option<(&'a str, &'a str)> {
+        let inner = text.strip_prefix(function)?.strip_prefix('(')?;
+        let mut depth = 1usize;
+        let mut quoted = false;
+        for (index, ch) in inner.char_indices() {
+            match ch {
+                '"' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((inner[..index].trim(), inner[index + 1..].trim()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    /// Operands either side of the first comparison operator at paren depth
+    /// zero and outside quotes.
+    fn split_comparison(text: &str) -> Option<(&str, &str)> {
+        let bytes = text.as_bytes();
+        let mut depth = 0usize;
+        let mut quoted = false;
+        for index in 0..bytes.len() {
+            match bytes[index] {
+                b'"' => quoted = !quoted,
+                b'(' | b'{' if !quoted => depth += 1,
+                b')' | b'}' if !quoted => depth = depth.saturating_sub(1),
+                b'>' | b'<' if !quoted && depth == 0 => {
+                    let width = if bytes.get(index + 1) == Some(&b'=') {
+                        2
+                    } else {
+                        1
+                    };
+                    return Some((text[..index].trim(), text[index + width..].trim()));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn path_of(text: &str) -> Vec<String> {
+        if text.is_empty() {
+            Vec::new()
+        } else {
+            text.split('.').map(|part| part.trim().to_owned()).collect()
+        }
+    }
+    fn parse_expression(text: &str) -> Result<StageExpr, DomainError> {
+        let text = text.trim();
+        if let Some((left, right)) = split_comparison(text) {
+            return Ok(StageExpr::Compare {
+                left: Box::new(parse_expression(left)?),
+                right: Box::new(parse_expression(right)?),
+            });
+        }
+        if let Some((argument, trailing)) = split_call(text, "len") {
+            if !trailing.is_empty() {
+                return Err(reject(1, format!("unexpected {trailing} after len")));
+            }
+            return Ok(StageExpr::Len(Box::new(parse_expression(argument)?)));
+        }
+        for function in ["published", "approved", "changes_requested"] {
+            if let Some((artifact, trailing)) = split_call(text, function) {
+                if !trailing.is_empty() {
+                    return Err(reject(1, format!("unexpected {trailing} after {function}")));
+                }
+                let artifact = artifact.to_owned();
+                return Ok(match function {
+                    "published" => StageExpr::Published(artifact),
+                    "approved" => StageExpr::Approved(artifact),
+                    _ => StageExpr::ChangesRequested(artifact),
+                });
+            }
+        }
+        if let Some((artifact, trailing)) = split_call(text, "latest") {
+            let path = match trailing.strip_prefix('.') {
+                Some(path) if !path.is_empty() => path_of(path),
+                None if trailing.is_empty() => Vec::new(),
+                _ => return Err(reject(1, "latest path malformed")),
+            };
+            return Ok(StageExpr::Latest {
+                artifact: artifact.to_owned(),
+                path,
+            });
+        }
+        if text == "true" || text == "false" {
+            return Ok(StageExpr::Boolean);
+        }
+        if text.parse::<i64>().is_ok() {
+            return Ok(StageExpr::Integer);
+        }
+        if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+            return Ok(StageExpr::Text);
+        }
+        if text.contains('(') || text.contains(')') {
+            return Err(reject(1, format!("unknown expression {text}")));
+        }
+        let (head, trailing) = text.split_once('.').unwrap_or((text, ""));
+        let path = path_of(trailing);
+        match head {
+            "input" => Ok(StageExpr::Input(path)),
+            "each" => Ok(StageExpr::Each(path)),
+            _ if path.first().is_some_and(|segment| segment == "outcome") => {
+                Ok(StageExpr::Outcome {
+                    unit: head.to_owned(),
+                    path: path[1..].to_vec(),
+                })
+            }
+            _ => Ok(StageExpr::Name {
+                head: head.to_owned(),
+                path,
+            }),
+        }
+    }
+    /// Artifacts a done_when expression proves already have a revision. The
+    /// language has no conjunction, so only a bare publication or approval
+    /// guard qualifies; a comparison or a length proves nothing about one.
+    fn guaranteed_artifacts(expression: &StageExpr) -> BTreeSet<String> {
+        match expression {
+            StageExpr::Published(artifact) | StageExpr::Approved(artifact) => {
+                BTreeSet::from([artifact.clone()])
+            }
+            _ => BTreeSet::new(),
+        }
+    }
+    /// Render a type back into the syntax `parse_type` accepts, so a nullable
+    /// latest reads as `optional(text)` and not as an embedded JSON encoding.
+    fn render_type(ty: &TypeExpression) -> String {
+        match ty {
+            TypeExpression::Name(name) => name.clone(),
+            TypeExpression::Record(fields) => format!(
+                "{{{}}}",
+                fields
+                    .iter()
+                    .map(|(key, value)| format!("{key}: {}", render_type(value)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+    fn segments(path: &[String]) -> Vec<&str> {
+        path.iter().map(String::as_str).collect()
+    }
     #[derive(Clone)]
     struct Scope<'a> {
         input: &'a TypeExpression,
@@ -577,146 +759,117 @@ pub mod workflow_v2 {
         each: Option<TypeExpression>,
         aliases: &'a BTreeMap<String, TypeExpression>,
         body: Option<(&'a str, &'a TypeExpression)>,
-        nonnull: bool,
+        guaranteed: BTreeSet<String>,
     }
-    fn infer(text: &str, scope: &Scope<'_>) -> Result<TypeExpression, DomainError> {
-        let text = text.trim();
-        if let Some((left, right)) = [" >= ", " <= ", " > ", " < "]
-            .iter()
-            .find_map(|op| text.split_once(op))
-        {
-            if infer(left, scope)? != TypeExpression::Name("integer".into())
-                || infer(right, scope)? != TypeExpression::Name("integer".into())
-            {
-                return Err(reject(9, "integer comparison requires integer operands"));
+    fn infer(expression: &StageExpr, scope: &Scope<'_>) -> Result<TypeExpression, DomainError> {
+        let integer = || TypeExpression::Name("integer".into());
+        let boolean = || TypeExpression::Name("boolean".into());
+        match expression {
+            StageExpr::Compare { left, right } => {
+                if infer(left, scope)? != integer() || infer(right, scope)? != integer() {
+                    return Err(reject(9, "integer comparison requires integer operands"));
+                }
+                Ok(boolean())
             }
-            return Ok(TypeExpression::Name("boolean".into()));
-        }
-        if let Some(inner) = inner_type(text, "len") {
-            let ty = infer(inner, scope)?;
-            if ty != TypeExpression::Name("text".into()) && item_type(&ty).is_none() {
-                return Err(reject(9, "len requires text or list"));
+            StageExpr::Len(inner) => {
+                let ty = infer(inner, scope)?;
+                if ty != TypeExpression::Name("text".into()) && item_type(&ty).is_none() {
+                    return Err(reject(9, "len requires text or list"));
+                }
+                Ok(integer())
             }
-            return Ok(TypeExpression::Name("integer".into()));
-        }
-        for name in ["published", "approved", "changes_requested"] {
-            if let Some(artifact) = inner_type(text, name) {
-                if !scope.artifacts.contains_key(artifact.trim()) {
+            StageExpr::Published(artifact)
+            | StageExpr::Approved(artifact)
+            | StageExpr::ChangesRequested(artifact) => {
+                if !scope.artifacts.contains_key(artifact) {
                     return Err(reject(1, format!("artifact {artifact} absent")));
                 }
-                return Ok(TypeExpression::Name("boolean".into()));
+                Ok(boolean())
             }
-        }
-        if let Some(rest) = text.strip_prefix("latest(") {
-            let (artifact, suffix) = rest
-                .split_once(')')
-                .ok_or_else(|| reject(1, "malformed latest"))?;
-            let artifact_type = &scope
-                .artifacts
-                .get(artifact)
-                .ok_or_else(|| reject(1, format!("artifact {artifact} absent")))?
-                .schema;
-            if !suffix.is_empty() {
-                if !scope.nonnull {
-                    return Err(reject(9, "nullable latest must be guarded"));
+            StageExpr::Latest { artifact, path } => {
+                let schema = &scope
+                    .artifacts
+                    .get(artifact)
+                    .ok_or_else(|| reject(1, format!("artifact {artifact} absent")))?
+                    .schema;
+                // A guard names the artifact it proves. Treating any publication
+                // guard as proof for every artifact let an unguarded field read
+                // of a sibling artifact past check 9.
+                if !scope.guaranteed.contains(artifact) {
+                    if !path.is_empty() {
+                        return Err(reject(9, "nullable latest must be guarded"));
+                    }
+                    return Ok(TypeExpression::Name(format!(
+                        "optional({})",
+                        render_type(schema)
+                    )));
                 }
-                return field_type(
-                    artifact_type,
-                    &suffix
-                        .strip_prefix('.')
-                        .ok_or_else(|| reject(1, "latest path malformed"))?
-                        .split('.')
-                        .collect::<Vec<_>>(),
-                    scope.aliases,
-                )
-                .ok_or_else(|| reject(1, "artifact field absent"));
+                if path.is_empty() {
+                    return Ok(schema.clone());
+                }
+                field_type(schema, &segments(path), scope.aliases)
+                    .ok_or_else(|| reject(1, "artifact field absent"))
             }
-            return Ok(if scope.nonnull {
-                artifact_type.clone()
-            } else {
-                TypeExpression::Name(format!(
-                    "optional({})",
-                    serde_json::to_string(artifact_type).unwrap_or_default()
-                ))
-            });
-        }
-        if let Some(rest) = text.strip_prefix("input.") {
-            return field_type(
-                scope.input,
-                &rest.split('.').collect::<Vec<_>>(),
-                scope.aliases,
-            )
-            .ok_or_else(|| reject(1, format!("input field {rest} absent")));
-        }
-        if text == "input" {
-            return Ok(scope.input.clone());
-        }
-        if let Some(rest) = text.strip_prefix("each.") {
-            return field_type(
-                scope
+            StageExpr::Input(path) => {
+                if path.is_empty() {
+                    return Ok(scope.input.clone());
+                }
+                field_type(scope.input, &segments(path), scope.aliases)
+                    .ok_or_else(|| reject(1, format!("input field {} absent", path.join("."))))
+            }
+            StageExpr::Each(path) => {
+                let each = scope
                     .each
                     .as_ref()
-                    .ok_or_else(|| reject(3, "each outside collection"))?,
-                &rest.split('.').collect::<Vec<_>>(),
-                scope.aliases,
-            )
-            .ok_or_else(|| reject(1, "each field absent"));
-        }
-        if text == "each" {
-            return scope
-                .each
-                .clone()
-                .ok_or_else(|| reject(3, "each outside collection"));
-        }
-        if let Some((key, ty)) = scope.body {
-            if text == key {
-                return Ok(ty.clone());
+                    .ok_or_else(|| reject(3, "each outside collection"))?;
+                if path.is_empty() {
+                    return Ok(each.clone());
+                }
+                field_type(each, &segments(path), scope.aliases)
+                    .ok_or_else(|| reject(1, "each field absent"))
             }
-            if let Some(rest) = text.strip_prefix(key).and_then(|v| v.strip_prefix('.')) {
-                return field_type(ty, &rest.split('.').collect::<Vec<_>>(), scope.aliases)
-                    .ok_or_else(|| reject(1, "validation body field absent"));
+            StageExpr::Outcome { unit, path } => {
+                let ty = scope.outcomes.get(unit).ok_or_else(|| {
+                    reject(
+                        1,
+                        format!("unit outcome {unit} absent or outside read scope"),
+                    )
+                })?;
+                if path.is_empty() {
+                    return Ok(ty.clone());
+                }
+                field_type(ty, &segments(path), scope.aliases)
+                    .ok_or_else(|| reject(4, "unit outcome field absent"))
             }
+            StageExpr::Name { head, path } => {
+                if let Some((bound, ty)) = scope.body {
+                    if head == bound {
+                        if path.is_empty() {
+                            return Ok(ty.clone());
+                        }
+                        return field_type(ty, &segments(path), scope.aliases)
+                            .ok_or_else(|| reject(1, "validation body field absent"));
+                    }
+                }
+                // Whole segments, so a unit outcome field named `input` reads as
+                // one rather than tripping this class on a substring match.
+                if path
+                    .iter()
+                    .any(|segment| ["input", "artifact", "state"].contains(&segment.as_str()))
+                {
+                    return Err(reject(4, "expression reads inside another unit"));
+                }
+                Err(reject(1, format!("unknown expression {head}")))
+            }
+            StageExpr::Boolean => Ok(boolean()),
+            StageExpr::Integer => Ok(integer()),
+            StageExpr::Text => Ok(TypeExpression::Name("text".into())),
         }
-        if text.contains(".input") || text.contains(".artifact") || text.contains(".state") {
-            return Err(reject(4, "expression reads inside another unit"));
-        }
-        if let Some((unit, suffix)) = text.split_once(".outcome") {
-            let ty = scope.outcomes.get(unit).ok_or_else(|| {
-                reject(
-                    1,
-                    format!("unit outcome {unit} absent or outside read scope"),
-                )
-            })?;
-            return if suffix.is_empty() {
-                Ok(ty.clone())
-            } else {
-                field_type(
-                    ty,
-                    &suffix
-                        .strip_prefix('.')
-                        .ok_or_else(|| reject(4, "outcome path malformed"))?
-                        .split('.')
-                        .collect::<Vec<_>>(),
-                    scope.aliases,
-                )
-                .ok_or_else(|| reject(4, "unit outcome field absent"))
-            };
-        }
-        if text == "true" || text == "false" {
-            return Ok(TypeExpression::Name("boolean".into()));
-        }
-        if text.parse::<i64>().is_ok() {
-            return Ok(TypeExpression::Name("integer".into()));
-        }
-        if text.starts_with('"') && text.ends_with('"') {
-            return Ok(TypeExpression::Name("text".into()));
-        }
-        Err(reject(1, format!("unknown expression {text}")))
     }
     fn checked(text: &str, scope: &Scope<'_>) -> Result<CheckedStageExpression, DomainError> {
         Ok(CheckedStageExpression {
             source: text.into(),
-            value_type: infer(text, scope)?,
+            value_type: infer(&parse_expression(text)?, scope)?,
         })
     }
     fn fields(
@@ -778,7 +931,7 @@ pub mod workflow_v2 {
             each: None,
             aliases: &workflow.schemas,
             body: None,
-            nonnull: false,
+            guaranteed: BTreeSet::new(),
         };
         let mut owners = BTreeMap::<String, String>::new();
         let mut workers = Vec::new();
@@ -948,12 +1101,16 @@ pub mod workflow_v2 {
             .done_when
             .as_deref()
             .ok_or_else(|| reject(9, format!("stage {key} lacks done_when")))?;
-        let done_when = checked(done, &base)?;
+        let done_expression = parse_expression(done)?;
+        let done_when = CheckedStageExpression {
+            source: done.into(),
+            value_type: infer(&done_expression, &base)?,
+        };
         if done_when.value_type != TypeExpression::Name("boolean".into()) {
             return Err(reject(9, format!("stage {key} done_when is not boolean")));
         }
         let outcome_scope = Scope {
-            nonnull: done.contains("published(") || done.contains("approved("),
+            guaranteed: guaranteed_artifacts(&done_expression),
             ..base
         };
         let outcome = fields(&stage.outcome, &outcome_scope)?;
@@ -1063,7 +1220,7 @@ pub mod workflow_v2 {
                 each: None,
                 aliases: &workflow.schemas,
                 body: None,
-                nonnull: false,
+                guaranteed: BTreeSet::new(),
             };
             let collection = if let Some(source) = &unit.for_each {
                 let source = checked(source, &scope)?;
@@ -1138,7 +1295,7 @@ pub mod workflow_v2 {
             each: None,
             aliases: &workflow.schemas,
             body: None,
-            nonnull: false,
+            guaranteed: BTreeSet::new(),
         };
         let mut checked_outcome = Vec::new();
         for (key, source) in &group.outcome {

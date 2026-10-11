@@ -1,5 +1,5 @@
 # Committed generated output. GitHub collapses these in pull request diffs;
-# regenerate with scripts/generate-core-contracts.sh, generate-bundles.sh or
+# regenerate with scripts/generate-core-contracts.sh or
 # oakridge-dbos/scripts/generate-storage-records.ts.
 oakridge-dbos/src/core-client/generated-contracts.ts linguist-generated=true
 oakridge-dbos/src/storage/generated-records.ts linguist-generated=true

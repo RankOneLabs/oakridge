@@ -14,6 +14,7 @@
     { "name": "8 review input outside stage read scope", "base": "review-loop", "pointer": "/stages/document/reviews/editor/inputs/draft", "value": "document.outcome.draft", "reason": "check 8" },
     { "name": "8 review input type error", "base": "review-loop", "pointer": "/stages/document/reviews/editor/inputs/draft", "value": "len(true)", "reason": "check 8" },
     { "name": "9 missing done_when", "base": "review-loop", "pointer": "/stages/document/done_when", "value": null, "reason": "check 9" },
+    { "name": "9 latest guarded by another artifact", "base": "review-loop", "pointer": "/stages/document/outcome/draft", "value": "latest(critique).notes", "reason": "check 9" },
     { "name": "10 missing prompt file", "base": "review-loop", "pointer": "/stages/document/reviews/editor/prompt", "value": "missing.md", "reason": "check 10" },
     { "name": "10 review prompt undeclared input", "base": "review-loop", "prompt_override": "{{undeclared}}", "reason": "check 10" },
     { "name": "11 duplicate key", "raw": "{\"workflow\":\"a\",\"workflow\":\"b\"}", "reason": "duplicate" },
