@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 26 of the 48 `main` PWA test files. The remaining 22 are
+This branch has mapped and tested 27 of the 48 `main` PWA test files. The remaining 21 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -300,13 +300,43 @@ The current client suite also tests generated run and definition pagination, con
 | Unportable | `expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();` | No equivalent assertion. | Feedback is now a pinned command payload; no generic **Send feedback** panel is part of `GateDecisionActions`. |
 | Replacement | `expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | When the command disappears from the scope projection, the command form unmounts. This replaces closing the old feedback panel. |
 
+## `kbbl/core/pwa/oakridge/__tests__/ReviewInboxView.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);` | `expect(rows.map((row) => row.querySelector("h2")?.textContent)).toEqual(["Admit API", "Review web artifact"]);` | Two generated command items appear once, in projection order. The items come from `makeInboxCommand` and `makeReviewInbox`. |
+| Unportable | `expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);` | No equivalent lifecycle-card assertion. | The generated inbox has command, wait and diagnostic items; it no longer renders a second v15 cohort-progress collection. Absence of a retired test ID would prove nothing about duplicates. |
+| Replacement | `expect(screen.getByText("Artifact ready for review")).toBeTruthy();` | `expect(rows.map((row) => row.querySelector("h2")?.textContent)).toEqual(["Admit API", "Review web artifact"]);` | Command labels now come from the pinned scope definition. The old lifecycle phrase is retired. |
+| **Relaxed** | `expect(screen.getByTestId("or-inbox-admit-btn")).toBeTruthy();` | `expect(rows[0]?.querySelector("button")?.textContent).toBe("Open work");` | The inbox opens the scope containing the admission command; it no longer offers a direct admission button. |
+| **Relaxed** | `expect(handlers.onSelectArtifact).toHaveBeenCalledWith("revision-web");` | `expect(onSelectScope).toHaveBeenCalledWith("run-one", "scope-web");` | The inbox navigates to the exact scope, where its observed revision is available. Direct revision navigation is gone. |
+| Translated | `expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");` | `expect(onSelectScope).toHaveBeenCalledWith("run-one", "scope-web");` | Run navigation now includes the scope that requires attention. |
+| Unportable | `await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes("/gates/stage-build%3Aweb/resume"))).toBe(true));` | No direct inbox POST assertion. | The inbox now opens a scope; `GateDecisionActions` submits the generated command there. The v15 gate resume route is retired. |
+| Unportable | `expect(JSON.parse(String(request.body))).toMatchObject({ action: "approve", operator_comment: "Approve artifact", feedback: "" });` | No direct inbox payload assertion. | The generated command payload is defined by the pinned schema and sent from the scope review, not a hard-coded inbox approve action. |
+| Replacement | `await waitFor(() => expect(screen.queryByTestId("or-decision-approve")).toBeNull());` | `expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);` | A departed command stays as a disabled settled row after refresh. The inbox no longer owns an approve button. |
+| Translated | `expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST").length).toBeGreaterThanOrEqual(2);` | `expect(fetch).toHaveBeenCalledTimes(2);` | The stable-row test proves the inbox is fetched again after Refresh; there is no POST in the current inbox. |
+| Unportable | `expect(send.disabled).toBe(true);` | No equivalent direct-feedback assertion. | The review inbox has no `Send feedback` form; feedback fields live in pinned scope commands. |
+| Unportable | `await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));` | No equivalent direct-feedback POST assertion. | Submission occurs on the scope command form after navigation. |
+| Unportable | `expect(JSON.parse(String(request.body))).toMatchObject({ action: "request_revision", feedback: "Explain the recovery path." });` | No equivalent direct-feedback payload assertion. | The current command schema decides the payload fields; the retired gate action and feedback shape are not a PWA contract. |
+| Replacement | `expect((await screen.findByTestId("or-review-inbox-blocked")).textContent).toContain("database");` | `expect(await screen.findByText("database blocks admission")).toBeTruthy();` | Generated diagnostic detail names the blocker, but the old blocked cohort card is retired. |
+| Translated | `expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();` | `expect(screen.queryByRole("button", { name: /Admit/ })).toBeNull();` | A diagnostic item offers no direct admission action. |
+| Translated | `expect(await screen.findByText("Brief approved · queued automatically")).toBeTruthy();` | Same assertion. | A generated wait item carries the visible automatic queue label. |
+| Translated | `expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();` for automatic work | `expect(screen.queryByRole("button", { name: /Submit/ })).toBeNull();` | Automatic waiting work has no direct decision submission control. |
+| Unportable | `for (const label of labels) expect(screen.getByText(label)).toBeTruthy();` | No equivalent lifecycle-label assertion. | The generated inbox lists active command, wait and diagnostic descriptions; it does not project all ten v15 cohort lifecycle states or their fixed English labels. |
+| Unportable | `expect(screen.getByText("Complete")).toBeTruthy();` | No equivalent completed-cohort assertion. | Terminal scopes leave the attention inbox; completed scope state is read on the run surface. |
+| Translated | `expect(await screen.findByText("Confirm the merged pull request")).toBeTruthy();` | Same assertion. | The pinned merge-confirmation command is distinct from artifact review. |
+| **Relaxed** | `expect(screen.getByRole("button", { name: "Confirm merge" })).toBeTruthy();` | `expect(screen.getByRole("button", { name: "Open work" })).toBeTruthy();` | The command is reachable at its scope, but no longer executable directly from the inbox. |
+| Translated | `expect(await screen.findByText("Pull request needs attention")).toBeTruthy();` | `expect(await screen.findByText(/Pull request needs attention/)).toBeTruthy();` | The generated diagnostic's detail names the mismatch; its label is no longer a separate lifecycle field. |
+| Translated | `expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();` | `expect(detail.textContent).toContain("observed pull request belongs to another repository");` | The diagnostic preserves the reconciliation detail. |
+| Unportable | `expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();` | No equivalent inbox link assertion. | The diagnostic variant has only `detail`, run ID and scope ID; it does not carry a PR URL. The operator opens the scope for related outputs. |
+| Translated | `expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);` | Same assertion using generated command rows with `data-state`. | The row position and append behavior are preserved end to end. The test refreshes `ReviewInboxView` from the shared factory and checks all three positions. |
+| Unportable | `expect(screen.getByText("Merged · complete")).toBeTruthy();` | No equivalent inbox assertion. | Completed scopes no longer occupy the attention inbox. Their terminal outcome is shown in the run projection. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
 
 | Original file | Original tests | Why no assertion-preserving port is present |
 | --- | ---: | --- |
-| `__tests__/ReviewInboxView.test.tsx` | 11 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
@@ -329,7 +359,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 22 files and 276 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 21 files and 265 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
