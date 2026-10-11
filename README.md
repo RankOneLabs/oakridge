@@ -28,7 +28,7 @@ workspace event returns an explicit failure.
 bun install --frozen-lockfile
 cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
 bash scripts/generate-core-contracts.sh --check
-bash scripts/generate-bundles.sh --check
+bun workflow-config/src/generate.ts --check
 bun run typecheck
 bun run --filter kbbl test
 bun run --filter kbbl test:pwa
@@ -62,11 +62,11 @@ spawns (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
-Edit example bundles in `workflow-config/src/development.ts`. The three
-bundles under `workflow-config/definitions/` are generated, not committed:
-`bash scripts/generate-bundles.sh` writes them, and the test suites run it
-first. Each prompt references a file by path and SHA-256
-content digest; see `workflow-config/README.md` for the exact byte rule.
+Edit the v2 examples in `workflow-config/samples/`. Their YAML is parsed into
+the Rust test fixtures by `workflow-config/src/generate.ts`; CI checks that
+the committed JSON matches. The v1 DBOS and PWA tests temporarily generate
+their ignored development bundles with the same command's `--pwa-fixtures`
+option while their runtime is being cut over.
 
 Each selected action has a pinned `deadline_ms` that bounds an individual
 provider call. A DBOS execution timeout also bounds the entire start and
