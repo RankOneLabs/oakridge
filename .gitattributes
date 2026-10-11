@@ -1,6 +1,9 @@
-# Committed generated output. GitHub collapses these in pull request diffs;
-# regenerate with scripts/generate-core-contracts.sh or
-# oakridge-dbos/scripts/generate-storage-records.ts.
+# Committed generated output. GitHub collapses these in pull request diffs.
+# The contracts regenerate with scripts/generate-core-contracts.sh and the
+# storage records with oakridge-dbos/scripts/generate-storage-records.ts. The
+# definitions and the dev-flow prompts are frozen: their generator retired with
+# the v1 authoring surface, so edit those files directly or delete them with
+# their last consumer.
 oakridge-dbos/src/core-client/generated-contracts.ts linguist-generated=true
 oakridge-dbos/src/storage/generated-records.ts linguist-generated=true
 workflow-config/src/source-contracts.ts linguist-generated=true

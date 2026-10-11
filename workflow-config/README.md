@@ -16,5 +16,7 @@ The v1 template authoring surface and its bundle builder are retired, along
 with the per-stage scope and schema modules they composed. The bundles under
 `definitions/` are the last of its output and are now committed as pinned test
 inputs for the DBOS and PWA suites that have not been cut over yet. Nothing
-regenerates them, and nothing should: c2 and c3 replace those consumers with
-the v2 compiler and the YAML samples above, and delete the bundles with them.
+regenerates them, and nothing should: whichever cohort moves those consumers
+onto the v2 compiler and the YAML samples above deletes the bundles with them.
+`prompts/templates/` and `prompts/dev-flow/v3/` are frozen for the same reason
+-- the renderer that composed the second from the first is retired.
