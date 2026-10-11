@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
@@ -57,5 +57,36 @@ describe("ArtifactReview", () => {
     wrap(<ArtifactReview revisionId="revision-1" scopes={[reviewScope()]} schemas={[]}
       onBack={() => undefined} onRefresh={() => undefined} />);
     expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();
+  });
+
+  it("submits an edited text atom from the review surface", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input).endsWith("/commands") ? Response.json({ kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 2 }, { status: 202 })
+        : Response.json([]));
+    vi.stubGlobal("fetch", fetch);
+    const revision = makeArtifactRevision();
+    const command = makeCommand({ key: "edit_analysis", label: "Edit analysis", targets: [] });
+    const scope = makeScopeView({ commands: [command], outputs: [makeOutputSlot({ current_revision: revision })],
+      command_targets: { edit_analysis: [] } });
+    const refresh = vi.fn();
+    wrap(<ArtifactReview revisionId={revision.id} scopes={[scope]} schemas={[]} onBack={() => undefined} onRefresh={refresh} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit artifact" }));
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Operator changed body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    const request = fetch.mock.calls.find(([input]) => String(input).endsWith("/commands"));
+    expect(JSON.parse(request?.[1]?.body as string).payload).toMatchObject({ reviewed_revision_id: revision.id,
+      prev_value: revision.body, body: { schema: "text", data: { kind: "string", value: "Operator changed body" } } });
+  });
+
+  it("opens the new revision when a saved edit replaces the selected revision", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+    const predecessor = makeArtifactRevision();
+    const revised = makeArtifactRevision({ id: "revision-2", predecessor_id: predecessor.id, version: 2 });
+    const navigate = vi.fn();
+    wrap(<ArtifactReview revisionId={predecessor.id} scopes={[makeScopeView({ outputs: [makeOutputSlot({
+      current_revision_id: revised.id, current_revision: revised, version: 2 })] })]} schemas={[]}
+      onBack={() => undefined} onRefresh={() => undefined} onRevised={navigate} />);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(revised.id));
   });
 });

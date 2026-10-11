@@ -175,12 +175,6 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
           const result = scope.outputs.find((item) => item.output_key === "build_result" && item.collection_key === "");
           const agentRevision = result?.current_revision;
           if (!agentRevision || agentRevision.body.data.kind !== "record") throw new Error("build result revision not ready for browser walk");
-          const buildSchema = bundle.schemas.find((item) => item.key === "build_body")?.shape;
-          const summaryId = buildSchema?.kind === "record" ? buildSchema.fields.findIndex((field) => field.key === "summary") : -1;
-          if (summaryId < 0) throw new Error("build_body summary field missing");
-          const editedBody = { ...agentRevision.body, data: { ...agentRevision.body.data,
-            fields: agentRevision.body.data.fields.map((field) => field.field_id === summaryId
-              ? { ...field, value: { schema: "text", data: { kind: "string" as const, value: "Edited by operator" } } } : field) } };
           const browser = await chromium.launch({ args: ["--no-sandbox"] });
           const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
           try {
@@ -202,19 +196,20 @@ for (const final_merge_policy of ["require_merge", "allow_close_without_merge"] 
             };
             mkdirSync(screenshots, { recursive: true });
             await capture("run-overview", `oakridge/run/${run_id}`, '[data-testid="or-run-workspace"]');
-            let edit: { status: number; body: unknown } = { status: 409, body: null };
-            for (let attempt = 0; attempt < 5 && edit.status === 409; attempt++) {
-              const latest = await read<ScopeView>(`/api/runs/${run_id}/scopes/${scope.scope_id}`);
-              const command = { command_key: "edit_build_result", payload: { output_key: "build_result", collection_key: "",
-                reviewed_revision_id: agentRevision.id, prev_value: agentRevision.body, body: editedBody },
-                request_id: crypto.randomUUID(), scope_id: scope.scope_id, expected_scope_version: latest.cursor.scope_version,
-                targets: latest.command_targets.edit_build_result ?? [] };
-              edit = await page.evaluate(async ({ path, body }) => {
-                const response = await fetch(`/oakridge/api${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-                return { status: response.status, body: await response.json() };
-              }, { path: `/api/runs/${run_id}/scopes/${scope.scope_id}/commands`, body: command });
+            let editStatus = 409;
+            for (let attempt = 0; attempt < 5 && editStatus === 409; attempt++) {
+              await page.goto(`${base}#oakridge/run/${run_id}/artifact/${agentRevision.id}`);
+              await page.getByTestId("or-artifact-review").waitFor();
+              await page.getByRole("button", { name: "Edit artifact" }).click();
+              await page.getByLabel("summary", { exact: true }).fill("Edited by operator");
+              const editResponse = page.waitForResponse((reply) => reply.url().includes(`/scopes/${scope.scope_id}/commands`)
+                && reply.request().method() === "POST");
+              await page.getByRole("button", { name: "Save edit" }).click();
+              const edit = await editResponse;
+              editStatus = edit.status();
+              if (editStatus !== 202 && editStatus !== 409) throw new Error(`operator edit failed: ${editStatus} ${await edit.text()}`);
             }
-            if (edit.status !== 202) throw new Error(`operator edit failed: ${JSON.stringify(edit)}`);
+            if (editStatus !== 202) throw new Error(`operator edit remained in conflict after five UI attempts`);
             let editRevision: NonNullable<typeof agentRevision> | null = null;
             for (let attempt = 0; attempt < 100; attempt++) {
               const projected = await read<ScopeView>(`/api/runs/${run_id}/scopes/${scope.scope_id}`);
