@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch ports 10 of the 48 `main` PWA test files. The remaining 38 are
+This branch ports 12 of the 48 `main` PWA test files. The remaining 36 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -30,8 +30,21 @@ listed below as an explicit coverage gap; this is not a completed parity gate.
 | Translated | `expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();` | `expect(screen.getByRole("status").textContent).toContain("unavailable in the current scope projection");` | The current review consumes the already loaded scope projection and exposes an explicit missing-revision state. Fetch failure remains the responsibility of the scope loader. |
 | Translated | `expect(screen.queryByText("← Back")).toBeNull();` | `expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();` | Review navigation is now an explicit overview action on the review shell. This is a changed interaction, so the old absence assertion cannot be preserved literally. |
 
-The first suite has 4 passing tests. The unportable assertions above remain
-open parity decisions.
+The first suite has 6 passing tests, including a UI edit submission and a check
+that the review follows the new revision. The old
+claims below are closed as explicit replacement-surface decisions, not as
+translations. An authority-owned fact is not inferred from a missing revision
+field, and a retired v15 endpoint is not restored merely to satisfy a test.
+
+| Old claim | Replacement surface decision | Coverage consequence |
+| --- | --- | --- |
+| Producing stage | The scope projection's `scope_key` and label identify the owning scope; the output slot's `output_key` identifies the artifact. `RunWorkspace` shows both. | The old `producing_stage` field is retired; the exact stage-name assertion remains a recorded loss. |
+| Validation metadata | The compiler checks the publication against the pinned schema before the revision reaches the review projection. The UI receives `OperatorCheckedValue`. | The old `validation.valid` display is retired. Compiler validation is authoritative, but this is a moved claim, not a PWA translation. |
+| Revision `approved` status | The current scope state and available command list express review progress; `GateDecisionActions` tests target-specific actions. | The old artifact-local status chip is retired. Its exact assertion is not claimed as preserved. |
+| Descriptor layout and sections | The checked body schema selects the viewer and field order. `PlanViewer` and `OperatorTypedValue` render that structure. | `data-review-layout` and descriptor-section attributes are retired; the old presentation contract is not asserted. |
+| Artifact-local action label | The pinned command label is displayed by `GateDecisionActions`. | The artifact-local override is retired; the new label is a different authored source. |
+| Run-scoped gate fetch | The scope projection includes commands and observed revision targets; the target assertion above verifies action visibility. | No separate gate fetch occurs. Fetch mechanics changed; target-specific action behavior is covered. |
+| Untyped plan body | `PlanViewer` consumes a checked `plan_body`; its own suite checks scope, cohort order and graph. | Untyped plan tolerance is retired; malformed bodies are rejected before publication. |
 
 ## `kbbl/core/pwa/oakridge/lib/run-attention.test.ts`
 
@@ -46,8 +59,8 @@ open parity decisions.
 
 | Classification | Original assertion (`main`) | New assertion | Reason |
 | --- | --- | --- | --- |
-| Unportable | `expect(selectStableDecisionQueue([live("a"), live("b"), live("c")], [gate("b"), gate("c")])).toEqual([{ kind: "settled", item: gate("a") }, live("b"), live("c")]);` | No equivalent assertion. | The generated inbox has no stable settled-row model; the current queue derives live commands from scopes. This loss of row position coverage remains open. |
-| Unportable | `expect(selectStableDecisionQueue([live("a"), live("b")], [gate("assessment"), gate("a"), gate("b")])).toEqual([live("a"), live("b"), live("assessment")]);` | No equivalent assertion. | The current selector does not retain previous rows between projections. |
+| Replaced, parity restored | `expect(selectStableDecisionQueue([live("a"), live("b"), live("c")], [gate("b"), gate("c")])).toEqual([{ kind: "settled", item: gate("a") }, live("b"), live("c")]);` | `expect(selectStableOperatorDecisionQueue([a, b, c].map((item) => ({ kind: "live", item })), [b, c])).toEqual([{ kind: "settled", item: a }, { kind: "live", item: b }, { kind: "live", item: c }]);` | `ReviewInboxView` now renders retained settled rows as disabled. Generated inbox commands come from `makeInboxCommand`; the row-position claim is preserved. |
+| Replaced, parity restored | `expect(selectStableDecisionQueue([live("a"), live("b")], [gate("assessment"), gate("a"), gate("b")])).toEqual([live("a"), live("b"), live("assessment")]);` | `expect(selectStableOperatorDecisionQueue([a, b].map((item) => ({ kind: "live", item })), [assessment, a, b])).toEqual([{ kind: "live", item: a }, { kind: "live", item: b }, { kind: "live", item: assessment }]);` | New generated inbox commands append after retained rows even when the server lists them first. |
 | Translated | `expect(selectStableDecisionQueue([], [gate("b"), gate("a")])).toEqual([live("b"), live("a")]);` | `expect(selectActionableScopes(scopes).map((scope) => scope.scope_id)).toEqual(["first", "last"]);` | Initial display order still follows the projection order; idle scopes are omitted. |
 
 ## `kbbl/core/pwa/oakridge/lib/status-tone.test.ts`
@@ -103,6 +116,30 @@ not a hand-written Oakridge read model.
 | Unportable | `expect(within(screen.getByTestId("or-risk-card")).getByText("No mitigation given.")).toBeTruthy();` | No equivalent assertion. | The shipped checked `risk` schema requires a mitigation string; a bare-string risk cannot be projected. |
 | Unportable | `expect(screen.getByRole("alert").textContent).toContain("scope: expected an object");` | No equivalent assertion. | The checked value has already been validated by the compiler; the viewer has no untyped-body contract error surface. |
 
+## `kbbl/core/pwa/oakridge/lib/plan.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(parsePlan(body).ok).toBe(true);` | No PWA assertion. | The compiler checks the raw plan before projecting `OperatorCheckedValue`; the PWA has no `parsePlan` ingress. This moved validation is not counted as a passing PWA test. |
+| Unportable | `expect(parsed({ ...body, risks: ["Pin drift"] }).risks).toEqual([{ description: "Pin drift", mitigation: null }]);` | No equivalent assertion. | The pinned `risk` schema requires a mitigation string; a bare string cannot be checked and projected. |
+| Unportable | `expect(parsed({ ...body, cohorts: [withoutDescription] }).cohorts[0]?.description).toBeNull();` | No equivalent assertion. | The checked `plan_cohort` has an explicit optional `description` field. The old missing-property parser fallback is outside the PWA contract. |
+| Unportable | `expect(result.ok ? null : result.error.field).toBe("cohorts[1].files_in_scope");` | No equivalent assertion. | Validation errors are returned by the compiler before publication; the checked viewer never receives an invalid `files_in_scope`. |
+| Unportable | `expect(parsePlan({ ...body, scope: { include: ["core"] } }).ok).toBe(false);` | No equivalent assertion. | The compiler rejects a scope that does not match `plan_scope`; the PWA consumes only checked values. |
+| Translated | `expect(selectOrderedCohorts(parsed(body)).map((entry) => entry.id)).toEqual(["core", "api"]);` | `expect(ids(["core", "api"])).toEqual(["core", "api"]);` | The `makePlanGraphFixture` checked body retains the same dependency order and body order. |
+| Translated | `expect(selectOrderedCohorts(parsed({ ...body, dependency_order: ["api"] })).map((entry) => entry.id)).toEqual(["api", "core"]);` | `expect(ids(["api"])).toEqual(["api", "core"]);` | An omitted cohort still follows the listed cohort. |
+| Translated | `expect(selectOrderedCohorts(parsed({ ...body, dependency_order: ["core", "core", "api"] })).map((entry) => entry.id)).toEqual(["core", "api"]);` | `expect(ids(["core", "core", "api"])).toEqual(["core", "api"]);` | Repeated order keys do not duplicate cohort cards. |
+
+## `kbbl/core/pwa/oakridge/lib/pr-summary.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(parsed.ok && parsed.value.base_branch).toBe("epic/metrics-update");` | No equivalent assertion. | The current pinned `pr_body` has no `base_branch`; branch policy belongs to the scope's repository preparation and forge observation. |
+| Translated | `expect(parsed.ok && parsed.value.review_status).toBeNull();` | `expect(selectFieldText(body, schemas, "review_status")).toBeNull();` | The checked optional status is null in the factory fixture, as in the original body. |
+| Unportable | `expect(parsed.ok ? null : parsed.error.field).toBe("branch");` | No equivalent assertion. | Missing required fields fail compiler validation before the PWA receives a checked revision. |
+| Replacement | `expect(selectPullRequestLabel(body.pr_url)).toBe("RankOneLabs/assay #50");` | `expect(screen.getByRole("link", { name: "Open pull request" }).getAttribute("href")).toBe("https://github.com/RankOneLabs/assay/pull/50");` | The current viewer uses an explicit link label. The destination remains exact, while the old abbreviated text is retired. |
+| Replacement | `expect(selectPullRequestLabel("https://gitlab.com/a/b/-/merge_requests/1")).toBeNull();` | `expect(selectHttpUrl("https://gitlab.com/a/b/-/merge_requests/1")).toBe("https://gitlab.com/a/b/-/merge_requests/1");` | Any safe HTTP URL is now linked. The old GitHub-only label rule is deliberately broadened. |
+| Translated | `expect(isWebUrl("javascript:alert(1)")).toBe(false);` | `expect(selectHttpUrl("javascript:alert(1)")).toBeNull();` | An unsafe scheme still cannot become a link. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -131,8 +168,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/launch-config.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/launch-selection.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/plan.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/pr-summary.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/request-identity.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-accent.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -148,19 +183,19 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 38 files and 362 named test declarations; parameterized cases may expand further. None is silently counted as ported.
+This register covers 36 files and 348 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
-The browser test serves the production PWA bundle through stub kbbl, routes its API calls to the production Oakridge composition, and uses a stub forge. Each row has a light and dark capture from that walk. The historical `main` surface has no runnable backend in this branch, so the per-file assertion diff above is the available baseline; these captures establish current rendering, not visual equality with `main`.
+The current captures come from the production PWA bundle through stub kbbl and stub forge against the production Oakridge composition. The `main` captures are from local `main` commit `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. Its artifact-review and definition-editor images are the archived `c4-review-authoring/review-desktop-*` and `authoring-desktop-*` captures; the other four rows were rendered from that commit's original React components in a temporary Vite harness with representative stub responses and captured at 1440 × 900 in both themes. The harness supplied one v15 run with two of four stages complete, one current session, one approval gate and one release; one actionable `artifact_gate` inbox item; one artifact with an open thread and two messages; and one v15 workflow definition. The temporary source tree was removed after capture. These pairs show surface changes; their fixtures are representative, not an assertion that the two systems share the same backend state.
 
-| Surface | `main` reference | Current light screenshot | Current dark screenshot | Result |
-| --- | --- | --- | --- | --- |
-| Run overview | `main` run-workspace tests | [light](parity-screenshots/run-overview-light.png) | [dark](parity-screenshots/run-overview-dark.png) | Rendered in production bundle |
-| Artifact review | `main` artifact-review tests and assertion diff above | [light](parity-screenshots/artifact-review-light.png) | [dark](parity-screenshots/artifact-review-dark.png) | Operator edit revision rendered |
-| Artifact discussion | `main` artifact-review tests | [light](parity-screenshots/artifact-discussion-light.png) | [dark](parity-screenshots/artifact-discussion-dark.png) | Ping delivered to the completed stub session |
-| Review inbox | `main` ReviewInboxView tests | [light](parity-screenshots/review-inbox-light.png) | [dark](parity-screenshots/review-inbox-dark.png) | Rendered in production bundle |
-| Definition list | [`main` workflow list capture](../kbbl/docs/c1-before-workflow-def-list.png) and workflowdefs tests | [light](parity-screenshots/definitions-light.png) | [dark](parity-screenshots/definitions-dark.png) | Rendered in production bundle; old list is a different workflow model |
-| Definition editor | `main` workflowdefs tests | [light](parity-screenshots/definition-editor-light.png) | [dark](parity-screenshots/definition-editor-dark.png) | Rendered in production bundle |
+| Surface | `main` light | `main` dark | Current light | Current dark | Result |
+| --- | --- | --- | --- | --- | --- |
+| Run overview | [light](parity-screenshots/main-run-overview-light.png) | [dark](parity-screenshots/main-run-overview-dark.png) | [light](parity-screenshots/run-overview-light.png) | [dark](parity-screenshots/run-overview-dark.png) | Main showed stage progress, session and gates; current shows scope progress. |
+| Artifact review | [light](parity-screenshots/main-artifact-review-light.png) | [dark](parity-screenshots/main-artifact-review-dark.png) | [light](parity-screenshots/artifact-review-light.png) | [dark](parity-screenshots/artifact-review-dark.png) | Current review exposes a checked-value edit control; old revision metadata differs. |
+| Artifact discussion | [light](parity-screenshots/main-artifact-discussion-light.png) | [dark](parity-screenshots/main-artifact-discussion-dark.png) | [light](parity-screenshots/artifact-discussion-light.png) | [dark](parity-screenshots/artifact-discussion-dark.png) | Both show a revision discussion; current ping resumes the ended stub session. |
+| Review inbox | [light](parity-screenshots/main-review-inbox-light.png) | [dark](parity-screenshots/main-review-inbox-dark.png) | [light](parity-screenshots/review-inbox-light.png) | [dark](parity-screenshots/review-inbox-dark.png) | Current generated inbox uses scope commands and now retains settled row position. |
+| Definition list | [light](parity-screenshots/main-definitions-light.png) | [dark](parity-screenshots/main-definitions-dark.png) | [light](parity-screenshots/definitions-light.png) | [dark](parity-screenshots/definitions-dark.png) | Old workflow graph and current pinned-definition catalog are different models. |
+| Definition editor | [light](parity-screenshots/main-definition-editor-light.png) | [dark](parity-screenshots/main-definition-editor-dark.png) | [light](parity-screenshots/definition-editor-light.png) | [dark](parity-screenshots/definition-editor-dark.png) | Current editor authors the pinned development bundle. |
 
-The edit-then-ping test checks that the edited revision has a null `execution_id` and points back to the agent revision. It then creates a discussion thread, sends a reply with Ping agent selected, and checks `delivered`, one resume of the already completed stub session, and the exact input received by stub kbbl. The edit is sent from the browser through the operator command API because the restored review surface does not expose an edit control.
+The edit-then-ping test checks that the edited revision has a null `execution_id` and points back to the agent revision. It clicks the review surface's **Edit artifact** control, changes the checked `summary` atom and saves through the PWA command hook. It then creates a discussion thread, sends a reply with Ping agent selected, and checks `delivered`, one resume of the already completed stub session, and the exact input received by stub kbbl.

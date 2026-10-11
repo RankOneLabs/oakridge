@@ -103,6 +103,26 @@ export function makeProjectDraft(overrides: Partial<OperatorProjectDraft> = {}):
 interface PlanCohortInput { readonly id: string; readonly title: string; readonly depends_on: readonly string[] }
 export interface PlanGraphFixture { readonly body: OperatorCheckedValue; readonly schemas: readonly OperatorSchema[] }
 
+export interface PrSummaryFixture { readonly body: OperatorCheckedValue; readonly schemas: readonly OperatorSchema[] }
+
+/** The field order and optional status mirror pr_body in the shipped development definition. */
+export function makePrSummaryFixture(overrides: { readonly pr_url?: string; readonly branch?: string;
+  readonly summary?: string; readonly review_status?: string | null } = {}): PrSummaryFixture {
+  const value = (schema: string, text: string): OperatorCheckedValue => ({ schema, data: { kind: "string", value: text } });
+  const body: OperatorCheckedValue = { schema: "pr_body", data: { kind: "record", fields: [
+    { field_id: 0, value: value("text", overrides.pr_url ?? "https://github.com/RankOneLabs/assay/pull/50") },
+    { field_id: 1, value: value("ident", overrides.branch ?? "cohort/run/cm-api") },
+    { field_id: 2, value: value("text", overrides.summary ?? "Adds analyze().") },
+    { field_id: 3, value: { schema: "optional_pr_review_status", data: { kind: "optional", value: overrides.review_status
+      ? { schema: "pr_review_status", data: { kind: "enum", variant: overrides.review_status } } : null } } },
+  ], dictionary: [] } };
+  const schemas: readonly OperatorSchema[] = [{ key: "pr_body", shape: { kind: "record", fields: [
+    { key: "pr_url", schema: "text", required: true }, { key: "branch", schema: "ident", required: true },
+    { key: "summary", schema: "text", required: true }, { key: "review_status", schema: "optional_pr_review_status", required: true },
+  ], dictionary: null } }];
+  return { body, schemas };
+}
+
 /** Field order mirrors plan_body, plan_cohort and plan_scope in workflow-config/definitions/development.json. */
 export function makePlanGraphFixture(cohorts: readonly PlanCohortInput[], dependencyOrder: readonly string[] = cohorts.map((cohort) => cohort.id)): PlanGraphFixture {
   const value = (schema: string, text: string): OperatorCheckedValue => ({ schema, data: { kind: "string", value: text } });
