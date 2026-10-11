@@ -8,6 +8,13 @@ Run `bun workflow-config/src/generate.ts --check` to detect drift; CI runs this
 check. The prompts referenced by the samples live under `prompts/review-loop/`
 and `prompts/fan-out/`, and the Rust sample tests load those exact files.
 
-The DBOS and PWA v1 tests still need local development bundles during the
-cutover. `bun workflow-config/src/generate.ts --pwa-fixtures` produces those
-ignored test inputs. They are not part of the v2 sample compiler path.
+`src/prompt-catalog.ts` lists every file under `prompts/` with a server-computed
+SHA-256 digest; the authority serves it at `/api/prompts` and resolves a pinned
+bundle's prompt keys through it.
+
+The v1 template authoring surface and its bundle builder are retired, along
+with the per-stage scope and schema modules they composed. The bundles under
+`definitions/` are the last of its output and are now committed as pinned test
+inputs for the DBOS and PWA suites that have not been cut over yet. Nothing
+regenerates them, and nothing should: c2 and c3 replace those consumers with
+the v2 compiler and the YAML samples above, and delete the bundles with them.

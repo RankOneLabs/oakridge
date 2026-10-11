@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
-import { buildDevelopmentRun } from "../../workflow-config/src/development";
-import { DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY } from "../../workflow-config/src/development/policies";
+import { resolve } from "node:path";
+import type { DefinitionBundle } from "../src/core-client/generated-contracts";
 import { decisionKind, outputPresentation, stageLabel } from "../src/projections/presentation";
 
+const keys = ["development", "development-independent-siblings", "development-verification"];
+const bundles: DefinitionBundle[] = await Promise.all(keys.map((key) =>
+  Bun.file(resolve(import.meta.dir, `../../workflow-config/definitions/${key}.json`)).json()));
+
 test("presentation lookups cover every output schema, scope key and scope state in all shipped bundles", () => {
-  for (const policy of [DEVELOPMENT_POLICY, INDEPENDENT_SIBLINGS_POLICY, VERIFICATION_POLICY]) {
-    const bundle = buildDevelopmentRun(policy);
+  for (const bundle of bundles) {
     for (const scope of bundle.scopes) {
       expect(stageLabel(scope.key)).toBe(scope.presentation.label);
       for (const output of scope.outputs) expect(outputPresentation(output.schema)).not.toBeNull();

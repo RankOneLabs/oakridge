@@ -64,9 +64,11 @@ Bundle, route, projection, prompt and UI edits do not change it; set
 
 Edit the v2 examples in `workflow-config/samples/`. Their YAML is parsed into
 the Rust test fixtures by `workflow-config/src/generate.ts`; CI checks that
-the committed JSON matches. The v1 DBOS and PWA tests temporarily generate
-their ignored development bundles with the same command's `--pwa-fixtures`
-option while their runtime is being cut over.
+the committed JSON matches. The v1 template authoring surface is retired: the
+three bundles under `workflow-config/definitions/` are now committed as pinned
+test inputs for the DBOS and PWA suites still on the v1 runtime, and nothing
+regenerates them. `POST /api/definitions/compile` reports that authoring is
+retired until c3 reinstates it over the v2 compiler.
 
 Each selected action has a pinned `deadline_ms` that bounds an individual
 provider call. A DBOS execution timeout also bounds the entire start and

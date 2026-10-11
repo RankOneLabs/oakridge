@@ -9,8 +9,6 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
-# Until DBOS consumes the v2 compiler, its tests use local v1 fixture bundles.
-bun workflow-config/src/generate.ts --pwa-fixtures
 if [[ "$suite" == integration ]]; then
   bun run --filter kbbl build:pwa
 fi
