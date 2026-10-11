@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 21 of the 48 `main` PWA test files. The remaining 27 are
+This branch has mapped and tested 23 of the 48 `main` PWA test files. The remaining 25 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -244,6 +244,23 @@ The current client suite also tests generated run and definition pagination, con
 | Unportable | `expect(selectRunSessionsRead({ attempts: ATTEMPTS, is_pending: false, is_error: true })).toEqual({ kind: "loaded", attempts: ATTEMPTS });` | No equivalent selector assertion. | Stale-data retention is delegated to React Query and is not asserted by this pure execution selector. |
 | Unportable | `expect(selectRunSessionsRead({ attempts: [], is_pending: false, is_error: false })).toEqual({ kind: "loaded", attempts: [] });` | No equivalent read-state assertion. | The current selector accepts already loaded scopes and returns an empty row list; it does not represent pending, error or loaded states. |
 
+## `kbbl/core/pwa/oakridge/lib/workflow-definition-form.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect(result).toEqual({ ok: false, error: { operation: "validate_workflow_definition", entityId: "new_workflow_definition", details: ["Name is required."] } });` | No equivalent name-validation assertion. | A pinned definition is compiled by the authority from `WorkflowAuthoring`. The current editor has no graph `name` field or `validateWorkflowDefinition` error result. The new suite separately checks that unknown stored authoring versions are rejected. |
+| Replacement | `expect(validateWorkflowDefinition({ name: "workflow", stages: [], edges: [] })).toEqual({ ok: true, value: null });` | `expect(selectStoredAuthoring({ authoring })).toEqual(authoring); expect(selectCloneAuthoring(authoring).key).toBe("workflow-copy");` | Valid persisted authoring can be reopened and cloned, but an empty v15 stage graph is no longer a definition. The fixture comes from `makeWorkflowAuthoring`; the old empty-graph claim is retired. |
+
+## `kbbl/core/pwa/oakridge/lib/launch-config.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(buildEpicProfile(" Full parity! ", "guarded", [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", forge_owner: "acme", forge_name: "oakridge", integration_branch: "main" }])).toEqual({ title: "Full parity!", slug: "full-parity", final_merge_policy: "guarded", repositories: [{ repository_key: "oakridge", repository_path: "/code/oakridge", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "oakridge" } }] });` | `expect(draft).toEqual({ name: "Full parity!", repo_dir: "/code/oakridge", forge_repository: { provider: "github", owner: "acme", name: "oakridge" }, integration_branch: "main" });` | The generated project draft preserves trimmed name, repository path, forge identity and branch. It no longer asserts a durable slug, multiple repositories or the old merge policy. `makeProjectFormValues` supplies the inputs. |
+| Unportable | `expect(buildEpicProfile("!!!", "guarded", [])).toBeNull();` | No equivalent slug assertion. | The pinned project has a name and repo directory; the old epic slug is absent. Project validation belongs to the authority API. |
+| Unportable | `expect(profile?.final_merge_policy).toBe("external_confirmation");` | No equivalent assertion. | The current pinned development bundle offers its own `final_merge_policy` variants, not the retired `external_confirmation` epic profile choice. |
+| Translated | `expect(buildRunExecutionContext({ brief_notes: "Build it", base_branch: "epic/build-it", repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", integration_branch: "main" }], oakridge_url: "http://oakridge", planner: { runtime: "claude-code", model: "opus" }, worker: { runtime: "claude-code", model: "sonnet" } })).toEqual({ ok: true, value: expect.objectContaining({ planner_effort: null, worker_effort: null }) });` | `expect(input).toMatchObject({ sessions: { planner: { effort: null }, worker: { effort: null } } });` | Launch-wide role selections still write explicit null effort, now under the pinned root `sessions` value rather than v15 context fields. `makeRuntimeSelection` supplies both roles. |
+| Unportable | `expect(buildRunExecutionContext({ brief_notes: "Build it", base_branch: "epic/build-it", repositories: [], oakridge_url: "http://oakridge", planner: { runtime: "claude-code", model: "opus" }, worker: { runtime: "claude-code", model: "sonnet" } })).toEqual({ ok: false, error: { operation: "build_run_execution_context", detail: "At least one repository with a worktree path is required." } });` | No equivalent PWA assertion. | The pinned root schema and compiler validate repository collections; the old context builder and its specific error result are gone. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -264,7 +281,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/build-brief.test.ts` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/build-result.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/launch-config.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/request-identity.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-accent.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -275,10 +291,9 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 | `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 27 files and 299 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 25 files and 292 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

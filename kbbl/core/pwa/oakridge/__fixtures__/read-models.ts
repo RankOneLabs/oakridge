@@ -9,6 +9,8 @@ import developmentDefinition from "../../../../../workflow-config/definitions/de
 import type { OperatorCommandSubmission } from "../lib/operator-drafts";
 import type { OakridgeConfig } from "../types";
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
+import type { WorkflowAuthoring } from "../../../../../workflow-config/src/authoring";
+import type { ProjectFormValues } from "../lib/project-draft";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
@@ -158,6 +160,16 @@ export function makeRuntimeDescriptor(overrides: Partial<RuntimeDescriptor> = {}
 
 export function makeRuntimeSelection(overrides: Partial<RuntimeModelSelection> = {}): RuntimeModelSelection {
   return { runtime: "claude-code", model: "claude-opus-4-8", effort: undefined, ...overrides };
+}
+
+export function makeWorkflowAuthoring(overrides: Partial<WorkflowAuthoring> = {}): WorkflowAuthoring {
+  return { authoring_version: 1, template: "development", key: "development", implementation_capacity: 2,
+    sibling_failure: "cancel", wire_field_order: "canonical", stage_layout: "standard", ...overrides };
+}
+
+export function makeProjectFormValues(overrides: Partial<ProjectFormValues> = {}): ProjectFormValues {
+  return { name: "Scout", repo_dir: "/code/rol/scout", owner: "RankOneLabs", repository: "scout",
+    integration_branch: "main", ...overrides };
 }
 
 export function makeExecutionView(overrides: Partial<OperatorExecutionView> = {}): OperatorExecutionView {
