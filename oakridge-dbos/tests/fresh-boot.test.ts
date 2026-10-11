@@ -82,7 +82,7 @@ test("empty database cold boots, compiles through workflow-cli and serves a run 
   } finally {
     if (composition) await composition.close();
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 }, 15_000);

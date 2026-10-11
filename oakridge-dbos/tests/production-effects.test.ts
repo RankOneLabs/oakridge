@@ -85,7 +85,7 @@ test("two processes can apply the empty authority baseline concurrently exactly 
     expect(baselines[0]?.count).toBe(1);
   } finally {
     await Promise.all([first.close(), second.close()]);
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });

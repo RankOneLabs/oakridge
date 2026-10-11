@@ -54,7 +54,7 @@ test("concurrent publications cannot overwrite a slot without a predecessor", as
     } finally { release_lock(); await holder; await other; }
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });
