@@ -3,7 +3,7 @@ import type {
   OperatorInboxItem, OperatorOutputSlotView, OperatorProjectDraft, OperatorProjectView, OperatorReviewInbox, OperatorRunDetail,
   OperatorRunSessionAttempt, OperatorRunSummary, OperatorSchema, OperatorSessionLocation, OperatorScopeView,
   OperatorRunEvent, OperatorDefinitionSummary, OperatorExecutionView, OperatorCommandReceipt,
-  OperatorStartPinnedRunRequest, OperatorStartedRun,
+  OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorDecisionOutcome, OperatorScopeHistory,
 } from "../operator-contracts";
 import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
 import type { OperatorCommandSubmission } from "../lib/operator-drafts";
@@ -191,6 +191,21 @@ export function makeRunEvent(overrides: Partial<OperatorRunEvent> = {}): Operato
   return { transition_id: "transition-1", run_id: "run-one", scope_id: "scope-one", scope_key: "spec_analysis",
     decision: "wait", attention: { label: "Awaiting work or review", trigger: "accept" }, is_terminal: false,
     occurred_at: "2026-10-09T00:00:00.000Z", ...overrides };
+}
+
+export function makeWaitDecision(overrides: Partial<Extract<OperatorDecisionOutcome, { kind: "wait" }>> = {}): Extract<OperatorDecisionOutcome, { kind: "wait" }> {
+  return { kind: "wait", reason: "awaiting_review", continuations: [], explanation: {
+    bundle_digest: "digest-1", node_id: "node-1", owner: "scope-1", read_set: [], trace: [], trigger_id: "trigger-1",
+  }, ...overrides };
+}
+
+export function makeScopeTransition(overrides: Partial<OperatorScopeHistory["transitions"][number]> = {}): OperatorScopeHistory["transitions"][number] {
+  return { id: "transition-1", trigger_id: "trigger-1", decision: makeWaitDecision(),
+    created_at: "2026-09-27T10:00:00Z", version: 1, ...overrides };
+}
+
+export function makeScopeHistory(overrides: Partial<OperatorScopeHistory> = {}): OperatorScopeHistory {
+  return { scope_id: "scope-1", transitions: [], facts: [], ...overrides };
 }
 
 export function makeScopeView(overrides: Partial<OperatorScopeView> = {}): OperatorScopeView {

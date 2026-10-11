@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 29 of the 48 `main` PWA test files. The remaining 19 are
+This branch has mapped and tested 30 of the 48 `main` PWA test files. The remaining 18 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -354,6 +354,15 @@ The current client suite also tests generated run and definition pagination, con
 | Unportable | `expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);` for `cohort_id` | No equivalent PWA validation assertion. | The compiler's `ident` schema checks raw cohort IDs. The PWA consumes the already checked value. |
 | Unportable | `expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);` for `repository_key` | No equivalent PWA validation assertion. | The compiler's `ident` schema checks raw repository keys. The PWA consumes the already checked value. |
 
+## `kbbl/core/pwa/oakridge/lib/run-activity.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(items.map((item) => item.sequence)).toEqual(["12", "10"]);` | `expect(within(pane).getAllByRole("listitem").map((item) => item.textContent?.match(/Version (\d+)/)?.[1])).toEqual(["12", "10"]);` | The authority history endpoint scopes by run and scope and orders transitions newest first; the PWA displays that order. The old client-side filtering of a mixed-run ledger page is no longer tested. `makeScopeHistory` and `makeScopeTransition` supply the generated projection. |
+| Unportable | `expect(selectRunActivity([publication], "run-1")[0]).toMatchObject({ summary: "Output published", is_optional_attention: true });` | No equivalent activity-list assertion. | Generated transitions describe scope decisions; the old slot-release operation and `optional` continuation flag are absent. Current attention notifications are covered in `run-notifications.test.ts`. |
+| Unportable | `expect(selectRunActivity([event({ sequence: "30", operation: "work_started" })], "run-1")).toEqual([]);` | No equivalent filtering assertion. | Scope history intentionally shows every committed transition; the old run-event operation filter is retired. |
+| Translated | `expect(request).toHaveBeenCalledWith("/oakridge/api/run_events?limit=500&run_id=run%2Fone");` | `expect(fetch.mock.calls[0]?.[0]).toBe("/oakridge/api/api/runs/run%2Fone/scopes/scope%2Fone/history");` | The request is still bounded to an escaped run ID, now also to the selected scope. The v15 run-events ledger route is retired. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -371,7 +380,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/build-result.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -380,7 +388,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 19 files and 258 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 18 files and 254 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
