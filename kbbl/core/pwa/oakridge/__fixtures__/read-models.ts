@@ -12,6 +12,7 @@ import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 import type { WorkflowAuthoring } from "../../../../../workflow-config/src/authoring";
 import type { ProjectFormValues } from "../lib/project-draft";
 import type { InputField } from "../lib/operator-input";
+import type { SelectedFile } from "../lib/brief-notes";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
@@ -180,6 +181,11 @@ export function makeWorkflowAuthoring(overrides: Partial<WorkflowAuthoring> = {}
 export function makeProjectFormValues(overrides: Partial<ProjectFormValues> = {}): ProjectFormValues {
   return { name: "Scout", repo_dir: "/code/rol/scout", owner: "RankOneLabs", repository: "scout",
     integration_branch: "main", ...overrides };
+}
+
+export function makeBriefNotesFile(name: string, size: number, text?: string | (() => Promise<string>)):
+  SelectedFile & { text(): Promise<string> } {
+  return { name, size, text: typeof text === "function" ? text : async () => text ?? "" };
 }
 
 export function makeExecutionView(overrides: Partial<OperatorExecutionView> = {}): OperatorExecutionView {

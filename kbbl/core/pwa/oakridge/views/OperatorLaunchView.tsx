@@ -16,6 +16,7 @@ import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfig
 import { coerceRoleSelection, initialSelectionForRole } from "../lib/runtime-selection";
 import { supportsRoleSessionInput, withRoleSessionInput } from "../lib/launch-role-settings";
 import { RoleSettingsFields } from "../components/organisms/RoleSettingsFields";
+import { readBriefNotesFile } from "../lib/brief-notes";
 
 
 function selectInputFields(source: OperatorDefinitionBundle | undefined): readonly InputField[] | null {
@@ -48,6 +49,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [digest, setDigest] = useState("");
   const [input, setInput] = useState("{}");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDrafts>({});
+  const [loadedSpecFile, setLoadedSpecFile] = useState<string | null>(null);
   const [rawMode, setRawMode] = useState(false);
   const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole("planner", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
   const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole("worker", runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
@@ -111,7 +113,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const discard = () => {
     try { discardPendingLaunch(); } catch (cause) { setError(String(cause)); return; }
     setPending(null); setIsStorageUnreadable(false); setError(null);
-    setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false);
+    setDigest(""); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
   };
   return <main className="or-page" data-testid="or-new-run">
     <header className="or-page-header"><Button variant="secondary" onClick={onBack}>Back</Button><h1 className="or-page-title">Launch pinned run</h1></header>
@@ -120,7 +122,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     <form onSubmit={(event) => void launch(event)}>
       <label htmlFor="operator-digest">Definition digest</label>
       <select id="operator-digest" value={selected} disabled={pending !== null || launching} onChange={(event) => {
-        setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false);
+        setDigest(event.target.value); setInput("{}"); setFieldDrafts({}); setRawMode(false); setLoadedSpecFile(null);
       }}>
         {selected === "" && <option value="" disabled>Select a definition…</option>}
         {pending && !definitions.data?.some((item) => item.digest === pending.digest)
@@ -166,7 +168,20 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           : schema?.shape.kind === "string" ? <input id={id} type="text" value={value} required={field.required && schema.shape.min_length > 0}
             minLength={schema.shape.min_length} maxLength={schema.shape.max_length} onChange={(event) => setValue(event.target.value)} />
           : <textarea id={id} value={value} required={field.required} onChange={(event) => setValue(event.target.value)}
-            className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}</div>;
+            className="w-full min-h-24 rounded-md border p-3 font-mono text-xs" />}
+          {field.key === "spec" && schema?.shape.kind === "string" && <>
+            <label htmlFor="operator-spec-file">Load spec from file</label>
+            <input id="operator-spec-file" type="file" disabled={launching} onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              void readBriefNotesFile(file).then((result) => {
+                if (!result.ok) { setError(result.error.detail); return; }
+                setValue(result.value.text); setLoadedSpecFile(result.value.file_name); setError(null);
+              });
+            }} />
+            {loadedSpecFile && <p role="status">Loaded {loadedSpecFile}</p>}
+          </>}
+        </div>;
       })}</div>}
       {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result, or discard it to compose a new launch. Discarding forgets the retry identity, and the earlier attempt may still have created a run; check the runs list.</p>}
       {isStorageUnreadable && !pending && <p role="status">Stored launch state is unreadable. Discard it to compose a new launch; any earlier attempt may still have created a run, so check the runs list.</p>}

@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 34 of the 48 `main` PWA test files. The remaining 14 are
+This branch has mapped and tested 35 of the 48 `main` PWA test files. The remaining 13 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -417,6 +417,30 @@ The current client suite also tests generated run and definition pagination, con
 | Unchanged | `expect(screen.queryByRole("button")).toBeNull();` | Same assertion. | A text block that fits has no disclosure control. The layout stub uses DOM measurements, not a hand-written read-model fixture. |
 | Unchanged | `expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");` | Same assertion. | Long text still expands on click. The restored component is used for checked analysis summaries and build-brief goals. |
 
+## `kbbl/core/pwa/oakridge/lib/brief-notes.test.ts`
+
+The file handle in every assertion is now made by `makeBriefNotesFile` in the shared fixture factory. The pinned development root input has a string `spec` field; the launch view uses `readBriefNotesFile` to populate it. The old mandatory-brief form validation is a separate, retired contract because the pinned `spec` schema permits empty text.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `expect(selectBriefNotesFileRefusal(file("brief.md", 4_096))).toBeNull();` | `expect(selectBriefNotesFileRefusal(makeBriefNotesFile("brief.md", 4_096))).toBeNull();` | Same size guard, shared file fixture. |
+| Translated | `expect(selectBriefNotesFileRefusal(file("brief.md", 0))?.detail).toBe("brief.md is empty.");` | `expect(selectBriefNotesFileRefusal(makeBriefNotesFile("brief.md", 0))?.detail).toBe("brief.md is empty.");` | Empty file refusal is identical. |
+| Translated | `expect(refusal?.detail).toBe("dump.json is 1.0 MB, over the 1.0 MB limit for brief notes.");` | Same assertion, with `makeBriefNotesFile("dump.json", MAX_BRIEF_NOTES_BYTES + 1)` creating the handle. | Oversize file refusal still reports the file and limit. |
+| Translated | `expect(selectBriefNotesFileRefusal(file("brief.md", MAX_BRIEF_NOTES_BYTES))).toBeNull();` | `expect(selectBriefNotesFileRefusal(makeBriefNotesFile("brief.md", MAX_BRIEF_NOTES_BYTES))).toBeNull();` | Exact limit remains accepted. |
+| Translated | `expect(selectLoadedBriefNotesRefusal(file("brief.md", 12), "Ship it")).toBeNull();` | `expect(selectLoadedBriefNotesRefusal(makeBriefNotesFile("brief.md", 12), "Ship it")).toBeNull();` | Content acceptance is unchanged. |
+| Translated | `expect(selectLoadedBriefNotesRefusal(file("brief.md", 12), "  \\n\\t ")?.detail).toBe("brief.md has no readable text.");` | `expect(selectLoadedBriefNotesRefusal(makeBriefNotesFile("brief.md", 12), "  \\n\\t ")?.detail).toBe("brief.md has no readable text.");` | Whitespace-only file refusal is unchanged. |
+| Translated | `expect(await readBriefNotesFile(file("brief.md", 7, "Ship it"))).toEqual({ ok: true, value: { text: "Ship it", file_name: "brief.md" } });` | `expect(await readBriefNotesFile(makeBriefNotesFile("brief.md", 7, "Ship it"))).toEqual({ ok: true, value: { text: "Ship it", file_name: "brief.md" } });` | The reader still returns the exact content and filename. |
+| Translated | `expect(result.ok && result.value.text).toBe(body);` | Same assertion, with `makeBriefNotesFile("brief.md", body.length, body)` creating the handle. | Trailing structure is preserved. |
+| Translated | `expect(result.ok).toBe(false); expect(read).toBe(false);` | Same assertions, with an oversize `makeBriefNotesFile` handle. | Rejection still occurs before file IO. |
+| Translated | `expect(result).toEqual({ ok: false, error: { operation: "read_brief_notes_file", detail: "Could not read brief.md." } });` | Same assertion, with a rejecting `makeBriefNotesFile` handle. | Read failures remain error values. |
+| Unchanged helper; replacement surface | `expect(selectMissingBriefNotesDetail({ kind: "typed" })).toBe("Brief notes are required.");` | Same helper assertion; no equivalent launch-form assertion. | The pinned `spec` schema allows empty text, so launch no longer rejects an absent typed brief. This is a recorded UI coverage loss, not a translation. |
+| Unchanged helper; replacement surface | `expect(selectMissingBriefNotesDetail({ kind: "file", file_name: "" })).toBe("Choose a file with the brief notes.");` | Same helper assertion; no equivalent launch-form assertion. | The file picker is optional under the pinned input contract. A missing file does not block launch. |
+| Unchanged | `expect(formatBytes(4_096)).toBe("4 KB");` | Same assertion. | Kilobyte message formatting is preserved. |
+| Unchanged | `expect(formatBytes(2_621_440)).toBe("2.5 MB");` | Same assertion. | Megabyte message formatting is preserved. |
+| Unchanged | `expect(formatBytes(12)).toBe("1 KB");` | Same assertion. | Small nonempty files do not round to zero. |
+
+The launch integration additionally checks that selecting `brief.md` places its exact text in the generated `spec` field and displays the filename.
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -429,7 +453,6 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -438,7 +461,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 14 files and 220 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 13 files and 205 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
