@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 28 of the 48 `main` PWA test files. The remaining 20 are
+This branch has mapped and tested 29 of the 48 `main` PWA test files. The remaining 19 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -345,6 +345,15 @@ The current client suite also tests generated run and definition pagination, con
 
 `RunIdentityHeader.test.tsx` additionally checks that the generated run header actually applies the selected class and renders the existing accent bar. The restored selector is therefore used by the current surface, not just passing as an unused helper.
 
+## `kbbl/core/pwa/oakridge/lib/build-brief.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| **Relaxed** | `expect(isBuildBrief(validBrief)).toBe(true);` | `expect([selectFieldText(body, schemas, "cohort_id"), selectFieldText(body, schemas, "title"), selectFieldText(body, schemas, "goal")]).toEqual(["brief-ui", "Build brief review UI", "Make the brief reviewable."]);` | The checked `brief_body` from `makeBuildBriefFixture` exposes its registered fields, but this PWA selector does not validate raw JSON. The compiler performs that validation before publication. |
+| Unportable | `expect(isBuildBrief({ ...validBrief, decisions_made: [{ decision: "Missing rationale" }] })).toBe(false);` | No equivalent PWA validation assertion. | A checked `brief_decision` always has the schema's rationale field. The PWA cannot receive an incomplete decision body. The new suite separately checks that the rationale is read by its schema key. |
+| Unportable | `expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);` for `cohort_id` | No equivalent PWA validation assertion. | The compiler's `ident` schema checks raw cohort IDs. The PWA consumes the already checked value. |
+| Unportable | `expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);` for `repository_key` | No equivalent PWA validation assertion. | The compiler's `ident` schema checks raw repository keys. The PWA consumes the already checked value. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -360,7 +369,6 @@ The following original files are not ported. A similarly named current test, whe
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/assessment.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/build-brief.test.ts` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/build-result.test.ts` | 8 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -372,7 +380,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 20 files and 260 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 19 files and 258 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
