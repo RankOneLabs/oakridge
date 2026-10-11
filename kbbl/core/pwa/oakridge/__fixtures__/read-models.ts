@@ -11,9 +11,19 @@ import type { OakridgeConfig } from "../types";
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 import type { WorkflowAuthoring } from "../../../../../workflow-config/src/authoring";
 import type { ProjectFormValues } from "../lib/project-draft";
+import type { InputField } from "../lib/operator-input";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
+
+export function makeDevelopmentRootFields(): readonly InputField[] {
+  const root = developmentDefinition.scopes.find((scope) => scope.key === developmentDefinition.root);
+  const shape = developmentSchemas.find((schema) => schema.key === root?.input_schema)?.shape;
+  if (shape?.kind !== "record") throw new Error("Development root input is not a record");
+  return shape.fields.map((field) => ({ field, schema: developmentSchemas.find((schema) => schema.key === field.schema) }));
+}
+
+export function makeDevelopmentSchemas(): readonly OperatorSchema[] { return developmentSchemas; }
 
 function checkedFixtureValue(schemaKey: string, input: unknown): OperatorCheckedValue {
   const shape = developmentSchemas.find((schema) => schema.key === schemaKey)?.shape;
