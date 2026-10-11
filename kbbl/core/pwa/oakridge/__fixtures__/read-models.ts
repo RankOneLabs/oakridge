@@ -5,7 +5,8 @@ import type {
   OperatorRunEvent, OperatorDefinitionSummary, OperatorExecutionView, OperatorCommandReceipt, OperatorRunScopeSummary,
   OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorDecisionOutcome, OperatorScopeHistory,
 } from "../operator-contracts";
-import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { OperatorCommandSubmission } from "../lib/operator-drafts";
 import type { OakridgeConfig } from "../types";
 import type { RuntimeDescriptor, RuntimeModelSelection, SessionSnapshot } from "../../types";
@@ -15,6 +16,10 @@ import type { InputField } from "../lib/operator-input";
 import type { SelectedFile } from "../lib/brief-notes";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
+const developmentPath = ["../../../workflow-config/definitions/development.json", "workflow-config/definitions/development.json"]
+  .map((path) => resolve(process.cwd(), path)).find(existsSync);
+if (!developmentPath) throw new Error("Generated development definition fixture is missing");
+const developmentDefinition = JSON.parse(readFileSync(developmentPath, "utf8")) as OperatorDefinitionSummary["source"];
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
 
 export function makeDevelopmentRootFields(): readonly InputField[] {
