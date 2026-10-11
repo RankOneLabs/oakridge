@@ -8,7 +8,7 @@ import type {
 import developmentDefinition from "../../../../../workflow-config/definitions/development.json";
 import type { OperatorCommandSubmission } from "../lib/operator-drafts";
 import type { OakridgeConfig } from "../types";
-import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
+import type { RuntimeDescriptor, RuntimeModelSelection, SessionSnapshot } from "../../types";
 import type { WorkflowAuthoring } from "../../../../../workflow-config/src/authoring";
 import type { ProjectFormValues } from "../lib/project-draft";
 import type { InputField } from "../lib/operator-input";
@@ -199,6 +199,15 @@ export function makeBriefNotesFile(name: string, size: number, text?: string | (
   return { name, size, text: typeof text === "function" ? text : async () => text ?? "" };
 }
 
+export function makeSessionSnapshot(sid: string, overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
+  return { sid, name: `session ${sid}`, agentProfile: "codex", status: "idle", source: "acp",
+    lastActivityTs: "2026-09-01T09:10:00Z", createdAt: "2026-09-01T09:00:00Z",
+    artifactId: null, projectWorkdir: "/code/oakridge", worktreePath: "/code/oakridge",
+    worktreeBranch: null, worktreeBaseRef: null, requestedModel: null,
+    requestedEffort: null, endReason: null, fencedBy: null, pendingPermissionCount: 0,
+    workflow: null, ...overrides };
+}
+
 export function makeExecutionView(overrides: Partial<OperatorExecutionView> = {}): OperatorExecutionView {
   return { id: "execution-1", scope_id: "scope-1", worker_key: "author", generation: 1,
     status: "pending", result: null, version: 1, ...overrides };
@@ -277,6 +286,7 @@ interface ScopeOutputFixtureOptions {
   readonly collection_key?: string;
   readonly revision_id?: string;
   readonly created_at?: string;
+  readonly scope?: Partial<OperatorScopeView>;
 }
 
 export function makeScopeWithOutput(options: ScopeOutputFixtureOptions): OperatorScopeView {
@@ -284,7 +294,8 @@ export function makeScopeWithOutput(options: ScopeOutputFixtureOptions): Operato
     output_key: options.output_key, collection_key: options.collection_key ?? "",
     created_at: options.created_at ?? "2026-07-01T09:00:00Z" });
   return makeScopeView({ outputs: [makeOutputSlot({ output_key: options.output_key,
-    collection_key: options.collection_key ?? "", current_revision_id: revision.id, current_revision: revision })] });
+    collection_key: options.collection_key ?? "", current_revision_id: revision.id, current_revision: revision })],
+    ...options.scope });
 }
 
 export function makeCommand(overrides: Partial<OperatorCommandDefinition> = {}): OperatorCommandDefinition {

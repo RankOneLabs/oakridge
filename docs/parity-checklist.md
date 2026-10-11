@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 40 of the 48 `main` PWA test files. The remaining 8 are
+This branch has mapped and tested 41 of the 48 `main` PWA test files. The remaining 7 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -576,6 +576,59 @@ The v15 sidebar joined executor attempts with the ACP session inventory and remo
 | Unportable | `expect(visibleSessions()).toEqual([]);` | No equivalent assertion. | An empty ACP inventory no longer controls the generated execution list. |
 | Unportable | `await waitFor(() => expect(visibleSessions()).toEqual([]));` | No equivalent assertion. | A deletion by another ACP client does not mutate the authority's execution record. The current row links to scope, not a deleted transcript. |
 
+## `kbbl/core/pwa/oakridge/__tests__/run-pane-bodies.test.tsx`
+
+The replacement suite mounts checked artifact review and the existing ACP session surface on the generated route. It retains single-pane transcript and resume behavior. The v15 two-pane workspace and its saved-pane purge contract are explicitly retired. All read-model and ACP snapshot fixtures come from the shared factory. Whitespace in multi-line original assertions is normalized for the table.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `await waitFor(() => expect(screen.getByTestId("or-run-pane-session")).toBeTruthy());` | `expect(host.getAttribute("data-session-id")).toBe("sid-c1");` | The generated session route still mounts the existing transcript pane. |
+| Unportable | `expect(detail.getAttribute("data-review-layout")).toBe("report");` | No equivalent assertion. | Descriptor-driven review layout metadata is absent from the checked revision surface. |
+| Unportable | `expect(await screen.findByTestId("or-review-items-section")).toBeTruthy();` | No equivalent assertion. | Review items are attached to collaboration threads, not an independent artifact review-items section. |
+| Translated | `expect(screen.getByTestId("or-threads-section")).toBeTruthy();` | `expect(screen.getByTestId("or-artifact-threads")).toBeTruthy();` | The checked artifact review keeps its discussion section. |
+| Translated | `expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();` | `expect(screen.getByTestId("or-gate-actions").textContent).toContain("Approve the build");` | An observed pinned command for this revision remains in the artifact review. |
+| Translated | `expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve the build");` | `expect(screen.getByTestId("or-gate-actions").textContent).toContain("Approve the build");` | The visible command retains the authored action label. |
+| Replacement | `expect(screen.queryByText("← Back")).toBeNull();` | `expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();` | The review shell has an explicit overview action instead of relying on the old route-level back absence. |
+| Unportable | `expect(screen.getByTestId("or-run-pane-close-primary")).toBeTruthy();` | No equivalent assertion. | The current route has one content pane and no primary-pane move/close controls. |
+| Unportable | `expect(screen.getByTestId("or-run-pane-move-primary")).toBeTruthy();` | No equivalent assertion. | The current route has one content pane and no primary-pane move/close controls. |
+| Translated | `expect(host.getAttribute("data-session-id")).toBe("sid-c1");` | `expect(host.getAttribute("data-session-id")).toBe("sid-c1");` | The embedded pane retains session identity. |
+| Translated | `expect(host.querySelector(".events")).toBeTruthy();` | `expect(host.querySelector(".events")).toBeTruthy();` | The existing transcript renderer remains mounted. |
+| Translated | `expect(EventSourceStub.instances.some((es) => es.url.includes("sid-c1"))).toBe(true);` | `expect(SessionEvents.instances.some((source) => source.url.includes("sid-c1"))).toBe(true);` | The pane subscribes to the selected session feed. |
+| Translated | `expect(surface?.classList.contains("session-surface--embedded")).toBe(true);` | `expect(host.querySelector(".app")?.classList.contains("session-surface--embedded")).toBe(true);` | The input bar is anchored to the embedded session surface. |
+| Translated | `expect(host.querySelector(".bottom-stack")).toBeTruthy();` | `expect(host.querySelector(".bottom-stack")).toBeTruthy();` | The input bar belongs to the session pane. |
+| Translated | `expect(document.body.querySelectorAll(".bottom-stack")).toHaveLength(1);` | `expect(document.body.querySelectorAll(".bottom-stack")).toHaveLength(1);` | A single route produces one input bar. Two-pane coexistence is separately recorded as lost. |
+| Translated | `expect(topBar?.getAttribute("data-chrome")).toBe("pane");` | `expect(topBar?.getAttribute("data-chrome")).toBe("pane");` | The top bar uses pane chrome. |
+| Translated | `expect(topBar?.querySelector(".status")).toBeTruthy();` | `expect(topBar?.querySelector(".status")).toBeTruthy();` | Session status remains in the top bar. |
+| Translated | `expect(topBar?.querySelector(".session-label-name")?.textContent).toBe("session sid-c1");` | `expect(topBar?.querySelector(".session-label-name")?.textContent).toBe("session sid-c1");` | The selected session name remains visible. |
+| Translated | `expect(topBar?.querySelector(".back-button")).toBeNull();` | `expect(topBar?.querySelector(".back-button")).toBeNull();` | The nested session surface omits its own back button. |
+| Translated | `expect(topBar?.querySelector(".theme-toggle")).toBeNull();` | `expect(topBar?.querySelector(".theme-toggle")).toBeNull();` | The nested session surface omits its own theme toggle. |
+| Unportable | `await waitFor(() => expect(screen.getAllByTestId("or-run-pane-session")).toHaveLength(2));` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(first!.getAttribute("data-session-id")).toBe("sid-c1");` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(second!.getAttribute("data-session-id")).toBe("sid-c2");` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(first!.querySelectorAll(".bottom-stack")).toHaveLength(1);` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(second!.querySelectorAll(".bottom-stack")).toHaveLength(1);` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(first!.contains(second!)).toBe(false);` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `await waitFor(() => expect(screen.getAllByTestId("or-run-pane-session")).toHaveLength(2));` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(send).toBeTruthy();` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(String(send![0])).toBe("/sessions/sid-c2/input");` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(JSON.parse(String(send![1]?.body))).toMatchObject({ text: "status?" });` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `await waitFor(() => expect(screen.getByTestId("or-artifact-detail")).toBeTruthy());` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(screen.getByTestId("or-run-pane-session")).toBeTruthy();` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(screen.getByTestId("or-run-pane-close-primary")).toBeTruthy();` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `expect(screen.getByTestId("or-run-pane-close-secondary")).toBeTruthy();` | No equivalent assertion. | The restored workspace has a single route pane. Independent primary and secondary session/artifact panes, including second-pane send routing, are not available. |
+| Unportable | `await waitFor(() => expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).toContain("sid-c1"), );` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(screen.queryByTestId("or-run-pane-session")).toBeNull();` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-c1");` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(rows).toHaveLength(1);` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(rows[0]!.textContent).toContain("c2");` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(screen.queryByTestId("or-run-pane-session")).toBeNull();` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Unportable | `expect(screen.getByTestId("or-run-overview")).toBeTruthy();` | No equivalent assertion. | The current workspace does not persist or reconcile v15 pane entries with ACP removedSids. Generated execution rows link to scopes, so this purge-and-restore claim has no equivalent. |
+| Translated | `await waitFor(() => expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe( "sid-resumed", ), );` | `await waitFor(() => expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe("sid-resumed"));` | Resuming an ended session replaces the selected transcript in the same generated route pane. |
+
+The current artifact test also checks that the checked build-result viewer renders its summary. This is generated-surface evidence; it does not restore the retired descriptor layout or second pane.
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -583,7 +636,6 @@ The following original files are not ported. A similarly named current test, whe
 | Original file | Original tests | Why no assertion-preserving port is present |
 | --- | ---: | --- |
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -591,7 +643,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace-storage.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 8 files and 137 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 7 files and 125 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
