@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 33 of the 48 `main` PWA test files. The remaining 15 are
+This branch has mapped and tested 34 of the 48 `main` PWA test files. The remaining 14 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -410,6 +410,13 @@ The current client suite also tests generated run and definition pagination, con
 | Translated | `expect(selectCriterionReport(null, [finding("Alone.", "partial")]).needs_attention.map(label)).toEqual(["Alone."]);` | `expect(selectCheckedAssessmentView(body, schemas).needs_attention.map((finding) => selectFieldText(finding, schemas, "criterion"))).toEqual(["Alone."]);` | A finding remains visible without loading a brief. |
 | Translated | `expect(selectCriterionCounts({ met: 3, partial: 0, not_met: 1, unassessed: 0 })).toEqual([{ status: "not_met", count: 1 }, { status: "met", count: 3 }]);` | `expect(selectCheckedAssessmentView(body, schemas).status_counts).toEqual([{ status: "not_met", count: 1 }, { status: "met", count: 3 }]);` | Zero counts are omitted and the worst nonzero status leads. |
 
+## `kbbl/core/pwa/oakridge/components/molecules/ExpandableText.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unchanged | `expect(screen.queryByRole("button")).toBeNull();` | Same assertion. | A text block that fits has no disclosure control. The layout stub uses DOM measurements, not a hand-written read-model fixture. |
+| Unchanged | `expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");` | Same assertion. | Long text still expands on click. The restored component is used for checked analysis summaries and build-brief goals. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -421,7 +428,6 @@ The following original files are not ported. A similarly named current test, whe
 | `__tests__/run-session-removal.test.tsx` | 4 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/workflowdefs.test.tsx` | 15 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `components/molecules/ExpandableText.test.tsx` | 2 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/brief-notes.test.ts` | 15 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/cohort-artifact.test.ts` | 13 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
@@ -432,7 +438,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 15 files and 222 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 14 files and 220 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 

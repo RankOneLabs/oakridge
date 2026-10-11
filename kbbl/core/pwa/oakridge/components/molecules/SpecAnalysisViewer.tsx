@@ -6,13 +6,14 @@ import { OperatorTypedValue } from "./OperatorTypedValue";
 import { ArtifactSection } from "./ArtifactSection";
 import { RiskCard } from "./RiskCard";
 import { Button } from "../../../components/atoms/Button";
+import { ExpandableText } from "./ExpandableText";
 export function SpecAnalysisViewer({ body, schemas }: ViewerProps) {
   const [showSources, setShowSources] = useState(false);
   const analysis = selectCheckedSpecAnalysisView(body, schemas);
   const sources = selectFieldItems(body, schemas, "source_spec_refs");
   const risks = selectFieldItems(body, schemas, "risks");
   return <article className="flex flex-col gap-4" data-testid="or-spec-analysis-viewer">
-    <p>{selectFieldText(body, schemas, "summary")}</p>
+    <ExpandableText text={selectFieldText(body, schemas, "summary") ?? ""} />
     {analysis.blockers.length > 0 ? <ArtifactSection title="Blocking issues" testId="or-spec-blockers"><ol>
       {analysis.blockers.map((blocker, index) => <li key={index}><OperatorTypedValue value={blocker.value} schemas={schemas} /></li>)}
     </ol></ArtifactSection> : <p data-testid="or-spec-no-blockers">Nothing is blocking.</p>}
