@@ -13,6 +13,7 @@ import { operatorEvent } from "../lib/__fixtures__/operator-event";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { savePendingCommand } from "../lib/operator-drafts";
 import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
+import { makeInboxCommand, makeReviewInbox } from "../__fixtures__/read-models";
 import type { LiveStreamFrame } from "../../../live-stream";
 
 class EventSourceStub {
@@ -62,6 +63,21 @@ test("the app badge and visible inbox share one fetch and one invalidation key",
   expect(fetch).toHaveBeenCalledTimes(1);
   await cache.invalidateQueries({ queryKey: ["operator", "inbox"] });
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+});
+
+test("settled inbox work keeps its row while the next action stays in place", async () => {
+  const first = makeInboxCommand({ key: "approve-first", label: "Approve first" });
+  const second = makeInboxCommand({ key: "approve-second", label: "Approve second" });
+  let items = [first, second];
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(makeReviewInbox({ items }))));
+  render(<QueryClientProvider client={client()}><ReviewInboxView onSelectScope={() => undefined} /></QueryClientProvider>);
+  expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
+  items = [second];
+  screen.getByRole("button", { name: "Refresh" }).click();
+  await waitFor(() => expect(screen.getAllByTestId("or-review-inbox-item")[0]?.getAttribute("data-state")).toBe("settled"));
+  const rows = screen.getAllByTestId("or-review-inbox-item");
+  expect(rows.map((row) => row.textContent?.includes("Approve second"))).toEqual([false, true]);
+  expect((rows[0]?.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
 });
 
 test("StrictMode recovery delivers one pending command with its retained request id", async () => {
