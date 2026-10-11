@@ -261,9 +261,17 @@ pub fn evaluate_expression(
             let length = match &value.data {
                 CheckedData::String { value } => value.chars().count(),
                 CheckedData::List { items } => items.len(),
-                _ => return Err(failure(DomainErrorKind::InvalidSnapshot, value.schema.to_string(), "len source is not text or list")),
+                _ => {
+                    return Err(failure(
+                        DomainErrorKind::InvalidSnapshot,
+                        value.schema.to_string(),
+                        "len source is not text or list",
+                    ))
+                }
             };
-            CheckedData::Integer { value: length as i64 }
+            CheckedData::Integer {
+                value: length as i64,
+            }
         }
         CheckedExpressionNode::GreaterThan { left, right }
         | CheckedExpressionNode::GreaterOrEqual { left, right }
@@ -271,8 +279,14 @@ pub fn evaluate_expression(
         | CheckedExpressionNode::LessOrEqual { left, right } => {
             let left_value = evaluate_expression(left, context)?;
             let right_value = evaluate_expression(right, context)?;
-            let (CheckedData::Integer { value: left }, CheckedData::Integer { value: right }) = (&left_value.data, &right_value.data) else {
-                return Err(failure(DomainErrorKind::InvalidSnapshot, expression.schema.to_string(), "comparison operands are not integers"));
+            let (CheckedData::Integer { value: left }, CheckedData::Integer { value: right }) =
+                (&left_value.data, &right_value.data)
+            else {
+                return Err(failure(
+                    DomainErrorKind::InvalidSnapshot,
+                    expression.schema.to_string(),
+                    "comparison operands are not integers",
+                ));
             };
             let value = match &expression.node {
                 CheckedExpressionNode::GreaterThan { .. } => left > right,
@@ -546,34 +560,93 @@ mod tests {
 
     #[test]
     fn len_and_all_integer_comparisons_evaluate() {
-        let bundle: DefinitionBundle = serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
+        let bundle: DefinitionBundle =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
         let program = compile(&bundle, &bundle.operations).unwrap();
         let unit = check_value(&bundle, &SchemaId::from("unit"), &serde_json::json!({})).unwrap();
         let snapshot = Snapshot {
-            owner: InstanceId::from("scope"), scope: ScopeKey::from("document"), version: 1,
-            input: unit.clone(), state: check_value(&bundle, &SchemaId::from("position"), &serde_json::json!({"kind":"ready","value":{}})).unwrap(),
-            trigger: Trigger { id: TriggerId::from("start"), key: SymbolKey::from("begin"), payload: unit },
-            observations: vec![], timestamp_ms: 0, random_seed: 0,
+            owner: InstanceId::from("scope"),
+            scope: ScopeKey::from("document"),
+            version: 1,
+            input: unit.clone(),
+            state: check_value(
+                &bundle,
+                &SchemaId::from("position"),
+                &serde_json::json!({"kind":"ready","value":{}}),
+            )
+            .unwrap(),
+            trigger: Trigger {
+                id: TriggerId::from("start"),
+                key: SymbolKey::from("begin"),
+                payload: unit,
+            },
+            observations: vec![],
+            timestamp_ms: 0,
+            random_seed: 0,
         };
         let literal = |value: CheckedData, schema: &str| CheckedExpression {
             schema: SchemaId::from(schema),
-            node: CheckedExpressionNode::Literal { value: CheckedValue { schema: SchemaId::from(schema), data: value } },
+            node: CheckedExpressionNode::Literal {
+                value: CheckedValue {
+                    schema: SchemaId::from(schema),
+                    data: value,
+                },
+            },
         };
         let number = |value| literal(CheckedData::Integer { value }, "count");
-        let length = CheckedExpression { schema: SchemaId::from("count"), node: CheckedExpressionNode::Len {
-            value: Box::new(literal(CheckedData::String { value: "éx".into() }, "text")),
-        }};
+        let length = CheckedExpression {
+            schema: SchemaId::from("count"),
+            node: CheckedExpressionNode::Len {
+                value: Box::new(literal(
+                    CheckedData::String {
+                        value: "éx".into()
+                    },
+                    "text",
+                )),
+            },
+        };
         let mut budget = 100;
-        let mut context = EvaluationContext { program: &program, snapshot: &snapshot, item: None, budget: &mut budget };
-        assert_eq!(evaluate_expression(&length, &mut context).unwrap().data, CheckedData::Integer { value: 2 });
+        let mut context = EvaluationContext {
+            program: &program,
+            snapshot: &snapshot,
+            item: None,
+            budget: &mut budget,
+        };
+        assert_eq!(
+            evaluate_expression(&length, &mut context).unwrap().data,
+            CheckedData::Integer { value: 2 }
+        );
         let cases = [
-            CheckedExpressionNode::GreaterThan { left: Box::new(number(2)), right: Box::new(number(1)) },
-            CheckedExpressionNode::GreaterOrEqual { left: Box::new(number(2)), right: Box::new(number(2)) },
-            CheckedExpressionNode::LessThan { left: Box::new(number(1)), right: Box::new(number(2)) },
-            CheckedExpressionNode::LessOrEqual { left: Box::new(number(2)), right: Box::new(number(2)) },
+            CheckedExpressionNode::GreaterThan {
+                left: Box::new(number(2)),
+                right: Box::new(number(1)),
+            },
+            CheckedExpressionNode::GreaterOrEqual {
+                left: Box::new(number(2)),
+                right: Box::new(number(2)),
+            },
+            CheckedExpressionNode::LessThan {
+                left: Box::new(number(1)),
+                right: Box::new(number(2)),
+            },
+            CheckedExpressionNode::LessOrEqual {
+                left: Box::new(number(2)),
+                right: Box::new(number(2)),
+            },
         ];
         for node in cases {
-            assert_eq!(evaluate_expression(&CheckedExpression { schema: SchemaId::from("flag"), node }, &mut context).unwrap().data, CheckedData::Boolean { value: true });
+            assert_eq!(
+                evaluate_expression(
+                    &CheckedExpression {
+                        schema: SchemaId::from("flag"),
+                        node
+                    },
+                    &mut context
+                )
+                .unwrap()
+                .data,
+                CheckedData::Boolean { value: true }
+            );
         }
     }
 

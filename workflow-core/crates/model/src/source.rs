@@ -441,11 +441,25 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
-    Len { value: Box<Expression> },
-    GreaterThan { left: Box<Expression>, right: Box<Expression> },
-    GreaterOrEqual { left: Box<Expression>, right: Box<Expression> },
-    LessThan { left: Box<Expression>, right: Box<Expression> },
-    LessOrEqual { left: Box<Expression>, right: Box<Expression> },
+    Len {
+        value: Box<Expression>,
+    },
+    GreaterThan {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    GreaterOrEqual {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    LessThan {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    LessOrEqual {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
     IsVariant {
         value: Box<Expression>,
         variant: String,
@@ -688,7 +702,10 @@ pub struct WorkerRuntime {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionMode { Resume, Fresh }
+pub enum SessionMode {
+    Resume,
+    Fresh,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -702,7 +719,9 @@ pub struct Review {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ReviewBy { Operator }
+pub enum ReviewBy {
+    Operator,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -717,7 +736,10 @@ pub struct ReviewDecision {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum DecisionEffect { Approve, RequestChanges }
+pub enum DecisionEffect {
+    Approve,
+    RequestChanges,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

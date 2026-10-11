@@ -9,21 +9,43 @@ fn prompts() -> BTreeMap<String, String> {
         ("review-loop/critique.md", "{{subject}}"),
         ("review-loop/editor.md", "{{draft}} {{critique}}"),
         ("fan-out/item.md", "{{text}}"),
-    ].into_iter().map(|(key, value)| (key.into(), value.into())).collect()
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), value.into()))
+    .collect()
 }
 
 fn operations() -> Vec<CodeOperation> {
     vec![CodeOperation {
-        key: SymbolKey::from("repository.prepare"), version: 1,
-        input_schema: TypeExpression::Record([
-            ("repository_path".into(), TypeExpression::Name("repo_path".into())),
-            ("expected_head".into(), TypeExpression::Name("optional(text)".into())),
-        ].into()),
-        output_schema: TypeExpression::Record([
-            ("repository_path".into(), TypeExpression::Name("repo_path".into())),
-            ("push_remote_owner".into(), TypeExpression::Name("ident".into())),
-            ("head".into(), TypeExpression::Name("ident".into())),
-        ].into()),
+        key: SymbolKey::from("repository.prepare"),
+        version: 1,
+        input_schema: TypeExpression::Record(
+            [
+                (
+                    "repository_path".into(),
+                    TypeExpression::Name("repo_path".into()),
+                ),
+                (
+                    "expected_head".into(),
+                    TypeExpression::Name("optional(text)".into()),
+                ),
+            ]
+            .into(),
+        ),
+        output_schema: TypeExpression::Record(
+            [
+                (
+                    "repository_path".into(),
+                    TypeExpression::Name("repo_path".into()),
+                ),
+                (
+                    "push_remote_owner".into(),
+                    TypeExpression::Name("ident".into()),
+                ),
+                ("head".into(), TypeExpression::Name("ident".into())),
+            ]
+            .into(),
+        ),
         error_codes: vec![],
     }]
 }

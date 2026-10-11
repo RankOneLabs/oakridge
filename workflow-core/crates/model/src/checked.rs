@@ -101,11 +101,25 @@ pub enum CheckedExpressionNode {
         left: Box<CheckedExpression>,
         right: Box<CheckedExpression>,
     },
-    Len { value: Box<CheckedExpression> },
-    GreaterThan { left: Box<CheckedExpression>, right: Box<CheckedExpression> },
-    GreaterOrEqual { left: Box<CheckedExpression>, right: Box<CheckedExpression> },
-    LessThan { left: Box<CheckedExpression>, right: Box<CheckedExpression> },
-    LessOrEqual { left: Box<CheckedExpression>, right: Box<CheckedExpression> },
+    Len {
+        value: Box<CheckedExpression>,
+    },
+    GreaterThan {
+        left: Box<CheckedExpression>,
+        right: Box<CheckedExpression>,
+    },
+    GreaterOrEqual {
+        left: Box<CheckedExpression>,
+        right: Box<CheckedExpression>,
+    },
+    LessThan {
+        left: Box<CheckedExpression>,
+        right: Box<CheckedExpression>,
+    },
+    LessOrEqual {
+        left: Box<CheckedExpression>,
+        right: Box<CheckedExpression>,
+    },
     IsVariant {
         value: Box<CheckedExpression>,
         variant: String,

@@ -35,14 +35,24 @@ pub fn boolean_schema(bundle: &DefinitionBundle) -> CoreResult<SchemaId> {
     Ok(first)
 }
 fn integer_schema(bundle: &DefinitionBundle) -> CoreResult<SchemaId> {
-    let mut integers = bundle.schemas.iter()
+    let mut integers = bundle
+        .schemas
+        .iter()
         .filter(|s| matches!(s.shape, SchemaShape::Integer { .. }))
         .map(|s| s.key.clone());
-    let first = integers.next().ok_or_else(|| error(
-        DomainErrorKind::MissingSymbol, "integer", "integer expression requires a named integer schema"
-    ))?;
+    let first = integers.next().ok_or_else(|| {
+        error(
+            DomainErrorKind::MissingSymbol,
+            "integer",
+            "integer expression requires a named integer schema",
+        )
+    })?;
     if integers.next().is_some() {
-        return Err(error(DomainErrorKind::DuplicateSymbol, "integer", "integer expressions require one declared integer schema"));
+        return Err(error(
+            DomainErrorKind::DuplicateSymbol,
+            "integer",
+            "integer expressions require one declared integer schema",
+        ));
     }
     Ok(first)
 }
@@ -234,10 +244,22 @@ pub fn compile_expression(
         }
         Expression::Len { value } => {
             let value = recurse(value)?;
-            if !matches!(schema(bundle, &value.schema)?, SchemaShape::String { .. } | SchemaShape::List { .. }) {
-                return Err(error(DomainErrorKind::IncompatiblePort, owner.key.to_string(), "len requires text or list"));
+            if !matches!(
+                schema(bundle, &value.schema)?,
+                SchemaShape::String { .. } | SchemaShape::List { .. }
+            ) {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    owner.key.to_string(),
+                    "len requires text or list",
+                ));
             }
-            (integer_schema(bundle)?, CheckedExpressionNode::Len { value: Box::new(value) })
+            (
+                integer_schema(bundle)?,
+                CheckedExpressionNode::Len {
+                    value: Box::new(value),
+                },
+            )
         }
         Expression::GreaterThan { left, right }
         | Expression::GreaterOrEqual { left, right }
@@ -246,14 +268,31 @@ pub fn compile_expression(
             let left = recurse(left)?;
             let right = recurse(right)?;
             if !matches!(schema(bundle, &left.schema)?, SchemaShape::Integer { .. })
-                || !matches!(schema(bundle, &right.schema)?, SchemaShape::Integer { .. }) {
-                return Err(error(DomainErrorKind::IncompatiblePort, owner.key.to_string(), "comparison requires integers"));
+                || !matches!(schema(bundle, &right.schema)?, SchemaShape::Integer { .. })
+            {
+                return Err(error(
+                    DomainErrorKind::IncompatiblePort,
+                    owner.key.to_string(),
+                    "comparison requires integers",
+                ));
             }
             let node = match expression {
-                Expression::GreaterThan { .. } => CheckedExpressionNode::GreaterThan { left: Box::new(left), right: Box::new(right) },
-                Expression::GreaterOrEqual { .. } => CheckedExpressionNode::GreaterOrEqual { left: Box::new(left), right: Box::new(right) },
-                Expression::LessThan { .. } => CheckedExpressionNode::LessThan { left: Box::new(left), right: Box::new(right) },
-                _ => CheckedExpressionNode::LessOrEqual { left: Box::new(left), right: Box::new(right) },
+                Expression::GreaterThan { .. } => CheckedExpressionNode::GreaterThan {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                Expression::GreaterOrEqual { .. } => CheckedExpressionNode::GreaterOrEqual {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                Expression::LessThan { .. } => CheckedExpressionNode::LessThan {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                _ => CheckedExpressionNode::LessOrEqual {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
             };
             (boolean_schema(bundle)?, node)
         }
@@ -741,20 +780,42 @@ mod tests {
             shape: SchemaShape::Integer { min: 0, max: 1000 },
         });
         let literal = |value| Expression::Literal {
-            schema: SchemaId::from("count"), value: serde_json::json!(value),
+            schema: SchemaId::from("count"),
+            value: serde_json::json!(value),
         };
-        let length = Expression::Len { value: Box::new(Expression::Literal {
-            schema: SchemaId::from("text"), value: serde_json::json!("abc"),
-        }) };
-        assert_eq!(compile(&bundle, &length).unwrap().schema, SchemaId::from("count"));
+        let length = Expression::Len {
+            value: Box::new(Expression::Literal {
+                schema: SchemaId::from("text"),
+                value: serde_json::json!("abc"),
+            }),
+        };
+        assert_eq!(
+            compile(&bundle, &length).unwrap().schema,
+            SchemaId::from("count")
+        );
         let pairs = [
-            Expression::GreaterThan { left: Box::new(literal(2)), right: Box::new(literal(1)) },
-            Expression::GreaterOrEqual { left: Box::new(literal(2)), right: Box::new(literal(1)) },
-            Expression::LessThan { left: Box::new(literal(1)), right: Box::new(literal(2)) },
-            Expression::LessOrEqual { left: Box::new(literal(1)), right: Box::new(literal(2)) },
+            Expression::GreaterThan {
+                left: Box::new(literal(2)),
+                right: Box::new(literal(1)),
+            },
+            Expression::GreaterOrEqual {
+                left: Box::new(literal(2)),
+                right: Box::new(literal(1)),
+            },
+            Expression::LessThan {
+                left: Box::new(literal(1)),
+                right: Box::new(literal(2)),
+            },
+            Expression::LessOrEqual {
+                left: Box::new(literal(1)),
+                right: Box::new(literal(2)),
+            },
         ];
         for expression in pairs {
-            assert_eq!(compile(&bundle, &expression).unwrap().schema, SchemaId::from("flag"));
+            assert_eq!(
+                compile(&bundle, &expression).unwrap().schema,
+                SchemaId::from("flag")
+            );
         }
     }
 }

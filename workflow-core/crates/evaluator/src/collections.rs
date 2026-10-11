@@ -119,10 +119,21 @@ pub(crate) fn materialize_with_budget(
     let mut children = Vec::new();
     for item in &items {
         let key_value = if let Some(expression) = &collection.key {
-            let mut member = EvaluationContext { program, snapshot, item: Some(item), budget: &mut *context.budget };
+            let mut member = EvaluationContext {
+                program,
+                snapshot,
+                item: Some(item),
+                budget: &mut *context.budget,
+            };
             Some(evaluate_expression(expression, &mut member)?)
-        } else { None };
-        let key_source = if let Some(value) = &key_value { value } else { field(item, collection.key_field)? };
+        } else {
+            None
+        };
+        let key_source = if let Some(value) = &key_value {
+            value
+        } else {
+            field(item, collection.key_field)?
+        };
         let key = text(key_source, context.budget)?;
         if key.is_empty()
             || key.len() > 256
@@ -136,10 +147,21 @@ pub(crate) fn materialize_with_budget(
             ));
         }
         let after_value = if let Some(expression) = &collection.after {
-            let mut member = EvaluationContext { program, snapshot, item: Some(item), budget: &mut *context.budget };
+            let mut member = EvaluationContext {
+                program,
+                snapshot,
+                item: Some(item),
+                budget: &mut *context.budget,
+            };
             Some(evaluate_expression(expression, &mut member)?)
-        } else { None };
-        let after_source = if let Some(value) = &after_value { value } else { field(item, collection.dependencies_field)? };
+        } else {
+            None
+        };
+        let after_source = if let Some(value) = &after_value {
+            value
+        } else {
+            field(item, collection.dependencies_field)?
+        };
         let CheckedData::List {
             items: dependencies,
         } = &after_source.data
@@ -332,32 +354,73 @@ mod tests {
 
     #[test]
     fn computed_key_and_after_expressions_materialize_members() {
-        let mut bundle: DefinitionBundle = serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
+        let mut bundle: DefinitionBundle =
+            serde_json::from_str(include_str!("../../../fixtures/bundles/dynamic.json")).unwrap();
         bundle.schemas.push(Schema {
             key: SchemaId::from("key_wrapper"),
-            shape: SchemaShape::Record { fields: vec![SchemaField { key: "value".into(), schema: SchemaId::from("ident"), required: true }], dictionary: None },
+            shape: SchemaShape::Record {
+                fields: vec![SchemaField {
+                    key: "value".into(),
+                    schema: SchemaId::from("ident"),
+                    required: true,
+                }],
+                dictionary: None,
+            },
         });
         let collection = bundle.scopes[0].children[0].collection.as_mut().unwrap();
-        collection.key = Some(Expression::Field { value: Box::new(Expression::Record { schema: SchemaId::from("key_wrapper"), fields: vec![FieldExpression {
-            key: "value".into(), value: Expression::Reference { root: ReferenceRoot::Item, path: vec!["key".into()] },
-        }] }), key: "value".into() });
-        collection.after = Some(Expression::Reference { root: ReferenceRoot::Item, path: vec!["dependencies".into()] });
+        collection.key = Some(Expression::Field {
+            value: Box::new(Expression::Record {
+                schema: SchemaId::from("key_wrapper"),
+                fields: vec![FieldExpression {
+                    key: "value".into(),
+                    value: Expression::Reference {
+                        root: ReferenceRoot::Item,
+                        path: vec!["key".into()],
+                    },
+                }],
+            }),
+            key: "value".into(),
+        });
+        collection.after = Some(Expression::Reference {
+            root: ReferenceRoot::Item,
+            path: vec!["dependencies".into()],
+        });
         collection.key_field.clear();
         collection.dependencies_field.clear();
         let program = compile(&bundle, &bundle.operations).unwrap();
         let owner = &bundle.scopes[0];
         let payload = check_value(&bundle, &SchemaId::from("unit"), &json!({})).unwrap();
         let snapshot = Snapshot {
-            owner: InstanceId::from("batch"), scope: owner.key.clone(), version: 1,
-            input: check_value(&bundle, &owner.input_schema, &json!([
-                {"key":"first","input":{},"dependencies":[]},
-                {"key":"second","input":{},"dependencies":["first"]}
-            ])).unwrap(),
-            state: check_value(&bundle, &owner.state_schema, &json!({"kind":"ready","value":{}})).unwrap(),
-            trigger: Trigger { id: TriggerId::from("begin"), key: SymbolKey::from("begin"), payload },
-            observations: vec![], timestamp_ms: 0, random_seed: 0,
+            owner: InstanceId::from("batch"),
+            scope: owner.key.clone(),
+            version: 1,
+            input: check_value(
+                &bundle,
+                &owner.input_schema,
+                &json!([
+                    {"key":"first","input":{},"dependencies":[]},
+                    {"key":"second","input":{},"dependencies":["first"]}
+                ]),
+            )
+            .unwrap(),
+            state: check_value(
+                &bundle,
+                &owner.state_schema,
+                &json!({"kind":"ready","value":{}}),
+            )
+            .unwrap(),
+            trigger: Trigger {
+                id: TriggerId::from("begin"),
+                key: SymbolKey::from("begin"),
+                payload,
+            },
+            observations: vec![],
+            timestamp_ms: 0,
+            random_seed: 0,
         };
-        let children = materialize(&program, &snapshot, &SymbolKey::from("items")).unwrap().children;
+        let children = materialize(&program, &snapshot, &SymbolKey::from("items"))
+            .unwrap()
+            .children;
         assert_eq!(children[1].depends_on, vec!["first"]);
     }
 }

@@ -123,9 +123,16 @@ pub enum BlockedReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Writer {
-    Session { session: SessionId, attempt: ActionKey },
-    Executor { attempt: ActionKey },
-    Operator { subject: OperatorId },
+    Session {
+        session: SessionId,
+        attempt: ActionKey,
+    },
+    Executor {
+        attempt: ActionKey,
+    },
+    Operator {
+        subject: OperatorId,
+    },
     Engine,
 }
 
@@ -139,9 +146,17 @@ pub enum WorkerResult {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
-    Launched { input: Value },
-    WorkerStarted { action: ActionKey, kbbl_session_id: Option<String> },
-    WorkerEnded { action: ActionKey, result: WorkerResult },
+    Launched {
+        input: Value,
+    },
+    WorkerStarted {
+        action: ActionKey,
+        kbbl_session_id: Option<String>,
+    },
+    WorkerEnded {
+        action: ActionKey,
+        result: WorkerResult,
+    },
     RevisionPublished {
         unit: UnitId,
         artifact: SymbolKey,
@@ -157,7 +172,10 @@ pub enum Event {
         target: RevisionId,
         payload: Value,
     },
-    RetryRequested { unit: UnitId, worker: WorkerKey },
+    RetryRequested {
+        unit: UnitId,
+        worker: WorkerKey,
+    },
     CancelRequested,
 }
 
@@ -171,7 +189,11 @@ pub struct Incoming {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Mode { Initial, Revise, Review }
+pub enum Mode {
+    Initial,
+    Revise,
+    Review,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -186,14 +208,30 @@ pub enum Cause {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
-    RunWorker { unit: UnitId, worker: WorkerKey, mode: Mode, cause: Cause },
-    Start { unit: UnitId, input: Value },
-    Complete { unit: UnitId, outcome: Value },
+    RunWorker {
+        unit: UnitId,
+        worker: WorkerKey,
+        mode: Mode,
+        cause: Cause,
+    },
+    Start {
+        unit: UnitId,
+        input: Value,
+    },
+    Complete {
+        unit: UnitId,
+        outcome: Value,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AttemptStatus { Pending, Running, Succeeded, Failed { code: String, detail: String } }
+pub enum AttemptStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed { code: String, detail: String },
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
