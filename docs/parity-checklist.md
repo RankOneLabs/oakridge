@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch ports 13 of the 48 `main` PWA test files. The remaining 35 are
+This branch has mapped and tested 14 of the 48 `main` PWA test files. The remaining 34 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -147,6 +147,13 @@ not a hand-written Oakridge read model.
 | **Relaxed** | `expect(EventSourceStub.instances).toHaveLength(1);` | `expect(EventSourceStub.instances.filter((source) => source.readyState !== EventSourceStub.CLOSED)).toHaveLength(1);` | The shared live connection may reconnect as subscriptions mount; this only proves that one physical source stays active, rather than that only one was created. The event fixture now comes from `makeRunEvent` in the shared read-model factory. |
 | Replacement | `expect(received.map((event) => [event.sequence, event.replayed])).toEqual([["7", true], ["8", false]]);` | `expect(received.map((event) => event.transition_id)).toEqual(["transition-8"]); expect(invalidations).toHaveBeenCalledWith({ queryKey: queryKeys.run("run-one") });` | The generated authority event has a transition ID and replay metadata is envelope-only. Replayed frames refresh the query but are withheld from live notification subscribers; live frames are delivered. The old callback contract that delivered replayed frames is explicitly retired. |
 
+## `kbbl/core/pwa/oakridge/lib/run-notifications.test.ts`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Replacement | `expect(selectRunFrameNotification(frame(false))).toEqual({ kind: "info", message: "Optional attention: Output published · build · c5", href: "#oakridge/run/run%2Fone" });` | `expect(selectEventNotification(operatorEvent({ run_id: "run/one" }))?.href).toBe("#oakridge/run/run%2Fone/scope/scope-one");` and `expect(selectEventNotification(operatorEvent())).toEqual({ kind: "info", message: "spec_analysis: Awaiting work or review", href: "#oakridge/run/run-one/scope/scope-one" });` | Current events identify a scope transition, not a v15 slot-release event. The notification still links the relevant surface and escapes run IDs, but its route and message come from the generated scope attention metadata. The old exact message and run-only link are retired. |
+| Translated, moved to hook test | `expect(selectRunFrameNotification(frame(true))).toBeNull();` | `expect(received.map((event) => event.transition_id)).toEqual(["transition-8"]);` after replay and live frames are emitted | The event-stream hook now withholds replayed frames from notification subscribers before the selector runs. The suppression claim is preserved at the stream boundary rather than in the pure notification selector. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -177,7 +184,6 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/request-identity.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-accent.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-activity.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
-| `lib/run-notifications.test.ts` | 2 | The existing same-name suite uses current scope notifications; the two old run-event assertions have not been mapped to that projection. |
 | `lib/run-overview.test.ts` | 32 | The old stage/gate/attempt overview API was replaced by scope projections; its gate and sidebar claims need separate equivalents. |
 | `lib/run-session-availability.test.ts` | 5 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-sessions.test.ts` | 14 | The old work-order attempt and health model differs from the generated session projection; no assertion-preserving mapping has been established. |
@@ -189,7 +195,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/workflow-definition-form.test.ts` | 2 | The old form uses handwritten workflow definitions; the current form consumes pinned generated bundle schemas. |
 | `repository-inputs.test.ts` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 35 files and 347 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
+This register covers 34 files and 345 named test declarations; parameterized cases may expand further. The newly ported plan and PR-summary suites also record seven source declarations whose raw-body or retired-label assertions cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
