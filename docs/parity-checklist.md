@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 25 of the 48 `main` PWA test files. The remaining 23 are
+This branch has mapped and tested 26 of the 48 `main` PWA test files. The remaining 22 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -282,13 +282,30 @@ The current client suite also tests generated run and definition pagination, con
 | **Relaxed** | `expect(changed.idempotency_key).toBe("launch-2");` after changing launch notes | `expect(readPendingLaunch()?.request_id).toBe("launch-2");` after `discardPendingLaunch()` and saving a new request | The UI now retains an uncertain launch until the operator discards it. Editing input alone does not mint another key; the explicit discard step is a changed safety policy. |
 | Translated | `expect(foundation.idempotency_key).not.toBe(web.idempotency_key);` | `expect(operatorDraftIdentity(first)).not.toBe(operatorDraftIdentity(second));` | Distinct generated scopes have distinct storage identities even for the same command key; v15 stage/unit composite keys are retired. |
 
+## `kbbl/core/pwa/oakridge/__tests__/GateDecisionActions.test.tsx`
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Translated | `await waitFor(() => expect(requestBody?.artifact_revision_id).toBe("revision-edited"));` | `expect(request.targets).toEqual([{ identity: "revision-edited", version: 2 }]);` | The generated command request carries the selected edited revision in its observed target list. `makeScopeView` and `makeCommand` build the read-model fixture. |
+| Translated | `expect(onComplete).not.toHaveBeenCalled();` | `expect(onRefresh).not.toHaveBeenCalled();` | When a command response arrives after switching revisions, the unmounted command form no longer refreshes the new review. `OperatorCommandForm` now guards completion callbacks. |
+| Translated | `expect(screen.queryByTestId("or-decision-success")).toBeNull();` | `expect(screen.queryByText("Command accepted.")).toBeNull();` | The stale response does not display success in the new revision's command form. |
+| Translated | `expect(screen.getByTestId("or-decision-approve")).toBeTruthy();` | `expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();` | The new revision keeps its own available command after the stale response resolves. |
+| Unportable | `expect(requests.map((request) => request.feedback)).toEqual(["First explanation", "Better explanation"]);` | No equivalent feedback-panel assertion. | The current command form renders fields from a pinned payload schema; it has no special `request_revision` feedback panel. The two old feedback strings are not a generic command contract. |
+| Unportable | `expect(requests[0].idempotency_key).not.toBe(requests[1].idempotency_key);` | No equivalent changed-feedback assertion. | After uncertain delivery, the current form retries a retained request ID and payload until resolved. It does not mint a new key on edits to an in-flight feedback panel. |
+| Replacement | `expect(stranded.textContent).toBe("Run cancelled — gate stranded");` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | A terminal scope with no available command hides review actions; the stable inbox can retain a settled row. The old stranded-gate text is retired. |
+| **Relaxed** | `expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | The unavailable command cannot be clicked, but the old visible disabled button is absent. |
+| **Relaxed** | `expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | The unavailable revision command cannot be clicked; its separate disabled button is not shown. |
+| Replacement | `expect(screen.queryByTestId("or-decision-feedback")).toBeNull();` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | A terminal scope offers no payload form, so the old feedback textarea cannot be opened; that dedicated panel no longer exists. |
+| Translated | `expect(fetchMock).not.toHaveBeenCalled();` | `expect(fetch).not.toHaveBeenCalled();` | Removing unavailable commands causes no command submission. |
+| Unportable | `expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();` | No equivalent assertion. | Feedback is now a pinned command payload; no generic **Send feedback** panel is part of `GateDecisionActions`. |
+| Replacement | `expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();` | `expect(screen.queryByTestId("or-gate-actions")).toBeNull();` | When the command disappears from the scope projection, the command form unmounts. This replaces closing the old feedback panel. |
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
 
 | Original file | Original tests | Why no assertion-preserving port is present |
 | --- | ---: | --- |
-| `__tests__/GateDecisionActions.test.tsx` | 5 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/ReviewInboxView.test.tsx` | 11 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-pane-bodies.test.tsx` | 12 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
@@ -312,7 +329,7 @@ The following original files are not ported. A similarly named current test, whe
 | `lib/spec-analysis.test.ts` | 11 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/stage-unit-params.test.ts` | 4 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 
-This register covers 23 files and 281 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 22 files and 276 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
