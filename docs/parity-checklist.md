@@ -8,7 +8,7 @@ means the old behavior has no equivalent contract or surface in this branch;
 the original assertion is retained here for review rather than silently
 deleted. A passing test does not resolve an unportable entry.
 
-This branch has mapped and tested 43 of the 48 `main` PWA test files. The remaining 5 are
+This branch has mapped and tested 44 of the 48 `main` PWA test files. The remaining 4 are
 listed below as an explicit coverage gap; this is not a completed parity gate.
 
 ## `kbbl/core/pwa/oakridge/__tests__/artifact-review.test.tsx`
@@ -670,6 +670,27 @@ The v15 selector joined run work-order attempts, a live ACP inventory and an arc
 | Translated | `expect(purgedIds()).toEqual(new Set());` while the archive request remains pending | `expect(useStore.getState().removedSids.size).toBe(0);` | Repeated empty live snapshots do not invent a removal. |
 | Translated | `expect(purgedIds()).toEqual(new Set(["deleted"]));` after an observed ACP deletion | `expect(useStore.getState().removedSids.has("deleted" as Sid)).toBe(true);` | An ACP session seen and then absent from the next live snapshot is remembered as removed. |
 
+## `kbbl/core/pwa/oakridge/components/organisms/BindingEditor.test.tsx`
+
+The v15 definition editor exposed individual `SlotBinding` variants, including `input_lookup` in fan-out configuration. The pinned development authoring form accepts high-level `WorkflowAuthoring`; it compiles the generated bundle before pinning and has no field-level binding editor. The replacement test checks that compile-before-pin workflow with the shared authoring fixture. This is a **replacement-surface decision**, not preservation of the old binding-edit behavior.
+
+| Classification | Original assertion (`main`) | New assertion | Reason |
+| --- | --- | --- | --- |
+| Unportable | `expect((screen.getByLabelText("binding binding source") as HTMLSelectElement).value).toBe("input_lookup");` | No equivalent assertion. | The pinned authoring form has no `SlotBinding` source selector. |
+| Unportable | `expect((screen.getByLabelText("Input name") as HTMLInputElement).value).toBe("repository_refs");` | No equivalent assertion. | A per-binding input name is not authorable in the current form. |
+| Unportable | `expect((screen.getByLabelText("Value path") as HTMLInputElement).value).toBe("/artifact/base_branch");` | No equivalent assertion. | A per-binding JSON pointer is not exposed in high-level authoring. |
+| Unportable | `expect(onChange).toHaveBeenCalledWith({ ...expectedPrBase, value_path: "/artifact/integration_branch" });` | No equivalent assertion. | The current authoring model cannot edit one lookup field while preserving the other lookup properties. This regression guard is retired. |
+| Unportable | `expect(inFanOut).toContain("input_lookup");` | No equivalent assertion. | Fan-out binding variants are compiler-authored, not selectable in the PWA. |
+| Unportable | `expect(inFanOut).toContain("context_lookup");` | No equivalent assertion. | The high-level editor has no fan-out binding-source list. |
+| Unportable | `expect(scalar).toEqual(["literal", "input", "context"]);` | No equivalent assertion. | Scalar binding-source options are not shown in the current form. |
+| Unportable | `expect((screen.getByLabelText("base_ref mode") as HTMLSelectElement).value).toBe("binding");` | No equivalent assertion. | The generated `base_ref` is not independently editable. |
+| Unportable | `expect((screen.getByLabelText("Input name") as HTMLInputElement).value).toBe("repository_refs");` | No equivalent assertion. | The nested binding fields are absent from the pinned authoring UI. |
+| Unportable | `expect((screen.getByLabelText("model mode") as HTMLSelectElement).value).toBe("context");` | No equivalent assertion. | Model binding mode is not a field in `WorkflowAuthoring`; runtime selection belongs to launch/session settings. |
+| Unportable | `expect(screen.queryByLabelText("Input name")).toBeNull();` | No equivalent assertion. | The current form has no per-binding input-name field in any mode. |
+| Unportable | `expect((screen.getByLabelText("model mode") as HTMLSelectElement).value).toBe("literal");` | No equivalent assertion. | The current definition form does not offer literal model binding mode. |
+
+The new suite's assertions are `expect(compileOperatorDefinition).toHaveBeenCalledWith(makeWorkflowAuthoring());`, `expect(pinOperatorDefinition).toHaveBeenCalledWith(makeWorkflowAuthoring());`, and `expect(onPinned).toHaveBeenCalledOnce();`. They prove the replacement authoring flow, not the 12 retired field-edit claims above.
+
 ## Remaining `main` suite gap
 
 The following original files are not ported. A similarly named current test, where one exists, does not close the original assertions. These are open coverage gaps, not passing parity claims. The original file and its tests remain available in `main` for the next per-assertion diff.
@@ -678,11 +699,10 @@ The following original files are not ported. A similarly named current test, whe
 | --- | ---: | --- |
 | `__tests__/oakridge.test.tsx` | 28 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
 | `__tests__/run-workspace.test.tsx` | 24 | The test targets v15 run, stage, unit, or definition UI built on handwritten models; the restored surface uses scope projections and has no direct test fixture mapping. |
-| `components/organisms/BindingEditor.test.tsx` | 6 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace-restore.test.ts` | 22 | The tested v15 module is absent in this branch; its behavior needs an explicit replacement-surface decision before assertions can be translated. |
 | `lib/run-workspace.test.ts` | 25 | The old run-workspace selector uses v15 stages and units; the current scope workspace exposes a different data model. |
 
-This register covers 5 files and 105 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
+This register covers 4 files and 99 named test declarations as previously counted; parameterized cases may expand further. Ported suites also record source declarations that cannot run on checked projections. None is silently counted as passing.
 
 ## Surface checklist
 
