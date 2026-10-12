@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { operationBundle, sessionBundle } from "./effect-fixture";
 
 test("effect fixture worker result schemas equal their shipped declarations", async () => {

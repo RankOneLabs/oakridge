@@ -22,7 +22,7 @@ export function selectRecordVersions(rows: readonly VersionedRecord[]): readonly
 }
 
 export interface StoredTransitionHistory<Timestamp> {
-  readonly id: string; readonly trigger_id: string; readonly decision: import("../core-client/generated-contracts").DecisionOutcome;
+  readonly id: string; readonly trigger_id: string; readonly decision: import("../core-client/core-types").DecisionOutcome;
   readonly created_at: Timestamp; readonly version: SqlVersion;
 }
 export interface TransitionHistory<Timestamp> extends Omit<StoredTransitionHistory<Timestamp>, "version"> { readonly version: number }

@@ -1,6 +1,6 @@
 import type * as Rows from "./generated-records";
 import type { CollaborationDeliveryId, CollaborationMessageId, CollaborationThreadId, ExecutionId, OperatorEventId, PoolId, ProjectId, ReviewItemId, RevisionId, RunId, ScopeId } from "../domain/primitives";
-import type { Materialization } from "../core-client/generated-contracts";
+import type { Materialization } from "../core-client/core-types";
 
 export type { ExecutionId, PoolId, ProjectId, RevisionId, RunId, ScopeId } from "../domain/primitives";
 export type { ChildCollectionMember, CommitReceipt } from "./json-column-types";
@@ -47,5 +47,5 @@ export type ReviewItemRecord = Branded<Rows.ReviewItem, { id: ReviewItemId; run_
 export type CollaborationDeliveryRecord = Branded<Rows.CollaborationDelivery, { id: CollaborationDeliveryId; run_id: RunId; scope_id: ScopeId; message_id: CollaborationMessageId }>;
 
 // Wire payloads remain the generated Rust contracts; persistence adds identity and version.
-export type CompiledBundle = import("../core-client/generated-contracts").CompiledBundle;
+export type CompiledBundle = import("../core-client/core-types").CompiledBundle;
 export type MaterializedCollection = Materialization;

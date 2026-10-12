@@ -1,5 +1,5 @@
 import { INPUT_CONTRACTS } from "../provider-catalog";
-import type { DefinitionBundle } from "../../core-client/generated-contracts";
+import type { DefinitionBundle } from "../../core-client/core-types";
 import { plainValue } from "../../core-client/plain-value";
 import type { ExecutionRequest } from "../../domain/execution";
 import type { ExecutionId, ExecutorOperationId, JsonValue, StageInstanceId, UnitId } from "../../domain/primitives";
@@ -11,7 +11,7 @@ import type { StableInvocation } from "../provider";
 import type { PromptTexts } from "../../storage/prompt-content";
 import { defaultModelForRuntime, type RuntimeId } from "../../../../kbbl/core/runtime";
 import { resolveSessionSettings, type SessionInvocationSettings, type SessionPolicy } from "../../domain/session-settings";
-import type { Invocation } from "../../core-client/generated-contracts";
+import type { Invocation } from "../../core-client/core-types";
 
 
 /** `prompts` holds the stored text of every prompt the decision selected; a render never reads a prompt file. */

@@ -6,7 +6,7 @@ import { readSnapshot } from "../src/storage/snapshot-reader";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { CoreClient } from "../src/core-client/client";
-import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { CheckedValue } from "../src/core-client/core-types";
 import { MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
 import type { PoolId, RunId, ScopeId } from "../src/storage/schema-records";
 

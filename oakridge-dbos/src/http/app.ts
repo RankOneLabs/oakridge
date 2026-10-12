@@ -12,7 +12,7 @@ import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { readScopeView, readRunView, readInbox } from "../storage/projection-reader";
 import { listDefinitions, readDefinition, readPinnedDefinition } from "./definition-inspection";
 import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
 import { plainValue } from "../core-client/plain-value";

@@ -1,4 +1,4 @@
-import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
+import type { CheckedValue, CommandDefinition, DefinitionBundle, DecisionOutcome } from "../core-client/core-types";
 import type { ScopeId, ScopeInstanceRecord, OutputSlotRecord, ArtifactRevisionRecord, ResourceBindingRecord } from "../storage/schema-records";
 import type { CommandPrefill, TargetRevision } from "../storage/command-selection";
 import { normalizeRecordVersion, type ExecutionView, type StoredVersionedRecord } from "./record-selectors";

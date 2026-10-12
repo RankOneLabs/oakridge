@@ -1,4 +1,4 @@
-import type { CheckedValue, DefinitionBundle } from "./generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "./core-types";
 import type { JsonValue } from "../domain/primitives";
 import type { Result } from "../storage/commit";
 

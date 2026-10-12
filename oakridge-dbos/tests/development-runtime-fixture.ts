@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import { installDefinitionApi } from "../src/http/app";
 import type { ScopeView } from "../src/projections/scope-view";
 import { createMutationService } from "../src/storage/mutation-service";

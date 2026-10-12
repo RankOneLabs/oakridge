@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { resolve } from "node:path";
 import { Pool } from "pg";
 import { CoreClient } from "../src/core-client/client";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import { installDefinitionApi } from "../src/http/app";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { createMutationService, type MutationService, type StartedRun } from "../src/storage/mutation-service";

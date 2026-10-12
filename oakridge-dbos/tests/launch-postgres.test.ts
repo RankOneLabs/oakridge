@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { deleteRun } from "../src/storage/run-lifecycle";
 import { createMutationService, type MutationService, type StartedRun } from "../src/storage/mutation-service";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";

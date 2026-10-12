@@ -4,7 +4,7 @@ import { httpBodyLimit } from "../src/http/app";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, PendingWork, TransientServiceError } from "../src/http/scope-commands";
 import { resolve } from "node:path";
 import type { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { githubProviderCapabilities } from "../src/runtime/compose";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";

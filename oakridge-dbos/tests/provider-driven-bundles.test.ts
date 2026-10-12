@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createProductionComposition } from "../src/runtime/compose";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { PullRequestReader } from "../src/runtime/github-pull-requests";
 import type { ScopeInstanceRecord } from "../src/storage/schema-records";
 import { withDatabase } from "./effect-fixture";

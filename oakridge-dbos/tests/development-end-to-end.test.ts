@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { ScopeCommandRequest } from "../src/http/scope-commands";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { PullRequestObservation } from "../src/domain/pull-request";
 import type { PullRequestBranchQuery, PullRequestReader } from "../src/runtime/github-pull-requests";
 import type { RunView } from "../src/projections/run-view";

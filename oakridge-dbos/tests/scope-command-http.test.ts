@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { MAX_PUBLICATION_VALUE_BYTES } from "../src/http/publication";
 import { harness, unit } from "./scope-command-fixture";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import type { RunId } from "../src/storage/schema-records";
 
 interface EditHarnessOptions { readonly validation?: "valid" | "invalid" | "unexpected"; readonly output_key?: string }

@@ -11,7 +11,6 @@ import { CORE_WASM_PATH } from "../core-client/client";
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "../../kbbl/core/runtime.ts",
   "adapters/kbbl.ts",
-  "core-client/bundle-content-hash.ts",
   "core-client/client.ts",
   "core-client/core-types.ts",
   "core-client/observation-roots.ts",

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { CoreClient } from "../src/core-client/client";
-import type { Invocation } from "../src/core-client/generated-contracts";
+import type { Invocation } from "../src/core-client/core-types";
 import { pendingCleanupCount, type EffectPayload } from "../src/effects/intents";
 import { selectedInvocation, type EffectProvider, type InvocationId } from "../src/effects/provider";
 import { persistEffectResult } from "../src/storage/effect-results";

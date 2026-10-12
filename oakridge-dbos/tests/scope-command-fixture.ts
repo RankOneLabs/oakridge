@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import type { CoreClient } from "../src/core-client/client";
-import type { CheckedValue, DefinitionBundle, DecisionOutcome, Output } from "../src/core-client/generated-contracts";
-import { transportFailure, type CoreResult } from "../src/core-client/transport-errors";
+import type { CheckedValue, DefinitionBundle, DecisionOutcome, Output } from "../src/core-client/core-types";
+import type { CoreResult } from "../src/core-client/client";
 import { installDefinitionApi } from "../src/http/app";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { IngressReceiptRecord, RunId, ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
@@ -78,7 +78,7 @@ export async function harness(options: HarnessOptions = {}) {
     : { kind: "apply", targets: [revision], mutations: [], invocations: [], outcome: null, explanation };
   const core = {
     async request(operation: string): Promise<CoreResult<Output>> {
-      if (options.transport_failure) return transportFailure("unresponsive_child", "deadline exceeded");
+      if (options.transport_failure) return { ok: false, error: { kind: "transport", detail: { kind: "malformed_request", detail: "deadline exceeded" } } };
       if (options.malformed_core) return { ok: true, value: { kind: "evaluated", value: decision } };
       if (operation === "validate_payload") return { ok: true, value: { kind: "validated", value: unit } };
       evaluate_count++;

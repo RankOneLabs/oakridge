@@ -1,7 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
-import { decodeCoreResponse } from "../core-client/generated-contracts";
-import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
+import { decodeCoreResponse } from "../core-client/core-types";
+import type { DefinitionBundle, Trigger } from "../core-client/core-types";
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";

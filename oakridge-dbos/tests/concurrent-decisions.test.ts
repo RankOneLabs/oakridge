@@ -4,7 +4,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
-import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { CheckedValue } from "../src/core-client/core-types";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
 
 test("concurrent publications cannot overwrite a slot without a predecessor", async () => {

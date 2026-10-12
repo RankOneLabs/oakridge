@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Invocation } from "../src/core-client/generated-contracts";
+import type { Invocation } from "../src/core-client/core-types";
 import { requiresCleanup, type EffectPayload } from "../src/effects/intents";
 import { exhaustStart, resolveStart, startAttemptsExhausted } from "../src/effects/outcomes";
 import { selectedInvocation, type InvocationId } from "../src/effects/provider";

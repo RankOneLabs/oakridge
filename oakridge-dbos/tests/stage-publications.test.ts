@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import type { DefinitionBundle, ReferenceRoot } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle, ReferenceRoot } from "../src/core-client/core-types";
 import { observationRootKey } from "../src/core-client/observation-roots";
 import { readSnapshot, type AuthoritySnapshot } from "../src/storage/snapshot-reader";
 import { stagePublications } from "../src/storage/stage-publications";

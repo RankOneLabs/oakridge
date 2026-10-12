@@ -1,5 +1,5 @@
-import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
-import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
+import type { CheckedValue, Trigger } from "../core-client/core-types";
+import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/core-types";
 import { MAX_SNAPSHOT_BYTES } from "../core-client/client";
 import type { OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";

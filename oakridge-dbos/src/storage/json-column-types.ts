@@ -3,14 +3,14 @@
  * these per column with `COMMENT ON COLUMN ... IS '@type {Name}'`, and
  * scripts/generate-storage-records.ts imports them into generated-records.ts.
  */
-import type { CheckedValue } from "../core-client/generated-contracts";
+import type { CheckedValue } from "../core-client/core-types";
 import type { EffectPayload } from "../effects/intents";
 import type { ScopeId } from "./schema-records";
 import type { JsonValue } from "../domain/primitives";
 
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 
-export type { CheckedValue, CompiledBundle, DecisionOutcome } from "../core-client/generated-contracts";
+export type { CheckedValue, CompiledBundle, DecisionOutcome } from "../core-client/core-types";
 /** Named apart from the generated definition_bundle row. */
 export type DefinitionBundleSource = DefinitionBundle;
 export type { SessionPolicy } from "../domain/session-settings";

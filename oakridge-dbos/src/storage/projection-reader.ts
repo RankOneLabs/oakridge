@@ -1,4 +1,4 @@
-import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
+import type { CompiledBundle, DefinitionBundle } from "../core-client/core-types";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import type { RunEventCursor } from "../projections/run-event";
 import type { OperatorEventDeliveryRow } from "../projections/operator-event";

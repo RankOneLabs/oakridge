@@ -1,6 +1,6 @@
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import type { DefinitionDetail, DefinitionGraph, DefinitionPage, DefinitionSummary, PinnedDefinition } from "../projections/definition-view";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 
 export type { DefinitionPage, DefinitionSummary, PinnedDefinition } from "../projections/definition-view";
 export function definitionGraph(bundle: DefinitionBundle): DefinitionGraph {

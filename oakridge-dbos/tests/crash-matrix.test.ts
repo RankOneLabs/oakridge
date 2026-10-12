@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { CoreClient } from "../src/core-client/client";
 import { pendingCleanupCount, type EffectPayload } from "../src/effects/intents";
 import type { EffectProvider } from "../src/effects/provider";

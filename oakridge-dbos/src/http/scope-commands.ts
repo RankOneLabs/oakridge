@@ -1,4 +1,4 @@
-import type { CheckedValue, DefinitionBundle, Trigger } from "../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, Trigger } from "../core-client/core-types";
 import type { CoreClient } from "../core-client/client";
 import { checkPublications, requestEvaluation, type MutationService } from "../storage/mutation-service";
 import type { OutputPublication } from "../storage/commit";

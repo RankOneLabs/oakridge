@@ -5,7 +5,7 @@ import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { requestDigest } from "../src/storage/receipts";
-import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { CheckedValue } from "../src/core-client/core-types";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
 
 test("receipt digest is stable when nested map keys arrive in another order", () => {

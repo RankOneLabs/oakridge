@@ -1,5 +1,5 @@
 import type { CoreClient } from "../core-client/client";
-import type { DefinitionBundle, LifecyclePayloadProjection, ScopeDefinition } from "../core-client/generated-contracts";
+import type { DefinitionBundle, LifecyclePayloadProjection, ScopeDefinition } from "../core-client/core-types";
 import { prepareLifecycleTrigger } from "../storage/lifecycle-trigger";
 import type { MutationService } from "../storage/mutation-service";
 import type { ChildCollectionRecord, RunId, ScopeId, ScopeInstanceRecord, ScopeExportRecord } from "../storage/schema-records";

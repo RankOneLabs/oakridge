@@ -6,7 +6,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { readSnapshot, hasSameReadSet } from "../src/storage/snapshot-reader";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import type { ScopeId } from "../src/storage/schema-records";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import { runtimeFixture } from "./development-runtime-fixture";
 import { withDatabase, unit } from "./effect-fixture";
 

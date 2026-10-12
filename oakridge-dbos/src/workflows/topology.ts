@@ -1,6 +1,6 @@
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
-import type { CheckedValue } from "../core-client/generated-contracts";
+import type { CheckedValue } from "../core-client/core-types";
 import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";

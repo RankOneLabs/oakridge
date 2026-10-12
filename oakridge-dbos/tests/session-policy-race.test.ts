@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { CheckedValue } from "../src/core-client/core-types";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
 import { prepareCommit } from "../src/storage/mutation-service";
 import { readSnapshot } from "../src/storage/snapshot-reader";

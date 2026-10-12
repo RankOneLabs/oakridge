@@ -1,4 +1,4 @@
-import type { DefinitionBundle, InvocationSetting } from "../../core-client/generated-contracts";
+import type { DefinitionBundle, InvocationSetting } from "../../core-client/core-types";
 import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
 import type { AuthoritySnapshot } from "../../storage/snapshot-reader";

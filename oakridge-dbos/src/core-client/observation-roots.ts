@@ -1,4 +1,4 @@
-import type { CheckedScope, ReferenceRoot } from "./generated-contracts";
+import type { CheckedScope, ReferenceRoot } from "./core-types";
 
 /** Root identity is independent of source JSON property ordering. */
 export function observationRootKey(root: ReferenceRoot): string {

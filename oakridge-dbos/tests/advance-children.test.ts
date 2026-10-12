@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { advanceChildren } from "../src/runtime/advance-children";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { runtimeFixture } from "./development-runtime-fixture";

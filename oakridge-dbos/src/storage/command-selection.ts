@@ -1,5 +1,5 @@
 export { availableCommand } from "../projections/scope-view";
-import type { CheckedValue, CommandDefinition, DecisionOutcome, DefinitionBundle, VersionedValue } from "../core-client/generated-contracts";
+import type { CheckedValue, CommandDefinition, DecisionOutcome, DefinitionBundle, VersionedValue } from "../core-client/core-types";
 import { plainValue } from "../core-client/plain-value";
 import type { JsonValue } from "../domain/primitives";
 import type { ScopeId } from "./schema-records";

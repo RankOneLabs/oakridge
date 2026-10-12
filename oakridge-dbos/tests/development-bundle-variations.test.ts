@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
-import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
 const paths = ["development.json", "development-independent-siblings.json"] as const;

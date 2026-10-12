@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { CoreClient } from "../src/core-client/client";
 import { createEffectProvider, recoverConfiguredFailure, recoverStartFailure } from "../src/effects/operations/production-provider";
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";

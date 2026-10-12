@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 import type { Result } from "./commit";
 import type { SqlExecutor } from "./sql-executor";
 

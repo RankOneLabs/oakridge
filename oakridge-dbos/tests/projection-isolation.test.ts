@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { selectInboxItems } from "../src/projections/inbox";
 import { DEFAULT_INBOX_LIMIT, readInbox, readOperatorEventsAfter } from "../src/storage/projection-reader";
 import type { RunId, ScopeId, ScopeInstanceRecord } from "../src/storage/schema-records";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import { withDatabase } from "./effect-fixture";
 import { writeOperatorEvent } from "../src/storage/operator-events";

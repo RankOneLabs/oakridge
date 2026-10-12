@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { advanceChildren } from "../src/runtime/advance-children";
 import type { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { MutationService } from "../src/storage/mutation-service";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 

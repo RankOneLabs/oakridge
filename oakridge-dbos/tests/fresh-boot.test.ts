@@ -10,7 +10,7 @@ process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("ba
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import type { OutputPublication } from "../src/storage/commit";
 import type { ScopeId } from "../src/storage/schema-records";
 import { createProductionComposition } from "../src/runtime/compose";

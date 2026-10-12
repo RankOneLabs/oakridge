@@ -1,4 +1,4 @@
-import { type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/generated-contracts";
+import { type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/core-types";
 import { createHash, randomBytes } from "node:crypto";
 import type { CapacityChange } from "./capacity";
 import { applyCapacityChanges } from "./capacity";

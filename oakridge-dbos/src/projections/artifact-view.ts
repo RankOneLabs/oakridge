@@ -1,4 +1,4 @@
-import type { CheckedValue } from "../core-client/generated-contracts";
+import type { CheckedValue } from "../core-client/core-types";
 import type { RunId, ScopeId } from "../storage/schema-records";
 import type { OutputSlotView } from "./scope-view";
 import { outputPresentation, type ArtifactPresentation } from "./presentation";

@@ -8,7 +8,7 @@ import { installDefinitionApi } from "../src/http/app";
 import { createMutationService } from "../src/storage/mutation-service";
 import { createProductionComposition } from "../src/runtime/compose";
 import { stubProviderCapabilities, withDatabase } from "./effect-fixture";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { CoreClient } from "../src/core-client/client";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
 import type { MutationService } from "../src/storage/mutation-service";
