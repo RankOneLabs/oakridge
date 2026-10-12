@@ -1,8 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
-import type { ScopeCommandRequest } from "../../../oakridge-dbos/src/http/scope-commands";
-import { harness } from "../../../oakridge-dbos/tests/scope-command-fixture";
 
 async function browserScript(): Promise<string> {
   const built = await Bun.build({ entrypoints: [resolve(import.meta.dir, "operator-browser-entry.tsx")], target: "browser",
@@ -25,76 +23,9 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); });
 
-// Real Chromium and the production React surface. The shared fixture supplies
-// read projections; the command response is mocked until DBOS adopts v2 step.
-test("browser isolates drafts, submits observed result targets, and recovers a lost receipt after reload", async () => {
-  const api = await harness({ operator_workspace: true });
-  const accepted = new Map<string, { kind: "accepted_pending"; request_id: string; transition_id: string; scope_version: number }>();
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
-    if (request.method === "POST" && url.pathname.endsWith("/scopes/scope-1/commands")) {
-      const command = await request.json() as ScopeCommandRequest;
-      let receipt = accepted.get(command.request_id);
-      if (!receipt) {
-        receipt = { kind: "accepted_pending", request_id: command.request_id, transition_id: "transition-1", scope_version: 5 };
-        accepted.set(command.request_id, receipt);
-      }
-      return Response.json(receipt, { status: 202 });
-    }
-    if (url.pathname.startsWith("/oakridge/api/")) {
-      url.pathname = url.pathname.slice("/oakridge/api".length);
-      const response = await api.app.fetch(new Request(url, request));
-      if (request.method === "GET" && url.pathname.endsWith("/scopes/scope-1") && accepted.size > 0) {
-        const scope = await response.json() as { cursor: { scope_version: number; transition_id: string | null } };
-        return Response.json({ ...scope, cursor: { scope_version: 5, transition_id: "transition-1" } });
-      }
-      return response;
-    }
-    return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
-  } });
-  const context = await browser.newContext();
-  try {
-    const page = await context.newPage();
-    page.setDefaultTimeout(10_000);
-    const pageErrors: Error[] = [];
-    page.on("pageerror", (error) => pageErrors.push(error));
-    const requests: ScopeCommandRequest[] = [];
-    const receipts: unknown[] = [];
-    await page.route("**/scopes/scope-1/commands", async (route) => {
-      requests.push(route.request().postDataJSON() as ScopeCommandRequest);
-      const response = await route.fetch();
-      expect(response.status()).toBe(202);
-      receipts.push(await response.json());
-      if (requests.length === 1) await route.abort("failed");
-      else await route.fulfill({ response });
-    });
-    await page.goto(server.url.href);
-    const discuss = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit discuss", exact: true }) });
-    const change = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit change", exact: true }) });
-    await change.waitFor();
-    await page.getByTestId("operator-history-pane").getByText("No transitions yet.", { exact: true }).waitFor();
-    await discuss.getByLabel("Feedback").fill("Discussion draft");
-    await change.getByLabel("Feedback").fill("Change draft");
-    expect(await discuss.getByLabel("Feedback").inputValue()).toBe("Discussion draft");
-    await change.getByRole("button", { name: "Submit change", exact: true }).click();
-    await change.getByRole("alert")
-      .filter({ hasText: "Delivery is uncertain." }).waitFor();
-    expect(requests[0]).toMatchObject({ command_key: "change", expected_scope_version: 4,
-      targets: [{ identity: "exec-1", version: 6 }], payload: { text: "Change draft" } });
-    expect(accepted.size).toBe(1);
-    await page.reload();
-    await page.getByText("Receipt recovered for change.", { exact: true }).waitFor();
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toEqual(requests[0]);
-    expect(receipts[1]).toEqual(receipts[0]);
-    expect(accepted.size).toBe(1);
-    expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("oakridge:operator:pending:")))).toEqual([]);
-    expect(pageErrors).toEqual([]);
-  } finally { await context.close(); server.stop(true); }
-}, 30_000);
-
-
+// Real Chromium and the production React surface, against a mocked API. The
+// scope-command scenario drove the v1 command route and fixture that rescue R1
+// deletes; R6 restores it against the v2 decide route when it ports the PWA.
 test("browser recovers a committed launch after losing its response and reloading", async () => {
   const requests: Array<{ readonly request_id: string; readonly digest: string; readonly input: unknown }> = [];
   let launches = 0;

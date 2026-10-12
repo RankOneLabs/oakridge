@@ -121,9 +121,6 @@ jobs:
 
   kbbl-browser-tests:
     name: kbbl browser tests (Chromium)
-    # This suite drives the Oakridge PWA against the v1 DBOS fixture. The PWA
-    # port (rescue spec R6) rebuilds it against the v2 backend and removes this gate.
-    if: github.base_ref != 'epic/core-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
