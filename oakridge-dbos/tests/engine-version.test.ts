@@ -24,7 +24,7 @@ test("changes in every engine dependency change the recovery version", () => {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, "original");
     }
-    const baseline = resolve(root, "storage/migrations/0001_core_authority.sql");
+    const baseline = resolve(root, "storage/migrations/0001_core.sql");
     mkdirSync(dirname(baseline), { recursive: true });
     writeFileSync(baseline, "original storage");
     const workflows = resolve(root, "workflows");
