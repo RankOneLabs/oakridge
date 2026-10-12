@@ -13,7 +13,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 
 const output = resolve(import.meta.dir, "../src/storage/generated-records.ts");
-const HEADER = "// Generated from src/storage/migrations/0001_core_authority.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.\n"
+const HEADER = "// Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.\n"
   + "// jsonb column types come from each column's @type comment, resolved in json-column-types.ts.\n\n";
 
 function scratchUrl(server_url: string, database: string): string {
@@ -40,7 +40,7 @@ async function generate(server_url: string): Promise<string> {
     finally { await db.close(); }
     const records = await typescriptOfSchema(url, [], ["schema_baseline"], "authority",
       { writeHeader: false, jsonTypesFile: "./json-column-types" });
-    return HEADER + records;
+    return HEADER + records.replaceAll("\r\n", "\n");
   });
 }
 
