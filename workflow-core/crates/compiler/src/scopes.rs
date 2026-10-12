@@ -11,18 +11,27 @@ fn reject(class: u8, detail: impl Into<String>) -> DomainError {
         detail.into(),
     )
 }
-fn parse_type(text: &str) -> TypeExpression {
+fn parse_type(text: &str) -> Result<TypeExpression, DomainError> {
     let text = text.trim();
     if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-        let fields = split_top_level(inner)
-            .filter_map(|field| {
-                let (key, value) = field.split_once(':')?;
-                Some((key.trim().to_owned(), parse_type(value)))
-            })
-            .collect();
-        TypeExpression::Record(fields)
+        let mut fields = BTreeMap::new();
+        if !inner.trim().is_empty() {
+            for field in split_top_level(inner) {
+                let (key, value) = field
+                    .split_once(':')
+                    .ok_or_else(|| reject(11, format!("malformed record field {field}")))?;
+                let key = key.trim();
+                if key.is_empty() || value.trim().is_empty() {
+                    return Err(reject(11, format!("malformed record field {field}")));
+                }
+                if fields.insert(key.to_owned(), parse_type(value)?).is_some() {
+                    return Err(reject(11, format!("duplicate record field {key}")));
+                }
+            }
+        }
+        Ok(TypeExpression::Record(fields))
     } else {
-        TypeExpression::Name(text.to_owned())
+        Ok(TypeExpression::Name(text.to_owned()))
     }
 }
 fn split_top_level(text: &str) -> impl Iterator<Item = &str> {
@@ -70,7 +79,7 @@ fn validate_type(
             let inner = inner_type(name, "list")
                 .or_else(|| inner_type(name, "optional"))
                 .unwrap();
-            validate_type(&parse_type(inner), aliases, visiting)?;
+            validate_type(&parse_type(inner)?, aliases, visiting)?;
         }
         TypeExpression::Name(name) if aliases.contains_key(name) => {
             if !visiting.insert(name.clone()) {
@@ -101,7 +110,7 @@ fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
     let TypeExpression::Name(name) = ty else {
         return None;
     };
-    Some(parse_type(inner_type(name, "list")?))
+    parse_type(inner_type(name, "list")?).ok()
 }
 fn field_type(
     ty: &TypeExpression,
@@ -113,7 +122,7 @@ fn field_type(
         current = match current {
             TypeExpression::Record(fields) => fields.get(*part)?.clone(),
             TypeExpression::Name(name) => {
-                let parsed = parse_type(&name);
+                let parsed = parse_type(&name).ok()?;
                 if parsed == TypeExpression::Name(name.clone()) {
                     return None;
                 }
@@ -874,7 +883,7 @@ fn compile_group(
         };
         let collection = if let Some(source) = &unit.for_each {
             let source = checked(source, &scope)?;
-            let each = item_type(&source.value_type)
+            let each = item_type(&resolve_type(&source.value_type, &workflow.schemas))
                 .ok_or_else(|| reject(2, format!("collection {key} source is not list")))?;
             scope.each = Some(each);
             let key_expr = checked(unit.key.as_ref().unwrap(), &scope)?;
@@ -894,6 +903,15 @@ fn compile_group(
                     },
                 },
             };
+            let dependency_type = item_type(&resolve_type(&after.value_type, &workflow.schemas));
+            if !matches!(dependency_type,
+                Some(TypeExpression::Name(ref name)) if name == "ident" || name == "text"
+            ) {
+                return Err(reject(
+                    2,
+                    "collection after must be list(ident) or list(text)",
+                ));
+            }
             Some(CheckedUnitCollection {
                 source,
                 key: key_expr,
@@ -980,10 +998,7 @@ fn compile_group(
                 )
                 .ok_or_else(|| reject(4, "map field absent"))?
             };
-            let item_type = TypeExpression::Name(format!(
-                "list({})",
-                serde_json::to_string(&item).unwrap_or_default()
-            ));
+            let item_type = TypeExpression::Name(format!("list({})", render_type(&item)));
             CheckedStageExpression {
                 source: source.clone(),
                 expression: Expression::Map {
@@ -1085,4 +1100,36 @@ pub fn decode_workflow(bytes: &[u8]) -> Result<Workflow, DomainError> {
         }
     }
     serde_json::from_value(value).map_err(|error| reject(11, error.to_string()))
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+
+    #[test]
+    fn malformed_record_fields_are_rejected() {
+        for text in [
+            "{ key text }",
+            "{ key: text, bad }",
+            "{ key: text, key: integer }",
+        ] {
+            assert_eq!(&*parse_type(text).unwrap_err().entity_id, "check 11");
+        }
+    }
+
+    #[test]
+    fn list_item_types_render_as_source_syntax() {
+        let item = TypeExpression::Record(BTreeMap::from([(
+            "key".into(),
+            TypeExpression::Name("text".into()),
+        )]));
+        assert_eq!(format!("list({})", render_type(&item)), "list({key: text})");
+        assert_eq!(
+            format!(
+                "list({})",
+                render_type(&TypeExpression::Name("text".into()))
+            ),
+            "list(text)"
+        );
+    }
 }
