@@ -545,6 +545,26 @@ fn fields(
         })
         .collect()
 }
+/// `none` (or no workspace) gives the session no worktree; `repository(<expr>)`
+/// names the repository its worktree is cut from, read from the stage input.
+fn workspace_expression(
+    source: Option<&str>,
+    scope: &Scope<'_>,
+) -> Result<Option<CheckedStageExpression>, DomainError> {
+    let Some(text) = source.map(str::trim) else {
+        return Ok(None);
+    };
+    if text == "none" {
+        return Ok(None);
+    }
+    match split_call(text, "repository") {
+        Some((inner, "")) if !inner.is_empty() => Ok(Some(checked(inner, scope)?)),
+        _ => Err(reject(
+            6,
+            format!("workspace {text} must be none or repository(<expr>)"),
+        )),
+    }
+}
 fn checked_record(fields: &[CheckedNamedExpression]) -> TypeExpression {
     TypeExpression::Record(
         fields
@@ -615,15 +635,17 @@ fn compile_stage(
                 ));
             }
         }
-        let inputs = match worker {
+        let (inputs, workspace) = match worker {
             Worker::Agent {
                 prompts: modes,
                 inputs,
                 creates,
                 reviews,
+                workspace,
                 ..
             } => {
                 let input_fields = fields(inputs, &base)?;
+                let workspace = workspace_expression(workspace.as_deref(), &base)?;
                 if reviews.is_some() && !modes.contains_key("review") {
                     return Err(reject(
                         7,
@@ -662,7 +684,7 @@ fn compile_stage(
                 for path in modes.values() {
                     prompt(path, inputs, prompts)?;
                 }
-                input_fields
+                (input_fields, workspace)
             }
             Worker::Code {
                 operation,
@@ -691,12 +713,13 @@ fn compile_stage(
                 {
                     return Err(reject(12, format!("operation {operation} output mismatch")));
                 }
-                input_fields
+                (input_fields, None)
             }
         };
         workers.push(CheckedWorker {
             key: WorkerKey::from(worker_key.as_str()),
             inputs,
+            workspace,
         });
     }
     for artifact in stage.artifacts.keys() {

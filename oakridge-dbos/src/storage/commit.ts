@@ -1,436 +1,276 @@
-import { type CompiledBundle, type CheckedValue, type DecisionOutcome, type DefinitionBundle } from "../core-client/core-types";
-import { createHash, randomBytes } from "node:crypto";
-import type { CapacityChange } from "./capacity";
-import { applyCapacityChanges } from "./capacity";
-import { findReceipt, requestDigest, type IngressIdentity } from "./receipts";
-import type { AuthoritySnapshot, ReadSet } from "./snapshot-reader";
-import { hasSameReadSet, readRunPolicy, readSnapshot, readScopedSnapshot, READ_RELATIONS, CAPACITY_READ_RELATIONS } from "./snapshot-reader";
-import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-records";
-import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
-import { pinProviderRequest, resolveSelectedSessionSettings } from "../effects/operations/selected-request";
-import { readStoredPrompts } from "./prompt-content";
-import { MAX_SNAPSHOT_BYTES, measureSnapshotSize } from "../effects/operations/selected-publication-contract";
-export { MAX_SNAPSHOT_BYTES, measureSnapshotSize } from "../effects/operations/selected-publication-contract";
-import { selectedInvocation, type InvocationId } from "../effects/provider";
-import type { EffectPayload } from "../effects/intents";
-import type { Result as SharedResult } from "../domain/primitives";
-import { sealEffectPayload } from "./effect-secret";
-import { revokeStarts } from "./revocation";
-import { validateDecision, validateStorageAuthority } from "./storage-validator";
-import { selectRunEvent, type RunEvent } from "../projections/run-event";
+import { createHash } from "node:crypto";
+import type { CoreClient } from "../core-client/client";
+import { compileWorkflow, selectWanted } from "../core-client/client";
+import type { Event, Incoming, ResolvedRunWorker, ScopedSnapshot, StepResult, Writer } from "../core-client/core-types";
+import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
+import type { RunEvent } from "../projections/run-event";
+import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
+import type { CommitReceipt } from "./json-column-types";
+import { readPromptTexts } from "./registry-store";
+import { readScopedSnapshot } from "./snapshot-store";
 
-export interface DomainError { readonly operation: string; readonly entity_id: string; readonly detail: string; readonly reason?: CommitRejectionReason }
-/** A storage result: the shared Result with a traced domain error. */
-export type Result<Value> = SharedResult<Value, DomainError>;
-export interface OutputPublication { readonly revision_id?: string; readonly scope_id: ScopeId; readonly output_key: string; readonly collection_key: string; readonly body: CheckedValue; readonly predecessor_id: string | null; readonly expected_slot_version: number | null; readonly execution_id: string | null }
-export interface EffectPublication { readonly effect_key: string; readonly payload: CheckedValue; readonly execution_id: string | null }
-export interface CommitRequest { readonly execution_authority?: string; readonly child_cancellations?: readonly import("./child-cancellation").ChildCancellation[]; readonly identity: IngressIdentity; readonly read_set: ReadSet; readonly decision: DecisionOutcome; readonly outputs: readonly OutputPublication[]; readonly capacity: readonly CapacityChange[]; readonly effects: readonly EffectPublication[]; readonly operator_version: number | null }
-export type CommitRejectionReason = "owner_terminal" | "generation_revoked" | "capacity_unavailable" | "database_constraint" | "invalid";
-export type CommitResult = { readonly kind: "Committed"; readonly receipt: CommitReceipt } | { readonly kind: "Replayed"; readonly receipt: CommitReceipt } | { readonly kind: "Conflict"; readonly detail: string } | { readonly kind: "Rejected"; readonly reason: CommitRejectionReason; readonly detail: string; readonly constraint?: string } | { readonly kind: "snapshot_too_large"; readonly scope: ScopeId; readonly bytes: number; readonly limit: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] };
-
-class AbortCommit extends Error { constructor(readonly outcome: CommitResult) { super("detail" in outcome ? outcome.detail : outcome.kind); } }
-function fail(outcome: CommitResult): never { throw new AbortCommit(outcome); }
-
-function databaseFailure(error: unknown): CommitResult | null {
-  if (!error || typeof error !== "object" || !("code" in error)) return null;
-  if (error.code === "40P01" || error.code === "40001") return { kind: "Conflict", detail: `database concurrency conflict (${error.code}); refresh decision` };
-  if (error.code === "23505") {
-    const constraint = "constraint" in error && typeof error.constraint === "string" ? error.constraint : "unknown constraint";
-    return { kind: "Rejected", reason: "database_constraint", detail: `unique constraint violated: ${constraint}`, constraint };
-  }
-  return null;
-}
-
-async function measureWrittenSnapshots(tx: SqlExecutor, source: AuthoritySnapshot, child_cancellations: CommitRequest["child_cancellations"], definition: { source: DefinitionBundle; checked_program: CompiledBundle }): Promise<void> {
-  const scope_ids = new Set<ScopeId>([source.owner.id as ScopeId, ...(child_cancellations ?? []).map((child) => child.source.owner.id as ScopeId)]);
-  if (source.owner.parent_id) scope_ids.add(source.owner.parent_id as ScopeId);
-  for (const child of child_cancellations ?? []) if (child.source.owner.parent_id) scope_ids.add(child.source.owner.parent_id as ScopeId);
-  for (const scope_id of scope_ids) {
-    // A parent has no trigger at a child export/outcome boundary. The current
-    // checked trigger is a synthetic measurement trigger for that parent.
-    const measured = await readSnapshot(inTransaction(tx), scope_id, source.snapshot.trigger, source.snapshot.random_seed, definition);
-    if (!measured) continue;
-    const measurement = measureSnapshotSize(measured);
-    if (scope_id === source.owner.id && JSON.stringify(measurement.roots) !== JSON.stringify(source.reads))
-      fail({ kind: "Rejected", reason: "invalid", detail: "measured observation roots differ from the decision roots" });
-    if (measurement.bytes <= MAX_SNAPSHOT_BYTES) continue;
-    fail({ kind: "snapshot_too_large", scope: scope_id, bytes: measurement.bytes, limit: MAX_SNAPSHOT_BYTES, largest_roots: measurement.largest_roots });
-  }
-}
-
-async function lockOwners(tx: SqlExecutor, request: CommitRequest): Promise<void> {
-  for (const witness of request.read_set.rows) {
-    if (!(READ_RELATIONS as readonly string[]).includes(witness.relation)) fail({ kind: "Rejected", reason: "invalid", detail: `unknown read relation: ${witness.relation}` });
-  }
-  // Global lock order: run advisory lock first, then relation.localeCompare order,
-  // then IDs within each relation. Capacity changes and invocation pins take
-  // the exclusive run lock; unrelated sibling transitions share it.
-  const pins_invocation = request.decision.kind === "apply" && request.decision.invocations.length > 0;
-  await tx.query(request.capacity.length || pins_invocation
-    ? "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
-    : "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))", [request.identity.run_id]);
-  const by_relation = new Map<string, string[]>();
-  for (const witness of request.read_set.rows) {
-    if (!request.capacity.length && CAPACITY_READ_RELATIONS.includes(witness.relation)) continue;
-    by_relation.set(witness.relation, [...(by_relation.get(witness.relation) ?? []), witness.id]);
-  }
-  for (const relation of [...by_relation.keys()].sort((a, b) => a.localeCompare(b))) {
-    const ids = [...new Set(by_relation.get(relation)!)].sort();
-    await tx.query(`SELECT id FROM authority.${relation} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`, [ids]);
-  }
-}
-
-async function writeOutputs(tx: SqlExecutor, request: CommitRequest): Promise<void> {
-  for (const output of request.outputs) {
-    const slots = await tx.query<{ id: string; current_revision_id: string | null; version: string | number }>("SELECT id,current_revision_id,version FROM authority.output_slot WHERE scope_id=$1 AND output_key=$2 AND collection_key=$3 FOR UPDATE", [output.scope_id, output.output_key, output.collection_key]);
-    const slot = slots[0];
-    if ((slot?.current_revision_id ?? null) !== output.predecessor_id || (slot ? Number(slot.version) : null) !== output.expected_slot_version) fail({ kind: "Conflict", detail: "output predecessor or version changed" });
-    const revision_id = output.revision_id ?? crypto.randomUUID();
-    await tx.query("INSERT INTO authority.artifact_revision (id,scope_id,execution_id,output_key,collection_key,body,predecessor_id) VALUES ($1,$2,$3,$4,$5,$6,$7)", [revision_id, output.scope_id, output.execution_id, output.output_key, output.collection_key, JSON.stringify(output.body), output.predecessor_id]);
-    if (slot) await tx.query("UPDATE authority.output_slot SET current_revision_id=$1,version=version+1 WHERE id=$2", [revision_id, slot.id]);
-    else await tx.query("INSERT INTO authority.output_slot (id,scope_id,output_key,collection_key,current_revision_id) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), output.scope_id, output.output_key, output.collection_key, revision_id]);
-  }
-}
-
-/** Withdraws the worker's current starts and records the stops they owe, in this transaction. */
-async function revokeSelectedEffects(tx: SqlExecutor, scope_id: string, worker: string): Promise<void> {
-  await revokeStarts(tx, [scope_id], worker);
-}
-
-async function writeDecision(tx: SqlExecutor, request: CommitRequest, source: AuthoritySnapshot, definition: { source: DefinitionBundle; checked_program: CompiledBundle }, write_event?: (tx: SqlExecutor, event: RunEvent) => Promise<void>): Promise<CommitReceipt> {
-  const scope_id = source.owner.id;
-  const execution_ids: string[] = [];
-  if (request.decision.kind === "apply") {
-    for (const mutation of request.decision.mutations) {
-      if (mutation.kind === "bind_resource") await tx.query("INSERT INTO authority.resource_binding (id,scope_id,resource_key,observation) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,resource_key) DO UPDATE SET observation=excluded.observation,version=authority.resource_binding.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
-      if (mutation.kind === "clear_resource") await tx.query("UPDATE authority.resource_binding SET observation=NULL,version=version+1 WHERE scope_id=$1 AND resource_key=$2", [scope_id, mutation.key]);
-      if (mutation.kind === "clear_output") await tx.query("UPDATE authority.output_slot SET current_revision_id=NULL,version=version+1 WHERE scope_id=$1 AND output_key=$2", [scope_id, mutation.key]);
-      if (mutation.kind === "set_state") await tx.query("UPDATE authority.scope_instance SET local_state=$1,version=version+1 WHERE id=$2", [JSON.stringify(mutation.value), scope_id]);
-      if (mutation.kind === "export") await tx.query("INSERT INTO authority.scope_export (id,scope_id,export_key,value) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,export_key) DO UPDATE SET value=excluded.value,version=authority.scope_export.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(mutation.value)]);
-      if (mutation.kind === "revoke" || mutation.kind === "stop") {
-        await revokeSelectedEffects(tx, scope_id, mutation.worker);
-        await tx.query("UPDATE authority.execution_selection SET generation=generation+1,execution_id=NULL,version=version+1 WHERE scope_id=$1 AND worker_key=$2", [scope_id, mutation.worker]);
-      }
-      if (mutation.kind === "activate_child") {
-        const declared = definition.source.scopes.find((item) => item.key === source.owner.scope_key)?.children.find((item) => item.key === mutation.key);
-        const child_state = definition.checked_program.scopes.find((item) => item.key === declared?.scope)?.initial;
-        if (!declared || !child_state) fail({ kind: "Rejected", reason: "invalid", detail: "child definition missing" });
-        const child_id = crypto.randomUUID();
-        await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state) VALUES ($1,$2,$3,$4,$5,$6,$7)", [child_id, source.owner.run_id, scope_id, declared.scope, mutation.key, JSON.stringify(mutation.input), JSON.stringify(child_state)]);
-      }
-      if (mutation.kind === "activate_collection") {
-        const members: ChildCollectionMember[] = [];
-        for (const child of mutation.materialization.children) {
-          const child_state = definition.checked_program.scopes.find((item) => item.key === child.scope)?.initial;
-          if (!child_state) fail({ kind: "Rejected", reason: "invalid", detail: "collection child definition missing" });
-          const child_id = crypto.randomUUID();
-          members.push({ id: child_id as ScopeId, key: child.key, depends_on: child.depends_on });
-          await tx.query("INSERT INTO authority.scope_instance (id,run_id,parent_id,scope_key,child_key,input,local_state,collection_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [child_id, source.owner.run_id, scope_id, child.scope, child.key, JSON.stringify(child.input), JSON.stringify(child_state), mutation.key]);
-        }
-        await tx.query("INSERT INTO authority.child_collection (id,scope_id,collection_key,members) VALUES ($1,$2,$3,$4) ON CONFLICT (scope_id,collection_key) DO UPDATE SET members=excluded.members,version=authority.child_collection.version+1", [crypto.randomUUID(), scope_id, mutation.key, JSON.stringify(members)]);
-      }
-    }
-    for (const invocation of request.decision.invocations) {
-      const execution_id = crypto.randomUUID();
-      execution_ids.push(execution_id);
-      const selection = await tx.query<{ generation: string | number }>("SELECT generation FROM authority.execution_selection WHERE scope_id=$1 AND worker_key=$2 FOR UPDATE", [scope_id, invocation.selection.worker]);
-      if (selection.length) await revokeSelectedEffects(tx, scope_id, invocation.selection.worker);
-      const generation = Number(selection[0]?.generation ?? 0) + 1;
-      await tx.query("INSERT INTO authority.execution (id,scope_id,worker_key,generation,status) VALUES ($1,$2,$3,$4,'pending')", [execution_id, scope_id, invocation.selection.worker, generation]);
-      await tx.query("INSERT INTO authority.execution_selection (id,scope_id,worker_key,execution_id,generation) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (scope_id,worker_key) DO UPDATE SET execution_id=excluded.execution_id,generation=excluded.generation,version=authority.execution_selection.version+1", [crypto.randomUUID(), scope_id, invocation.selection.worker, execution_id, generation]);
-    }
-    if (request.decision.outcome) await tx.query("UPDATE authority.scope_instance SET outcome=$1,is_terminal=true,version=version+1 WHERE id=$2", [JSON.stringify(request.decision.outcome), scope_id]);
-  }
-  await writeOutputs(tx, request);
-  const capacity = await applyCapacityChanges(tx, request.capacity);
-  if (!capacity.ok) fail({ kind: "Rejected", reason: "capacity_unavailable", detail: `${capacity.error.operation}/${capacity.error.entity_id}: ${capacity.error.detail}` });
-  // Every effect intent is one selected invocation, pinned here so recovery never re-renders a request.
-  const invocations = request.decision.kind === "apply" ? request.decision.invocations : [];
-  if (request.effects.length !== invocations.length) fail({ kind: "Rejected", reason: "invalid", detail: "effects do not pair with selected invocations" });
-  const prompts = await readStoredPrompts(tx, definition.source, invocations.flatMap((invocation) => invocation.prompt_key == null ? [] : [invocation.prompt_key]));
-  if (!prompts.ok) fail({ kind: "Rejected", reason: "invalid", detail: `${prompts.error.entity_id}: ${prompts.error.detail}` });
-  const policy = invocations.length ? await readRunPolicy(tx, source.owner.run_id) : null;
-  if (policy && (policy.witness.id !== source.read_set.policy.id || policy.witness.version !== source.read_set.policy.version))
-    fail({ kind: "Conflict", detail: "session policy changed; refresh decision" });
-  for (const [index, effect] of request.effects.entries()) {
-    const id = crypto.randomUUID();
-    const execution_id = effect.execution_id ?? execution_ids[index] ?? null;
-    const selection = invocations[index];
-    if (!selection || !execution_id) fail({ kind: "Rejected", reason: "invalid", detail: "effect without a selected execution" });
-    const publication_secret = randomBytes(32).toString("base64url");
-    const settings = resolveSelectedSessionSettings(definition.source, selection, source.owner, policy!.policy);
-    if (!settings.ok) fail({ kind: "Rejected", reason: "invalid", detail: settings.error.detail });
-    const pinned = pinProviderRequest({ invocation: selectedInvocation(id as InvocationId, execution_id, selection, settings.value), bundle: definition.source, prompts: prompts.value, scope: source.owner, publication_secret });
-    if (!pinned.ok) fail({ kind: "Rejected", reason: "invalid", detail: pinned.error.detail });
-    await tx.query("UPDATE authority.execution SET publication_secret_hash=$1 WHERE id=$2", [createHash("sha256").update(publication_secret).digest("hex"), execution_id]);
-    const payload: EffectPayload = { invocation: pinned.value, action: "start", handle: null };
-    await tx.query("INSERT INTO authority.effect_intent (id,scope_id,execution_id,effect_key,payload) VALUES ($1,$2,$3,$4,$5)", [id, scope_id, execution_id, effect.effect_key, JSON.stringify(sealEffectPayload(payload))]);
-  }
-  await tx.query("INSERT INTO authority.fact (id,scope_id,fact_key,payload) VALUES ($1,$2,$3,$4)", [crypto.randomUUID(), scope_id, source.snapshot.trigger.key, JSON.stringify(source.snapshot.trigger.payload)]);
-  const transition_id = crypto.randomUUID();
-  const transitions = await tx.query<{ created_at: string }>("INSERT INTO authority.transition (id,scope_id,trigger_id,decision) VALUES ($1,$2,$3,$4) RETURNING to_json(created_at)#>>'{}' AS created_at", [transition_id, scope_id, source.snapshot.trigger.id, JSON.stringify(request.decision)]);
-  await tx.query("UPDATE authority.scope_instance SET version=version+1 WHERE id=$1", [scope_id]);
-  const owners = await tx.query<{ version: string | number }>("SELECT version FROM authority.scope_instance WHERE id=$1", [scope_id]);
-  const receipt = { transition_id, scope_version: Number(owners[0]!.version) };
-  await tx.query("INSERT INTO authority.ingress_receipt (id,run_id,scope_id,ingress_id,request_digest,result) VALUES ($1,$2,$3,$4,$5,$6)", [crypto.randomUUID(), request.identity.run_id, scope_id, request.identity.ingress_id, request.identity.request_digest, JSON.stringify(receipt)]);
-  if (write_event) await write_event(tx, selectRunEvent({ id: transition_id, run_id: source.owner.run_id as import("./schema-records").RunId,
-    scope_id: scope_id as ScopeId, scope_key: source.owner.scope_key, decision: request.decision,
-    created_at: transitions[0]?.created_at ?? new Date().toISOString() }));
-  return receipt;
-}
-
-export async function commitDecision(db: TransactionalSqlExecutor, request: CommitRequest, source: AuthoritySnapshot, write_event?: (tx: SqlExecutor, event: RunEvent) => Promise<void>): Promise<Result<CommitResult>> {
-  const checked = validateDecision(request, source);
-  if (!checked.ok) return checked;
-  if (request.read_set.scope_id !== source.owner.id) return { ok: true, value: { kind: "Rejected", reason: "invalid", detail: "read set owner differs from decision owner" } };
-  try {
-    const result = await db.transaction(async (tx): Promise<CommitResult> => {
-      await lockOwners(tx, request);
-      const receipt = await findReceipt(tx, request.identity);
-      if (receipt.kind === "replay") return { kind: "Replayed", receipt: receipt.receipt };
-      if (receipt.kind === "conflict") return { kind: "Conflict", detail: "ingress identity reused with different request content" };
-      if (!await hasSameReadSet(tx, request.read_set)) return { kind: "Conflict", detail: "read set changed; refresh decision" };
-      const definitions = await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [source.owner.run_id]);
-      const definition = definitions[0];
-      if (!definition) fail({ kind: "Rejected", reason: "invalid", detail: "definition bundle missing" });
-      const storage_check = await validateStorageAuthority(tx, request, source, definition.source);
-      if (!storage_check.ok) return { kind: "Rejected", reason: storage_check.error.reason === "generation_revoked" ? "generation_revoked" : "invalid", detail: storage_check.error.detail };
-      if (request.operator_version !== null && request.operator_version !== Number(source.owner.version)) return { kind: "Conflict", detail: "operator target version changed; refresh decision" };
-      if (source.owner.is_terminal) return { kind: "Rejected", reason: "owner_terminal", detail: "owner is terminal" };
-      const cancellation_keys = request.decision.kind === "apply" ? request.decision.mutations.flatMap((mutation) => mutation.kind === "cancel_children" ? [mutation.key] : []) : [];
-      if (cancellation_keys.length || request.child_cancellations?.length) {
-        const expected = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
-          SELECT s.* FROM authority.scope_instance s WHERE s.parent_id=$1 AND
-          ((s.collection_key IS NULL AND s.child_key=ANY($2::text[])) OR s.id IN (SELECT COALESCE(member->>'id', member#>>'{}')
-            FROM authority.child_collection c, jsonb_array_elements(c.members) member
-            WHERE c.scope_id=$1 AND c.collection_key=ANY($2::text[])))
-          UNION ALL SELECT s.* FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
-        ) SELECT id FROM descendants WHERE NOT is_terminal ORDER BY id`, [source.owner.id, cancellation_keys]);
-        const provided = (request.child_cancellations ?? []).map((item) => item.source.owner.id).sort();
-        if (JSON.stringify(expected.map((item) => item.id)) !== JSON.stringify(provided)) fail({ kind: "Rejected", reason: "invalid", detail: "declared child cancellation set differs from active descendants" });
-      }
-      for (const child of request.child_cancellations ?? []) {
-        if (!child.request.decision || child.request.decision.kind !== "apply" || !child.request.decision.outcome || JSON.stringify(child.request.read_set) !== JSON.stringify(request.read_set))
-          fail({ kind: "Rejected", reason: "invalid", detail: "child cancellation must terminate against the parent read set" });
-        const valid = validateDecision(child.request, child.source);
-        const authority = valid.ok ? await validateStorageAuthority(tx, child.request, child.source, definition.source) : valid;
-        if (!authority.ok) fail({ kind: "Rejected", reason: "invalid", detail: authority.error.detail });
-        const descendants = await tx.query<{ id: string }>(`WITH RECURSIVE descendants AS (
-          SELECT id,parent_id FROM authority.scope_instance WHERE parent_id=$1
-          UNION ALL SELECT s.id,s.parent_id FROM authority.scope_instance s JOIN descendants d ON s.parent_id=d.id
-        ) SELECT id FROM descendants WHERE id=$2`, [request.identity.scope_id, child.source.owner.id]);
-        if (!descendants.length || child.source.owner.run_id !== source.owner.run_id || child.source.owner.is_terminal)
-          fail({ kind: "Rejected", reason: "invalid", detail: "cancellation target is not an active owned descendant" });
-        await writeDecision(tx, child.request, child.source, definition, write_event);
-      }
-      const committed = await writeDecision(tx, request, source, definition, write_event);
-      await measureWrittenSnapshots(tx, source, request.child_cancellations, definition);
-      return { kind: "Committed", receipt: committed };
-    });
-    return { ok: true, value: result };
-  } catch (error) {
-    if (error instanceof AbortCommit) return { ok: true, value: error.outcome };
-    const mapped = databaseFailure(error);
-    if (mapped) return { ok: true, value: mapped };
-    return { ok: false, error: { operation: "commit_decision", entity_id: request.identity.scope_id, detail: String(error) } };
-  }
-}
-
-/** The v2 ingress accepted by the authority. The caller supplies the writer
- * from its verified credential, never from the request body. */
-export interface EventCommitRequest {
-  readonly run_id: string;
+/** An event as ingress hands it over: the writer is resolved from the credential, never the body. */
+export interface CommitRequest {
+  readonly run_id: RunId;
   readonly ingress_id: string | null;
-  readonly definition_bundle_id?: string;
-  readonly event: import("../core-client/core-types").Event;
-  readonly writer: import("../core-client/core-types").Writer;
+  readonly event: Event;
+  readonly writer: Writer;
+  /** Required with `launched`: the run is created pinned to this definition. */
+  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null };
 }
-export type EventCommitResult =
-  | { readonly kind: "committed" | "replayed"; readonly event_id: string }
-  | { readonly kind: "conflict" | "rejected"; readonly detail: string };
-class AbortEventCommit extends Error {
-  constructor(readonly result: EventCommitResult) { super(result.kind); }
+export type CommitOutcome =
+  | { readonly kind: "committed"; readonly event_id: string }
+  /** The ingress id was seen before with the same content: its stored result. */
+  | { readonly kind: "replayed"; readonly receipt: CommitReceipt }
+  /** `step` refused the event. Stored as a rejected receipt when it carries an ingress id. */
+  | { readonly kind: "rejected"; readonly reason: string }
+  | { readonly kind: "conflict"; readonly detail: string }
+  | { readonly kind: "missing"; readonly detail: string };
+export interface CommitDependencies {
+  readonly db: Database;
+  readonly core: CoreClient;
+  /** Called after a committed event; the executor re-reads the run. */
+  readonly wake: (run_id: RunId) => void;
 }
+export type CommitResult = { readonly ok: true; readonly value: CommitOutcome } | { readonly ok: false; readonly error: TracedError };
 
-type V2Snapshot = import("../core-client/core-types").ScopedSnapshot;
-type V2Step = import("../core-client/core-types").StepResult;
-type V2Action = import("../core-client/core-types").Action;
-
-async function affectedUnit(tx: SqlExecutor, run_id: string, event: EventCommitRequest["event"]): Promise<string | null> {
-  switch (event.kind) {
-    case "launched":
-    case "cancel_requested": return null;
-    case "revision_published":
-    case "operator_decided":
-    case "retry_requested": return event.unit;
-    case "worker_started":
-    case "worker_ended": {
-      const row = (await tx.query<{ unit_id: string }>(`SELECT unit_id FROM authority.attempt
-        WHERE run_id=$1 AND action_id=$2 ORDER BY seq DESC LIMIT 1`, [run_id, event.action]))[0];
-      if (!row) throw new AbortEventCommit({ kind: "rejected", detail: "worker action not found" });
-      return row.unit_id;
-    }
-  }
+/** A fault inside the transaction: it rolls back and surfaces as an error, never as a stored outcome. */
+class CommitFault extends Error {
+  constructor(readonly error: TracedError) { super(error.detail); }
 }
+const fault = (run_id: string, detail: string): CommitFault => new CommitFault({ operation: "commit_event", entity_id: run_id, detail });
 
-/** The target is checked under the run lock, against the pinned review's
- * artifact. A read performed by an HTTP handler would race another commit. */
-async function checkDecisionTarget(tx: SqlExecutor, run_id: string,
-  event: EventCommitRequest["event"], source: import("../core-client/core-types").Workflow): Promise<void> {
-  if (event.kind !== "operator_decided") return;
-  const unit = (await tx.query<{ stage: string | null }>(
-    "SELECT stage FROM authority.unit WHERE run_id=$1 AND id=$2", [run_id, event.unit]))[0];
-  const artifact = unit?.stage ? source.stages[unit.stage]?.reviews?.[event.review]?.of : null;
-  if (!artifact) throw new AbortEventCommit({ kind: "rejected", detail: "review is not declared for this unit" });
-  const latest = (await tx.query<{ id: string }>(`SELECT id FROM authority.artifact_revision
-    WHERE run_id=$1 AND unit_id=$2 AND artifact=$3 ORDER BY created_at DESC,id DESC LIMIT 1`,
-  [run_id, event.unit, artifact]))[0];
-  if (latest?.id !== event.target)
-    throw new AbortEventCommit({ kind: "conflict", detail: "review target revision changed" });
+/** Canonical JSON: object keys sorted, so a replay matches regardless of key order. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") return `{${Object.keys(value).sort()
+    .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+export function requestDigest(request: Pick<CommitRequest, "event" | "writer">): string {
+  return createHash("sha256").update(canonical({ event: request.event, writer: request.writer })).digest("hex");
 }
 
-function newUnits(before: V2Snapshot, after: V2Snapshot): V2Snapshot["units"] {
-  const known = new Set(before.units.map((unit) => unit.id));
-  return after.units.filter((unit) => !known.has(unit.id))
-    .sort((left, right) => left.id.split("/").length - right.id.split("/").length);
-}
-
-async function writeStepDelta(tx: SqlExecutor, run_id: string, before: V2Snapshot, step: V2Step): Promise<void> {
-  const after = step.snapshot;
-  await tx.query("UPDATE authority.run SET root_unit_id=$2,input=$3,status=$4,version=version+1 WHERE id=$1",
-    [run_id, after.run.root, JSON.stringify(after.run.input ?? null), JSON.stringify(after.run.status)]);
-  for (const unit of newUnits(before, after)) {
-    const member_key = unit.parent == null ? unit.declaration : unit.id.slice(unit.parent.length + 1);
-    await tx.query(`INSERT INTO authority.unit
-      (id,run_id,parent_id,unit_key,collection_key,declaration,stage,pool,input,status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [unit.id, run_id, unit.parent, unit.declaration,
-      member_key === unit.declaration ? null : member_key, unit.declaration, unit.stage ?? null,
-      unit.pool ?? null, JSON.stringify(unit.input), JSON.stringify(unit.status)]);
-  }
-  for (const unit of after.units) {
-    if (before.units.some((old) => old.id === unit.id)) {
-      await tx.query("UPDATE authority.unit SET status=$3,version=version+1 WHERE run_id=$1 AND id=$2 AND status IS DISTINCT FROM $3::jsonb",
-        [run_id, unit.id, JSON.stringify(unit.status)]);
-    } else {
-      for (const dependency of unit.after) await tx.query(
-        "INSERT INTO authority.unit_dependency (run_id,unit_id,depends_on_id) VALUES ($1,$2,$3)", [run_id, unit.id, dependency]);
-    }
-  }
-  const old_attempts = new Map(before.attempts.map((attempt) => [`${attempt.action_id}:${attempt.seq}`, attempt]));
-  for (const attempt of after.attempts) {
-    const old = old_attempts.get(`${attempt.action_id}:${attempt.seq}`);
-    if (!old) await tx.query(`INSERT INTO authority.attempt
-      (action_id,seq,run_id,unit_id,worker,mode,cause,status,ended_at,kbbl_session_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [attempt.action_id, attempt.seq, run_id, attempt.unit,
-      attempt.worker, JSON.stringify(attempt.mode), JSON.stringify(attempt.cause), JSON.stringify(attempt.status),
-      attempt.ended_at, attempt.kbbl_session_id ?? null]);
-    else if (JSON.stringify(old) !== JSON.stringify(attempt)) await tx.query(`UPDATE authority.attempt
-      SET status=$4,ended_at=$5,kbbl_session_id=$6 WHERE run_id=$1 AND action_id=$2 AND seq=$3`, [run_id,
-      attempt.action_id, attempt.seq, JSON.stringify(attempt.status), attempt.ended_at, attempt.kbbl_session_id ?? null]);
-  }
-  const old_revisions = new Set(before.revisions.map((revision) => revision.id));
-  for (const revision of after.revisions) if (!old_revisions.has(revision.id)) await tx.query(`INSERT INTO authority.artifact_revision
-    (id,run_id,unit_id,artifact,body,by_id,predecessor_id,subject) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [revision.id,
-    run_id, revision.unit, revision.artifact, JSON.stringify(revision.body), revision.by,
-    revision.predecessor ?? null, revision.subject ?? null]);
-  const old_decisions = new Set(before.decisions.map((decision) => decision.id));
-  for (const decision of after.decisions) if (!old_decisions.has(decision.id)) await tx.query(`INSERT INTO authority.review_decision
-    (id,run_id,unit_id,review,decision,effect,target_revision_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [decision.id,
-    run_id, decision.unit, decision.review, decision.decision, decision.effect, decision.target,
-    JSON.stringify(decision.payload)]);
-}
-
-async function reconcileWanted(tx: SqlExecutor, run_id: string, event_id: string, before: V2Snapshot, step: V2Step): Promise<void> {
-  type ExistingIntent = { id: string; unit_id: string; action_id: string; seq: number; status: string };
-  const old_unit_ids = before.units.map((unit) => unit.id);
-  const active = await tx.query<ExistingIntent>(`SELECT id,unit_id,action_id,seq,status FROM authority.effect_intent
-    WHERE run_id=$1 AND unit_id=ANY($2::text[]) AND status IN ('pending','acknowledged','stop_requested')`,
-    [run_id, old_unit_ids]);
-  const wanted_by_unit = step.wanted as unknown as readonly (readonly [string, readonly V2Action[]])[];
-  const actions = wanted_by_unit.flatMap(([unit_id, wanted]) => wanted.map((action) => ({ unit_id, action })));
-  const wanted_keys = new Set<string>();
-  for (const { unit_id, action } of actions) {
-    if (action.kind !== "run_worker") continue;
-    const attempt = step.snapshot.attempts.find((candidate) => candidate.unit === unit_id && candidate.worker === action.worker
-      && JSON.stringify(candidate.mode) === JSON.stringify(action.mode) && JSON.stringify(candidate.cause) === JSON.stringify(action.cause));
-    if (!attempt) throw new Error(`wanted worker ${unit_id}/${action.worker} has no attempt`);
-    const key = `${attempt.action_id}:${attempt.seq}`;
-    wanted_keys.add(key);
-    if (!active.some((intent) => `${intent.action_id}:${intent.seq}` === key)) await tx.query(`INSERT INTO authority.effect_intent
-      (id,run_id,unit_id,action_id,seq,payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (action_id,seq) DO NOTHING`,
-      [crypto.randomUUID(), run_id, unit_id, attempt.action_id, attempt.seq, JSON.stringify(action satisfies V2Action)]);
-  }
-  for (const intent of active) {
-    if (wanted_keys.has(`${intent.action_id}:${intent.seq}`)) continue;
-    const attempt = step.snapshot.attempts.find((candidate) => candidate.action_id === intent.action_id && candidate.seq === intent.seq);
-    const owner = step.snapshot.units.find((unit) => unit.id === intent.unit_id);
-    // The evaluator removes a worker from wanted as soon as it starts. That
-    // does not revoke its authority: an active running attempt still owns it.
-    if (attempt?.status.kind === "running" && owner?.status.kind === "active") continue;
-    const status = attempt?.status.kind === "succeeded" ? "stopped"
-      : attempt?.status.kind === "failed" ? "failed" : "stop_requested";
-    if (intent.status !== status) await tx.query(
-      "UPDATE authority.effect_intent SET status=$2,updated_at=now() WHERE id=$1", [intent.id, status]);
-  }
-  for (const [unit_id, wanted] of wanted_by_unit) await tx.query(
-    "INSERT INTO authority.wanted_log (id,run_id,unit_id,event_id,actions) VALUES ($1,$2,$3,$4,$5)",
-    [crypto.randomUUID(), run_id, unit_id, event_id, JSON.stringify(wanted)]);
-}
-
-/** Run-row locking serializes every event. Snapshot, Rust step, delta, wanted
- * reconciliation, event and ingress receipt share one transaction. */
-export async function commitEvent(db: TransactionalSqlExecutor, core: import("../core-client/client").CoreClient,
-  request: EventCommitRequest): Promise<Result<EventCommitResult>> {
+/**
+ * The single writer of workflow state (part 1 §6.2). Under the run row lock it
+ * answers a replayed ingress id from its receipt, steps the core over the
+ * scoped snapshot, and writes the event with its writer, the state delta, the
+ * effect instructions for newly wanted workers, the wanted log, the receipt
+ * and the operator event, in one transaction. A step rejection is stored, not
+ * rolled back. The executor is woken after commit.
+ */
+export async function commitEvent(deps: CommitDependencies, request: CommitRequest): Promise<CommitResult> {
   try {
-    return { ok: true, value: await db.transaction(async (tx): Promise<EventCommitResult> => {
-      if (request.event.kind === "launched") {
-        if (!request.definition_bundle_id) return { kind: "rejected", detail: "definition bundle required for launch" };
-        await tx.query(`INSERT INTO authority.run (id,definition_bundle_id)
-          VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, [request.run_id, request.definition_bundle_id]);
-      }
-      const runs = await tx.query<{ id: string; definition_bundle_id: string }>(
-        "SELECT id,definition_bundle_id FROM authority.run WHERE id=$1 FOR UPDATE", [request.run_id]);
-      const run = runs[0];
-      if (!run) return { kind: "rejected", detail: "run not found" };
-      if (request.definition_bundle_id && run.definition_bundle_id !== request.definition_bundle_id)
-        return { kind: "conflict", detail: "run pinned to a different definition" };
-      const digest = requestDigest({ event: request.event, writer: request.writer });
-      if (request.ingress_id !== null) {
-        const receipts = await tx.query<{ request_digest: string; result: { event_id: string } }>(
-          "SELECT request_digest,result FROM authority.ingress_receipt WHERE run_id=$1 AND ingress_id=$2",
-          [request.run_id, request.ingress_id]);
-        const receipt = receipts[0];
-        if (receipt) return receipt.request_digest === digest
-          ? { kind: "replayed", event_id: receipt.result.event_id }
-          : { kind: "conflict", detail: "ingress ID reused with different content" };
-      }
-      const definition = (await tx.query<{ digest: string; source: import("../core-client/core-types").Workflow }>(
-        "SELECT digest,source FROM authority.definition_bundle WHERE id=$1", [run.definition_bundle_id]))[0];
-      if (!definition) throw new AbortEventCommit({ kind: "rejected", detail: "pinned definition missing" });
-      await checkDecisionTarget(tx, request.run_id, request.event, definition.source);
-      const unit_id = await affectedUnit(tx, request.run_id, request.event);
-      const snapshot = await readScopedSnapshot(inTransaction(tx), request.run_id, unit_id);
-      if (!snapshot) throw new AbortEventCommit({ kind: "rejected", detail: "affected unit not found" });
-      const incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
-      const evaluated = await core.request("step", { workflow_digest: definition.digest, snapshot, incoming });
-      if (!evaluated.ok) throw new AbortEventCommit({ kind: "rejected", detail: JSON.stringify(evaluated.error) });
-      if (evaluated.value.kind !== "stepped") throw new AbortEventCommit({ kind: "rejected", detail: "core returned non-step output" });
-      const step = evaluated.value.value;
-      await writeStepDelta(tx, request.run_id, snapshot, step);
-      const event_id = crypto.randomUUID();
-      await tx.query(`INSERT INTO authority.event (id,run_id,unit_id,ingress_id,payload,writer)
-        VALUES ($1,$2,$3,$4,$5,$6)`, [event_id, request.run_id, unit_id, request.ingress_id,
-        JSON.stringify(request.event), JSON.stringify(request.writer)]);
-      await reconcileWanted(tx, request.run_id, event_id, snapshot, step);
-      if (request.ingress_id !== null) await tx.query(`INSERT INTO authority.ingress_receipt
-        (id,run_id,unit_id,ingress_id,request_digest,result) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [crypto.randomUUID(), request.run_id, unit_id, request.ingress_id, digest, JSON.stringify({ event_id })]);
-      return { kind: "committed", event_id };
-    }) };
+    const outcome = await deps.db.transaction().execute((trx) => commitInTransaction(trx, deps.core, request));
+    if (outcome.kind === "committed") deps.wake(request.run_id);
+    return { ok: true, value: outcome };
   } catch (error) {
-    if (error instanceof AbortEventCommit) return { ok: true, value: error.result };
-    const mapped = databaseFailure(error);
-    if (mapped) return { ok: true, value: { kind: "conflict", detail: "detail" in mapped ? mapped.detail : mapped.kind } };
+    if (error instanceof CommitFault) return { ok: false, error: error.error };
+    const conflict = concurrencyConflict(error);
+    if (conflict) return { ok: true, value: { kind: "conflict", detail: conflict } };
     return { ok: false, error: { operation: "commit_event", entity_id: request.run_id, detail: String(error) } };
   }
+}
+
+/** Deadlock and serialization failures are retryable outcomes, not faults. */
+function concurrencyConflict(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  return error.code === "40P01" || error.code === "40001" ? `database concurrency conflict (${error.code}); retry the event` : null;
+}
+
+async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<CommitOutcome> {
+  const { run_id } = request;
+  if (request.event.kind === "launched") {
+    if (!request.launch) return { kind: "missing", detail: "a launch names its pinned definition" };
+    await trx.insertInto("authority.run").values({ id: run_id, definition_bundle_id: request.launch.definition_bundle_id,
+      project_id: request.launch.project_id }).onConflict((conflict) => conflict.column("id").doNothing()).execute();
+  }
+  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id"])
+    .where("id", "=", run_id).forUpdate().executeTakeFirst();
+  if (!run) return { kind: "missing", detail: "run not found" };
+  if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
+    return { kind: "conflict", detail: "run is pinned to a different definition" };
+  const digest = requestDigest(request);
+  if (request.ingress_id !== null) {
+    const receipt = await trx.selectFrom("authority.ingress_receipt").select(["request_digest", "result"])
+      .where("run_id", "=", run_id).where("ingress_id", "=", request.ingress_id).executeTakeFirst();
+    if (receipt) return receipt.request_digest === digest ? { kind: "replayed", receipt: receipt.result }
+      : { kind: "conflict", detail: "ingress id reused with different content" };
+  }
+  const unit_id = await affectedUnit(trx, run_id, request.event);
+  const reject = async (reason: string): Promise<CommitOutcome> => {
+    await storeReceipt(trx, { request, unit_id: unit_id.ok ? unit_id.value : null, digest, result: { kind: "rejected", reason } });
+    return { kind: "rejected", reason };
+  };
+  if (!unit_id.ok) return reject(unit_id.reason);
+  const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "prompts"])
+    .where("id", "=", run.definition_bundle_id).executeTakeFirst();
+  if (!definition) throw fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`);
+  const snapshot = await readScopedSnapshot(trx, run_id, unit_id.value);
+  if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`);
+  const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
+  const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
+  if (stepped.kind === "rejected") return reject(stepped.reason);
+  const step = stepped.step;
+  await writeDelta(trx, run_id, snapshot, step.snapshot);
+  const event = await trx.insertInto("authority.event").values({ id: crypto.randomUUID(), run_id, unit_id: unit_id.value,
+    ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
+    .returning(["id", "created_at"]).executeTakeFirstOrThrow();
+  await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
+  for (const { unit_id: unit, actions } of selectWanted(step))
+    await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
+      actions: jsonText(actions) }).execute();
+  await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result: { kind: "committed", event_id: event.id } });
+  const run_event: RunEvent = { event_id: event.id, run_id, unit_id: unit_id.value as UnitId | null, kind: request.event.kind,
+    run_status: step.snapshot.run.status.kind, occurred_at: new Date(event.created_at).toISOString() };
+  await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id, event_key: "run_event",
+    payload: jsonText({ kind: "run_event", data: run_event }) }).execute();
+  return { kind: "committed", event_id: event.id };
+}
+
+type Affected = { readonly ok: true; readonly value: string | null } | { readonly ok: false; readonly reason: string };
+/** Launch and cancel address the whole run; worker reports address the unit of their attempt. */
+async function affectedUnit(trx: DatabaseTransaction, run_id: string, event: Event): Promise<Affected> {
+  switch (event.kind) {
+    case "launched": case "cancel_requested": return { ok: true, value: null };
+    case "revision_published": case "operator_decided": case "retry_requested": return { ok: true, value: event.unit };
+    case "worker_started": case "worker_ended": {
+      const attempt = await trx.selectFrom("authority.attempt").select("unit_id")
+        .where("run_id", "=", run_id).where("action_id", "=", event.action).orderBy("seq", "desc").executeTakeFirst();
+      return attempt ? { ok: true, value: attempt.unit_id } : { ok: false, reason: `action ${event.action} has no attempt` };
+    }
+  }
+}
+
+interface StepInput {
+  readonly run_id: string;
+  readonly definition: { readonly digest: string; readonly source: import("../core-client/core-types").Workflow; readonly prompts: { readonly [path: string]: string } };
+  readonly snapshot: ScopedSnapshot;
+  readonly incoming: Incoming;
+}
+type Stepped = { readonly kind: "stepped"; readonly step: StepResult } | { readonly kind: "rejected"; readonly reason: string };
+/** Step against the pinned program, compiling it from its pinned source and prompts when the core has not cached it. */
+async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: StepInput): Promise<Stepped> {
+  const step = () => core.request("step", { workflow_digest: input.definition.digest, snapshot: input.snapshot, incoming: input.incoming });
+  let response = await step();
+  if (!response.ok && response.error.kind === "domain" && response.error.detail.kind === "unknown_bundle") {
+    const texts = await readPromptTexts(trx, Object.values(input.definition.prompts));
+    const prompts = Object.fromEntries(Object.entries(input.definition.prompts).flatMap(([path, digest]) => {
+      const text = texts.get(digest);
+      return text === undefined ? [] : [[path, text]];
+    }));
+    const compiled = await compileWorkflow(core, { workflow: input.definition.source, prompts });
+    if (!compiled.ok) throw fault(input.run_id, `pinned definition no longer compiles: ${compiled.error.detail}`);
+    if (compiled.value.digest !== input.definition.digest) throw fault(input.run_id, `pinned definition compiles to ${compiled.value.digest}, not ${input.definition.digest}`);
+    response = await step();
+  }
+  if (!response.ok) {
+    if (response.error.kind === "domain" && response.error.detail.kind === "invalid_assignment")
+      return { kind: "rejected", reason: response.error.detail.detail };
+    throw fault(input.run_id, `core step failed: ${JSON.stringify(response.error)}`);
+  }
+  if (response.value.kind !== "stepped") throw fault(input.run_id, "core returned a non-step output");
+  return { kind: "stepped", step: response.value.value };
+}
+
+/** A collection member's key is its id below its parent; a fixed unit has none. */
+function collectionKey(unit: ScopedSnapshot["units"][number]): string | null {
+  if (unit.parent == null) return null;
+  const member = unit.id.slice(unit.parent.length + 1);
+  return member === unit.declaration ? null : member;
+}
+
+/** Write what step changed: run, new units and edges, unit statuses, attempts, revisions and decisions. */
+async function writeDelta(trx: DatabaseTransaction, run_id: string, before: ScopedSnapshot, after: ScopedSnapshot): Promise<void> {
+  await trx.updateTable("authority.run").set((eb) => ({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
+    status: jsonText(after.run.status), version: eb("version", "+", 1) })).where("id", "=", run_id).execute();
+  const known = new Map(before.units.map((unit) => [unit.id, unit]));
+  // Parents first: a member's foreign key names its parent.
+  const created = after.units.filter((unit) => !known.has(unit.id)).sort((left, right) => left.id.split("/").length - right.id.split("/").length);
+  for (const unit of created) await trx.insertInto("authority.unit").values({ id: unit.id, run_id, parent_id: unit.parent ?? null,
+    unit_key: unit.declaration, collection_key: collectionKey(unit), declaration: unit.declaration, stage: unit.stage ?? null,
+    pool: unit.pool ?? null, input: jsonText(unit.input), status: jsonText(unit.status) }).execute();
+  for (const unit of created) for (const depends_on_id of unit.after)
+    await trx.insertInto("authority.unit_dependency").values({ run_id, unit_id: unit.id, depends_on_id }).execute();
+  for (const unit of after.units) {
+    const old = known.get(unit.id);
+    if (old && canonical(old.status) !== canonical(unit.status)) await trx.updateTable("authority.unit")
+      .set((eb) => ({ status: jsonText(unit.status), version: eb("version", "+", 1) }))
+      .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
+  }
+  const old_attempts = new Map(before.attempts.map((attempt) => [`${attempt.action_id}#${attempt.seq}`, attempt]));
+  for (const attempt of after.attempts) {
+    const old = old_attempts.get(`${attempt.action_id}#${attempt.seq}`);
+    if (!old) await trx.insertInto("authority.attempt").values({ action_id: attempt.action_id, seq: attempt.seq, run_id,
+      unit_id: attempt.unit, worker: attempt.worker, mode: jsonText(attempt.mode), cause: jsonText(attempt.cause),
+      status: jsonText(attempt.status), ended_at: attempt.ended_at, kbbl_session_id: attempt.kbbl_session_id ?? null }).execute();
+    else if (canonical(old) !== canonical(attempt)) await trx.updateTable("authority.attempt")
+      .set({ status: jsonText(attempt.status), ended_at: attempt.ended_at, kbbl_session_id: attempt.kbbl_session_id ?? null })
+      .where("action_id", "=", attempt.action_id).where("seq", "=", attempt.seq).execute();
+  }
+  const old_revisions = new Set(before.revisions.map((revision) => revision.id));
+  for (const revision of after.revisions) if (!old_revisions.has(revision.id))
+    await trx.insertInto("authority.artifact_revision").values({ id: revision.id, run_id, unit_id: revision.unit, artifact: revision.artifact,
+      body: jsonText(revision.body), by_id: revision.by, predecessor_id: revision.predecessor ?? null, subject: revision.subject ?? null }).execute();
+  const old_decisions = new Set(before.decisions.map((decision) => decision.id));
+  for (const decision of after.decisions) if (!old_decisions.has(decision.id))
+    await trx.insertInto("authority.review_decision").values({ id: decision.id, run_id, unit_id: decision.unit, review: decision.review,
+      decision: decision.decision, effect: decision.effect, target_revision_id: decision.target, payload: jsonText(decision.payload) }).execute();
+}
+
+interface Reconcile {
+  readonly run_id: string;
+  readonly source: import("../core-client/core-types").Workflow;
+  readonly prompts: { readonly [path: string]: string };
+  readonly step: StepResult;
+}
+/**
+ * Diff the external actions step wants against effect_intent. The core wants a
+ * RunWorker until its attempt exists, so a wanted action with no intent gets
+ * one, carrying its effect instruction. An intent whose unit is no longer
+ * active (done or cancelled) is still in effect but no longer wanted, so its
+ * stop is requested. An intent the executor has settled is left alone.
+ */
+async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Promise<void> {
+  const { run_id, step } = input;
+  const unit_ids = step.snapshot.units.map((unit) => unit.id);
+  if (unit_ids.length === 0) return;
+  const wanted = selectWanted(step)
+    .flatMap(({ actions }) => actions.filter((action): action is RunWorkerAction => action.kind === "run_worker"));
+  const resolved = new Map<string, ResolvedRunWorker>(step.resolved.map((item) => [item.action_id, item]));
+  // One intent per action: a periodic worker's later attempts reuse its action id, and its
+  // carrier starts each one (WorkerStarted on an ended periodic attempt opens the next seq).
+  const existing = new Set((await trx.selectFrom("authority.effect_intent").select("action_id")
+    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(unit_ids)).execute()).map((row) => row.action_id));
+  for (const action of wanted) {
+    // step adds the attempt for a newly wanted action; its key names the resolved inputs.
+    const attempt = step.snapshot.attempts.filter((candidate) => candidate.unit === action.unit && candidate.worker === action.worker
+      && canonical(candidate.mode) === canonical(action.mode) && canonical(candidate.cause) === canonical(action.cause)).at(-1);
+    const inputs = attempt ? resolved.get(attempt.action_id) : undefined;
+    if (!attempt || !inputs) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} has no attempt or resolved inputs`);
+    if (existing.has(inputs.action_id)) continue;
+    const unit = step.snapshot.units.find((candidate) => candidate.id === action.unit);
+    if (!unit?.stage) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} is not on a stage`);
+    const instruction = selectEffectInstruction({ workflow: input.source, prompts: input.prompts, stage: unit.stage, action, seq: attempt.seq, resolved: inputs });
+    if (!instruction.ok) throw fault(run_id, instruction.error.detail);
+    await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
+      action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
+    existing.add(inputs.action_id);
+  }
+  const inactive = step.snapshot.units.filter((unit) => unit.status.kind === "done" || unit.status.kind === "cancelled").map((unit) => unit.id);
+  if (inactive.length) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", updated_at: new Date() })
+    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", ["pending", "acknowledged"]).execute();
+}
+
+interface ReceiptInput { readonly request: CommitRequest; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }
+async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Promise<void> {
+  if (input.request.ingress_id === null) return;
+  await trx.insertInto("authority.ingress_receipt").values({ id: crypto.randomUUID(), run_id: input.request.run_id, unit_id: input.unit_id,
+    ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) }).execute();
+}
+
+/** The one run id derivation (D8): a launch's request id names its run, so a replayed launch finds its receipt. */
+export function launchRunId(request_id: string): RunId {
+  return `run-${createHash("sha256").update(request_id).digest("hex")}` as RunId;
 }

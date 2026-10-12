@@ -15,6 +15,9 @@ CREATE TABLE authority.definition_bundle (
   digest text NOT NULL UNIQUE,
   source jsonb NOT NULL,
   checked_program jsonb NOT NULL,
+  -- prompt path -> content digest, pinned at compile (D9). Editing a prompt
+  -- file afterwards cannot change what this definition renders.
+  prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   archived_at timestamptz
@@ -157,6 +160,11 @@ CREATE TABLE authority.effect_intent (
   seq integer NOT NULL CHECK (seq >= 0),
   payload jsonb NOT NULL,
   status authority.effect_status NOT NULL DEFAULT 'pending',
+  -- Executor bookkeeping: provider start attempts claimed, when the next may
+  -- run, and why the last one did not succeed.
+  tries integer NOT NULL DEFAULT 0 CHECK (tries >= 0),
+  next_try_at timestamptz,
+  last_error text,
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (action_id, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
@@ -170,26 +178,6 @@ CREATE TABLE authority.ingress_receipt (
   request_digest text NOT NULL,
   result jsonb NOT NULL,
   UNIQUE (run_id, ingress_id),
-  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
-);
-
-CREATE TABLE authority.capacity_pool (
-  id text PRIMARY KEY,
-  run_id text NOT NULL REFERENCES authority.run(id),
-  pool_key text NOT NULL,
-  capacity integer NOT NULL CHECK (capacity >= 0),
-  UNIQUE (run_id, pool_key),
-  UNIQUE (run_id, id)
-);
-
-CREATE TABLE authority.capacity_reservation (
-  id text PRIMARY KEY,
-  run_id text NOT NULL,
-  pool_id text NOT NULL,
-  unit_id text NOT NULL,
-  is_active boolean NOT NULL DEFAULT true,
-  UNIQUE (pool_id, unit_id),
-  FOREIGN KEY (run_id, pool_id) REFERENCES authority.capacity_pool(run_id, id),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
 );
 
@@ -240,17 +228,37 @@ CREATE TABLE authority.collaboration_delivery (
   FOREIGN KEY (run_id, message_id) REFERENCES authority.collaboration_message(run_id, id)
 );
 
-CREATE INDEX unit_run_idx ON authority.unit(run_id);
-CREATE INDEX unit_parent_idx ON authority.unit(parent_id);
-CREATE INDEX attempt_unit_idx ON authority.attempt(unit_id);
-CREATE INDEX artifact_revision_unit_idx ON authority.artifact_revision(unit_id);
+-- The operator stream's outbox. Written by commit and the registry store in the
+-- transaction that causes it; never read by step. A deleted run leaves its
+-- rows in the stream with no run (D12).
+CREATE TABLE authority.operator_event (
+  id text PRIMARY KEY,
+  run_id text REFERENCES authority.run(id) ON DELETE SET NULL,
+  -- The key of the entity the event concerns (run, definition or project id);
+  -- kept when the run is deleted.
+  run_key text NOT NULL,
+  event_key text NOT NULL,
+  payload jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint
+);
+
+-- unit is keyed (run_id, id) and its parent lookups use the (run_id, parent_id, …)
+-- unique index; the rest serve commit, the executor and the read store per unit.
+CREATE INDEX attempt_unit_idx ON authority.attempt(run_id, unit_id);
+CREATE INDEX artifact_revision_unit_idx ON authority.artifact_revision(run_id, unit_id, artifact, created_at);
+CREATE INDEX review_decision_unit_idx ON authority.review_decision(run_id, unit_id);
 CREATE INDEX event_commit_idx ON authority.event(commit_txid, id);
 CREATE INDEX event_run_created_idx ON authority.event(run_id, created_at, id);
-CREATE INDEX effect_intent_status_idx ON authority.effect_intent(status);
-CREATE INDEX reservation_active_idx ON authority.capacity_reservation(pool_id) WHERE is_active;
+CREATE INDEX event_unit_created_idx ON authority.event(run_id, unit_id, created_at, id);
+CREATE INDEX wanted_log_unit_idx ON authority.wanted_log(run_id, unit_id);
+CREATE INDEX effect_intent_run_idx ON authority.effect_intent(run_id, status);
+CREATE INDEX effect_intent_unit_idx ON authority.effect_intent(run_id, unit_id);
+CREATE INDEX operator_event_commit_idx ON authority.operator_event(commit_txid, id);
 
 COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
 COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';
+COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}';
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.project.session_policy IS '@type {SessionPolicy}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
@@ -265,9 +273,10 @@ COMMENT ON COLUMN authority.review_decision.payload IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.event.payload IS '@type {CoreEvent}';
 COMMENT ON COLUMN authority.event.writer IS '@type {Writer}';
 COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedActions}';
-COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectIntentPayload}';
+COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectInstruction}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';
 COMMENT ON COLUMN authority.collaboration_message.body IS '@type {CollaborationMessageBody}';
 COMMENT ON COLUMN authority.review_item.body IS '@type {ReviewItemBody}';
 COMMENT ON COLUMN authority.collaboration_delivery.payload IS '@type {CollaborationDeliveryPayload}';
+COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';

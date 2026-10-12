@@ -4,13 +4,12 @@ import { resolve } from "node:path";
 
 import { CoreClient } from "../src/core-client/client";
 import { decodeCoreResponse } from "../src/core-client/core-types";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
+import { openDatabase } from "../src/storage/database";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { githubIdentityFromRemote } from "../src/runtime/project-identity";
 import { selectControlPlaneAccess } from "../src/http/control-auth";
 import { silentDurationMs } from "../src/adapters/kbbl";
-import { settingForRole } from "../src/effects/operations/selected-publication-contract";
 import type { Workflow } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
@@ -38,7 +37,7 @@ const retainedPaths = [
 
   "oakridge-dbos/src/core-client/client.ts",
   "oakridge-dbos/src/core-client/core-types.ts",
-  "oakridge-dbos/src/storage/sql-executor.ts",
+  "oakridge-dbos/src/storage/database.ts",
   "oakridge-dbos/src/runtime/git-command-runner.ts",
   "oakridge-dbos/src/runtime/github-pull-requests.ts",
   "oakridge-dbos/src/runtime/project-identity.ts",
@@ -56,7 +55,7 @@ test("every named leaf operation remains present", () => {
 
 test("only leaf support types remain in the former domain directory", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
-    "delegated-session.ts", "execution.ts", "primitives.ts", "projects.ts",
+    "delegated-session.ts", "effect-instruction.ts", "execution.ts", "primitives.ts", "projects.ts",
     "pull-request.ts", "repository-provisioning.ts", "session-settings.ts", "workflow.ts",
   ]);
 });
@@ -64,8 +63,7 @@ test("only leaf support types remain in the former domain directory", () => {
 test("retained operations import and execute", async () => {
   expect(CoreClient.start({ wasm_path: "/nonexistent/workflow_evaluator.wasm" }).ok).toBe(false);
   expect(decodeCoreResponse(null)).toBeNull();
-  const sql = PgPostgresExecutor.connect("postgres://localhost/oakridge");
-  await sql.close();
+  await openDatabase("postgres://localhost/oakridge").destroy();
   expect((await new BunGitCommandRunner().run(root, ["rev-parse", "--is-inside-work-tree"])).exit_code).toBe(0);
   const reader = new GithubPullRequestReader({ token: "test" }, (async () => new Response(null, { status: 404 })) as unknown as typeof fetch);
   expect(await reader.read("owner", "repo", 1)).toEqual({ ok: true, value: null });
@@ -84,8 +82,3 @@ test("v2 sample workers declare their kind without v1 provider routing", () => {
 
 // Provider literal ownership is enforced by provider-literal-lint.test.ts,
 // including its sole named catalog exemption and positive controls.
-
-if (false) {
-  // @ts-expect-error an unrecognized setting role must fail at typecheck time
-  settingForRole([], "unknown_role");
-}

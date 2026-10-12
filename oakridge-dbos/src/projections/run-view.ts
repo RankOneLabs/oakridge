@@ -1,13 +1,12 @@
-import type { RunId } from "../storage/schema-records";
 import type { Action, ScopedSnapshot, UnitStatus } from "../core-client/core-types";
-import type { SqlExecutor } from "../storage/sql-executor";
-import { readScopedSnapshot } from "../storage/snapshot-reader";
+import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
 
-export interface RunScopeSummary { readonly scope_id: string; readonly scope_key: string; readonly label: string; readonly version: number; readonly is_terminal: boolean; readonly available_commands: readonly string[] }
-export interface RunSummary { readonly run_id: RunId; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
-  readonly created_at: Date; readonly archived_at: Date | null }
-export interface RunView extends RunSummary {
-  readonly cursor: readonly { readonly scope_id: string; readonly version: number }[]; readonly scopes: readonly RunScopeSummary[] }
+export interface RunUnitSummary { readonly unit_id: UnitId; readonly unit_key: string; readonly stage: string | null; readonly status: UnitStatus; readonly version: number }
+export interface RunSummary {
+  readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string; readonly version: number;
+  readonly status: UnitStatus; readonly created_at: Date; readonly archived_at: Date | null;
+}
+export interface RunView extends RunSummary { readonly units: readonly RunUnitSummary[] }
 /** The run endpoint's complete projection. */
 export type RunDetail = RunView;
 export interface RunPage { readonly items: readonly RunView[]; readonly next_cursor: string | null }
@@ -62,13 +61,8 @@ export function selectInspectAttention(snapshot: ScopedSnapshot, wanted: readonl
   return attention.sort((left, right) => left.unit_id.localeCompare(right.unit_id) || left.worker.localeCompare(right.worker));
 }
 
-export async function readRunInspect(db: SqlExecutor, run_id: string): Promise<RunInspectView | null> {
-  const snapshot = await readScopedSnapshot(db, run_id, null);
-  if (!snapshot) return null;
-  const wanted = await db.query<LatestWanted>(`SELECT DISTINCT ON (w.unit_id) w.unit_id,w.actions
-    FROM authority.wanted_log w JOIN authority.event e ON e.run_id=w.run_id AND e.id=w.event_id
-    WHERE w.run_id=$1 ORDER BY w.unit_id,e.created_at DESC,e.id DESC`, [run_id]);
-  return { run_id, status: snapshot.run.status,
+export function selectRunInspect(snapshot: ScopedSnapshot, wanted: readonly LatestWanted[]): RunInspectView {
+  return { run_id: snapshot.run.id, status: snapshot.run.status,
     units: snapshot.units.map((unit) => ({ id: unit.id, stage: unit.stage ?? null, status: unit.status })),
     attention: selectInspectAttention(snapshot, wanted) };
 }

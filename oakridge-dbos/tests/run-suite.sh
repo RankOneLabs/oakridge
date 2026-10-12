@@ -9,15 +9,8 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
-if [[ "$suite" == integration ]]; then
-  bun run --filter kbbl build:pwa
-fi
-# Booting a composition requires an effect-encryption key, and CI supplies none.
-# Default one for the whole suite so a new test that boots the authority cannot
-# omit it; production-effects.test.ts still unsets it at runtime to assert that a
-# missing key fails startup.
-export OAKRIDGE_EFFECT_ENCRYPTION_KEY="${OAKRIDGE_EFFECT_ENCRYPTION_KEY:-ERERERERERERERERERERERERERERERERERERERERERE}"
-integration=' advance-children authority-schema cancellation-obligations capacity-reservations child-page commit-atomicity concurrent-decisions crash-matrix development-end-to-end development-lifecycle development-publication effect-deadline engine-upgrade fresh-boot launch-postgres operator-browser operator-events operator-registry ops-live production-effects provider-driven-bundles receipt-replay retained-operations review-effects run-durability run-error-recovery run-review-acceptance run-rollover session-observe-recovery session-policy-race scope-command-postgres snapshot-reader stage-publications start-attempt-recovery '
+# Integration files run against a real PostgreSQL server: each creates and drops its own scratch database.
+integration=' carrier-stop collaboration-store commit commit-atomicity concurrent-decisions event-stream executor-store fresh-boot migrate operator-registry ops-live read-store registry-store run-deletion '
 mapfile -d '' files < <(find src tests -name '*.test.ts' -print0 | sort -z)
 selected=()
 for file in "${files[@]}"; do
@@ -31,6 +24,6 @@ shard="${TEST_SHARD:-0}"
 count="${TEST_SHARD_COUNT:-1}"
 failed=0
 for ((index=shard; index<${#selected[@]}; index+=count)); do
-  OAKRIDGE_ENABLE_RAW_INGRESS=1 bun test --timeout=120000 "${selected[index]}" || failed=$((failed+1))
+  bun test --timeout=120000 "${selected[index]}" || failed=$((failed+1))
 done
 if [[ "$failed" -ne 0 ]]; then echo "$failed $suite test files failed" >&2; exit 1; fi

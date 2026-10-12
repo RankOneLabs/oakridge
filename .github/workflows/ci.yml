@@ -85,11 +85,6 @@ jobs:
 
   workspace-typecheck:
     name: workspace typecheck (TypeScript)
-    # The v2 core replaces the scope-definition protocol oakridge-dbos is
-    # written against, so it and the operator contracts derived from its
-    # TypeScript do not compile between this PR and c3, which moves DBOS onto
-    # compile/step. The Rust core and its generated contracts stay green.
-    if: github.base_ref != 'epic/core-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,8 +93,13 @@ jobs:
       # package.json — keeps CI builds reproducible against the
       # committed lock.
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
+      - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
+      - run: bunx tsc --noEmit -p lbc-dashboard/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
+      # kbbl's typecheck includes the Oakridge PWA, which still reads the v1
+      # operator contract. The PWA port (rescue spec R6) owns it and removes this gate.
+      - if: github.base_ref != 'epic/core-v2'
+        run: bunx tsc --noEmit -p kbbl/tsconfig.json
 
   kbbl-tests:
     name: kbbl backend tests (bun)
@@ -121,8 +121,6 @@ jobs:
 
   kbbl-browser-tests:
     name: kbbl browser tests (Chromium)
-    # This suite drives the c1 DBOS fixture and resumes with the c3 host migration.
-    if: github.base_ref != 'epic/core-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,9 +140,6 @@ jobs:
 
   oakridge-dbos-unit-tests:
     name: oakridge-dbos unit tests (bun)
-    # The v2 core removes the generated development bundle consumed by these
-    # tests. c3 re-enables this job when DBOS uses compile/step and YAML samples.
-    if: github.base_ref != 'epic/core-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -163,9 +158,6 @@ jobs:
 
   oakridge-dbos-tests:
     name: oakridge-dbos integration tests (bun, shard ${{ matrix.shard }})
-    # The v2 core removes the generated development bundle consumed by these
-    # tests. c3 re-enables this job when DBOS uses compile/step and YAML samples.
-    if: github.base_ref != 'epic/core-v2'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -202,7 +194,6 @@ jobs:
         working-directory: workflow-core
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: cd oakridge-dbos && bunx playwright install --with-deps chromium
       - name: Check generated storage records
         if: matrix.shard == 0
         run: bun oakridge-dbos/scripts/generate-storage-records.ts --check
@@ -210,7 +201,6 @@ jobs:
         env:
           TEST_SHARD: ${{ matrix.shard }}
           TEST_SHARD_COUNT: "2"
-          OAKRIDGE_ENABLE_RAW_INGRESS: "1"
         run: bun run --filter oakridge-dbos test:integration
 
   lbc-dashboard-tests:

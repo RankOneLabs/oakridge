@@ -3,7 +3,7 @@ import type { CollaborationDeliveryRecord, CollaborationMessageRow, Collaboratio
 export interface CollaborationThreadView {
   readonly id: string;
   readonly run_id: string;
-  readonly scope_id: string;
+  readonly unit_id: string;
   readonly artifact_revision_id: string;
   readonly context: CollaborationThreadRow["context"];
   readonly created_at: string;
@@ -19,7 +19,7 @@ export function selectCollaborationThreadView(thread: ThreadWithCurrent,
   messages: readonly CollaborationMessageRow[], review_items: readonly ReviewItemRow[],
   deliveries: readonly CollaborationDeliveryRecord[]): CollaborationThreadView {
   const latest_delivery = deliveries[0];
-  return { id: thread.id, run_id: thread.run_id, scope_id: thread.scope_id,
+  return { id: thread.id, run_id: thread.run_id, unit_id: thread.unit_id,
     artifact_revision_id: thread.artifact_revision_id, context: thread.context, created_at: thread.created_at,
     capabilities: { can_write: thread.artifact_revision_id === thread.current_revision_id },
     messages, review_items, deliveries, last_delivery_failure_reason: latest_delivery?.payload.status === "failed"

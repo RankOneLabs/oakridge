@@ -1,4 +1,4 @@
-import type { RunId } from "../storage/schema-records";
+import type { RunId } from "../domain/primitives";
 import type { RunEvent } from "./run-event";
 
 /** The two payloads persisted in authority.operator_event. */

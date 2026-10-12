@@ -1,0 +1,56 @@
+import { expect, test } from "bun:test";
+import { sql } from "kysely";
+import { jsonText, openDatabase } from "../src/storage/database";
+import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { scratchDatabase } from "./authority-fixture";
+
+test("an empty database takes the baseline once, and a repeat confirms it", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db);
+    await migrateEmptyDatabase(db);
+    const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(db);
+    expect(baselines.rows[0]?.count).toBe(1);
+  } finally { await db.destroy(); await scratch.drop(); }
+});
+
+test("two processes applying the baseline concurrently apply it exactly once", async () => {
+  const scratch = await scratchDatabase();
+  const first = openDatabase(scratch.url);
+  const second = openDatabase(scratch.url);
+  try {
+    await Promise.all([migrateEmptyDatabase(first), migrateEmptyDatabase(second)]);
+    const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(first);
+    expect(baselines.rows[0]?.count).toBe(1);
+  } finally { await first.destroy(); await second.destroy(); await scratch.drop(); }
+});
+
+test("a database with other tables is refused, and a changed baseline is detected", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await sql`CREATE TABLE public.stray (id int)`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("requires an empty database; found public.stray");
+    await sql`DROP TABLE public.stray`.execute(db);
+    await migrateEmptyDatabase(db);
+    await sql`UPDATE authority.schema_baseline SET digest = ${"0".repeat(64)}`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("authority baseline digest mismatch");
+  } finally { await db.destroy(); await scratch.drop(); }
+});
+
+test("two runs each have a root unit with no parent, and ingress ids are scoped to a run", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db);
+    await db.insertInto("authority.definition_bundle").values({ id: "b", digest: "d", source: jsonText({}) as never, checked_program: jsonText({}) as never }).execute();
+    for (const run of ["r1", "r2"]) await db.transaction().execute(async (trx) => {
+      await trx.insertInto("authority.run").values({ id: run, definition_bundle_id: "b", root_unit_id: run }).execute();
+      await trx.insertInto("authority.unit").values({ id: run, run_id: run, unit_key: "$root", declaration: "$root", input: jsonText({}) as never, status: jsonText({}) as never }).execute();
+      await trx.insertInto("authority.ingress_receipt").values({ id: `${run}-receipt`, run_id: run, ingress_id: "same", request_digest: "x", result: jsonText({}) as never }).execute();
+    });
+    const units = await db.selectFrom("authority.unit").select("id").execute();
+    expect(units.length).toBe(2);
+  } finally { await db.destroy(); await scratch.drop(); }
+});

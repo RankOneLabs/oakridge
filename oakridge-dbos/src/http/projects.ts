@@ -1,11 +1,10 @@
 import type { Hono } from "hono";
 import { err, ok, type Result } from "../domain/primitives";
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
-import { listProjects } from "../storage/projection-reader";
-import type { MutationService } from "../storage/mutation-service";
+import type { Database } from "../storage/database";
+import { createProject, listProjects, updateProject } from "../storage/registry-store";
 import type { ProjectId, ProjectRecord } from "../storage/schema-records";
-import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type CommandError } from "./scope-commands";
+import { ConflictError, errorResponse, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type RequestError } from "./errors";
 
 export type { ProjectDraft } from "../domain/projects";
 /** A saved project as the operator API returns it. */
@@ -31,18 +30,15 @@ export function parseProjectDraft(value: unknown): Result<ProjectDraft, InvalidP
     forge_repository: { provider: "github", owner: forge_repository.owner, name: forge_repository.name } });
 }
 
-function failure(error: CommandError): Response {
-  const body = error instanceof InternalFaultError ? { error: error.kind, detail: "internal fault", trace_id: error.trace_id } : { error: error.kind, detail: error.detail };
-  return Response.json(body, { status: commandStatus({ ok: false, error }) });
-}
+const failure = errorResponse;
 function writeFailure(error: ProjectWriteError): Response {
   return failure(error.kind === "missing" ? new MissingEntityError("project not found") : new ConflictError(`a project named ${error.name} exists`));
 }
-async function draftOf(request: Request): Promise<Result<ProjectDraft, CommandError>> {
+async function draftOf(request: Request): Promise<Result<ProjectDraft, RequestError>> {
   try { return parseProjectDraft(await request.json()); } catch { return err(new MalformedRequestError("invalid JSON")); }
 }
 
-export function installProjectApi(app: Hono, deps: { readonly db: TransactionalSqlExecutor; readonly mutations: MutationService }): void {
+export function installProjectApi(app: Hono, deps: { readonly db: Database }): void {
   app.get("/api/projects", async () => {
     try { return Response.json({ items: await listProjects(deps.db) } satisfies ProjectList); }
     catch (cause) { return failure(new InternalFaultError(String(cause))); }
@@ -51,7 +47,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: TransactionalS
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const created = await deps.mutations.createProject(crypto.randomUUID() as ProjectId, draft.value);
+      const created = await createProject(deps.db, crypto.randomUUID() as ProjectId, draft.value);
       return created.ok ? Response.json(created.value, { status: 201 }) : writeFailure(created.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });
@@ -59,7 +55,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: TransactionalS
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const updated = await deps.mutations.updateProject(c.req.param("project_id") as ProjectId, draft.value);
+      const updated = await updateProject(deps.db, c.req.param("project_id") as ProjectId, draft.value);
       return updated.ok ? Response.json(updated.value) : writeFailure(updated.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });

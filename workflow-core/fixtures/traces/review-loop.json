@@ -49,7 +49,7 @@
           "unit": "run/document",
           "worker": "critic",
           "artifact": "critique",
-          "subject": "draft:1",
+          "subject": "run/document:draft:1",
           "body": {
             "notes": [
               "shorten"
@@ -80,7 +80,7 @@
           "unit": "run/document",
           "review": "editor",
           "decision": "request_changes",
-          "target": "draft:1",
+          "target": "run/document:draft:1",
           "payload": {
             "feedback": "shorter"
           }
@@ -100,7 +100,7 @@
           "unit": "run/document",
           "worker": "writer",
           "artifact": "draft",
-          "predecessor": "draft:1",
+          "predecessor": "run/document:draft:1",
           "body": {
             "title": "Second",
             "body": ""
@@ -146,7 +146,7 @@
           "unit": "run/document",
           "worker": "writer",
           "artifact": "draft",
-          "predecessor": "draft:2",
+          "predecessor": "run/document:draft:2",
           "body": {
             "title": "Third",
             "body": "Short"
@@ -157,8 +157,8 @@
           "unit": "run/document",
           "worker": "critic",
           "artifact": "critique",
-          "predecessor": "critique:1",
-          "subject": "draft:3",
+          "predecessor": "run/document:critique:1",
+          "subject": "run/document:draft:3",
           "body": {
             "notes": [
               "good"
@@ -177,7 +177,7 @@
           "unit": "run/document",
           "review": "editor",
           "decision": "approve",
-          "target": "draft:3",
+          "target": "run/document:draft:3",
           "payload": {}
         }
       ],
