@@ -86,6 +86,10 @@ export function isValidControlRequest(request: Pick<Request, "method" | "headers
   catch { return false; }
 }
 
+/** Fail closed: a request no route in the table classifies is refused, even where a handler is registered. */
+export const classifiedRoutesMiddleware = (): MiddlewareHandler => async (context, next) =>
+  matchRoute(context.req.method, context.req.path) ? next() : context.json({ error: "unclassified route" }, 404);
+
 export const controlTokenMiddleware = (token: string, policy?: BrowserWritePolicy): MiddlewareHandler => async (context, next) => {
   if (!requiresControlToken(context.req.method, context.req.path)) return next();
   if (!isValidControlRequest(context.req.raw, token, policy)) return context.json({ error: "unauthorized" }, 401);

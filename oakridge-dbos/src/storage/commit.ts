@@ -18,6 +18,12 @@ export interface CommitRequest {
   readonly writer: Writer;
   /** Required with `launched`: the run is created pinned to this definition. */
   readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null };
+  /**
+   * Only with `worker_started`: the sha256 hex of the publication secret minted
+   * for the attempt's session. Commit stores it on the attempt, and publish
+   * resolves its writer from it (part 1 §7.2).
+   */
+  readonly publication_secret_hash?: string | null;
 }
 export type CommitOutcome =
   | { readonly kind: "committed"; readonly event_id: string }
@@ -48,8 +54,9 @@ function canonical(value: unknown): string {
     .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-export function requestDigest(request: Pick<CommitRequest, "event" | "writer">): string {
-  return createHash("sha256").update(canonical({ event: request.event, writer: request.writer })).digest("hex");
+export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | "publication_secret_hash">): string {
+  const { event, writer, publication_secret_hash } = request;
+  return createHash("sha256").update(canonical(publication_secret_hash ? { event, writer, publication_secret_hash } : { event, writer })).digest("hex");
 }
 
 /**
@@ -81,6 +88,8 @@ function concurrencyConflict(error: unknown): string | null {
 
 async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<CommitOutcome> {
   const { run_id } = request;
+  if (request.publication_secret_hash && request.event.kind !== "worker_started")
+    throw fault(run_id, `a publication secret hash rides only on worker_started, not ${request.event.kind}`);
   if (request.event.kind === "launched") {
     if (!request.launch) return { kind: "missing", detail: "a launch names its pinned definition" };
     await trx.insertInto("authority.run").values({ id: run_id, definition_bundle_id: request.launch.definition_bundle_id,
@@ -114,6 +123,8 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   if (stepped.kind === "rejected") return reject(stepped.reason);
   const step = stepped.step;
   await writeDelta(trx, run_id, snapshot, step.snapshot);
+  if (request.event.kind === "worker_started" && request.publication_secret_hash)
+    await storePublicationSecret(trx, { run_id, action_id: request.event.action, hash: request.publication_secret_hash, after: step.snapshot });
   const event = await trx.insertInto("authority.event").values({ id: crypto.randomUUID(), run_id, unit_id: unit_id.value,
     ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
@@ -217,6 +228,16 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, before: Scop
   for (const decision of after.decisions) if (!old_decisions.has(decision.id))
     await trx.insertInto("authority.review_decision").values({ id: decision.id, run_id, unit_id: decision.unit, review: decision.review,
       decision: decision.decision, effect: decision.effect, target_revision_id: decision.target, payload: jsonText(decision.payload) }).execute();
+}
+
+interface PublicationSecret { readonly run_id: string; readonly action_id: string; readonly hash: string; readonly after: ScopedSnapshot }
+/** The started attempt is the action's latest; a periodic worker's start may have opened a new seq. */
+async function storePublicationSecret(trx: DatabaseTransaction, input: PublicationSecret): Promise<void> {
+  const started = input.after.attempts.filter((attempt) => attempt.action_id === input.action_id)
+    .reduce<ScopedSnapshot["attempts"][number] | null>((latest, attempt) => latest && latest.seq > attempt.seq ? latest : attempt, null);
+  if (!started) throw fault(input.run_id, `started action ${input.action_id} has no attempt`);
+  await trx.updateTable("authority.attempt").set({ publication_secret_hash: input.hash })
+    .where("run_id", "=", input.run_id).where("action_id", "=", started.action_id).where("seq", "=", started.seq).execute();
 }
 
 interface Reconcile {
