@@ -12,6 +12,14 @@ import { selectControlPlaneAccess } from "../src/http/control-auth";
 import { silentDurationMs } from "../src/adapters/kbbl";
 import { settingForRole } from "../src/effects/operations/selected-publication-contract";
 import type { Workflow } from "../src/core-client/core-types";
+import { OPERATION_REGISTRY } from "../src/operations/registry";
+
+test("v2 operation registry describes both in-process operations and excludes session.run", () => {
+  expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "pull_request.observe"]);
+  for (const operation of OPERATION_REGISTRY)
+    expect(Object.keys(operation).sort()).toEqual(["error_codes", "input_schema", "key", "output_schema", "version"]);
+  expect(OPERATION_REGISTRY[0].output_schema).toEqual({ repository_path: "repo_path", push_remote_owner: "ident", head: "ident" });
+});
 
 const root = resolve(import.meta.dir, "../..");
 const deletedPaths = [
