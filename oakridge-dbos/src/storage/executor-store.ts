@@ -8,7 +8,8 @@ type Reader = Kysely<DB> | DatabaseTransaction;
 /**
  * effect_intent bookkeeping, and nothing else (rescue spec §2.2). Commit
  * inserts an intent as `pending` and requests its stop; the executor moves it
- * through `acknowledged` to `stopped` or `failed` and keeps its start tries,
+ * through `acknowledged` to `stopped` or `failed`, or requests its stop itself
+ * when an attempt fails with an execution still possibly live, and keeps its start tries,
  * retry time and last error here. What a worker did is never written here: it
  * goes to commit as WorkerStarted, WorkerEnded and RevisionPublished.
  */
@@ -71,6 +72,20 @@ export async function markAcknowledged(db: Database, intent_id: string): Promise
       .where("id", "=", intent_id).where("status", "=", "pending").returning("status").executeTakeFirst();
     if (row) return row.status;
     return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", intent_id).executeTakeFirst())?.status ?? null;
+  });
+}
+
+/**
+ * The attempt failed while an execution may still exist (a live session, or a
+ * start whose answer never came): its stop is requested, and the cleanup
+ * carrier settles it only once the provider confirms the stop.
+ */
+export async function abandonIntent(db: Database, input: { readonly intent_id: string; readonly last_error: string }): Promise<EffectStatus | null> {
+  return db.transaction().execute(async (trx) => {
+    if (!await lockRunOf(trx, input.intent_id)) return null;
+    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
+      .where("id", "=", input.intent_id).where("status", "in", ["pending", "acknowledged"]).execute();
+    return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", input.intent_id).executeTakeFirst())?.status ?? null;
   });
 }
 

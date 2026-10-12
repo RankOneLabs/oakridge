@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
-import { claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent } from "../src/storage/executor-store";
+import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent } from "../src/storage/executor-store";
 import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -52,6 +52,21 @@ test("settling is final and leaves the intent off the owed list", async () => {
   await settleIntent(authority.db, { intent_id, status: "failed", last_error: "refused" });
   const again = await settleIntent(authority.db, { intent_id, status: "stopped", last_error: null });
   expect({ again, owed: await listOwedIntents(authority.db, run_id) }).toEqual({ again: "failed", owed: [] });
+});
+
+test("abandoning a live intent requests its stop and keeps it owed until a stop settles it", async () => {
+  const { run_id, intent_id } = await launchedIntent();
+  await markAcknowledged(authority.db, intent_id);
+  const abandoned = await abandonIntent(authority.db, { intent_id, last_error: "observation_unavailable: lost" });
+  const owed = await listOwedIntents(authority.db, run_id);
+  expect({ abandoned, owed, last_error: (await readIntent(authority.db, intent_id))?.last_error })
+    .toEqual({ abandoned: "stop_requested", owed: [{ id: intent_id, status: "stop_requested" }], last_error: "observation_unavailable: lost" });
+});
+
+test("abandoning a settled intent leaves it settled", async () => {
+  const { intent_id } = await launchedIntent();
+  await settleIntent(authority.db, { intent_id, status: "failed", last_error: "refused" });
+  expect(await abandonIntent(authority.db, { intent_id, last_error: "late" })).toBe("failed");
 });
 
 test("an attempt's session is the one it reported at start", async () => {

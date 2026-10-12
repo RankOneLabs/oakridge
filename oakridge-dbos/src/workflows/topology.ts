@@ -8,7 +8,7 @@ import type { EffectProvider, ExternalHandle, ProviderResult } from "../effects/
 import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import { commitEvent } from "../storage/commit";
 import type { Database } from "../storage/database";
-import { claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent,
+import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent,
   type EffectStatus, type SettledStatus, type StartClaim } from "../storage/executor-store";
 import { listRunsNeedingWork, readRunStanding } from "../storage/read-store";
 
@@ -72,6 +72,9 @@ export const runWorkflowId = (run_id: string, generation = 0): string => generat
  */
 export const intentWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
   `${intent_id}@${application_version}`;
+/** A stop is carried by its own workflow: the intent's start carrier may have finished, or may still be observing. */
+export const cleanupWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
+  `${intent_id}:stop@${application_version}`;
 /** DBOS dequeues and recovers only rows recorded under the running version. */
 export function isFromOtherEngine(status: WorkflowStatus): boolean {
   return status.applicationVersion !== undefined && status.applicationVersion !== DBOS.applicationVersion;
@@ -117,6 +120,9 @@ interface CarriedIntent {
   readonly id: string;
   readonly run_id: RunId;
   readonly status: EffectStatus;
+  /** Provider starts claimed so far; none means no execution can exist. */
+  readonly tries: number;
+  readonly last_error: string | null;
   readonly instruction: EffectInstruction;
   /** The session the attempt reported at start, so a carrier resumed by another version can observe or stop it. */
   readonly handle: ExternalHandle | null;
@@ -131,7 +137,8 @@ const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<Load
   const decoded = decodeEffectInstruction(intent.payload);
   if (!decoded.ok) return { kind: "invalid", id: intent.id, run_id: intent.run_id, attempt: { action_id: intent.action_id, seq: intent.seq }, detail: decoded.error.detail };
   const session_id = await readAttemptSession(db, decoded.value.attempt);
-  return { kind: "carried", intent: { id: intent.id, run_id: intent.run_id, status: intent.status, instruction: decoded.value,
+  return { kind: "carried", intent: { id: intent.id, run_id: intent.run_id, status: intent.status, tries: intent.tries,
+    last_error: intent.last_error, instruction: decoded.value,
     handle: session_id === null ? null : { kind: INPUT_CONTRACTS.session, session_id } } };
 }, { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
@@ -158,6 +165,9 @@ const markAcknowledgedStep = DBOS.registerStep(async (intent_id: string): Promis
 interface SettleInput { readonly intent_id: string; readonly status: SettledStatus; readonly last_error: string | null }
 const settleStep = DBOS.registerStep(async (input: SettleInput): Promise<EffectStatus | null> => settleIntent(current().db, input),
   { name: "oakridgeSettleIntent", retriesAllowed: true, maxAttempts: 5 });
+interface AbandonInput { readonly intent_id: string; readonly last_error: string }
+const abandonStep = DBOS.registerStep(async (input: AbandonInput): Promise<EffectStatus | null> => abandonIntent(current().db, input),
+  { name: "oakridgeAbandonIntent", retriesAllowed: true, maxAttempts: 5 });
 interface TryFailureInput { readonly intent_id: string; readonly last_error: string; readonly retry_in_seconds: number }
 const recordTryFailureStep = DBOS.registerStep(async (input: TryFailureInput): Promise<EffectStatus | null> =>
   recordTryFailure(current().db, { intent_id: input.intent_id, last_error: input.last_error, next_try_at: new Date(Date.now() + input.retry_in_seconds * 1000) }),
@@ -184,10 +194,19 @@ async function report(input: ReportInput): Promise<void> {
   const refused = await reportStep(input);
   if (refused) DBOS.logger.warn(`attempt ${input.attempt.action_id}: ${input.report.kind} report not applied: ${refused}`);
 }
-/** The attempt failed without a running execution: report it and settle the intent. */
+/** The attempt failed and no execution exists (the provider definitely refused it): report it and settle the intent. */
 async function failAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
   await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: failure } });
   return settleStep({ intent_id: intent.id, status: "failed", last_error: `${failure.code}: ${failure.detail}` });
+}
+/**
+ * The attempt failed but an execution may still exist: a session that can no
+ * longer be observed, or a start whose answer never came. Report it, then hand
+ * the intent to the cleanup carrier, which settles it only on a confirmed stop.
+ */
+async function abandonAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
+  await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: failure } });
+  return abandonStep({ intent_id: intent.id, last_error: `${failure.code}: ${failure.detail}` });
 }
 
 interface RunAdvance { readonly is_terminal: boolean; readonly pending_starts: readonly string[]; readonly pending_stops: readonly string[] }
@@ -242,7 +261,8 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     if (claim.kind === "missing") return null;
     if (claim.kind === "not_pending") { status = claim.status; break; }
     if (claim.kind === "exhausted") {
-      status = await failAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.start_attempts_exhausted,
+      // Every try got no definite answer, so a start may have landed.
+      status = await abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.start_attempts_exhausted,
         detail: `start attempts exhausted (${claim.tries})` });
       break;
     }
@@ -273,10 +293,10 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
         last_error: outcome.result.kind === "failed" ? `${outcome.result.code}: ${outcome.result.detail}` : null });
       break;
     }
-    if (outcome.kind === "refused") { status = await failAttempt(intent, outcome.failure); break; }
+    if (outcome.kind === "refused") { status = await abandonAttempt(intent, outcome.failure); break; }
     unavailable = outcome.kind === "retry" && outcome.is_unavailable ? unavailable + 1 : 0;
     if (unavailable >= Math.max(1, timing.max_observe_unavailable_attempts)) {
-      status = await failAttempt(intent, { kind: "failed", code: "observation_unavailable",
+      status = await abandonAttempt(intent, { kind: "failed", code: "observation_unavailable",
         detail: `observation unavailable after ${unavailable} consecutive attempts${outcome.kind === "retry" ? `: ${outcome.detail}` : ""}` });
       break;
     }
@@ -289,7 +309,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   return status;
 }
 
-/** Carries one requested stop until the provider positively acknowledges it. Workflow id = `intentWorkflowId(intent_id)`. */
+/** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`. */
 export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: "oakridgeCleanupWorkflow" });
 async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
@@ -297,11 +317,13 @@ async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   if (loaded.kind !== "carried") return loaded.kind === "invalid" ? settleStep({ intent_id, status: "stopped", last_error: loaded.detail }) : null;
   const intent = loaded.intent;
   if (intent.status !== "stop_requested") return intent.status;
+  // Why the stop was requested, when the executor requested it; kept past the stop's own retries.
+  const reason = intent.last_error;
   let handle = intent.handle;
   for (let attempt = 0; ; attempt++) {
     const outcome = resolveStop(await stopStep(intent.instruction, handle));
     if (outcome.kind === "confirmed") {
-      const settled = await settleStep({ intent_id, status: "stopped", last_error: null });
+      const settled = await settleStep({ intent_id, status: "stopped", last_error: reason });
       await wakeRun(intent.run_id);
       return settled;
     }
@@ -356,7 +378,10 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<vo
 async function settleExpiredEffect(intent_id: string): Promise<void> {
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind !== "carried" || (loaded.intent.status !== "pending" && loaded.intent.status !== "acknowledged")) return;
-  await failAttempt(loaded.intent, { kind: "failed", code: "execution_deadline_exceeded", detail: `execution deadline exceeded for ${intent_id}` });
+  const failure = { kind: "failed", code: "execution_deadline_exceeded", detail: `execution deadline exceeded for ${intent_id}` } as const;
+  // An unclaimed intent never reached the provider; any other may have a live execution to stop.
+  if (loaded.intent.status === "pending" && loaded.intent.tries === 0) await failAttempt(loaded.intent, failure);
+  else await abandonAttempt(loaded.intent, failure);
   DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
 }
 
@@ -364,7 +389,7 @@ const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): P
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
 
 export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  const workflow_id = intentWorkflowId(intent_id);
+  const workflow_id = kind === "start" ? intentWorkflowId(intent_id) : cleanupWorkflowId(intent_id);
   const status = await DBOS.getWorkflowStatus(workflow_id);
   if (!status) {
     const deadline_ms = current().timing.execution_deadline_ms;

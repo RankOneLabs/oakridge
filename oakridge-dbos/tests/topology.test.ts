@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { currentRunGeneration, DEFAULT_WORKFLOW_TIMING, dispatchChild, ensureRunRecoveryFork, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep,
-  intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, wakeRun } from "../src/workflows/topology";
+  cleanupWorkflowId, intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, wakeRun } from "../src/workflows/topology";
 
 registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
 /** DBOS's own record of a run's workflows: the source of its current generation (D10). */
@@ -41,6 +41,16 @@ test("a failed step replays after its last successful predecessor; a body failur
 
 test("an intent workflow is addressed by intent and engine version", () => {
   expect([intentWorkflowId("intent-1", "engine-a"), intentWorkflowId("intent-1", "engine-b")]).toEqual(["intent-1@engine-a", "intent-1@engine-b"]);
+});
+
+test("an intent's stop is carried under its own workflow id, apart from its start", async () => {
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => null as never);
+  const starts = recordStarts();
+  try {
+    await dispatchChild("run-1", "intent-1", "stop");
+    expect({ ids: starts.calls[0], distinct: cleanupWorkflowId("intent-1", "engine-a") !== intentWorkflowId("intent-1", "engine-a") })
+      .toEqual({ ids: [{ workflowID: cleanupWorkflowId("intent-1") }], distinct: true });
+  } finally { status.mockRestore(); starts.restore(); }
 });
 
 test("a PENDING carrier is not dispatched again, while a missing one is started", async () => {
