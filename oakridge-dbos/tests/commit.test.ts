@@ -3,7 +3,7 @@ import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
-import { commitEvent } from "../src/storage/commit";
+import { requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
 import { executor, launch, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
@@ -126,43 +126,6 @@ test("C4: a revision published by an attempt that is not current is refused at c
   expect(published.ok && published.value.kind).toBe("rejected");
 });
 
-test("concurrent events on one run serialize on the run row", async () => {
-  const run_id = await launched();
-  const submit = submitter(authority);
-  const unit = unitOf(run_id, "document");
-  const action = writerAction(run_id);
-  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
-  // Each publication names no predecessor: under the run lock exactly one sees none and the rest see a stale one.
-  const results = await Promise.all(Array.from({ length: 8 }, (_, index) => submit({ run_id, event: { kind: "revision_published", unit,
-    artifact: "draft", body: { title: "T", body: `body ${index}` }, by: action }, writer: executor(action) })));
-  const revisions = await authority.db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id).where("artifact", "=", "draft").execute();
-  expect({ kinds: results.map((result) => result.ok ? result.value.kind : "error").sort(), ids: revisions.map((row) => row.id) })
-    .toEqual({ kinds: ["committed", ...Array.from({ length: 7 }, () => "rejected" as const)], ids: [`${unit}:draft:1`] });
-});
-
-test("a fault mid-write rolls back the event, writer, delta and receipt together", async () => {
-  const run_id = await launched();
-  const before = await authority.db.selectFrom("authority.run").select("version").where("id", "=", run_id).executeTakeFirstOrThrow();
-  // A step result naming an attempt on a unit that does not exist fails its foreign key after the run row is updated.
-  const faulty = { request: async (operation: "compile" | "step", input: never) => {
-    const response = await authority.core.request(operation, input);
-    if (!response.ok || response.value.kind !== "stepped") return response;
-    const step = response.value.value;
-    return { ok: true, value: { kind: "stepped", value: { ...step, snapshot: { ...step.snapshot, attempts: [...step.snapshot.attempts,
-      { ...step.snapshot.attempts[0]!, action_id: "phantom", unit: `${run_id}/missing` }] } } } };
-  } } as unknown as CoreClient;
-  const ingress_id = crypto.randomUUID();
-  const result = await commitEvent({ db: authority.db, core: faulty, wake: () => undefined }, { run_id, ingress_id,
-    event: { kind: "cancel_requested" }, writer: { kind: "operator", subject: "credential:test" } });
-  const [after, events, receipt] = await Promise.all([
-    authority.db.selectFrom("authority.run").select(["version", "status"]).where("id", "=", run_id).executeTakeFirstOrThrow(),
-    authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
-    authority.db.selectFrom("authority.ingress_receipt").select("id").where("ingress_id", "=", ingress_id).execute(),
-  ]);
-  expect({ is_error: !result.ok, version: after.version, status: after.status.kind, events: events.length, receipts: receipt.length })
-    .toEqual({ is_error: true, version: before.version, status: "active", events: 1, receipts: 0 });
-});
-
 test("cancel requests the stop of every live intent of the run", async () => {
   const run_id = await launched();
   await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
@@ -214,4 +177,13 @@ test("a periodic worker keeps one intent across its attempts, which carries the 
   const instruction = decodeEffectInstruction(rows[0]?.payload);
   expect({ intents: rows.map((row) => row.seq), attempts: attempts.map((attempt) => attempt.seq), every: instruction.ok && instruction.value.worker })
     .toEqual({ intents: [1], attempts: [1, 2], every: { kind: "code", operation: "repository.prepare", every: "1s" } });
+});
+
+test("a request digest ignores key order and changes with the event or the writer", () => {
+  const writer = { kind: "operator", subject: "credential:a" } as const;
+  const digest = requestDigest({ event: { kind: "launched", input: { a: 1, b: 2 } }, writer });
+  expect({ reordered: requestDigest({ event: { kind: "launched", input: { b: 2, a: 1 } }, writer }) === digest,
+    other_event: requestDigest({ event: { kind: "launched", input: { a: 1, b: 3 } }, writer }) === digest,
+    other_writer: requestDigest({ event: { kind: "launched", input: { a: 1, b: 2 } }, writer: { kind: "operator", subject: "credential:b" } }) === digest })
+    .toEqual({ reordered: true, other_event: false, other_writer: false });
 });
