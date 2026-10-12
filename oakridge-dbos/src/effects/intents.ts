@@ -11,10 +11,9 @@ import { unsealEffectPayload } from "../storage/effect-secret";
  *
  * - `pending`: committed and not yet acknowledged by the provider.
  * - `acknowledged`: the provider returned an external handle; observation continues.
- * - `rejected`: the provider definitively refused the start.
- * - `revoked`: authority withdrew the selection; the payload retains what was learned.
- * - `cleanup_pending`: a stop intent whose acknowledgement is still owed.
- * - `cleanup_confirmed`: a terminal observation (start) or acknowledged stop (stop).
+ * - `stop_requested`: authority has requested cleanup of the action.
+ * - `stopped`: cleanup of the action was acknowledged.
+ * - `failed`: the action ended without an external execution to clean up.
  */
 export type { EffectStatus };
 export type EffectFailure =
@@ -50,33 +49,20 @@ export async function readIntent(db: SqlExecutor, intent_id: string): Promise<Ef
   return row ? { ...row, payload: unsealEffectPayload(row.payload), version: Number(row.version) } : null;
 }
 
-/** A never-dispatched selection and a definite rejection own no external execution. */
+/** The action row itself is the cleanup proof; no separate stop row exists in v2. */
 export function requiresCleanup(intent: Pick<EffectIntent, "status" | "payload">): boolean {
-  if (intent.payload.action !== "start") return false;
-  if (intent.status === "cleanup_confirmed" || intent.payload.handle?.kind === "completed") return false;
-  if (intent.payload.has_uncertain_start || intent.payload.start_in_flight) return true;
-  if (intent.status === "rejected") return intent.payload.handle !== null;
-  if (intent.status === "acknowledged") return true;
-  return intent.payload.handle !== null || intent.payload.has_dispatched === true;
+  return intent.status !== "stopped" && intent.status !== "failed";
 }
 
-/** Obligations that block run deletion: every start that may own an external execution and has no cleanup proof. */
+/** Every nonterminal action row blocks deletion, even before dispatch. */
 export async function pendingCleanupCount(db: SqlExecutor, run_id: string): Promise<number> {
   const rows = await db.query<{ count: string | number }>(`SELECT count(*) AS count FROM authority.effect_intent e
-    JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1
-    AND e.payload->>'action'='start' AND e.status<>'cleanup_confirmed' AND coalesce(e.payload->'handle'->>'kind','')<>'completed'
-    AND (coalesce((e.payload->>'has_uncertain_start')::boolean,false)
-      OR coalesce((e.payload->>'start_in_flight')::boolean,false)
-      OR jsonb_typeof(e.payload->'handle')<>'null'
-      OR (e.status<>'rejected' AND (e.status='acknowledged' OR coalesce((e.payload->>'has_dispatched')::boolean,false))))
-    AND NOT EXISTS (SELECT 1 FROM authority.effect_intent proof WHERE proof.scope_id=e.scope_id
-      AND proof.payload->'invocation'->>'id'=e.payload->'invocation'->>'id'
-      AND proof.payload->>'action'='stop' AND proof.status='cleanup_confirmed')`, [run_id]);
+    WHERE e.run_id=$1 AND e.status NOT IN ('stopped','failed')`, [run_id]);
   return Number(rows[0]?.count ?? 0);
 }
 
 export type DeleteEligibility = { readonly kind: "allowed" } | { readonly kind: "refused"; readonly obligations: number };
-/** A terminal observation or acknowledged stop is the only cleanup proof. */
+/** A stopped or failed action row is the only cleanup proof. */
 export async function deletionEligibility(db: SqlExecutor, run_id: string): Promise<DeleteEligibility> {
   const obligations = await pendingCleanupCount(db, run_id);
   return obligations === 0 ? { kind: "allowed" } : { kind: "refused", obligations };

@@ -17,6 +17,31 @@ const selection = { definition: { operation: "run", contract_version: 1, deadlin
 const start: EffectPayload = { action: "start", handle: null, invocation: selectedInvocation("invocation-1" as InvocationId, "execution-1", selection, null) };
 process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 
+test("v2 intent cleanup remains owed until its action row reaches stopped or failed", () => {
+  for (const status of ["pending", "acknowledged", "stop_requested"] as const)
+    expect(requiresCleanup({ status, payload: start })).toBe(true);
+  for (const status of ["stopped", "failed"] as const)
+    expect(requiresCleanup({ status, payload: { ...start, has_uncertain_start: true } })).toBe(false);
+});
+
+test("v2 run deletion counts nonterminal action rows without consulting stop rows", async () => {
+  const observed: string[] = [];
+  const db = { query: async (sql: string, parameters: readonly unknown[]) => {
+    observed.push(sql);
+    expect(parameters).toEqual(["run-1"]);
+    return [{ count: "2" }];
+  } } as unknown as TransactionalSqlExecutor;
+  expect(await pendingCleanupCount(db, "run-1")).toBe(2);
+  expect(await deletionEligibility(db, "run-1")).toEqual({ kind: "refused", obligations: 2 });
+  expect(observed.every((sql) => sql.includes("e.run_id=$1") && sql.includes("'stopped','failed'") && !sql.includes("proof"))).toBe(true);
+});
+
+test("v2 run deletion is allowed when every action row is terminal", async () => {
+  const db = { query: async () => [{ count: "0" }] } as unknown as TransactionalSqlExecutor;
+  expect(await pendingCleanupCount(db, "run-1")).toBe(0);
+  expect(await deletionEligibility(db, "run-1")).toEqual({ kind: "allowed" });
+});
+
 test("cleanup is owed exactly when an external execution may exist", () => {
   expect(requiresCleanup({ status: "pending", payload: start })).toBe(false);
   expect(requiresCleanup({ status: "pending", payload: { ...start, has_dispatched: true } })).toBe(true);
