@@ -64,6 +64,53 @@ pub fn validate_json(value: &Value) -> Result<(), &'static str> {
         _ => Ok(()),
     }
 }
+pub mod word_map {
+    use super::*;
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer>(
+        value: &BTreeMap<String, u32>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        decoder: D,
+    ) -> Result<BTreeMap<String, u32>, D::Error> {
+        BTreeMap::<String, u32>::deserialize(decoder)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 0, "maximum": u32::MAX}
+        })
+    }
+}
+pub mod optional_signed {
+    use super::*;
+    fn valid(value: i64) -> bool {
+        (MIN_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+    }
+    pub fn serialize<S: Serializer>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error> {
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::ser::Error::custom(RANGE_ERROR));
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<i64>, D::Error> {
+        let value = Option::<i64>::deserialize(decoder)?;
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::de::Error::custom(RANGE_ERROR));
+        }
+        Ok(value)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": ["integer", "null"],
+            "minimum": MIN_SAFE_INTEGER,
+            "maximum": MAX_SAFE_INTEGER
+        })
+    }
+}
 pub mod json {
     use super::*;
     pub fn serialize<S: Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {

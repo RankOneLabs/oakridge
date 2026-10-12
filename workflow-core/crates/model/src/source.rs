@@ -644,6 +644,8 @@ pub enum TypeExpression {
 #[serde(deny_unknown_fields)]
 pub struct Group {
     #[serde(default)]
+    #[serde(with = "crate::wire_numbers::word_map")]
+    #[schemars(schema_with = "crate::wire_numbers::word_map::schema")]
     pub pools: BTreeMap<String, u32>,
     pub units: BTreeMap<String, Unit>,
     pub outcome: BTreeMap<String, String>,
@@ -771,6 +773,8 @@ pub enum DecisionEffect {
 #[serde(deny_unknown_fields)]
 pub struct CodeOperation {
     pub key: SymbolKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub version: u32,
     pub input_schema: TypeExpression,
     pub output_schema: TypeExpression,

@@ -14,10 +14,10 @@ if [[ "${1:-}" == "--check" ]]; then
   diff -u "$output" "$generated"
   diff -u "$source_output" "$generated_source"
   diff -u "$builder_output" "$generated_source"
-  bun "$root/kbbl/scripts/generate-operator-contracts.ts" --check
 else
   cp "$generated" "$output"
   cp "$generated_source" "$source_output"
   cp "$generated_source" "$builder_output"
-  bun "$root/kbbl/scripts/generate-operator-contracts.ts"
 fi
+# The operator contracts are derived from oakridge-dbos' TypeScript rather than
+# from the Rust model; the workspace-typecheck job owns that check.

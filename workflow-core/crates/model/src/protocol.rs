@@ -1,13 +1,14 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 /// Bumped whenever the request or response shape changes. v2: non-compile
 /// operations address a cached bundle by `bundle_digest` instead of carrying
 /// the source, `available_operations` is gone, and `compiled` returns the
 /// digest and scope summaries rather than the checked program. v3: the frame
-/// cap rose from 1 MiB to 64 MiB.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// cap rose from 1 MiB to 64 MiB. v4: the operations are compile and step over
+/// the section 2 workflow model; payload validation, materialization and
+/// explanation are gone with the scope definition they served.
+pub const PROTOCOL_VERSION: u32 = 4;
 /// Guards the line reader, not the domain: a scope's whole snapshot travels in
 /// one evaluate frame, so this cap must sit far above any legitimate state.
 /// It changes only with a protocol version bump and regenerated TypeScript contracts.
@@ -71,50 +72,30 @@ pub struct Request {
 )]
 pub enum Operation {
     Compile {
-        bundle: DefinitionBundle,
-        catalog: ProviderCatalog,
+        workflow: Box<Workflow>,
+        #[serde(default)]
+        operations: Vec<CodeOperation>,
+        #[serde(default)]
+        prompts: std::collections::BTreeMap<String, String>,
     },
-    ValidatePayload {
-        bundle_digest: BundleDigest,
-        schema: SchemaId,
-        #[serde(with = "crate::wire_numbers::json")]
-        #[schemars(with = "Value")]
-        payload: Value,
-    },
-    /// Recheck a value that arrived already checked, such as a published output.
-    ValidateValue {
-        bundle_digest: BundleDigest,
-        schema: SchemaId,
-        value: CheckedValue,
-    },
-    Evaluate {
-        bundle_digest: BundleDigest,
-        snapshot: Snapshot,
-    },
-    Materialize {
-        bundle_digest: BundleDigest,
-        snapshot: Snapshot,
-        template: SymbolKey,
-    },
-    Explain {
-        bundle_digest: BundleDigest,
-        snapshot: Snapshot,
+    /// One event against the affected unit and its ancestors.
+    Step {
+        workflow_digest: BundleDigest,
+        snapshot: Box<ScopedSnapshot>,
+        incoming: Incoming,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Output {
-    Compiled(CompiledBundle),
-    Validated(CheckedValue),
-    Evaluated(DecisionOutcome),
-    Materialized(Materialization),
-    Explained(DecisionOutcome),
+    Compiled(CompiledWorkflow),
+    Stepped(Box<StepResult>),
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CompiledBundle {
+pub struct CompiledWorkflow {
     pub digest: BundleDigest,
-    pub scopes: Vec<CheckedScope>,
+    pub stages: Vec<SymbolKey>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

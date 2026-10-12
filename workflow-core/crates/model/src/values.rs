@@ -108,8 +108,14 @@ pub struct ReadVersion {
 pub enum UnitStatus {
     NotStarted,
     Active,
-    Blocked { reason: BlockedReason },
-    Done { outcome: Value },
+    Blocked {
+        reason: BlockedReason,
+    },
+    Done {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        outcome: Value,
+    },
     Cancelled,
 }
 
@@ -147,6 +153,8 @@ pub enum WorkerResult {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
     Launched {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         input: Value,
     },
     WorkerStarted {
@@ -160,6 +168,8 @@ pub enum Event {
     RevisionPublished {
         unit: UnitId,
         artifact: SymbolKey,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         body: Value,
         predecessor: Option<RevisionId>,
         subject: Option<RevisionId>,
@@ -170,6 +180,8 @@ pub enum Event {
         review: SymbolKey,
         decision: SymbolKey,
         target: RevisionId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         payload: Value,
     },
     RetryRequested {
@@ -216,10 +228,14 @@ pub enum Action {
     },
     Start {
         unit: UnitId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         input: Value,
     },
     Complete {
         unit: UnitId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
         outcome: Value,
     },
 }
@@ -237,6 +253,8 @@ pub enum AttemptStatus {
 #[serde(deny_unknown_fields)]
 pub struct AttemptState {
     pub action_id: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub seq: u32,
     pub unit: UnitId,
     pub worker: WorkerKey,
@@ -244,6 +262,9 @@ pub struct AttemptState {
     pub cause: Cause,
     pub status: AttemptStatus,
     pub kbbl_session_id: Option<String>,
+    /// A logical counter, not a clock: step is pure.
+    #[serde(with = "crate::wire_numbers::optional_signed")]
+    #[schemars(schema_with = "crate::wire_numbers::optional_signed::schema")]
     pub ended_at: Option<i64>,
 }
 
@@ -253,6 +274,8 @@ pub struct RevisionState {
     pub id: RevisionId,
     pub unit: UnitId,
     pub artifact: SymbolKey,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
     pub body: Value,
     pub predecessor: Option<RevisionId>,
     pub subject: Option<RevisionId>,
@@ -268,6 +291,8 @@ pub struct DecisionState {
     pub decision: SymbolKey,
     pub effect: DecisionEffect,
     pub target: RevisionId,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
     pub payload: Value,
 }
 
@@ -279,6 +304,8 @@ pub struct UnitState {
     pub declaration: SymbolKey,
     pub stage: Option<SymbolKey>,
     pub status: UnitStatus,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
     pub input: Value,
     pub after: Vec<UnitId>,
     pub pool: Option<SymbolKey>,
