@@ -51,7 +51,7 @@ as run workflow errors and are recovered through a fork.
 DBOS resumes only workflows recorded under the running `applicationVersion`.
 `src/workflows/engine-version.ts` hashes the sorted `ENGINE_SOURCE_MANIFEST`
 paths and bytes, then combines that source digest with the SHA-256 digest of
-`src/storage/migrations/0001_core_authority.sql` and of the WASM module
+`src/storage/migrations/0001_core.sql` and of the WASM module
 the process loads. The final SHA-256 is truncated to 16 hex characters. This
 includes workflow dependencies, the authority schema baseline and the Rust
 evaluator build. Bundle, route, projection, prompt and UI changes leave it
@@ -69,7 +69,7 @@ execution deadline.
 
 ## Storage records
 
-`src/storage/migrations/0001_core_authority.sql` is the only hand-written
+`src/storage/migrations/0001_core.sql` is the only hand-written
 description of the authority tables. `scripts/generate-storage-records.ts`
 applies it to a scratch database on `OAKRIDGE_TEST_DATABASE_URL`'s server and
 runs [pg-to-ts](https://github.com/danvk/pg-to-ts) over the result, writing

@@ -57,7 +57,7 @@ when a definition is first pinned; runs render from the stored copy.
 `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
 observation. The DBOS application version defaults to a 16-character SHA-256
 digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
-`0001_core_authority.sql` baseline digest and the digest of the core binary it
+`0001_core.sql` baseline digest and the digest of the core binary it
 spawns (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.

@@ -1,7 +1,7 @@
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { createHash } from "node:crypto";
 
-const migration = new URL("./migrations/0001_core_authority.sql", import.meta.url);
+const migration = new URL("./migrations/0001_core.sql", import.meta.url);
 
 export async function migrateEmptyDatabase(db: TransactionalSqlExecutor): Promise<void> {
   const version = await db.query<{ server_version_num: string }>("SELECT current_setting('server_version_num') AS server_version_num", []);

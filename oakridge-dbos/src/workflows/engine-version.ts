@@ -17,7 +17,6 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/plain-value.ts",
   "domain/execution.ts",
   "domain/primitives.ts",
-  "domain/run-session-policy.ts",
   "domain/session-settings.ts",
   "effects/evidence.ts",
   "effects/intents.ts",
@@ -83,7 +82,7 @@ export function computeEngineSourceDigest(workflows_dir: string = import.meta.di
 
 /** The authority baseline is asserted independently of the TypeScript import graph. */
 export function computeStorageBaselineDigest(workflows_dir: string = import.meta.dir): string {
-  return createHash("sha256").update(readFileSync(resolve(workflows_dir, "../storage/migrations/0001_core_authority.sql"))).digest("hex");
+  return createHash("sha256").update(readFileSync(resolve(workflows_dir, "../storage/migrations/0001_core.sql"))).digest("hex");
 }
 
 /**

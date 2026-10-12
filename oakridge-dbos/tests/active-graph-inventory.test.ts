@@ -28,15 +28,15 @@ test("deleted modules and legacy schema authority are absent from the active gra
   expect(files.filter((path) => path.startsWith("kbbl/core/db/") || path.includes("/migrations/") && !path.startsWith("oakridge-dbos/src/storage/migrations/"))).toEqual([]);
 });
 test("active schema and symbols reflect the scope authority", () => {
-  const sql = readFileSync(resolve(root, "oakridge-dbos/src/storage/migrations/0001_core_authority.sql"), "utf8");
+  const sql = readFileSync(resolve(root, "oakridge-dbos/src/storage/migrations/0001_core.sql"), "utf8");
   const tables = [...sql.matchAll(/CREATE TABLE\s+([\w.]+)/g)].map((match) => match[1]);
   expect(tables).toEqual([
     "authority.schema_baseline",
-    "authority.definition_bundle", "authority.project", "authority.prompt_content", "authority.run", "authority.scope_instance", "authority.launch_receipt", "authority.scope_export",
-    "authority.child_collection", "authority.execution_selection", "authority.execution", "authority.artifact_revision",
-    "authority.output_slot", "authority.fact", "authority.transition", "authority.ingress_receipt",
-    "authority.effect_intent", "authority.capacity_pool", "authority.capacity_reservation", "authority.resource_binding",
-    "authority.operator_event", "authority.collaboration_thread", "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery",
+    "authority.definition_bundle", "authority.project", "authority.prompt_content", "authority.run", "authority.unit",
+    "authority.unit_dependency", "authority.attempt", "authority.artifact_revision", "authority.review_decision",
+    "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
+    "authority.capacity_pool", "authority.capacity_reservation", "authority.collaboration_thread",
+    "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
   expect(activeSource).toContain("createMutationService");

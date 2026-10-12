@@ -11,6 +11,7 @@ import { githubIdentityFromRemote } from "../src/runtime/project-identity";
 import { selectControlPlaneAccess } from "../src/http/control-auth";
 import { silentDurationMs } from "../src/adapters/kbbl";
 import { settingForRole } from "../src/effects/operations/selected-publication-contract";
+import type { Workflow } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
 const deletedPaths = [
@@ -56,7 +57,7 @@ test("every named leaf operation remains present", () => {
 test("only leaf support types remain in the former domain directory", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
     "delegated-session.ts", "execution.ts", "primitives.ts", "projects.ts",
-    "pull-request.ts", "repository-provisioning.ts", "run-session-policy.ts", "session-settings.ts", "workflow.ts",
+    "pull-request.ts", "repository-provisioning.ts", "session-settings.ts", "workflow.ts",
   ]);
 });
 
@@ -73,13 +74,12 @@ test("retained operations import and execute", async () => {
   expect(silentDurationMs({}, Date.now())).toBeNull();
 });
 
-test("pinned OperationManifest.provider_kind is the only provider routing declaration", async () => {
-  const bundle = await Bun.file(resolve(root, "workflow-config/definitions/development.json")).json();
-  expect(bundle.operations.every((manifest: { provider_kind?: string; input_contract?: string; providers?: string[] }) =>
-    typeof manifest.provider_kind === "string" && typeof manifest.input_contract === "string" && manifest.providers === undefined)).toBe(true);
-  expect(bundle.scopes.every((scope: { workers: { actions: { provider?: string }[] }[] }) =>
-    scope.workers.every((worker) => worker.actions.every((action) => action.provider === undefined)))).toBe(true);
-  expect(readFileSync(resolve(root, "workflow-core/crates/model/src/checked.rs"), "utf8")).not.toMatch(/pub provider:/);
+test("v2 sample workers declare their kind without v1 provider routing", () => {
+  const bundle = JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles/fan-out.json"), "utf8")) as Workflow;
+  const workers = Object.values(bundle.stages).flatMap((stage) => Object.values(stage.workers));
+  expect(workers.length).toBeGreaterThan(0);
+  expect(workers.every((worker) => worker.kind === "agent" || worker.kind === "code")).toBe(true);
+  expect(JSON.stringify(bundle)).not.toMatch(/"provider_kind"|"input_contract"/);
 });
 
 // Provider literal ownership is enforced by provider-literal-lint.test.ts,
