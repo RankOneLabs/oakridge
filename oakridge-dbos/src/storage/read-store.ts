@@ -295,7 +295,7 @@ export async function readOperatorEventsAfter(db: Reader, input: { readonly afte
   const { after, subscription_snapshot } = input;
   const rows = await db.selectFrom("authority.operator_event").select(["id", "event_key", "payload", "commit_txid",
     sql<boolean>`coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${subscription_snapshot}::pg_snapshot), false)`.as("was_visible_at_subscription")])
-    .where((eb) => eb(eb.refTuple("commit_txid", "id"), ">", eb.tuple(Number(after.commit_txid), after.id)))
+    .where((eb) => eb(eb.refTuple("commit_txid", "id"), ">", eb.tuple(eb.cast<number>(eb.val(after.commit_txid), "bigint"), after.id)))
     .where("commit_txid", "<", sql<number>`pg_snapshot_xmin(pg_current_snapshot())::text::bigint`)
     .orderBy("commit_txid").orderBy("id").limit(input.limit).execute();
   return rows.map((row) => ({ id: row.id, event_key: row.payload.kind, payload: row.payload, commit_txid: String(row.commit_txid),

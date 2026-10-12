@@ -123,3 +123,14 @@ test("reconnect marks committed backlog as replay despite an older open transact
     } finally { await reader.cancel(); }
   } finally { release_transaction(); await transaction; await holder.destroy(); }
 });
+
+const cursorAt = (commit_txid: string): string => Buffer.from(JSON.stringify({ id: "e", commit_txid })).toString("base64url");
+test("a cursor past the bigint range is refused, and one at its edge streams", async () => {
+  const beyond = (await app.request("/events", { headers: { "last-event-id": cursorAt("9223372036854775808") } })).status;
+  const edge = await app.request("/events", { headers: { "last-event-id": cursorAt("9223372036854775807") } });
+  const reader = edge.body!.getReader();
+  await reader.read();
+  const after_polls = await Promise.race([reader.read().then((chunk) => chunk.done ? "closed" : "frame"), Bun.sleep(300).then(() => "open")]);
+  await reader.cancel();
+  expect({ beyond, edge: edge.status, after_polls }).toEqual({ beyond: 400, edge: 200, after_polls: "open" });
+});

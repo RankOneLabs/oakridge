@@ -7,11 +7,14 @@ import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/rea
 
 /** The SSE id is the base64url JSON cursor; Last-Event-ID hands it back on reconnect. */
 const encodeEventCursor = (cursor: RunEventCursor): string => Buffer.from(JSON.stringify(cursor)).toString("base64url");
+/** commit_txid is a PostgreSQL bigint, so a cursor beyond its range names no transaction. */
+const MAX_BIGINT = 9_223_372_036_854_775_807n;
+const isBigintText = (text: string): boolean => /^\d{1,19}$/.test(text) && BigInt(text) <= MAX_BIGINT;
 function decodeEventCursor(raw: string): RunEventCursor | null {
   try {
     const value: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
     if (!value || typeof value !== "object" || !("commit_txid" in value) || typeof value.commit_txid !== "string"
-      || !/^\d{1,20}$/.test(value.commit_txid) || !("id" in value) || typeof value.id !== "string" || !value.id) return null;
+      || !isBigintText(value.commit_txid) || !("id" in value) || typeof value.id !== "string" || !value.id) return null;
     return { commit_txid: value.commit_txid, id: value.id };
   } catch { return null; }
 }
