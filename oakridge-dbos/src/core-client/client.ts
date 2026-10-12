@@ -59,20 +59,23 @@ export class CoreClient {
       encoded = new TextEncoder().encode(JSON.stringify({ version: CORE_PROTOCOL_VERSION,
         request_id: String(++this.nextId), operation, input }));
     } catch (cause) { return transport("malformed_request", String(cause)); }
-    const pointer = this.core.core_alloc(encoded.length);
     try {
-      new Uint8Array(this.core.memory.buffer, pointer, encoded.length).set(encoded);
-      const responsePointer = this.core.core_process(pointer, encoded.length);
-      const responseBytes = new Uint8Array(this.core.memory.buffer, responsePointer, this.core.core_response_len()).slice();
-      const response = decodeCoreResponse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBytes)));
-      if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
-      switch (response.result.status) {
-        case "ok": return { ok: true, value: response.result.value };
-        case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
-        case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
+      const pointer = this.core.core_alloc(encoded.length);
+      try {
+        new Uint8Array(this.core.memory.buffer, pointer, encoded.length).set(encoded);
+        const responsePointer = this.core.core_process(pointer, encoded.length);
+        const responseBytes = new Uint8Array(this.core.memory.buffer, responsePointer, this.core.core_response_len()).slice();
+        const response = decodeCoreResponse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBytes)));
+        if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
+        switch (response.result.status) {
+          case "ok": return { ok: true, value: response.result.value };
+          case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
+          case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
+        }
+      } finally {
+        this.core.core_dealloc(pointer, encoded.length);
       }
     } catch (cause) { return transport("malformed_request", `core invocation failed: ${String(cause)}`); }
-    finally { this.core.core_dealloc(pointer, encoded.length); }
   }
 
   close(): void { this.closed = true; }

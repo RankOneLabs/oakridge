@@ -47,6 +47,24 @@ jobs:
           workspaces: workflow-core
       - run: cargo build --locked --target wasm32-unknown-unknown
 
+  core-wasm-client:
+    name: Bun WASM core client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workflow-core
+      - run: cargo build --locked --target wasm32-unknown-unknown -p workflow-evaluator
+        working-directory: workflow-core
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test oakridge-dbos/tests/core-fixture-parity.test.ts
+
   core-contracts:
     name: Generated Rust/TypeScript contracts
     runs-on: ubuntu-latest

@@ -192,17 +192,14 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
 /// The caller owns the input allocation and releases it after `core_process`.
 #[unsafe(no_mangle)]
 pub extern "C" fn core_alloc(len: usize) -> *mut u8 {
-    let mut buffer = Vec::<u8>::with_capacity(len);
-    let pointer = buffer.as_mut_ptr();
-    std::mem::forget(buffer);
-    pointer
+    Box::into_raw(vec![0u8; len].into_boxed_slice()) as *mut u8
 }
 
 /// # Safety
 /// `pointer` must be an allocation returned by `core_alloc(len)` and not yet freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn core_dealloc(pointer: *mut u8, len: usize) {
-    drop(unsafe { Vec::from_raw_parts(pointer, 0, len) });
+    drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(pointer, len)) });
 }
 
 /// # Safety
@@ -225,6 +222,16 @@ pub extern "C" fn core_response_len() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn abi_allocation_round_trips_through_exact_length() {
+        let len = 512;
+        let pointer = core_alloc(len);
+        unsafe {
+            std::slice::from_raw_parts_mut(pointer, len).fill(0xa5);
+            core_dealloc(pointer, len);
+        }
+    }
+
     #[test]
     fn unknown_operation_returns_a_typed_error() {
         let mut state = CoreState::new();
