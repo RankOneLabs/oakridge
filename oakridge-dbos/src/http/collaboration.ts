@@ -26,12 +26,12 @@ function param(c: Context, key: string): string {
 export function collaborationHandlers(deps: CollaborationApiDependencies) {
   return {
   getThreads: async (c: Context) => c.json(await readCollaborationThreads(deps.db,
-    { run_id: param(c, "run_id"), unit_id: param(c, "scope_id"), revision_id: param(c, "revision_id") })),
+    { run_id: param(c, "run_id"), unit_id: param(c, "unit_id"), revision_id: param(c, "revision_id") })),
   createThread: async (c: Context) => {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title)
       || !(raw.anchor === null || typeof raw.anchor === "string")) return c.json({ error: "request_key, title and anchor are required" }, 400);
-    const run_id = param(c, "run_id"), unit_id = param(c, "scope_id"), revision_id = param(c, "revision_id");
+    const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), revision_id = param(c, "revision_id");
     const result = await createCollaborationThread(deps.db, { id: `thread:${collaborationRecordId(revision_id, raw.request_key)}`,
       run_id, unit_id, revision_id, context: { title: raw.title, anchor: raw.anchor } });
     return result.kind === "written" || result.kind === "replayed" ? c.json(result.value, result.kind === "written" ? 201 : 200)
@@ -41,7 +41,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.text) || !nonempty(raw.author)
       || (raw.ping !== undefined && typeof raw.ping !== "boolean")) return c.json({ error: "request_key, text and author are required" }, 400);
-    const run_id = param(c, "run_id"), unit_id = param(c, "scope_id"), thread_id = param(c, "thread_id");
+    const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), thread_id = param(c, "thread_id");
     const id = `message:${collaborationRecordId(thread_id, raw.request_key)}`;
     const result = await addCollaborationMessage(deps.db, { id, run_id, unit_id, thread_id,
       body: { text: raw.text, author: raw.author, ping: raw.ping === true } });
@@ -57,7 +57,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title)
       || typeof raw.detail !== "string" || !nonempty(raw.status)) return c.json({ error: "request_key, title, detail and status are required" }, 400);
-    const run_id = param(c, "run_id"), unit_id = param(c, "scope_id"), thread_id = param(c, "thread_id");
+    const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), thread_id = param(c, "thread_id");
     const result = await addReviewItem(deps.db, { id: `review:${collaborationRecordId(thread_id, raw.request_key)}`,
       run_id, unit_id, thread_id, body: { title: raw.title, detail: raw.detail, status: raw.status } });
     return result.kind === "written" || result.kind === "replayed" ? c.json(result.value, result.kind === "written" ? 201 : 200)

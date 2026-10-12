@@ -1,16 +1,15 @@
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
-import type { WorkerResult } from "../core-client/core-types";
 import { decodeEffectInstruction, type EffectInstruction } from "../domain/effect-instruction";
 import type { RunId } from "../domain/primitives";
 import { bounded, resolveObserve, resolveStart, resolveStop, type WorkerFailure } from "../effects/outcomes";
 import type { EffectProvider, ExternalHandle, ProviderResult } from "../effects/provider";
 import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
-import { commitEvent } from "../storage/commit";
 import type { Database } from "../storage/database";
 import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent,
   type EffectStatus, type SettledStatus, type StartClaim } from "../storage/executor-store";
 import { listRunsNeedingWork, readRunStanding } from "../storage/read-store";
+import { reportWorker, type ExecutorReport } from "./executor-ingress";
 
 /**
  * Three generic workflows carry every run. None of them knows a stage or a
@@ -174,17 +173,11 @@ const recordTryFailureStep = DBOS.registerStep(async (input: TryFailureInput): P
 { name: "oakridgeRecordTryFailure", retriesAllowed: true, maxAttempts: 5 });
 
 /** One executor report, keyed by attempt so a replayed step is a replayed ingress. */
-type WorkerReport = { readonly kind: "started"; readonly session_id: string | null } | { readonly kind: "ended"; readonly result: WorkerResult };
+type ReportInput = ExecutorReport;
 type AttemptKey = EffectInstruction["attempt"];
-interface ReportInput { readonly run_id: RunId; readonly attempt: AttemptKey; readonly report: WorkerReport }
 const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string | null> => {
   const { db, core } = current();
-  const { action_id, seq } = input.attempt;
-  const event = input.report.kind === "started"
-    ? { kind: "worker_started" as const, action: action_id, kbbl_session_id: input.report.session_id }
-    : { kind: "worker_ended" as const, action: action_id, result: input.report.result };
-  const committed = await commitEvent({ db, core, wake: () => undefined }, { run_id: input.run_id,
-    ingress_id: `${event.kind}:${action_id}:${seq}`, event, writer: { kind: "executor", attempt: action_id } });
+  const committed = await reportWorker({ db, core, wake: () => undefined }, input);
   if (!committed.ok) throw new Error(`${committed.error.operation}: ${committed.error.detail}`);
   const outcome = committed.value;
   return outcome.kind === "committed" || outcome.kind === "replayed" ? null : `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
@@ -279,7 +272,8 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     }
     handle = outcome.handle;
     await report({ run_id: intent.run_id, attempt: intent.instruction.attempt,
-      report: { kind: "started", session_id: handle.kind === INPUT_CONTRACTS.session ? handle.session_id : null } });
+      // The publication secret is minted at session start by the agent provider (rescue spec R3).
+      report: { kind: "started", session_id: handle.kind === INPUT_CONTRACTS.session ? handle.session_id : null, publication_secret_hash: null } });
     if (handle.kind === "completed") {
       await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: handle.result } });
       status = await settleStep({ intent_id, status: handle.result.kind === "succeeded" ? "stopped" : "failed",

@@ -73,6 +73,17 @@ export interface OperatorRunEvent {
   readonly occurred_at: string;
 }
 
+export interface OperatorIngressRequest { readonly request_id: string }
+
+export interface OperatorLaunchRequest extends OperatorIngressRequest { readonly digest: string; readonly input: unknown; readonly project_id?: string | null }
+
+export interface OperatorDecideRequest extends OperatorIngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
+
+export type OperatorIngressResponse =
+  | { readonly run_id: string; readonly event_id: string }
+  | { readonly kind: "rejected"; readonly reason: string }
+  | { readonly kind: "conflict"; readonly detail: string };
+
 export type OperatorUnitStatus = { readonly "kind": "not_started" } | { readonly "kind": "active" } | { readonly "kind": "blocked"; readonly "reason": OperatorBlockedReason } | { readonly "kind": "done"; readonly "outcome": unknown } | { readonly "kind": "cancelled" };
 
 export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorStage }; readonly "workflow": string };

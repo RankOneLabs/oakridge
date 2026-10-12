@@ -25,6 +25,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/registry-store.ts",
   "storage/snapshot-store.ts",
   "workflows/engine-version.ts",
+  "workflows/executor-ingress.ts",
   "workflows/topology.ts",
 ];
 

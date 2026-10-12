@@ -1,15 +1,11 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { Hono } from "hono";
+import type { Hono } from "hono";
 import { CoreClient } from "../core-client/client";
 import type { RunId } from "../domain/primitives";
-import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
-import { browserWriteMiddleware, configuredBrowserWritePolicy } from "../http/browser-write-policy";
-import { httpBodyLimit, installDefinitionApi } from "../http/app";
-import { errorResponse, fault, MissingEntityError } from "../http/errors";
-import { installEventStream } from "../http/events";
-import { redactingReadResponses } from "../projections/serialization-view";
+import { selectControlPlaneAccess } from "../http/control-auth";
+import { configuredBrowserWritePolicy } from "../http/browser-write-policy";
+import { createHttpApp } from "../http/app";
 import { openDatabase } from "../storage/database";
-import { deleteRun } from "../storage/run-deletion";
 import type { EffectProvider } from "../effects/provider";
 import { createEffectProvider } from "../effects/operations/production-provider";
 import { selectApplicationVersion } from "../workflows/engine-version";
@@ -47,22 +43,8 @@ export async function createProductionComposition(options: ProductionOptions): P
     await DBOS.launch();
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
-    const app = new Hono();
-    app.use("*", httpBodyLimit());
-    app.use("*", redactingReadResponses());
-    const write_policy = configuredBrowserWritePolicy();
-    app.use("*", browserWriteMiddleware(write_policy));
-    if (access.kind === "token_required") app.use("*", controlTokenMiddleware(access.token, write_policy));
-    installDefinitionApi(app, { db, core, wake });
-    installEventStream(app, { db });
-    app.get("/health", (context) => context.json({ status: "ok", application_version, core: core.health }));
-    app.delete("/runs/:run_id", async (context) => {
-      try {
-        const result = await deleteRun(db, context.req.param("run_id") as RunId);
-        if (result.kind === "missing") return errorResponse(new MissingEntityError("run not found"));
-        return context.json(result, result.kind === "refused" ? 409 : 200);
-      } catch (cause) { return fault(cause); }
-    });
+    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(),
+      control_token: access.kind === "token_required" ? access.token : null });
     return { app, application_version, async close() {
       try { await parkRunningWorkflows(); }
       finally { try { await DBOS.shutdown(); } finally { core.close(); await db.destroy(); } }

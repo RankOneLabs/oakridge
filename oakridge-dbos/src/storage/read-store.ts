@@ -145,6 +145,25 @@ export async function listRunAttempts(db: Kysely<DB>, run_id: string): Promise<r
   });
 }
 
+/** The running attempt a publication secret speaks for, and the kbbl session it was minted for. */
+export interface SessionAttempt { readonly action_id: string; readonly seq: number; readonly unit_id: string; readonly kbbl_session_id: string }
+/**
+ * Resolve a publication secret's hash to its session's running attempt. The
+ * secret is minted per kbbl session, so it names whichever attempt of that
+ * session is running now; with none running, the secret speaks for nothing.
+ */
+export async function readSessionAttempt(db: Kysely<DB>, input: { readonly run_id: string; readonly secret_hash: string }): Promise<SessionAttempt | null> {
+  return consistent(db, async (trx) => {
+    const minted = await trx.selectFrom("authority.attempt").select("kbbl_session_id").where("run_id", "=", input.run_id)
+      .where("publication_secret_hash", "=", input.secret_hash).where("kbbl_session_id", "is not", null).executeTakeFirst();
+    if (!minted?.kbbl_session_id) return null;
+    const running = await trx.selectFrom("authority.attempt").select(["action_id", "seq", "unit_id"]).where("run_id", "=", input.run_id)
+      .where("kbbl_session_id", "=", minted.kbbl_session_id).where((eb) => eb(eb.ref("status", "->>").key("kind"), "=", "running"))
+      .orderBy("seq", "desc").executeTakeFirst();
+    return running ? { ...running, kbbl_session_id: minted.kbbl_session_id } : null;
+  });
+}
+
 /** Every revision of one artifact, oldest first, and every decision made on any of them. */
 export interface ArtifactHistory { readonly revisions: readonly ArtifactRevisionRecord[]; readonly decisions: readonly ReviewDecisionRecord[] }
 export async function readArtifactHistory(db: Kysely<DB>, input: UnitLocation & { readonly artifact: string }): Promise<ArtifactHistory | null> {

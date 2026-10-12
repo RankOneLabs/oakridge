@@ -8,7 +8,8 @@ import { Hono } from "hono";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { HTTP_ROUTES } from "../src/http/routes";
-import { installDefinitionApi, type DefinitionApiDependencies } from "../src/http/app";
+import { createHttpApp, type DefinitionApiDependencies } from "../src/http/app";
+import { browserWritePolicy } from "../src/http/browser-write-policy";
 
 import { controlTokenMiddleware, isLoopbackHost, requiresControlToken, selectControlPlaneAccess } from "../src/http/control-auth";
 
@@ -50,15 +51,28 @@ test("operator reads and writes require the token", () => {
   expect(requiresControlToken("DELETE", "/runs/r1")).toBe(true);
 });
 
-test("the route table enumerates every registered Hono endpoint", () => {
-  const files = ["../src/http/app.ts", "../src/http/projects.ts", "../src/http/events.ts", "../src/runtime/compose.ts"];
-  const actual = files.flatMap((file) => [...readFileSync(new URL(file, import.meta.url), "utf8").matchAll(/app\.(get|post|put|delete)\("([^"]+)"/g)]
-    .map((match) => `${match[1]?.toUpperCase()} ${match[2]}`)).sort();
-  expect(actual).toEqual(HTTP_ROUTES.map((route) => `${route.method} ${route.path}`).sort());
-  const app = new Hono();
-  installDefinitionApi(app, {} as DefinitionApiDependencies);
-  expect(app.routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual(
-    HTTP_ROUTES.filter((route) => route.path.startsWith("/api/")).map((route) => `${route.method} ${route.path}`).sort());
+const httpApp = (control_token: string | null) => createHttpApp({ ...({} as DefinitionApiDependencies),
+  application_version: "test", control_token, write_policy: browserWritePolicy([]) });
+const registered = (app: ReturnType<typeof createHttpApp>) =>
+  app.routes.filter((route) => route.method !== "ALL").map((route) => `${route.method} ${route.path}`).sort();
+
+test("every registered route is classified in the route table, and every classified route is registered", () => {
+  expect(registered(httpApp(null))).toEqual(HTTP_ROUTES.map((route) => `${route.method} ${route.path}`).sort());
+});
+
+test("a registered route the table does not classify is refused before its handler, with or without a token", async () => {
+  const reached: string[] = [];
+  const statuses = await Promise.all([null, "secret"].map(async (token) => {
+    const app = httpApp(token);
+    app.get("/api/unclassified", (context) => { reached.push(String(token)); return context.json({ ok: true }); });
+    return (await app.request("/api/unclassified", { headers: { authorization: "Bearer secret" } })).status;
+  }));
+  expect({ statuses, reached }).toEqual({ statuses: [404, 404], reached: [] });
+});
+
+test("only operator routes demand the control token; publish authenticates with its session secret", () => {
+  expect(HTTP_ROUTES.filter((route) => route.authority !== "operator").map((route) => `${route.authority} ${route.method} ${route.path}`))
+    .toEqual(["open GET /health", "session PUT /api/runs/:run_id/units/:unit_id/artifacts/:artifact"]);
 });
 
 test("control auth has no early-exit token comparison", () => {

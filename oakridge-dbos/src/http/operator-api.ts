@@ -9,3 +9,4 @@ export type { DefinitionPage, DefinitionSummary, DefinitionDetail, PinnedDefinit
 export type { CollaborationThreadView } from "../projections/collaboration-view";
 export type { ProjectDraft, ProjectList, ProjectView } from "./projects";
 export type { RunEvent } from "../projections/run-event";
+export type { IngressRequest, LaunchRequest, DecideRequest, IngressResponse } from "./ingress";

@@ -1,21 +1,31 @@
-import type { Context, Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow } from "../core-client/client";
-import type { Event, Workflow } from "../core-client/core-types";
-import type { ProjectId, RunId } from "../domain/primitives";
+import type { Workflow } from "../core-client/core-types";
+import type { RunId } from "../domain/primitives";
+import { redactingReadResponses } from "../projections/serialization-view";
 import { readWorkflowPrompts } from "../runtime/prompt-files";
-import { commitEvent, launchRunId, type CommitOutcome, type CommitResult } from "../storage/commit";
 import type { Database } from "../storage/database";
 import { listDefinitions, listRuns, readDefinition, readPinnedDefinition, readRunInspect, readRunView } from "../storage/read-store";
-import { findLaunchableDefinition, hasProject, pinDefinition, setDefinitionArchived, setRunArchived } from "../storage/registry-store";
+import { pinDefinition, setDefinitionArchived, setRunArchived } from "../storage/registry-store";
+import { deleteRun } from "../storage/run-deletion";
 import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
+import { browserWriteMiddleware, type BrowserWritePolicy } from "./browser-write-policy";
 import { collaborationHandlers } from "./collaboration";
-import { operatorWriterFromCredential } from "./control-auth";
+import { classifiedRoutesMiddleware, controlTokenMiddleware } from "./control-auth";
 import { errorResponse, fault, InvalidPayloadError, MalformedRequestError, MissingEntityError, requestBody } from "./errors";
+import { installEventStream } from "./events";
+import { installIngress } from "./ingress";
 import { installProjectApi } from "./projects";
 
 export interface DefinitionApiDependencies { readonly db: Database; readonly core: CoreClient; readonly wake: (run_id: RunId) => void }
+export interface HttpAppDependencies extends DefinitionApiDependencies {
+  readonly application_version: string;
+  /** Null when the bind is loopback (or explicitly insecure) and no token is configured. */
+  readonly control_token: string | null;
+  readonly write_policy: BrowserWritePolicy;
+}
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
   onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) });
 
@@ -46,7 +56,6 @@ function archivedQuery(raw: string | undefined): boolean | MalformedRequestError
   return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
 }
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
-const requestId = (value: unknown): value is string => typeof value === "string" && value.length >= 1 && value.length <= 200;
 
 const isPromptPath = (value: unknown): boolean => typeof value === "string";
 const isOptionalPromptPath = (value: unknown): boolean => value === undefined || value === null || isPromptPath(value);
@@ -60,28 +69,39 @@ function isWorkflowOutline(value: unknown): value is Workflow {
         && Object.values(stage.reviews).every((review) => isObject(review) && isOptionalPromptPath(review.prompt))));
 }
 
-/** One commit outcome as an HTTP response: a step rejection is 409, as is a reused ingress id. */
-function ingressResponse(run_id: string, result: CommitResult): Response {
-  if (!result.ok) return fault(`${result.error.operation} ${result.error.entity_id}: ${result.error.detail}`);
-  const outcome: CommitOutcome = result.value;
-  switch (outcome.kind) {
-    case "committed": return Response.json({ run_id, event_id: outcome.event_id }, { status: 201 });
-    case "replayed": return outcome.receipt.kind === "committed" ? Response.json({ run_id, event_id: outcome.receipt.event_id })
-      : Response.json({ kind: "rejected", reason: outcome.receipt.reason }, { status: 409 });
-    case "rejected": return Response.json({ kind: "rejected", reason: outcome.reason }, { status: 409 });
-    case "conflict": return Response.json({ kind: "conflict", detail: outcome.detail }, { status: 409 });
-    case "missing": return errorResponse(new MissingEntityError(outcome.detail));
-  }
+/**
+ * The whole HTTP surface: every route in `HTTP_ROUTES`, behind the middleware
+ * that refuses a route the table does not classify and, with a token
+ * configured, an operator route without it.
+ */
+export function createHttpApp(deps: HttpAppDependencies): Hono {
+  const app = new Hono();
+  app.use("*", httpBodyLimit());
+  app.use("*", classifiedRoutesMiddleware());
+  app.use("*", redactingReadResponses());
+  app.use("*", browserWriteMiddleware(deps.write_policy));
+  if (deps.control_token !== null) app.use("*", controlTokenMiddleware(deps.control_token, deps.write_policy));
+  installDefinitionApi(app, deps);
+  installEventStream(app, { db: deps.db });
+  app.get("/health", (context) => context.json({ status: "ok", application_version: deps.application_version, core: deps.core.health }));
+  app.delete("/runs/:run_id", async (context) => {
+    try {
+      const result = await deleteRun(deps.db, context.req.param("run_id") as RunId);
+      if (result.kind === "missing") return errorResponse(new MissingEntityError("run not found"));
+      return context.json(result, result.kind === "refused" ? 409 : 200);
+    } catch (cause) { return fault(cause); }
+  });
+  return app;
 }
 
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
-  const commit = { db: deps.db, core: deps.core, wake: deps.wake };
   installProjectApi(app, deps);
+  installIngress(app, deps);
   const collaboration = collaborationHandlers({ db: deps.db });
-  app.get("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.getThreads);
-  app.post("/api/runs/:run_id/scopes/:scope_id/revisions/:revision_id/threads", collaboration.createThread);
-  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/messages", collaboration.addMessage);
-  app.post("/api/runs/:run_id/scopes/:scope_id/threads/:thread_id/review-items", collaboration.addReviewItem);
+  app.get("/api/runs/:run_id/units/:unit_id/revisions/:revision_id/threads", collaboration.getThreads);
+  app.post("/api/runs/:run_id/units/:unit_id/revisions/:revision_id/threads", collaboration.createThread);
+  app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/messages", collaboration.addMessage);
+  app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/review-items", collaboration.addReviewItem);
 
   app.get("/api/runs", async (c) => { try {
     const limit = pageLimit(c.req.query("limit"));
@@ -92,24 +112,6 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
     return Response.json(await listRuns(deps.db, { after, limit, is_archived }));
   } catch (cause) { return fault(cause); } });
-
-  app.post("/api/runs", async (c) => {
-    const raw = await requestBody(c.req.raw);
-    if (raw instanceof MalformedRequestError) return errorResponse(raw);
-    if (!isObject(raw) || !requestId(raw.request_id) || typeof raw.digest !== "string" || !("input" in raw)
-      || !(raw.project_id === undefined || raw.project_id === null || typeof raw.project_id === "string"))
-      return errorResponse(new MalformedRequestError("request_id (1 to 200 characters), digest and input are required"));
-    try {
-      const definition_bundle_id = await findLaunchableDefinition(deps.db, raw.digest);
-      if (!definition_bundle_id) return errorResponse(new MissingEntityError("definition not found"));
-      const project_id = typeof raw.project_id === "string" ? raw.project_id as ProjectId : null;
-      if (project_id && !await hasProject(deps.db, project_id)) return errorResponse(new MissingEntityError("project not found"));
-      const run_id = launchRunId(raw.request_id);
-      return ingressResponse(run_id, await commitEvent(commit, { run_id, ingress_id: raw.request_id,
-        event: { kind: "launched", input: raw.input }, writer: operatorWriterFromCredential(c.req.raw),
-        launch: { definition_bundle_id, project_id } }));
-    } catch (cause) { return fault(cause); }
-  });
 
   app.get("/api/definitions", async (c) => { try {
     const limit = pageLimit(c.req.query("limit"));
@@ -164,21 +166,6 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     const view = await readRunView(deps.db, c.req.param("run_id"));
     return view ? c.json(view) : errorResponse(new MissingEntityError("run not found"));
   } catch (cause) { return fault(cause); } });
-
-  /** An operator event on a run: the body carries only its request id; the writer is the credential. */
-  const operatorEvent = (event: (c: Context) => Event) => async (c: Context) => {
-    const raw = await requestBody(c.req.raw);
-    if (raw instanceof MalformedRequestError) return errorResponse(raw);
-    if (!isObject(raw) || !requestId(raw.request_id)) return errorResponse(new MalformedRequestError("request_id is required"));
-    const run_id = c.req.param("run_id") as RunId;
-    try {
-      return ingressResponse(run_id, await commitEvent(commit, { run_id, ingress_id: raw.request_id, event: event(c),
-        writer: operatorWriterFromCredential(c.req.raw) }));
-    } catch (cause) { return fault(cause); }
-  };
-  app.post("/api/runs/:run_id/cancel", operatorEvent(() => ({ kind: "cancel_requested" })));
-  app.post("/api/runs/:run_id/units/:unit_id/workers/:worker/retry", operatorEvent((c) =>
-    ({ kind: "retry_requested", unit: c.req.param("unit_id") ?? "", worker: c.req.param("worker") ?? "" })));
 
   app.get("/api/runs/:run_id/inspect", async (c) => { try {
     const inspect = await readRunInspect(deps.db, c.req.param("run_id"));
