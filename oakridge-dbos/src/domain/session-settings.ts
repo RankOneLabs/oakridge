@@ -11,9 +11,7 @@ export interface SessionSettings {
 export type SessionScopeSelector =
   | { readonly kind: "run" }
   | { readonly kind: "stage"; readonly stage_key: string }
-  | { readonly kind: "cohort"; readonly stage_key: string; readonly cohort_key: string }
-  | { readonly kind: "stage_worker"; readonly stage_key: string; readonly worker_key: string }
-  | { readonly kind: "stage_worker_action"; readonly stage_key: string; readonly worker_key: string; readonly action_key: string };
+  | { readonly kind: "stage_worker"; readonly stage_key: string; readonly worker_key: string };
 
 export interface SessionPolicyEntry { readonly selector: SessionScopeSelector; readonly settings: SessionSettings }
 export interface SessionPolicy { readonly version: number; readonly entries: readonly SessionPolicyEntry[] }
@@ -43,9 +41,7 @@ export interface SessionInvocationSettings {
 
 export interface SessionSettingsContext {
   readonly stage_key: string;
-  readonly cohort_key: string | null;
   readonly worker_key: string;
-  readonly action_key: string;
   /** The bundle's declared default for this worker role, not a kbbl picker default. */
   readonly worker_defaults: readonly [RuntimeModelSelection, ...RuntimeModelSelection[]];
 }
@@ -99,9 +95,7 @@ function specificity(selector: SessionScopeSelector): number {
   switch (selector.kind) {
     case "run": return 0;
     case "stage": return 1;
-    case "cohort": return 2;
-    case "stage_worker": return 3;
-    case "stage_worker_action": return 4;
+    case "stage_worker": return 2;
   }
 }
 
@@ -109,8 +103,6 @@ function matchesSelector(selector: SessionScopeSelector, context: SessionSetting
   switch (selector.kind) {
     case "run": return true;
     case "stage": return selector.stage_key === context.stage_key;
-    case "cohort": return selector.stage_key === context.stage_key && selector.cohort_key === context.cohort_key;
     case "stage_worker": return selector.stage_key === context.stage_key && selector.worker_key === context.worker_key;
-    case "stage_worker_action": return selector.stage_key === context.stage_key && selector.worker_key === context.worker_key && selector.action_key === context.action_key;
   }
 }
