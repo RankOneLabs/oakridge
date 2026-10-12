@@ -185,15 +185,17 @@ export const silentDurationMs = (pending: JsonValue, now: number): number | null
   return Math.max(0, now - observedAt);
 };
 
-/**
- * The kbbl session one attempt owns. Keying on the attempt rather than the
- * execution is what lets a rerun start a fresh agent: the execution id is
- * shared by every attempt, so a rerun keyed on it resolved to the session that
- * had already died and re-failed immediately. The application version stays in
- * the key so a session never spans a backend version change.
- */
-const sessionKeyFor = (operation_id: ExecutorOperationId, executor_function_identity: string): string =>
-  `${operation_id}:${executor_function_identity}`;
+/** A resumable kbbl session is addressed by its run-scoped unit and worker. */
+/** A run-scoped unit/worker pair uses one kbbl path segment and can be decoded without ambiguity. */
+export function sessionKeyForUnitWorker(unit: string, worker: string): string {
+  return `${Buffer.from(unit).toString("base64url")}.${Buffer.from(worker).toString("base64url")}`;
+}
+
+export function unitWorkerFromSessionKey(key: string): { readonly unit: string; readonly worker: string } | null {
+  const parts = key.split(".");
+  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) return null;
+  return { unit: Buffer.from(parts[0]!, "base64url").toString(), worker: Buffer.from(parts[1]!, "base64url").toString() };
+}
 
 const sessionIdOf = (external_reference: ExternalExecutionReference, execution_id: ExecutionId): string => {
   if (external_reference.kind !== "kbbl_session") throw new Error(`execution ${execution_id} has no kbbl session reference`);
@@ -206,7 +208,7 @@ export interface SessionStartSelection { readonly request: ExecutionRequest; rea
 
 /** Render once at selection. Recovery dispatches the returned body without parsing launch material. */
 export function renderSessionStart(input: SessionStartSelection): ProviderResult<PinnedSessionStart> {
-  const { request, operation_id, executor_function_identity } = input;
+  const { request, executor_function_identity } = input;
   let config: KbblResolvedConfig;
   try { config = parseResolvedConfig(request.resolved_config); }
   catch (error) { return { kind: "permanently_rejected", code: "start_rejected", detail: error instanceof Error ? error.message : String(error) }; }
@@ -230,7 +232,9 @@ export function renderSessionStart(input: SessionStartSelection): ProviderResult
           ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
         },
       };
-  return { kind: "acknowledged", value: { session_key: sessionKeyFor(operation_id, executor_function_identity), body: JSON.stringify(body) } };
+  const unit = `${config.session_identity.run_id}:${config.session_identity.unit_id}`;
+  const worker = config.session_identity.operator_role ?? executor_function_identity;
+  return { kind: "acknowledged", value: { session_key: sessionKeyForUnitWorker(unit, worker), body: JSON.stringify(body) } };
 }
 
 export class KbblExecutorAdapter implements ExecutorAdapter {
@@ -409,7 +413,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     const sessionId = sessionIdOf(external_reference, execution_id);
     try {
       const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
+        method: "PUT", headers: { "content-type": "application/json", "x-oakridge-collaboration-resume": "true" }, body: JSON.stringify({ text: input } satisfies ResumableInputRequest),
       });
       if (response.ok) return { kind: "acknowledged", value: undefined };
       const detail = `kbbl input delivery failed (${response.status}): ${await response.text()}`;

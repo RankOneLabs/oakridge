@@ -2,11 +2,35 @@ import { expect, test } from "bun:test";
 import { deliverCollaborationPing, kbblDeliveryPort } from "../src/http/collaboration";
 import type { CollaborationDeliveryRecord } from "../src/storage/collaboration";
 import type { SqlExecutor } from "../src/storage/sql-executor";
+import { KbblExecutorAdapter, sessionKeyForUnitWorker, unitWorkerFromSessionKey } from "../src/adapters/kbbl";
+import type { ExecutionId } from "../src/domain/primitives";
 
 const command = { run_id: "run", scope_id: "scope", thread_id: "thread", revision_id: "edit",
   message_id: "message", request_key: "request-1", text: "Please review the change" };
 const request = { session_key: "pinned-key", body: JSON.stringify({ initial_prompt: "start", workdir: "/tmp" }) };
 const pinned = { request, session_id: "pinned-session" };
+
+test("unit and worker session key is one reversible route segment", () => {
+  const unit = "run-1:unit/child";
+  const worker = "build/revise";
+  const key = sessionKeyForUnitWorker(unit, worker);
+  expect(key).not.toContain("/");
+  expect(key.split(".")).toHaveLength(2);
+  expect(unitWorkerFromSessionKey(key)).toEqual({ unit, worker });
+});
+
+test("default resumable input revives an ended session", async () => {
+  let observed: { readonly method: string | undefined; readonly path: string; readonly resume: string | null } | null = null;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v2",
+    fetch: async (input, init) => {
+      observed = { method: init?.method, path: new URL(String(input)).pathname,
+        resume: new Headers(init?.headers).get("x-oakridge-collaboration-resume") };
+      return Response.json({ accepted: true });
+    } });
+  const result = await adapter.deliver_collaboration_input("execution" as ExecutionId, "revision-1", "Revise this", { kind: "kbbl_session", session_id: "recorded-sid" });
+  expect(result.kind).toBe("acknowledged");
+  expect(observed as unknown).toEqual({ method: "PUT", path: "/sessions/resumable/recorded-sid/input/revision-1", resume: "true" });
+});
 
 function deliveryDatabase(): { db: SqlExecutor; deliveries: CollaborationDeliveryRecord[] } {
   const deliveries: CollaborationDeliveryRecord[] = [];
