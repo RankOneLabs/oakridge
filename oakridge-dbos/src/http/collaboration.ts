@@ -50,6 +50,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     if (!await readThreadRevision(deps.db, { run_id, unit_id, thread_id })) return c.json({ error: "thread has no reviewed revision" }, 409);
     const delivery = await recordCollaborationDelivery(deps.db, { id: collaborationRecordId(thread_id, raw.request_key), run_id, unit_id,
       message_id: id, payload: { status: "failed", session_id: null, reason: SESSION_DELIVERY_PENDING, request_key: raw.request_key } });
+    if (!delivery) return c.json({ error: "missing" }, 404);
     return c.json({ message: result.value, delivery }, result.kind === "written" ? 201 : 200);
   },
   addReviewItem: async (c: Context) => {

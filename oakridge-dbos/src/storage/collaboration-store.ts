@@ -143,12 +143,20 @@ export interface DeliveryInput {
   readonly id: string; readonly run_id: string; readonly unit_id: string;
   readonly message_id: string; readonly payload: CollaborationDeliveryPayload;
 }
-/** One delivery outcome per id; a repeat returns the outcome first recorded. */
-export async function recordCollaborationDelivery(db: Database, input: DeliveryInput): Promise<CollaborationDeliveryRecord> {
-  const row = await db.insertInto("authority.collaboration_delivery").values({ ...input, payload: jsonText(input.payload) })
-    .onConflict((conflict) => conflict.column("id").doNothing()).returningAll().executeTakeFirst()
-    ?? await db.selectFrom("authority.collaboration_delivery").selectAll().where("id", "=", input.id).executeTakeFirstOrThrow();
-  return { ...row, created_at: createdAt(row.created_at) };
+/**
+ * One delivery outcome per id; a repeat returns the outcome first recorded.
+ * The run row is share-locked like every other collaboration write, so run
+ * deletion either finishes first (null: the run is gone) or waits for it.
+ */
+export async function recordCollaborationDelivery(db: Database, input: DeliveryInput): Promise<CollaborationDeliveryRecord | null> {
+  return db.transaction().execute(async (trx) => {
+    const run = await trx.selectFrom("authority.run").select("id").where("id", "=", input.run_id).forShare().executeTakeFirst();
+    if (!run) return null;
+    const row = await trx.insertInto("authority.collaboration_delivery").values({ ...input, payload: jsonText(input.payload) })
+      .onConflict((conflict) => conflict.column("id").doNothing()).returningAll().executeTakeFirst()
+      ?? await trx.selectFrom("authority.collaboration_delivery").selectAll().where("id", "=", input.id).executeTakeFirstOrThrow();
+    return { ...row, created_at: createdAt(row.created_at) };
+  });
 }
 
 /** The threads on a revision and on every revision before it, oldest first; only the latest revision's are writable. */

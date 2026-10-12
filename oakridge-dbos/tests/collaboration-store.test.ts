@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import { sql } from "kysely";
 import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread, readCollaborationThreads,
   readThreadRevision, recordCollaborationDelivery } from "../src/storage/collaboration-store";
+import { listOwedIntents, settleIntent } from "../src/storage/executor-store";
+import { deleteRun } from "../src/storage/run-deletion";
 import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -81,8 +84,28 @@ test("the thread view spans the revision chain, with write capability only on th
   const latest = `${unit}:draft:2`;
   await thread(run_id, unit, latest, "new");
   const views = await readCollaborationThreads(authority.db, { run_id, unit_id: unit, revision_id: latest });
-  expect({ repeat: repeat.payload.status, delivery: delivery.payload.status,
+  expect({ repeat: repeat?.payload.status, delivery: delivery?.payload.status,
     views: views.map((view) => [view.artifact_revision_id, view.capabilities.can_write, view.messages.length, view.review_items.length, view.last_delivery_failure_reason]) })
     .toEqual({ repeat: "failed", delivery: "failed",
       views: [[revisions[0], false, 1, 1, "no session"], [latest, true, 0, 0, null]] });
+});
+
+test("a ping recorded while its run is being deleted waits for the deletion and finds the run gone", async () => {
+  const { run_id, unit, revisions } = await drafted(1);
+  const opened = await thread(run_id, unit, revisions[0]!);
+  if (opened.kind !== "written") throw new Error("thread not written");
+  await addCollaborationMessage(authority.db, { id: "m-race", run_id, unit_id: unit, thread_id: opened.value.id, body: { text: "hi", author: "op", ping: true } });
+  for (const intent of await listOwedIntents(authority.db, run_id)) await settleIntent(authority.db, { intent_id: intent.id, status: "stopped", last_error: null });
+  // Deletion pauses on the message, after it has already removed the run's deliveries.
+  await sql`CREATE FUNCTION public.slow_message_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN OLD; END $$;
+    CREATE TRIGGER slow_message_delete BEFORE DELETE ON authority.collaboration_message FOR EACH ROW EXECUTE FUNCTION public.slow_message_delete()`.execute(authority.db);
+  try {
+    const deleting = deleteRun(authority.db, run_id);
+    await Bun.sleep(150);
+    const delivery = await recordCollaborationDelivery(authority.db, { id: "d-race", run_id, unit_id: unit, message_id: "m-race",
+      payload: { status: "failed", session_id: null, reason: "no session", request_key: "race" } });
+    expect({ deleted: await deleting, delivery }).toEqual({ deleted: { kind: "deleted" }, delivery: null });
+  } finally {
+    await sql`DROP TRIGGER slow_message_delete ON authority.collaboration_message; DROP FUNCTION public.slow_message_delete()`.execute(authority.db);
+  }
 });
