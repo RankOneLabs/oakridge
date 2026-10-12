@@ -16,10 +16,9 @@ import type { InputField } from "../lib/operator-input";
 import type { SelectedFile } from "../lib/brief-notes";
 
 /** Materialize test bodies from the same pinned schema that the compiler checks. */
-const developmentPath = ["../../../workflow-config/definitions/development.json", "workflow-config/definitions/development.json"]
-  .map((path) => resolve(process.cwd(), path)).find(existsSync);
-if (!developmentPath) throw new Error("Generated development definition fixture is missing");
-const developmentDefinition = JSON.parse(readFileSync(developmentPath, "utf8")) as OperatorDefinitionSummary["source"];
+const developmentDefinition = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, "development-definition.json"), "utf8"),
+) as OperatorDefinitionSummary["source"];
 const developmentSchemas: readonly OperatorSchema[] = developmentDefinition.schemas as unknown as readonly OperatorSchema[];
 
 export function makeDevelopmentRootFields(): readonly InputField[] {
@@ -366,7 +365,7 @@ export function makePrSummaryFixture(overrides: { readonly pr_url?: string; read
   return { body, schemas };
 }
 
-/** Field order mirrors plan_body, plan_cohort and plan_scope in workflow-config/definitions/development.json. */
+/** Field order mirrors plan_body, plan_cohort and plan_scope in development-definition.json. */
 export function makePlanGraphFixture(cohorts: readonly PlanCohortInput[], dependencyOrder: readonly string[] = cohorts.map((cohort) => cohort.id)): PlanGraphFixture {
   const value = (schema: string, text: string): OperatorCheckedValue => ({ schema, data: { kind: "string", value: text } });
   const list = (schema: string, items: readonly OperatorCheckedValue[]): OperatorCheckedValue =>

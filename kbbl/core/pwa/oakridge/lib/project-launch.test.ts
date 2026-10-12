@@ -6,7 +6,9 @@ import { selectProjectLaunchDrafts } from "./project-launch";
 import { selectProjectDraft } from "./project-draft";
 
 interface Bundle { readonly root: string; readonly schemas: readonly OperatorSchema[]; readonly scopes: readonly { readonly key: string; readonly input_schema: string }[] }
-const bundle: Bundle = JSON.parse(readFileSync(resolve(process.cwd(), "../../../workflow-config/definitions/development.json"), "utf8"));
+const bundle: Bundle = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, "../__fixtures__/development-definition.json"), "utf8"),
+);
 const root = bundle.scopes.find((scope) => scope.key === bundle.root)!;
 const rootShape = bundle.schemas.find((schema) => schema.key === root.input_schema)!.shape;
 const fields = rootShape.kind === "record" ? rootShape.fields.map((field) => ({ field, schema: bundle.schemas.find((schema) => schema.key === field.schema) })) : [];
