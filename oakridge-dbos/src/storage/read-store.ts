@@ -6,7 +6,9 @@ import type { OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
 import { selectRunInspect, type RunInspectView, type RunPage, type RunView } from "../projections/run-view";
 import type { DB } from "./db-types";
-import type { DatabaseTransaction } from "./database";
+import { anyOf, type DatabaseTransaction } from "./database";
+import type { WantedActions } from "./json-column-types";
+import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, UnitRecord } from "./schema-records";
 import { readScopedSnapshot } from "./snapshot-store";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
@@ -91,12 +93,163 @@ export async function listRunsNeedingWork(db: Reader, filter: { readonly run_id?
   return rows.map((row) => row.id as RunId);
 }
 
+// ---------------------------------------------------------------- units -----
+// Store reads for the unit, attempt, artifact, history, diagnostics and inbox
+// projections: authority rows as recorded, with no projection shape (R4).
+
+export interface UnitLocation { readonly run_id: string; readonly unit_id: string }
+/** What the executor has made of an attempt's intent, beside the attempt itself. */
+export type IntentStanding = Pick<EffectIntentRecord, "id" | "action_id" | "seq" | "status" | "tries" | "next_try_at" | "last_error" | "updated_at">;
+const INTENT_STANDING = ["id", "action_id", "seq", "status", "tries", "next_try_at", "last_error", "updated_at"] as const;
+
+/** One unit and everything recorded against it, in the order it was recorded. */
+export interface UnitRead {
+  readonly unit: UnitRecord;
+  readonly depends_on: readonly string[];
+  readonly attempts: readonly AttemptRecord[];
+  readonly revisions: readonly ArtifactRevisionRecord[];
+  readonly decisions: readonly ReviewDecisionRecord[];
+  readonly intents: readonly IntentStanding[];
+}
+export async function readUnit(db: Kysely<DB>, location: UnitLocation): Promise<UnitRead | null> {
+  return consistent(db, async (trx) => {
+    const unit = await trx.selectFrom("authority.unit").selectAll().where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+    if (!unit) return null;
+    const [dependencies, attempts, revisions, decisions, intents] = await Promise.all([
+      trx.selectFrom("authority.unit_dependency").select("depends_on_id").where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("depends_on_id").execute(),
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("action_id").orderBy("seq").execute(),
+      trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("created_at").orderBy("id").execute(),
+      trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("id").execute(),
+      trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("action_id").orderBy("seq").execute(),
+    ]);
+    return { unit: unit as UnitRecord, depends_on: dependencies.map((row) => row.depends_on_id), attempts: attempts as AttemptRecord[],
+      revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[], intents: intents as IntentStanding[] };
+  });
+}
+
+/** An attempt and the standing of the intent that carries its action (a periodic worker's attempts share one). */
+export interface AttemptRead { readonly attempt: AttemptRecord; readonly intent: IntentStanding | null }
+export async function listRunAttempts(db: Kysely<DB>, run_id: string): Promise<readonly AttemptRead[]> {
+  return consistent(db, async (trx) => {
+    const [attempts, intents] = await Promise.all([
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("action_id").orderBy("seq").execute(),
+      trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", run_id).execute(),
+    ]);
+    const by_action = new Map(intents.map((intent) => [intent.action_id, intent as IntentStanding]));
+    return attempts.map((attempt) => ({ attempt: attempt as AttemptRecord, intent: by_action.get(attempt.action_id) ?? null }));
+  });
+}
+
+/** Every revision of one artifact, oldest first, and every decision made on any of them. */
+export interface ArtifactHistory { readonly revisions: readonly ArtifactRevisionRecord[]; readonly decisions: readonly ReviewDecisionRecord[] }
+export async function readArtifactHistory(db: Kysely<DB>, input: UnitLocation & { readonly artifact: string }): Promise<ArtifactHistory | null> {
+  return consistent(db, async (trx) => {
+    const unit = await trx.selectFrom("authority.unit").select("id").where("run_id", "=", input.run_id).where("id", "=", input.unit_id).executeTakeFirst();
+    if (!unit) return null;
+    const revisions = await trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", input.run_id)
+      .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact).orderBy("created_at").orderBy("id").execute();
+    const revision_ids = revisions.map((revision) => revision.id);
+    const decisions = revision_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
+      .where("run_id", "=", input.run_id).where("target_revision_id", "=", anyOf(revision_ids)).orderBy("id").execute();
+    return { revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[] };
+  });
+}
+
+/** Events newest first: a run's, or one unit's. A launch or cancel names no unit, so it is in the run's history only. */
+export interface HistoryQuery { readonly run_id: string; readonly unit_id: string | null; readonly after: HistoryCursor | null; readonly limit: number }
+export interface HistoryCursor { readonly created_at: Date; readonly id: string }
+export interface HistoryEntry { readonly event: EventRecord; readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedActions }[] }
+export interface HistoryPage { readonly items: readonly HistoryEntry[]; readonly next: HistoryCursor | null }
+export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<HistoryPage> {
+  return consistent(db, async (trx) => {
+    let page = trx.selectFrom("authority.event").selectAll().where("run_id", "=", query.run_id);
+    if (query.unit_id !== null) page = page.where("unit_id", "=", query.unit_id);
+    const after = query.after;
+    if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(after.created_at, after.id)));
+    const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
+    const events = rows.slice(0, query.limit) as EventRecord[];
+    const event_ids = events.map((event) => event.id);
+    const wanted = event_ids.length === 0 ? [] : await trx.selectFrom("authority.wanted_log").select(["event_id", "unit_id", "actions"])
+      .where("run_id", "=", query.run_id).where("event_id", "=", anyOf(event_ids)).orderBy("unit_id").execute();
+    const last = events.at(-1);
+    return { items: events.map((event) => ({ event, wanted: wanted.filter((row) => row.event_id === event.id)
+        .filter((row) => query.unit_id === null || row.unit_id === query.unit_id).map((row) => ({ unit_id: row.unit_id, actions: row.actions })) })),
+      next: rows.length > query.limit && last ? { created_at: last.created_at, id: last.id } : null };
+  });
+}
+
+/** What went wrong around a unit: its intents' executor bookkeeping and the events step refused. */
+export interface UnitDiagnostics { readonly intents: readonly IntentStanding[]; readonly rejected: readonly IngressReceiptRecord[] }
+export async function readUnitDiagnostics(db: Kysely<DB>, location: UnitLocation): Promise<UnitDiagnostics | null> {
+  return consistent(db, async (trx) => {
+    const unit = await trx.selectFrom("authority.unit").select("id").where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+    if (!unit) return null;
+    const [intents, rejected] = await Promise.all([
+      trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .orderBy("action_id").orderBy("seq").execute(),
+      trx.selectFrom("authority.ingress_receipt").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
+        .where((eb) => eb(eb.ref("result", "->>").key("kind"), "=", "rejected")).orderBy("id").execute(),
+    ]);
+    return { intents: intents as IntentStanding[], rejected: rejected as IngressReceiptRecord[] };
+  });
+}
+
+/**
+ * Units that may be awaiting an operator decision: active stage units of live,
+ * unarchived runs whose stage declares a review, each with the latest revision
+ * of every artifact and the decisions on those revisions. Which of them
+ * awaits a decision is derived by the inbox projection.
+ */
+export interface ReviewCandidate {
+  readonly unit: UnitRecord;
+  readonly workflow: Workflow;
+  readonly latest: readonly ArtifactRevisionRecord[];
+  readonly decisions: readonly ReviewDecisionRecord[];
+}
+export interface ReviewCandidateQuery { readonly run_id: string | null; readonly after: UnitLocation | null; readonly limit: number }
+export interface ReviewCandidatePage { readonly items: readonly ReviewCandidate[]; readonly next: UnitLocation | null }
+export async function listReviewCandidates(db: Kysely<DB>, query: ReviewCandidateQuery): Promise<ReviewCandidatePage> {
+  return consistent(db, async (trx) => {
+    let page = trx.selectFrom("authority.unit as unit").innerJoin("authority.run as run", "run.id", "unit.run_id")
+      .innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
+      .selectAll("unit").select("bundle.source")
+      .where("run.archived_at", "is", null).where((eb) => eb(eb.ref("run.status", "->>").key("kind"), "not in", ["done", "cancelled"]))
+      .where((eb) => eb(eb.ref("unit.status", "->>").key("kind"), "=", "active")).where("unit.stage", "is not", null);
+    if (query.run_id !== null) page = page.where("unit.run_id", "=", query.run_id);
+    const after = query.after;
+    if (after) page = page.where((eb) => eb(eb.refTuple("unit.run_id", "unit.id"), ">", eb.tuple(after.run_id, after.unit_id)));
+    const rows = await page.orderBy("unit.run_id").orderBy("unit.id").limit(query.limit + 1).execute();
+    const selected = rows.slice(0, query.limit);
+    const reviewed = selected.filter((row) => row.stage !== null && Object.keys(row.source.stages[row.stage]?.reviews ?? {}).length > 0);
+    const run_ids = [...new Set(reviewed.map((row) => row.run_id))];
+    const latest = run_ids.length === 0 ? [] : await trx.selectFrom("authority.artifact_revision").selectAll()
+      .distinctOn(["run_id", "unit_id", "artifact"]).where("run_id", "=", anyOf(run_ids)).where("unit_id", "=", anyOf(reviewed.map((row) => row.id)))
+      .orderBy("run_id").orderBy("unit_id").orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute();
+    const latest_ids = latest.map((revision) => revision.id);
+    const decisions = latest_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
+      .where("target_revision_id", "=", anyOf(latest_ids)).orderBy("id").execute();
+    const last = selected.at(-1);
+    return {
+      items: reviewed.map(({ source, ...unit }) => ({ unit: unit as UnitRecord, workflow: source,
+        latest: latest.filter((revision) => revision.run_id === unit.run_id && revision.unit_id === unit.id) as ArtifactRevisionRecord[],
+        decisions: decisions.filter((decision) => decision.run_id === unit.run_id && decision.unit_id === unit.id) as ReviewDecisionRecord[] })),
+      next: rows.length > query.limit && last ? { run_id: last.run_id, unit_id: last.id } : null,
+    };
+  });
+}
+
 // ---------------------------------------------------------- definitions -----
 
 function groupNodes(group: Group, prefix = ""): DefinitionGraph["nodes"] {
   return Object.entries(group.units).flatMap(([key, unit]: [string, Unit]) => {
     const path = prefix ? `${prefix}/${key}` : key;
-    const after = unit.after == null ? [] : typeof unit.after === "string" ? [unit.after] : unit.after;
+    // A string `after` is an expression evaluated per collection member, not a unit key: it has no static edge.
+    const after = unit.after == null || typeof unit.after === "string" ? [] : unit.after;
     const node = { key: path, scope: unit.stage ?? key, depends_on: after.map((dependency) => prefix ? `${prefix}/${dependency}` : dependency) };
     return [node, ...(unit.group ? groupNodes(unit.group, path) : [])];
   });
