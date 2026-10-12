@@ -13,20 +13,20 @@ type Draftable = string | null | readonly Draftable[] | { readonly [key: string]
  * project cannot answer (the spec, or a branch it has not recorded) is left for
  * the operator.
  */
-function valueFor(project: OperatorProjectView, schemas: readonly OperatorSchema[], schema_key: string, field_key: string, role: string): Draftable | undefined {
+function valueFor(project: OperatorProjectView, schema_key: string, field_key: string, role: string): Draftable | undefined {
   const shape = schemas.find((schema) => schema.key === schema_key)?.shape;
   if (!shape) return undefined;
   switch (shape.kind) {
     case "optional": return null;
     case "enum": return shape.variants[0];
     case "list": {
-      const item = valueFor(project, schemas, shape.item, field_key, role);
+      const item = valueFor(project, shape.item, field_key, role);
       return item === undefined ? undefined : [item];
     }
     case "record": {
       const record: { [key: string]: Draftable } = {};
       for (const field of shape.fields) {
-        const value = valueFor(project, schemas, field.schema, field.key, field.key === "key" ? role : shape.fields.some((item) => item.key === "workdir") ? role : field.key);
+        const value = valueFor(project, field.schema, field.key, field.key === "key" ? role : shape.fields.some((item) => item.key === "workdir") ? role : field.key);
         if (value === undefined) return undefined;
         record[field.key] = value;
       }
@@ -46,11 +46,11 @@ function valueFor(project: OperatorProjectView, schemas: readonly OperatorSchema
 }
 
 /** Launch drafts for every structured root field the project can fill completely. */
-export function selectProjectLaunchDrafts(project: OperatorProjectView, fields: readonly InputField[], schemas: readonly OperatorSchema[]): ProjectLaunchDrafts {
+export function selectProjectLaunchDrafts(project: OperatorProjectView, fields: readonly InputField[]): ProjectLaunchDrafts {
   const drafts: { [field_key: string]: string } = {};
   for (const { field, schema } of fields) {
     if (!schema || schema.shape.kind === "string" || schema.shape.kind === "integer" || schema.shape.kind === "boolean") continue;
-    const value = valueFor(project, schemas, field.schema, field.key, field.key);
+    const value = valueFor(project, field.schema, field.key, field.key);
     if (value !== undefined) drafts[field.key] = JSON.stringify(value, null, 2);
   }
   return drafts;

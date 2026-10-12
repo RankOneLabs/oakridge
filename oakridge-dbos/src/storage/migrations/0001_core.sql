@@ -15,6 +15,9 @@ CREATE TABLE authority.definition_bundle (
   digest text NOT NULL UNIQUE,
   source jsonb NOT NULL,
   checked_program jsonb NOT NULL,
+  -- prompt_key -> content_digest, resolved from the catalog when the digest is
+  -- pinned. Editing a prompt file afterwards cannot change this definition.
+  prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   archived_at timestamptz
@@ -45,6 +48,10 @@ CREATE TABLE authority.run (
   status jsonb NOT NULL DEFAULT '{"kind":"not_started"}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
+  -- DBOS execution bookkeeping, not authority state: the workflow that owns a
+  -- long run claims the next generation atomically so a rollover cannot double-run.
+  current_generation bigint NOT NULL DEFAULT 0 CHECK (current_generation >= 0),
+  current_cursor text,
   archived_at timestamptz
 );
 
@@ -240,6 +247,19 @@ CREATE TABLE authority.collaboration_delivery (
   FOREIGN KEY (run_id, message_id) REFERENCES authority.collaboration_message(run_id, id)
 );
 
+-- A UI outbox, not authority state: these rows are never read by the evaluator
+-- and never replayed through step. They exist so the operator stream can
+-- announce registry and visibility writes that are not domain events.
+CREATE TABLE authority.operator_event (
+  id text PRIMARY KEY,
+  run_id text REFERENCES authority.run(id) ON DELETE CASCADE,
+  run_key text NOT NULL,
+  event_key text NOT NULL,
+  payload jsonb NOT NULL,
+  commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE INDEX unit_run_idx ON authority.unit(run_id);
 CREATE INDEX unit_parent_idx ON authority.unit(parent_id);
 CREATE INDEX attempt_unit_idx ON authority.attempt(unit_id);
@@ -248,9 +268,11 @@ CREATE INDEX event_commit_idx ON authority.event(commit_txid, id);
 CREATE INDEX event_run_created_idx ON authority.event(run_id, created_at, id);
 CREATE INDEX effect_intent_status_idx ON authority.effect_intent(status);
 CREATE INDEX reservation_active_idx ON authority.capacity_reservation(pool_id) WHERE is_active;
+CREATE INDEX operator_event_commit_idx ON authority.operator_event(commit_txid, id);
 
 COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
 COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';
+COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}';
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.project.session_policy IS '@type {SessionPolicy}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
@@ -271,3 +293,4 @@ COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {Collaboratio
 COMMENT ON COLUMN authority.collaboration_message.body IS '@type {CollaborationMessageBody}';
 COMMENT ON COLUMN authority.review_item.body IS '@type {ReviewItemBody}';
 COMMENT ON COLUMN authority.collaboration_delivery.payload IS '@type {CollaborationDeliveryPayload}';
+COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';

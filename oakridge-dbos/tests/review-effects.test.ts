@@ -9,7 +9,7 @@ import type { StableInvocation } from "../src/effects/provider";
 import { readIntent } from "../src/effects/intents";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
 import { createProductionComposition } from "../src/runtime/compose";
-import { operationBundle, sessionBundle, unit, waitUntil, withDatabase } from "./effect-fixture";
+import { operationWorkflow, sessionWorkflow, unit, waitUntil, withDatabase } from "./effect-fixture";
 
 interface SelectionInput { readonly bundle: DefinitionBundle; readonly input: unknown }
 interface SelectedRun { readonly db: PgPostgresExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly run: StartedRun; readonly invocation: StableInvocation }
@@ -60,7 +60,7 @@ test("production replay sends persisted HTTP bytes despite changed launch render
     return Response.json({ stopped: true });
   } });
   try {
-    await withSelection({ bundle: await sessionBundle(), input: { runtime: "claude-code", rendered_prompt: "original selected prompt", workdir: "/tmp", session_name: "replay",
+    await withSelection({ bundle: sessionWorkflow(), input: { runtime: "claude-code", rendered_prompt: "original selected prompt", workdir: "/tmp", session_name: "replay",
       session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: "a".repeat(40) } } }, async ({ db, core, invocation }) => {
       const provider = createEffectProvider({ db, core, kbbl_base_url: server.url.href });
       const changed: StableInvocation = { ...invocation, selection: { ...invocation.selection, prompt_key: "new_adapter_rendering",
@@ -74,7 +74,7 @@ test("production replay sends persisted HTTP bytes despite changed launch render
 });
 
 test("finite operation cleanup aborts an in-flight read and waits for confirmed IO completion", async () => {
-  await withSelection({ bundle: await operationBundle("repository.prepare"), input: { repository_path: "/repo", expected_head: null } }, async ({ db, core, invocation }) => {
+  await withSelection({ bundle: operationWorkflow("repository.prepare"), input: { repository_path: "/repo", expected_head: null } }, async ({ db, core, invocation }) => {
     let has_started = false;
     let has_aborted = false;
     let finish_io = (): void => {};
@@ -107,7 +107,7 @@ for (const cancellation of cancellation_cases) {
     await withDatabase(async ({ db, url }) => {
       const original: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
       const bundle: DefinitionBundle = { ...original, schemas: [...original.schemas, ...cancellation.schemas], scopes: original.scopes.map((scope) => ({ ...scope, cancellation: { ...scope.cancellation, payload: { kind: "literal", value: cancellation.payload } }, commands: scope.commands.map((command) => command.key === scope.cancellation.trigger ? { ...command, payload_schema: "cancel_payload" } : command) })) };
-      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+      const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1" });
       try {
         const created = await composition.app.request("http://localhost/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bundle, input: {} }) });
         if (created.status !== 201) throw new Error(await created.text());

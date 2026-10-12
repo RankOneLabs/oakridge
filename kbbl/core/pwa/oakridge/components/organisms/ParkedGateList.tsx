@@ -1,8 +1,8 @@
-import type { OperatorScopeView } from "../../operator-contracts";
+import type { OperatorUnitView } from "../../operator-contracts";
 import { selectActionableScopes } from "../../lib/decision-queue";
 import { Button } from "../../../components/atoms/Button";
 
-interface Props { readonly scopes: readonly OperatorScopeView[]; readonly onOpenScope: (id: string) => void }
+interface Props { readonly scopes: readonly OperatorUnitView[]; readonly onOpenScope: (id: string) => void }
 export function ParkedGateList({ scopes, onOpenScope }: Props) {
   const actionable = selectActionableScopes(scopes);
   return <section data-testid="or-parked-gates"><h3>Decisions waiting</h3>

@@ -1,7 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
-import { decodeCoreResponse } from "../core-client/core-types";
-import type { DefinitionBundle, Trigger } from "../core-client/core-types";
+import type { Event as CoreEvent, Workflow } from "../core-client/core-types";
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
 import { controlTokenMiddleware, selectControlPlaneAccess } from "../http/control-auth";
@@ -9,13 +8,12 @@ import { browserWriteMiddleware, configuredBrowserWritePolicy } from "../http/br
 import { httpBodyLimit, installDefinitionApi } from "../http/app";
 import { installEventStream } from "../http/events";
 import { authorityRepositories } from "../storage/repositories";
-import { createMutationService, cancelRun, deleteRun, type ScopeCancellationPayload, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
+import { createMutationService, cancelRun, deleteRun, type ProviderCapabilities, type ProviderCapabilityInput } from "../storage/mutation-service";
 import { PROVIDER_KINDS } from "../effects/provider-catalog";
 import { PgPostgresExecutor } from "../storage/sql-executor";
 import { verifyEffectEncryption } from "../storage/effect-secret";
 import { redactingReadResponses } from "../projections/serialization-view";
-import type { RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
-import type { OutputPublication } from "../storage/commit";
+import type { RunId, UnitId, UnitRecord } from "../storage/schema-records";
 import type { EffectProvider } from "../effects/provider";
 import type { PullRequestReader } from "./github-pull-requests";
 import { createEffectProvider } from "../effects/operations/production-provider";
@@ -31,42 +29,28 @@ export interface ProductionOptions {
   /** Defaults to the engine digest, or `DBOS_APPLICATION_VERSION` when set. */
   readonly application_version?: string;
 }
-export interface RunProjection { readonly run_id: RunId; readonly root_scope_id: ScopeId; readonly scope_key: string; readonly version: number; readonly is_terminal: boolean }
+export interface RunProjection { readonly run_id: RunId; readonly root_unit_id: UnitId; readonly unit_key: string; readonly version: number; readonly is_terminal: boolean }
 export interface ProductionComposition { readonly app: Hono; readonly application_version: string; readonly provider_capabilities: ProviderCapabilities; close(): Promise<void> }
 interface ForgeRepository { readonly owner: string; readonly name: string }
-/** Repository identity belongs to the GitHub contract; its enclosing fields belong to the bundle. */
-function forgeRepositories({ bundle, input }: ProviderCapabilityInput): readonly ForgeRepository[] {
-  const schemas = new Map(bundle.schemas.map((schema) => [schema.key, schema.shape]));
+/**
+ * Repository identity belongs to the GitHub contract. v2 schemas are type
+ * expressions rather than inspectable shapes, so identity is read from the
+ * run input itself: any object carrying both `owner` and `name` is a target.
+ */
+function forgeRepositories({ input }: ProviderCapabilityInput): readonly ForgeRepository[] {
   const found = new Map<string, ForgeRepository>();
-  function visit(schema_key: string, value: unknown, depth: number): void {
-    if (depth > bundle.limits.max_depth || value === null || value === undefined) return;
-    const shape = schemas.get(schema_key);
-    if (!shape) return;
-    if (shape.kind === "optional") { visit(shape.item, value, depth + 1); return; }
-    if (shape.kind === "list") {
-      if (Array.isArray(value)) value.forEach((item) => visit(shape.item, item, depth + 1));
-      return;
-    }
-    if (typeof value !== "object" || Array.isArray(value)) return;
+  const MAX_DEPTH = 32;
+  function visit(value: unknown, depth: number): void {
+    if (depth > MAX_DEPTH || value === null || typeof value !== "object") return;
+    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
     const record = value as { readonly [key: string]: unknown };
-    if (shape.kind === "union") {
-      const variant = shape.variants.find((variant) => variant.key === record.kind);
-      if (variant) visit(variant.schema, record.value, depth + 1);
-      return;
-    }
-    if (shape.kind !== "record") return;
-    if (shape.fields.some((field) => field.key === "owner") && shape.fields.some((field) => field.key === "name")
-      && typeof record.owner === "string" && typeof record.name === "string") {
+    if (typeof record.owner === "string" && typeof record.name === "string") {
       const repository = { owner: record.owner, name: record.name };
       found.set(JSON.stringify(repository), repository);
     }
-    shape.fields.forEach((field) => visit(field.schema, record[field.key], depth + 1));
-    const dictionary = shape.dictionary;
-    if (dictionary) Object.entries(record).filter(([key]) => !shape.fields.some((field) => field.key === key))
-      .forEach(([, value]) => visit(dictionary, value, depth + 1));
+    for (const nested of Object.values(record)) visit(nested, depth + 1);
   }
-  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
-  if (root) visit(root.input_schema, input, 0);
+  visit(input, 0);
   return [...found.values()];
 }
 export function githubProviderCapabilities(token: string, http: typeof fetch = fetch, kbbl_base_url = process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788"): ProviderCapabilities {
@@ -108,25 +92,14 @@ export function githubProviderCapabilities(token: string, http: typeof fetch = f
   };
 }
 
-function isBundle(value: unknown): value is DefinitionBundle {
-  return !!value && typeof value === "object" && "root" in value && typeof value.root === "string" && "scopes" in value && Array.isArray(value.scopes) && "operations" in value && Array.isArray(value.operations);
+function isWorkflow(value: unknown): value is Workflow {
+  return !!value && typeof value === "object" && "workflow" in value && typeof value.workflow === "string"
+    && "stages" in value && !!value.stages && typeof value.stages === "object"
+    && "run" in value && !!value.run && typeof value.run === "object";
 }
-function isTrigger(value: unknown): value is Trigger {
-  return !!value && typeof value === "object" && "id" in value && typeof value.id === "string" && "key" in value && typeof value.key === "string" && "payload" in value;
-}
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
-}
-function isOutputPublication(value: unknown): value is OutputPublication {
-  if (!value || typeof value !== "object") return false;
-  if (!("scope_id" in value) || typeof value.scope_id !== "string" || !("output_key" in value) || typeof value.output_key !== "string" || !("collection_key" in value) || typeof value.collection_key !== "string") return false;
-  if (!("predecessor_id" in value) || !isNullableString(value.predecessor_id) || !("execution_id" in value) || !isNullableString(value.execution_id)) return false;
-  if (!("expected_slot_version" in value) || !(value.expected_slot_version === null || (typeof value.expected_slot_version === "number" && Number.isSafeInteger(value.expected_slot_version) && value.expected_slot_version >= 0))) return false;
-  if (!("body" in value)) return false;
-  return decodeCoreResponse({ version: 1, request_id: "output-validation", truncated: false, result: { status: "ok", value: { kind: "validated", value: value.body } } }) !== null;
-}
-function isCancellationPayloads(value: unknown): value is readonly ScopeCancellationPayload[] {
-  return Array.isArray(value) && value.every((item: unknown) => !!item && typeof item === "object" && "scope_id" in item && typeof item.scope_id === "string" && "payload" in item);
+const EVENT_KINDS = new Set(["launched", "worker_started", "worker_ended", "revision_published", "operator_decided", "retry_requested", "cancel_requested"]);
+function isCoreEvent(value: unknown): value is CoreEvent {
+  return !!value && typeof value === "object" && "kind" in value && typeof value.kind === "string" && EVENT_KINDS.has(value.kind);
 }
 /**
  * The production composition. DBOS is the runtime: it is configured and
@@ -182,8 +155,8 @@ export async function createProductionComposition(options: ProductionOptions): P
       await ensureRunWorkflow(result.value.run_id);
       return context.json(result.value, 201);
     }
-    if (!body || typeof body !== "object" || !("bundle" in body) || !isBundle(body.bundle) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
-    const result = await mutations.startRun({ bundle: body.bundle, input: body.input });
+    if (!body || typeof body !== "object" || !("workflow" in body) || !isWorkflow(body.workflow) || !("input" in body)) return context.json({ error: "invalid run request" }, 400);
+    const result = await mutations.startRun({ workflow: body.workflow, input: body.input });
     if (!result.ok) return context.json({ error: result.error }, result.error.operation === "start_run_storage" ? 500 : 422);
     await ensureRunWorkflow(result.value.run_id);
     return context.json(result.value, 201);
@@ -192,10 +165,11 @@ export async function createProductionComposition(options: ProductionOptions): P
     const run_id = context.req.param("run_id") as RunId;
     const run = await repositories.run(run_id);
     if (!run) return context.json({ error: "run not found" }, 404);
-    const roots = await db.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=$1 AND parent_id IS NULL", [run_id]);
+    const roots = await db.query<UnitRecord>("SELECT * FROM authority.unit WHERE run_id=$1 AND parent_id IS NULL", [run_id]);
     const root = roots[0];
-    if (!root) return context.json({ error: "root scope missing" }, 500);
-    const projection: RunProjection = { run_id, root_scope_id: root.id as ScopeId, scope_key: root.scope_key, version: Number(root.version), is_terminal: root.is_terminal };
+    if (!root) return context.json({ error: "root unit missing" }, 500);
+    const projection: RunProjection = { run_id, root_unit_id: root.id, unit_key: root.declaration,
+      version: Number(root.version), is_terminal: root.status.kind === "done" || root.status.kind === "cancelled" };
     return context.json(projection);
   });
   app.post("/runs/:run_id/cancel", async (context) => {
@@ -203,9 +177,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
     if (!body || typeof body !== "object" || !("kind" in body) || body.kind !== "cancel_run" || !("reason" in body) || typeof body.reason !== "string")
       return context.json({ error: "invalid cancellation command" }, 400);
-    if ("payloads" in body && !isCancellationPayloads(body.payloads)) return context.json({ error: "invalid per-scope cancellation payloads" }, 400);
-    const payloads = "payloads" in body && isCancellationPayloads(body.payloads) ? body.payloads : undefined;
-    const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason, payloads }, core);
+    const result = await cancelRun(db, { kind: "cancel_run", run_id: context.req.param("run_id"), reason: body.reason }, core);
     if (result.kind === "rejected") return context.json(result, 422);
     if (result.kind === "missing") return context.json({ error: "run not found" }, 404);
     void wake(context.req.param("run_id") as RunId);
@@ -217,17 +189,16 @@ export async function createProductionComposition(options: ProductionOptions): P
     if (result.kind === "refused") return context.json(result, 409);
     return context.json(result);
   });
-  if (activeRoutes(process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1").some((route) => route.raw_ingress)) app.post("/runs/:run_id/scopes/:scope_id/decide", async (context) => {
+  if (activeRoutes(process.env.OAKRIDGE_ENABLE_RAW_INGRESS === "1").some((route) => route.raw_ingress)) app.post("/runs/:run_id/events", async (context) => {
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid JSON" }, 400); }
-    if (!body || typeof body !== "object" || !("trigger" in body) || !isTrigger(body.trigger) || !("ingress_id" in body) || typeof body.ingress_id !== "string") return context.json({ error: "invalid ingress" }, 400);
-    const operator_version = "operator_version" in body && typeof body.operator_version === "number" ? body.operator_version : null;
-    const outputs = "outputs" in body ? body.outputs : [];
-    if (!Array.isArray(outputs) || !outputs.every(isOutputPublication)) return context.json({ error: "invalid output publication" }, 400);
-    const result = await mutations.decide({ run_id: context.req.param("run_id") as RunId, scope_id: context.req.param("scope_id") as ScopeId, trigger: body.trigger, ingress_id: body.ingress_id, operator_version, outputs });
-    if (result.ok && (result.value.kind === "Committed" || result.value.kind === "Replayed"))
-      void wake(context.req.param("run_id") as RunId);
-    return result.ok ? context.json(result.value) : context.json({ error: result.error }, 422);
+    if (!body || typeof body !== "object" || !("event" in body) || !isCoreEvent(body.event)
+      || !("ingress_id" in body) || typeof body.ingress_id !== "string") return context.json({ error: "invalid ingress" }, 400);
+    const run_id = context.req.param("run_id") as RunId;
+    const result = await mutations.submit({ run_id, event: body.event, ingress_id: body.ingress_id, writer: { kind: "engine" } });
+    if (!result.ok) return context.json({ error: result.error }, 422);
+    if (result.value.kind === "committed" || result.value.kind === "replayed") void wake(run_id);
+    return context.json(result.value);
   });
   return { app, application_version, provider_capabilities, async close() {
     try { await parkRunningWorkflows(); }

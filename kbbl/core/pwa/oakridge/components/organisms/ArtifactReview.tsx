@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { OperatorSchema, OperatorScopeDefinition, OperatorScopeView } from "../../operator-contracts";
+import type { OperatorScopeDefinition, OperatorUnitView } from "../../operator-contracts";
 import { selectArtifactInScopes, selectScopeDetail } from "../../lib/run-overview";
 import { resolveViewer } from "../../artifactRegistry";
 import { createOperatorThread } from "../../client";
@@ -15,10 +15,10 @@ import { ArtifactReviewShell } from "./ArtifactReviewShell";
 import { ArtifactEditForm } from "./ArtifactEditForm";
 import { GateDecisionActions } from "./GateDecisionActions";
 
-interface Props { readonly revisionId: string; readonly scopes: readonly OperatorScopeView[]; readonly schemas: readonly OperatorSchema[];
+interface Props { readonly revisionId: string; readonly scopes: readonly OperatorUnitView[];
   readonly scopeDefinitions: readonly OperatorScopeDefinition[];
   readonly onBack: () => void; readonly onRefresh: () => void; readonly onRevised?: (revisionId: string) => void }
-export function ArtifactReview({ revisionId, scopes, schemas, scopeDefinitions, onBack, onRefresh, onRevised }: Props) {
+export function ArtifactReview({ revisionId, scopes, scopeDefinitions, onBack, onRefresh, onRevised }: Props) {
   const artifact = selectArtifactInScopes(scopes, revisionId);
   const successor = scopes.flatMap((scope) => scope.outputs).map((output) => output.current_revision)
     .find((revision) => revision?.predecessor_id === revisionId);
@@ -32,18 +32,18 @@ export function ArtifactReview({ revisionId, scopes, schemas, scopeDefinitions, 
   const threads = useThreads(artifact?.revision.run_id ?? "", artifact?.scope_id ?? "", revisionId, artifact !== null);
   const message = usePingThread(artifact?.revision.run_id ?? "", artifact?.scope_id ?? "", revisionId);
   if (!artifact) return <ArtifactReviewShell title="Artifact" onBack={onBack}><p role="status">This revision is unavailable in the current scope projection.</p></ArtifactReviewShell>;
-  const Viewer = resolveViewer(artifact.revision.body.schema);
   const scope = selectScopeDetail(scopes, artifact.scope_id);
+  const Viewer = resolveViewer(scope?.artifact_schemas[artifact.revision.artifact] ?? artifact.revision.artifact);
   const outputDefinition = scopeDefinitions.find((definition) => definition.key === scope?.scope_key)?.outputs
     .find((output) => output.key === artifact.output.output_key);
   const editCommand = scope?.commands.find((command) => command.key === outputDefinition?.edit_trigger);
   return <ArtifactReviewShell title={artifact.output.output_key} onBack={onBack}>
     <ArtifactRevisionNavigation revision={artifact.revision} />
-    <Viewer body={artifact.revision.body} schemas={schemas} />
+    <Viewer body={artifact.revision.body} />
     {scope && outputDefinition && editCommand && <ArtifactEditForm key={revisionId} scope={scope} output={artifact.output}
       outputDefinition={outputDefinition}
-      revision={artifact.revision} command={editCommand} schemas={schemas} onEdited={onRefresh} />}
-    {scope && <GateDecisionActions scope={scope} revisionId={revisionId} schemas={schemas} onRefresh={onRefresh} />}
+      revision={artifact.revision} command={editCommand} onEdited={onRefresh} />}
+    {scope && <GateDecisionActions scope={scope} revisionId={revisionId} onRefresh={onRefresh} />}
     <section data-testid="or-artifact-threads"><h3>Discussion</h3>
       {threads.isPending && <p role="status">Loading threads…</p>}
       {threads.isError && <p role="alert">Could not load threads: {String(threads.error)}</p>}

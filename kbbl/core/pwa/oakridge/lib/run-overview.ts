@@ -1,43 +1,49 @@
-import type { OperatorArtifactRevisionRecord, OperatorOutputSlotView, OperatorRunView, OperatorScopeView } from "../operator-contracts";
+import type { OperatorArtifactRevisionRecord, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 
 export interface RunProgress { readonly complete: number; readonly total: number; readonly needs_attention: number }
-export interface RunArtifact { readonly scope_id: string; readonly output: OperatorOutputSlotView; readonly revision: OperatorArtifactRevisionRecord }
+/** v2 has no output slots: a unit's artifacts are its revisions. */
+export interface RunArtifact { readonly unit_id: string; readonly artifact: string; readonly revision: OperatorArtifactRevisionRecord }
 
 export const selectRunProgress = (run: OperatorRunView): RunProgress => ({
-  complete: run.scopes.filter((scope) => scope.is_terminal).length,
-  total: run.scopes.length,
-  needs_attention: run.scopes.filter((scope) => !scope.is_terminal && scope.available_commands.length > 0).length,
+  complete: run.units.filter((unit) => unit.is_terminal).length,
+  total: run.units.length,
+  needs_attention: run.units.filter((unit) => !unit.is_terminal && unit.available_decisions.length > 0).length,
 });
 
-export const selectRunScope = (run: OperatorRunView, scopeId: string | null, rootKey: string | null): OperatorRunView["scopes"][number] | null =>
-  run.scopes.find((scope) => scope.scope_id === scopeId)
-    ?? run.scopes.find((scope) => scope.scope_key === rootKey)
-    ?? run.scopes[0] ?? null;
+export const selectRunUnit = (run: OperatorRunView, unitId: string | null, rootKey: string | null): OperatorRunView["units"][number] | null =>
+  run.units.find((unit) => unit.unit_id === unitId)
+    ?? run.units.find((unit) => unit.unit_key === rootKey)
+    ?? run.units[0] ?? null;
 
-export const selectRunArtifacts = (scopes: readonly OperatorScopeView[]): readonly RunArtifact[] =>
-  scopes.flatMap((scope) => scope.outputs.flatMap((output) => output.current_revision
-    ? [{ scope_id: scope.scope_id, output, revision: output.current_revision }] : []));
+/** The newest revision of each artifact a unit has published. */
+export const selectRunArtifacts = (units: readonly OperatorUnitView[]): readonly RunArtifact[] =>
+  units.flatMap((unit) => {
+    const newest = new Map<string, OperatorArtifactRevisionRecord>();
+    for (const revision of unit.revisions) newest.set(revision.artifact, revision);
+    return [...newest.entries()].map(([artifact, revision]) => ({ unit_id: unit.unit_id, artifact, revision }));
+  });
 
-export const selectLoadedScopes = (values: readonly (OperatorScopeView | undefined)[]): readonly OperatorScopeView[] =>
-  values.filter((value): value is OperatorScopeView => value !== undefined);
+export const selectLoadedUnits = (values: readonly (OperatorUnitView | undefined)[]): readonly OperatorUnitView[] =>
+  values.filter((value): value is OperatorUnitView => value !== undefined);
 
-export const selectScopeDetail = (scopes: readonly OperatorScopeView[], scopeId: string | null): OperatorScopeView | null =>
-  scopeId === null ? scopes[0] ?? null : scopes.find((scope) => scope.scope_id === scopeId) ?? null;
+export const selectUnitDetail = (units: readonly OperatorUnitView[], unitId: string | null): OperatorUnitView | null =>
+  unitId === null ? units[0] ?? null : units.find((unit) => unit.unit_id === unitId) ?? null;
 
-export const selectScopeQueryIndex = (run: OperatorRunView, scopeId: string | null): number =>
-  run.scopes.findIndex((scope) => scope.scope_id === scopeId);
+export const selectUnitQueryIndex = (run: OperatorRunView, unitId: string | null): number =>
+  run.units.findIndex((unit) => unit.unit_id === unitId);
 
-export const selectWaitingScopes = (scopes: readonly OperatorScopeView[]): readonly OperatorScopeView[] =>
-  scopes.filter((scope) => scope.decision?.kind === "wait");
+/** A blocked unit is the v2 shape of what v1 called a waiting scope. */
+export const selectWaitingUnits = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
+  units.filter((unit) => unit.status.kind === "blocked");
 
-export const selectCompletedScopeDetails = (scopes: readonly OperatorScopeView[]): readonly OperatorScopeView[] =>
-  scopes.filter((scope) => scope.outcome !== null);
+export const selectCompletedUnitDetails = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
+  units.filter((unit) => unit.status.kind === "done");
 
-export const selectFinalIntegrationScope = (scopes: readonly OperatorScopeView[]): OperatorScopeView | null =>
-  scopes.find((scope) => scope.scope_key === "final_integration") ?? null;
+export const selectFinalIntegrationUnit = (units: readonly OperatorUnitView[]): OperatorUnitView | null =>
+  units.find((unit) => unit.unit_key === "final_integration") ?? null;
 
-export const selectArtifactInScopes = (scopes: readonly OperatorScopeView[], revisionId: string): RunArtifact | null =>
-  selectRunArtifacts(scopes).find((artifact) => artifact.revision.id === revisionId) ?? null;
+export const selectArtifactInUnits = (units: readonly OperatorUnitView[], revisionId: string): RunArtifact | null =>
+  selectRunArtifacts(units).find((artifact) => artifact.revision.id === revisionId) ?? null;
 
-export const selectScopeStatus = (scope: OperatorRunView["scopes"][number]): "complete" | "attention" | "running" =>
-  scope.is_terminal ? "complete" : scope.available_commands.length > 0 ? "attention" : "running";
+export const selectUnitStatus = (unit: OperatorRunView["units"][number]): "complete" | "attention" | "running" =>
+  unit.is_terminal ? "complete" : unit.available_decisions.length > 0 ? "attention" : "running";

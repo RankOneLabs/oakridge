@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createProductionComposition, type ProductionOptions } from "../src/runtime/compose";
 import type { EffectProvider } from "../src/effects/provider";
 import { intentWorkflowId, runWorkflowId } from "../src/workflows/topology";
-import { begin, sessionBundle, unit, waitUntil, withDatabase } from "./effect-fixture";
+import { begin, sessionWorkflow, unit, waitUntil, withDatabase } from "./effect-fixture";
 
 const FAST = { retry_initial_seconds: 0.01, retry_cap_seconds: 0.02, observe_interval_seconds: 0.01, wake_timeout_seconds: 0.02 };
 
@@ -16,7 +16,7 @@ test("a session parked by one engine version completes under the next", async ()
     stop: async () => ({ kind: "acknowledged", value: { stopped: true } }),
   } as EffectProvider;
   const options = (application_version: string): ProductionOptions => ({ database_url: url, application_version,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: FAST, effect_provider: provider });
   const startIntent = async () => (await db.query<{ id: string; status: string }>(
     "SELECT e.id,e.status FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id WHERE s.run_id=$1 AND e.payload->>'action'='start'", [run_id]))[0];
@@ -24,7 +24,7 @@ test("a session parked by one engine version completes under the next", async ()
 
   let composition = await createProductionComposition(options("engine-a"));
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "observe", workdir: "/tmp",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "observe", workdir: "/tmp",
       session_name: "upgrade", session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     run_id = run.run_id;
     await waitUntil(async () => (await startIntent())?.status === "acknowledged");

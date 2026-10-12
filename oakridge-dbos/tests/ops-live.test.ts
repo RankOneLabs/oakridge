@@ -29,7 +29,7 @@ async function eventually(predicate: () => Promise<boolean>): Promise<void> {
 
 test("ops lists and inspects a live run, forks an ERROR run, and migrates idempotently", async () => withDatabase(async ({ url, db }) => {
   let composition = await createProductionComposition({ database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { wake_timeout_seconds: 5 } });
   try {
     const bundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();
@@ -52,7 +52,7 @@ test("ops lists and inspects a live run, forks an ERROR run, and migrates idempo
     expect((await db.query<{ current_generation: string }>("SELECT current_generation FROM authority.run WHERE id=$1", [run.run_id]))[0]?.current_generation).toBe("1");
 
     composition = await createProductionComposition({ database_url: url,
-      core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+      host: "127.0.0.1",
       timing: { wake_timeout_seconds: 5 } });
     await db.query("UPDATE authority.scope_instance SET is_terminal=true WHERE id=$1", [run.root_scope_id]);
     await wakeRun(run.run_id);

@@ -10,7 +10,6 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { githubIdentityFromRemote } from "../src/runtime/project-identity";
 import { selectControlPlaneAccess } from "../src/http/control-auth";
 import { silentDurationMs } from "../src/adapters/kbbl";
-import { settingForRole } from "../src/effects/operations/selected-publication-contract";
 import type { Workflow } from "../src/core-client/core-types";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
 
@@ -94,6 +93,4 @@ test("v2 sample workers declare their kind without v1 provider routing", () => {
 // including its sole named catalog exemption and positive controls.
 
 if (false) {
-  // @ts-expect-error an unrecognized setting role must fail at typecheck time
-  settingForRole([], "unknown_role");
 }

@@ -4,7 +4,7 @@
 /* tslint:disable */
 /* eslint-disable */
 
-import { RuntimeValue, Mode, Cause, AttemptStatus, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, DefinitionBundleSource, CompiledWorkflow, EffectIntentPayload, CoreEvent, Writer, CommitReceipt, ForgeRepository, SessionPolicy, ReviewItemBody, UnitStatus, WantedActions } from "./json-column-types";
+import { RuntimeValue, Mode, Cause, AttemptStatus, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, DefinitionBundleSource, CompiledWorkflow, PinnedPrompts, EffectIntentPayload, CoreEvent, Writer, CommitReceipt, ForgeRepository, OperatorEventPayload, SessionPolicy, ReviewItemBody, UnitStatus, WantedActions } from "./json-column-types";
 
 
 export type Json = unknown;
@@ -242,13 +242,15 @@ export interface DefinitionBundleInput {
   source: DefinitionBundleSource;
   /** @type {CompiledWorkflow} */
   checked_program: CompiledWorkflow;
+  /** @type {PinnedPrompts} */
+  prompts?: PinnedPrompts;
   version?: number;
   created_at?: Date;
   archived_at?: Date | null;
 }
 const definition_bundle = {
   tableName: 'definition_bundle',
-  columns: ['id', 'digest', 'source', 'checked_program', 'version', 'created_at', 'archived_at'],
+  columns: ['id', 'digest', 'source', 'checked_program', 'prompts', 'version', 'created_at', 'archived_at'],
   requiredForInsert: ['id', 'digest', 'source', 'checked_program'],
   primaryKey: 'id',
   foreignKeys: {},
@@ -351,6 +353,39 @@ const ingress_receipt = {
   foreignKeys: { run_id: { table: 'run', column: 'id', $type: null as unknown as Run }, },
   $type: null as unknown as IngressReceipt,
   $input: null as unknown as IngressReceiptInput
+} as const;
+
+// Table operator_event
+export interface OperatorEvent {
+  id: string;
+  run_id: string | null;
+  run_key: string;
+  event_key: string;
+  /** @type {OperatorEventPayload} */
+  payload: OperatorEventPayload;
+  commit_txid: number;
+  created_at: Date;
+}
+
+export interface OperatorEventInput {
+  id: string;
+  run_id?: string | null;
+  run_key: string;
+  event_key: string;
+  /** @type {OperatorEventPayload} */
+  payload: OperatorEventPayload;
+  commit_txid?: number;
+  created_at?: Date;
+}
+
+const operator_event = {
+  tableName: 'operator_event',
+  columns: ['id', 'run_id', 'run_key', 'event_key', 'payload', 'commit_txid', 'created_at'],
+  requiredForInsert: ['id', 'run_key', 'event_key', 'payload'],
+  primaryKey: 'id',
+  foreignKeys: { run_id: { table: 'run', column: 'id', $type: null as unknown as Run }, },
+  $type: null as unknown as OperatorEvent,
+  $input: null as unknown as OperatorEventInput
 } as const;
 
 // Table project
@@ -481,6 +516,8 @@ export interface Run {
   status: UnitStatus;
   created_at: Date;
   version: number;
+  current_generation: number;
+  current_cursor: string | null;
   archived_at: Date | null;
 }
 export interface RunInput {
@@ -494,11 +531,13 @@ export interface RunInput {
   status?: UnitStatus;
   created_at?: Date;
   version?: number;
+  current_generation?: number;
+  current_cursor?: string | null;
   archived_at?: Date | null;
 }
 const run = {
   tableName: 'run',
-  columns: ['id', 'definition_bundle_id', 'project_id', 'root_unit_id', 'input', 'status', 'created_at', 'version', 'archived_at'],
+  columns: ['id', 'definition_bundle_id', 'project_id', 'root_unit_id', 'input', 'status', 'created_at', 'version', 'current_generation', 'current_cursor', 'archived_at'],
   requiredForInsert: ['id', 'definition_bundle_id'],
   primaryKey: 'id',
   foreignKeys: {
@@ -644,6 +683,10 @@ export interface TableTypes {
     select: IngressReceipt;
     input: IngressReceiptInput;
   };
+  operator_event: {
+    select: OperatorEvent;
+    input: OperatorEventInput;
+  };
   project: {
     select: Project;
     input: ProjectInput;
@@ -690,6 +733,7 @@ export const tables = {
   effect_intent,
   event,
   ingress_receipt,
+  operator_event,
   project,
   prompt_content,
   review_decision,

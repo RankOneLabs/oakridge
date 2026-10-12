@@ -8,7 +8,7 @@ import { Button } from "../../components/atoms/Button";
 import { randomUuid } from "../../lib/random-uuid";
 import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "../lib/operator-launch";
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
-import type { OperatorStartPinnedRunRequest, OperatorSchema, OperatorDefinitionBundle } from "../operator-contracts";
+import type { OperatorStartPinnedRunRequest, OperatorDefinitionBundle } from "../operator-contracts";
 import { buildRootInput, inputRecord, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
@@ -27,7 +27,7 @@ function selectInputFields(source: OperatorDefinitionBundle | undefined): readon
     schema: source.schemas.find((schema) => schema.key === field.schema) })) : null;
 }
 
-function fieldText(value: unknown, schema: OperatorSchema | undefined): string {
+function fieldText(value: unknown, schema: | undefined): string {
   if (value === undefined) return "";
   return schema?.shape.kind === "string" || schema?.shape.kind === "enum" ? String(value) : JSON.stringify(value, null, 2);
 }

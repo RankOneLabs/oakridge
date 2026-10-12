@@ -12,7 +12,7 @@ export interface CollaborationApiDependencies {
   readonly db: TransactionalSqlExecutor;
   readonly kbbl_base_url: string;
 }
-interface PingCommand { readonly run_id: string; readonly scope_id: string; readonly thread_id: string;
+interface PingCommand { readonly run_id: string; readonly unit_id: string; readonly thread_id: string;
   readonly revision_id: string; readonly message_id: string; readonly request_key: string; readonly text: string }
 interface PinnedCollaborationSession { readonly request: PinnedSessionStart; readonly session_id: string }
 class CollaborationDeliveryUncertainError extends Error {}
@@ -23,9 +23,9 @@ export interface CollaborationDeliveryPort {
     | { readonly kind: "error"; readonly reason: string } | { readonly kind: "uncertain"; readonly reason: string }>;
 }
 
-async function pinnedSession(db: SqlExecutor, execution_id: string): Promise<PinnedCollaborationSession | null> {
+async function pinnedSession(db: SqlExecutor, action_id: string): Promise<PinnedCollaborationSession | null> {
   const intents = await db.query<{ readonly id: string }>(`SELECT id FROM authority.effect_intent
-    WHERE execution_id=$1 AND payload->>'action'='start' ORDER BY updated_at DESC,id DESC LIMIT 1`, [execution_id]);
+    WHERE action_id=$1 ORDER BY seq DESC,updated_at DESC LIMIT 1`, [action_id]);
   if (!intents[0]) return null;
   const intent = await readIntent(db,intents[0].id);
   const request = intent?.payload.invocation.request;
@@ -41,7 +41,7 @@ export async function deliverCollaborationPing(db: SqlExecutor, port: Collaborat
   const prior = await findCollaborationDelivery(db,id);
   if (prior) return prior;
   const fail = (reason: string) => recordCollaborationDelivery(db, { id, run_id: command.run_id,
-    scope_id: command.scope_id, message_id: command.message_id,
+    unit_id: command.unit_id, message_id: command.message_id,
     payload: { status: "failed", session_id: null, reason, request_key: command.request_key } });
   const target = await readRevisionCollaborationTarget(db,command.run_id,command.revision_id);
   if (!target) return fail("no agent-produced revision exists in the reviewed revision chain");
@@ -54,7 +54,7 @@ export async function deliverCollaborationPing(db: SqlExecutor, port: Collaborat
   const sent = await port.send(ensured.session_id,id,command.text);
   if (sent.kind === "uncertain") throw new CollaborationDeliveryUncertainError(`session input uncertain: ${sent.reason}`);
   if (sent.kind === "error") return fail(`session input refused: ${sent.reason}`);
-  return recordCollaborationDelivery(db, { id, run_id: command.run_id, scope_id: command.scope_id,
+  return recordCollaborationDelivery(db, { id, run_id: command.run_id, unit_id: command.unit_id,
     message_id: command.message_id,
     payload: { status: "delivered", session_id: ensured.session_id, reason: null, request_key: command.request_key } });
 }
@@ -118,15 +118,15 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
   workflow_dependencies = deps;
   return {
   getThreads: async (c: Context) => {
-    return c.json(await readCollaborationThreads(deps.db,param(c,"run_id"),param(c,"scope_id"),param(c,"revision_id")));
+    return c.json(await readCollaborationThreads(deps.db,param(c,"run_id"),param(c,"unit_id"),param(c,"revision_id")));
   },
   createThread: async (c: Context) => {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title)
       || !(raw.anchor === null || typeof raw.anchor === "string")) return c.json({ error: "request_key, title and anchor are required" },400);
-    const run_id = param(c,"run_id"), scope_id = param(c,"scope_id"), revision_id = param(c,"revision_id");
+    const run_id = param(c,"run_id"), unit_id = param(c,"unit_id"), revision_id = param(c,"revision_id");
     const result = await createCollaborationThread(deps.db, { id: `thread:${collaborationRecordId(revision_id,raw.request_key)}`,
-      run_id,scope_id,revision_id,context: { title: raw.title, anchor: raw.anchor } });
+      run_id,unit_id,revision_id,context: { title: raw.title, anchor: raw.anchor } });
     return result.kind === "written" || result.kind === "replayed" ? c.json(result.value,result.kind === "written" ? 201 : 200)
       : c.json({ error: result.kind },status(result.kind));
   },
@@ -134,17 +134,17 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.text) || !nonempty(raw.author)
       || (raw.ping !== undefined && typeof raw.ping !== "boolean")) return c.json({ error: "request_key, text and author are required" },400);
-    const run_id = param(c,"run_id"), scope_id = param(c,"scope_id"), thread_id = param(c,"thread_id");
+    const run_id = param(c,"run_id"), unit_id = param(c,"unit_id"), thread_id = param(c,"thread_id");
     const id = `message:${collaborationRecordId(thread_id,raw.request_key)}`;
-    const result = await addCollaborationMessage(deps.db,{ id,run_id,scope_id,thread_id,
+    const result = await addCollaborationMessage(deps.db,{ id,run_id,unit_id,thread_id,
       body: { text: raw.text, author: raw.author, ping: raw.ping === true } });
     if (result.kind !== "written" && result.kind !== "replayed") return c.json({ error: result.kind },status(result.kind));
     if (!raw.ping) return c.json({ message: result.value },result.kind === "written" ? 201 : 200);
     const threads = await deps.db.query<{ readonly artifact_revision_id: string }>(
-      "SELECT artifact_revision_id FROM authority.collaboration_thread WHERE id=$1 AND run_id=$2 AND scope_id=$3",[thread_id,run_id,scope_id]);
+      "SELECT artifact_revision_id FROM authority.collaboration_thread WHERE id=$1 AND run_id=$2 AND unit_id=$3",[thread_id,run_id,unit_id]);
     const revision_id = threads[0]?.artifact_revision_id;
     if (!revision_id) return c.json({ error: "thread has no reviewed revision" },409);
-    const command: PingCommand = { run_id,scope_id,thread_id,revision_id,message_id: id,request_key: raw.request_key,text: raw.text };
+    const command: PingCommand = { run_id,unit_id,thread_id,revision_id,message_id: id,request_key: raw.request_key,text: raw.text };
     const delivery = await (await DBOS.startWorkflow(deliveryWorkflow,
       { workflowID: `collaboration:${thread_id}:${raw.request_key}` })(command)).getResult();
     return c.json({ message: result.value, delivery },result.kind === "written" ? 201 : 200);
@@ -153,9 +153,9 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
     const raw = await json(c.req.raw);
     if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title)
       || typeof raw.detail !== "string" || !nonempty(raw.status)) return c.json({ error: "request_key, title, detail and status are required" },400);
-    const run_id = param(c,"run_id"), scope_id = param(c,"scope_id"), thread_id = param(c,"thread_id");
+    const run_id = param(c,"run_id"), unit_id = param(c,"unit_id"), thread_id = param(c,"thread_id");
     const result = await addReviewItem(deps.db,{ id: `review:${collaborationRecordId(thread_id,raw.request_key)}`,
-      run_id,scope_id,thread_id,body: { title: raw.title, detail: raw.detail, status: raw.status } });
+      run_id,unit_id,thread_id,body: { title: raw.title, detail: raw.detail, status: raw.status } });
     return result.kind === "written" || result.kind === "replayed" ? c.json(result.value,result.kind === "written" ? 201 : 200)
       : c.json({ error: result.kind },status(result.kind));
   },

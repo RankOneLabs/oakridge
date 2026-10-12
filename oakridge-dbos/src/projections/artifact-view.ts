@@ -1,6 +1,4 @@
-import type { CheckedValue } from "../core-client/core-types";
-import type { RunId, ScopeId } from "../storage/schema-records";
-import type { OutputSlotView } from "./scope-view";
+import type { ArtifactRevisionRecord, RunId, UnitId } from "../storage/schema-records";
 import { outputPresentation, type ArtifactPresentation } from "./presentation";
 
 /** Review status belongs to the operator projection, not the revision row. */
@@ -8,23 +6,26 @@ export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
 
 export interface ArtifactDetail {
   readonly run_id: RunId;
-  readonly scope_id: ScopeId;
-  readonly output_key: string;
-  readonly collection_key: string;
-  readonly slot_version: number;
-  readonly revision_id: string | null;
+  readonly unit_id: UnitId;
+  readonly artifact: string;
+  readonly revision_id: string;
   readonly predecessor_id: string | null;
-  readonly body: CheckedValue | null;
+  readonly subject: string | null;
+  readonly body: unknown;
   readonly status: ArtifactRevisionStatus;
   readonly presentation: ArtifactPresentation;
 }
 
-export function selectArtifactDetail(slot: OutputSlotView, status: ArtifactRevisionStatus): ArtifactDetail | null {
-  const presentation = slot.current_revision ? outputPresentation(slot.current_revision.body.schema) : null;
+/**
+ * v2 revisions carry no schema of their own, so the caller supplies the schema
+ * key its stage declares for the artifact.
+ */
+export function selectArtifactDetail(revision: ArtifactRevisionRecord, schema_key: string | null, status: ArtifactRevisionStatus): ArtifactDetail | null {
+  const presentation = schema_key === null ? null : outputPresentation(schema_key);
   if (!presentation) return null;
-  return { run_id: slot.run_id, scope_id: slot.scope_id, output_key: slot.output_key,
-    collection_key: slot.collection_key, slot_version: slot.version,
-    revision_id: slot.current_revision?.id ?? null,
-    predecessor_id: slot.current_revision?.predecessor_id ?? null,
-    body: slot.current_revision?.body ?? null, status, presentation };
+  return {
+    run_id: revision.run_id, unit_id: revision.unit_id, artifact: revision.artifact,
+    revision_id: revision.id, predecessor_id: revision.predecessor_id, subject: revision.subject,
+    body: revision.body, status, presentation,
+  };
 }

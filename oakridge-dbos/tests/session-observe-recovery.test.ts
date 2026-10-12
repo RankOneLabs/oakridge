@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { createProductionComposition } from "../src/runtime/compose";
 import type { ProviderResult, TerminalObservation } from "../src/effects/provider";
 import type { EffectPayload } from "../src/effects/intents";
-import { begin, sessionBundle, waitUntil, withDatabase } from "./effect-fixture";
+import { begin, sessionWorkflow, waitUntil, withDatabase } from "./effect-fixture";
 
 interface RejectionCase { readonly name: string; readonly observations: readonly ProviderResult<unknown>[] }
 const cases: readonly RejectionCase[] = [
@@ -29,7 +29,7 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
   let observations = 0;
   let can_confirm_stop = false;
   const composition = await createProductionComposition({ database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { retry_initial_seconds: 0.01, retry_cap_seconds: 0.02, observe_interval_seconds: 0.01,
       max_observe_unavailable_attempts: 2, wake_timeout_seconds: 0.02 },
     effect_provider: {
@@ -40,7 +40,7 @@ for (const rejection of cases) test(`${rejection.name}, fail the scope, and disc
         : { kind: "uncertain", detail: "cleanup unavailable" },
     } });
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "publish", workdir: "/tmp", session_name: "rejected",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "publish", workdir: "/tmp", session_name: "rejected",
       session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     await waitUntil(async () => (await db.query<{ is_terminal: boolean }>(
       "SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);

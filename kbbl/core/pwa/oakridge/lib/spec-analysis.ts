@@ -1,14 +1,13 @@
-import type { OperatorCheckedValue, OperatorSchema } from "../operator-contracts";
 import { selectFieldItems, selectFieldText } from "../artifact-types";
 
 export type SpecBlocker =
-  | { readonly kind: "finding"; readonly value: OperatorCheckedValue }
-  | { readonly kind: "requirement"; readonly value: OperatorCheckedValue };
+  | { readonly kind: "finding"; readonly value: unknown }
+  | { readonly kind: "requirement"; readonly value: unknown };
 
 export interface SpecAnalysisView {
   readonly blockers: readonly SpecBlocker[];
-  readonly findings: readonly OperatorCheckedValue[];
-  readonly requirements: readonly OperatorCheckedValue[];
+  readonly findings: readonly unknown[];
+  readonly requirements: readonly unknown[];
   readonly status_counts: readonly { readonly status: string; readonly count: number }[];
 }
 
@@ -17,11 +16,11 @@ const REQUIREMENT_ORDER = ["ambiguous", "implementable"] as const;
 const TALLY_ORDER = ["blocking", "warning", "info", "blocked", "ambiguous", "implementable"] as const;
 
 /** Separate urgent checked records once, retaining the pinned severity/status meanings. */
-export function selectCheckedSpecAnalysisView(body: OperatorCheckedValue, schemas: readonly OperatorSchema[]): SpecAnalysisView {
-  const findings = selectFieldItems(body, schemas, "findings");
-  const requirements = selectFieldItems(body, schemas, "requirements");
-  const severity = (finding: OperatorCheckedValue) => selectFieldText(finding, schemas, "severity");
-  const status = (requirement: OperatorCheckedValue) => selectFieldText(requirement, schemas, "status");
+export function selectCheckedSpecAnalysisView(body: unknown): SpecAnalysisView {
+  const findings = selectFieldItems(body, "findings");
+  const requirements = selectFieldItems(body, "requirements");
+  const severity = (finding: unknown) => selectFieldText(finding, "severity");
+  const status = (requirement: unknown) => selectFieldText(requirement, "status");
   const blockers: readonly SpecBlocker[] = [
     ...findings.filter((finding) => severity(finding) === "blocking").map((value): SpecBlocker => ({ kind: "finding", value })),
     ...requirements.filter((requirement) => status(requirement) === "blocked").map((value): SpecBlocker => ({ kind: "requirement", value })),

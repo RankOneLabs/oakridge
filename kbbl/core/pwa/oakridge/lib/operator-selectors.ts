@@ -1,40 +1,32 @@
-import type { OperatorCommandDefinition, OperatorCommandPrefill, OperatorDefinitionSummary, OperatorRunView, OperatorScopeView, OperatorTargetRevision } from "../operator-contracts";
+import type { OperatorAvailableDecision, OperatorDefinitionSummary, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import type { OperatorDraftKey } from "./operator-drafts";
 
-/** Target identities must come from the observed projection, never a later fetch. */
-export function selectCommandTargets(scope: OperatorScopeView, command: OperatorCommandDefinition): readonly OperatorTargetRevision[] | null {
-  const supplied = scope.command_targets?.[command.key];
-  if (supplied) return supplied.length === command.targets.length ? supplied : null;
-  if (command.targets.length === 0) return [];
-  const selected: OperatorTargetRevision[] = [];
-  for (const expression of command.targets) {
-    if (!expression || typeof expression !== "object" || !("kind" in expression) || expression.kind !== "reference"
-      || !("root" in expression) || !expression.root || typeof expression.root !== "object"
-      || !("kind" in expression.root) || expression.root.kind !== "output"
-      || !("key" in expression.root) || typeof expression.root.key !== "string") return null;
-    const outputKey = expression.root.key;
-    const slot = scope.outputs.find((item) => item.output_key === outputKey && item.collection_key === "");
-    if (!slot?.current_revision_id) return null;
-    selected.push({ identity: slot.current_revision_id, version: slot.version });
-  }
-  return selected;
+/**
+ * A decision targets the newest revision of the artifact its review is `of`.
+ * The identity comes from the observed projection, never a later fetch, so an
+ * operator decision cannot silently retarget a revision published since.
+ */
+export function selectTargetRevisionId(unit: OperatorUnitView, decision: OperatorAvailableDecision): string | null {
+  const matching = unit.revisions.filter((revision) => revision.artifact === decision.artifact);
+  return matching.length === 0 ? null : matching[matching.length - 1]!.id;
 }
 
-export function selectDraftKey(scope: OperatorScopeView, command: OperatorCommandDefinition): OperatorDraftKey | null {
-  const targets = selectCommandTargets(scope, command);
-  return targets === null ? null : { run_id: scope.run_id, scope_id: scope.scope_id,
-    command_key: command.key, owner_version: scope.cursor.scope_version, targets };
+export function selectDraftKey(unit: OperatorUnitView, decision: OperatorAvailableDecision): OperatorDraftKey | null {
+  const target_revision_id = selectTargetRevisionId(unit, decision);
+  return target_revision_id === null ? null : { run_id: unit.run_id, unit_id: unit.unit_id,
+    review: decision.review, decision: decision.decision,
+    owner_version: unit.cursor.unit_version, target_revision_id };
 }
 
-export interface RootScopeInput { readonly scopes: readonly Pick<OperatorRunView["scopes"][number], "scope_id" | "scope_key">[]; readonly root_key: string }
+export interface RootUnitInput { readonly units: readonly Pick<OperatorRunView["units"][number], "unit_id" | "unit_key">[]; readonly root_key: string }
 
 /**
- * The server lists a run's scopes by random id, so position says nothing; the
- * pinned definition's `root` key names the root scope. Null when the run has
- * no scope under that key, rather than a guess at another one.
+ * The server lists a run's units by random id, so position says nothing; the
+ * pinned definition's root key names the root unit. Null when the run has no
+ * unit under that key, rather than a guess at another one.
  */
-export function selectRootScopeId({ scopes, root_key }: RootScopeInput): string | null {
-  return scopes.find((scope) => scope.scope_key === root_key)?.scope_id ?? null;
+export function selectRootUnitId({ units, root_key }: RootUnitInput): string | null {
+  return units.find((unit) => unit.unit_key === root_key)?.unit_id ?? null;
 }
 
 export interface LaunchDigestInput {
@@ -52,15 +44,4 @@ export function selectLaunchDigest({ pending_digest, chosen_digest, definitions 
   if (pending_digest) return pending_digest;
   if (chosen_digest) return chosen_digest;
   return definitions?.length === 1 ? definitions[0]?.digest ?? "" : "";
-}
-
-/** Evidence fields the scope projects for a command; the operator never retypes them. */
-export function selectCommandPrefill(scope: OperatorScopeView, command: OperatorCommandDefinition): OperatorCommandPrefill {
-  return scope.command_prefill[command.key] ?? {};
-}
-
-/** Prefilled fields the scope has not observed yet; the command waits for them rather than asking the operator. */
-export function selectPendingEvidence(scope: OperatorScopeView, command: OperatorCommandDefinition): readonly string[] {
-  const prefill = selectCommandPrefill(scope, command);
-  return (command.prefill ?? []).map((entry) => entry.key).filter((key) => !(key in prefill));
 }

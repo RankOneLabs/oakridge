@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
 import { intentWorkflowId, wakeRun } from "../src/workflows/topology";
-import { begin, sessionBundle, withDatabase } from "./effect-fixture";
+import { begin, sessionWorkflow, withDatabase } from "./effect-fixture";
 import { sealEffectPayload } from "../src/storage/effect-secret";
 import type { EffectPayload } from "../src/effects/intents";
 
@@ -27,11 +27,11 @@ test("restart preserves an already-started effect and dispatches a pending one",
     observe: async () => ({ kind: "acknowledged" as const, value: { kind: "running" as const } }),
     stop: async () => ({ kind: "acknowledged" as const, value: { stopped: true as const } }),
   };
-  const options = { database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+  const options = { database_url: url,
     host: "127.0.0.1", effect_provider: provider, timing: { observe_interval_seconds: 0.05, wake_timeout_seconds: 0.05 } };
   let composition = await createProductionComposition(options);
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "wait",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "wait",
       workdir: "/tmp", session_name: "durable", session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     const first = async () => (await db.query<{ id: string; status: string; payload: object }>(
       "SELECT id,status,payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start' ORDER BY id LIMIT 1", [run.root_scope_id]))[0];
@@ -66,7 +66,7 @@ test("restart preserves an already-started effect and dispatches a pending one",
 
 test("a loop-boundary dispatch failure strands the run as a typed, visible ERROR", async () => withDatabase(async ({ url, db }) => {
   const composition = await createProductionComposition({ database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { wake_timeout_seconds: 5 } });
   try {
     const bundle = await Bun.file(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/minimal.json")).json();

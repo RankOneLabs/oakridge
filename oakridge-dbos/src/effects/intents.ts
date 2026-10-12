@@ -1,4 +1,4 @@
-import type { Trigger } from "../core-client/core-types";
+import type { Event as CoreEvent } from "../core-client/core-types";
 import type { SqlExecutor } from "../storage/sql-executor";
 import type { EffectIntentRecord, EffectStatus } from "../storage/schema-records";
 import type { ExternalHandle, StableInvocation } from "./provider";
@@ -32,7 +32,7 @@ export interface EffectPayload {
   readonly observe_unavailable_attempts?: number;
   readonly last_detail?: string;
   readonly failure?: EffectFailure;
-  readonly evidence?: Trigger;
+  readonly evidence?: CoreEvent;
   readonly evidence_delivered?: boolean;
   /** A provider start call was issued at least once; an external execution may exist. */
   readonly has_dispatched?: boolean;
@@ -40,13 +40,11 @@ export interface EffectPayload {
   readonly has_uncertain_start?: boolean;
 }
 /** An effect_intent row with its payload unsealed. */
-export type EffectIntent = Omit<EffectIntentRecord, "run_id" | "payload"> & { readonly payload: EffectPayload };
-interface EffectRow extends Omit<EffectIntent, "version"> { readonly version: string | number }
-
+export type EffectIntent = Omit<EffectIntentRecord, "payload"> & { readonly payload: EffectPayload };
 export async function readIntent(db: SqlExecutor, intent_id: string): Promise<EffectIntent | null> {
-  const rows = await db.query<EffectRow>("SELECT * FROM authority.effect_intent WHERE id=$1", [intent_id]);
+  const rows = await db.query<EffectIntent>("SELECT * FROM authority.effect_intent WHERE id=$1", [intent_id]);
   const row = rows[0];
-  return row ? { ...row, payload: unsealEffectPayload(row.payload), version: Number(row.version) } : null;
+  return row ? { ...row, payload: unsealEffectPayload(row.payload) } : null;
 }
 
 /** The action row itself is the cleanup proof; no separate stop row exists in v2. */

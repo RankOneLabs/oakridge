@@ -1,29 +1,28 @@
-import type { OperatorCheckedValue, OperatorSchema } from "./operator-contracts";
+/**
+ * v2 artifact bodies are plain JSON rather than a schema-directed value tree,
+ * so a field is read by key and needs no pinned schema to locate it.
+ */
+const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** Resolve a checked record field through the pinned schema's field order. */
-export function selectCheckedField(value: OperatorCheckedValue | null, schemas: readonly OperatorSchema[], key: string): OperatorCheckedValue | null {
-  if (value?.data.kind !== "record") return null;
-  const shape = schemas.find((schema) => schema.key === value.schema)?.shape;
-  if (shape?.kind !== "record") return null;
-  const fieldId = shape.fields.findIndex((field) => field.key === key);
-  return value.data.fields.find((field) => field.field_id === fieldId)?.value ?? null;
+export function selectBodyField(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] ?? null : null;
 }
 
-export function selectCheckedText(value: OperatorCheckedValue | null): string | null {
-  if (value?.data.kind === "string") return value.data.value;
-  if (value?.data.kind === "enum") return value.data.variant;
-  if (value?.data.kind === "optional") return selectCheckedText(value.data.value ?? null);
+export function selectText(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   return null;
 }
 
-export const selectCheckedItems = (value: OperatorCheckedValue | null): readonly OperatorCheckedValue[] =>
-  value?.data.kind === "list" ? value.data.items : [];
+export const selectItems = (value: unknown): readonly unknown[] =>
+  Array.isArray(value) ? value : [];
 
-export const selectFieldText = (value: OperatorCheckedValue, schemas: readonly OperatorSchema[], key: string): string | null =>
-  selectCheckedText(selectCheckedField(value, schemas, key));
+export const selectFieldText = (value: unknown, key: string): string | null =>
+  selectText(selectBodyField(value, key));
 
-export const selectFieldItems = (value: OperatorCheckedValue, schemas: readonly OperatorSchema[], key: string): readonly OperatorCheckedValue[] =>
-  selectCheckedItems(selectCheckedField(value, schemas, key));
+export const selectFieldItems = (value: unknown, key: string): readonly unknown[] =>
+  selectItems(selectBodyField(value, key));
 
 export const selectHttpUrl = (value: string | null): string | null =>
   value !== null && /^https?:\/\//i.test(value) ? value : null;

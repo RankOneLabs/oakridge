@@ -1,23 +1,26 @@
-import type { ExecutionView } from "./record-selectors";
-import type { RunId, ScopeId } from "../storage/schema-records";
+import type { AttemptView } from "./record-selectors";
+import type { RunId, UnitId } from "../storage/schema-records";
 
-/** An authority execution's address in an operator run. */
+/** An authority attempt's address in an operator run. */
 export interface SessionLocation {
   readonly run_id: RunId;
-  readonly scope_id: ScopeId;
-  readonly execution_id: string;
+  readonly unit_id: UnitId;
+  readonly action_id: string;
+  readonly seq: number;
 }
 
-/** An attempt is an authority execution; ACP process observations stay in kbbl. */
+/** An attempt is an authority attempt row; ACP process observations stay in kbbl. */
 export interface RunSessionAttempt {
   readonly location: SessionLocation;
-  readonly worker_key: string;
-  readonly generation: number;
-  readonly status: ExecutionView["status"];
-  readonly result: ExecutionView["result"];
+  readonly worker: string;
+  readonly mode: AttemptView["mode"];
+  readonly status: AttemptView["status"];
+  readonly kbbl_session_id: string | null;
 }
 
-export function selectRunSessionAttempt(run_id: RunId, execution: ExecutionView): RunSessionAttempt {
-  return { location: { run_id, scope_id: execution.scope_id, execution_id: execution.id },
-    worker_key: execution.worker_key, generation: execution.generation, status: execution.status, result: execution.result };
+export function selectRunSessionAttempt(run_id: RunId, attempt: AttemptView): RunSessionAttempt {
+  return {
+    location: { run_id, unit_id: attempt.unit_id, action_id: attempt.action_id, seq: attempt.seq },
+    worker: attempt.worker, mode: attempt.mode, status: attempt.status, kbbl_session_id: attempt.kbbl_session_id,
+  };
 }

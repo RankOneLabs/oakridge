@@ -1,4 +1,5 @@
-import { decodeCoreResponse, type CheckedValue, type Trigger } from "../core-client/core-types";
+import { decodeCoreResponse, type Event as CoreEvent } from "../core-client/core-types";
+import type { RuntimeValue } from "../storage/json-column-types";
 import type { EffectPayload } from "./intents";
 import type { ExternalHandle, ProviderResult, TerminalObservation } from "./provider";
 import { INPUT_CONTRACTS } from "./provider-catalog";
@@ -11,7 +12,7 @@ export function bounded<Value>(operation: Promise<ProviderResult<Value>>, timeou
   });
 }
 
-export function isCheckedValue(value: unknown): value is CheckedValue {
+export function isCheckedValue(value: unknown): value is RuntimeValue {
   return decodeCoreResponse({ version: 1, request_id: "effect-result", truncated: false, result: { status: "ok", value: { kind: "validated", value } } }) !== null;
 }
 export function isExternalHandle(value: unknown): value is ExternalHandle {
@@ -26,19 +27,19 @@ export function isExternalHandle(value: unknown): value is ExternalHandle {
 export function isPositiveStop(value: unknown): value is { readonly stopped: true } {
   return !!value && typeof value === "object" && "stopped" in value && value.stopped === true;
 }
-export function isTerminal(value: unknown): value is { readonly kind: "terminal"; readonly result: CheckedValue; readonly evidence?: Trigger } {
+export function isTerminal(value: unknown): value is { readonly kind: "terminal"; readonly result: RuntimeValue; readonly evidence?: CoreEvent } {
   return !!value && typeof value === "object" && "kind" in value && value.kind === "terminal" && "result" in value && isCheckedValue(value.result);
 }
 
 /** What one start attempt taught us: either a settled row, or "try again". */
 export type StartOutcome =
   | { readonly kind: "acknowledged"; readonly payload: EffectPayload }
-  | { readonly kind: "completed"; readonly payload: EffectPayload; readonly result: CheckedValue }
+  | { readonly kind: "completed"; readonly payload: EffectPayload; readonly result: RuntimeValue }
   | { readonly kind: "rejected"; readonly payload: EffectPayload }
   | { readonly kind: "retry"; readonly payload: EffectPayload };
 
 export function startAttemptsExhausted(payload: EffectPayload): boolean {
-  return (payload.start_attempts ?? 0) >= payload.invocation.selection.definition.max_attempts;
+  return (payload.start_attempts ?? 0) >= payload.invocation.max_start_attempts;
 }
 function retryStart(payload: EffectPayload, detail: string): StartOutcome {
   return startAttemptsExhausted(payload)
@@ -80,7 +81,7 @@ export function resolveStart(payload: EffectPayload, result: ProviderResult<unkn
 
 export type ObserveOutcome =
   | { readonly kind: "running" }
-  | { readonly kind: "terminal"; readonly payload: EffectPayload; readonly result: CheckedValue }
+  | { readonly kind: "terminal"; readonly payload: EffectPayload; readonly result: RuntimeValue }
   | { readonly kind: "rejected"; readonly payload: EffectPayload }
   | { readonly kind: "retry"; readonly payload: EffectPayload; readonly is_unavailable: boolean; readonly detail: string };
 
@@ -99,10 +100,10 @@ export function resolveObserve(payload: EffectPayload, result: ProviderResult<Te
 }
 
 export function settleObserveRetry(payload: EffectPayload, outcome: Extract<ObserveOutcome, { readonly kind: "retry" }>, limit: number):
-  { readonly status: "acknowledged" | "rejected"; readonly payload: EffectPayload } {
+  { readonly status: "acknowledged" | "failed"; readonly payload: EffectPayload } {
   const attempts = outcome.is_unavailable ? (payload.observe_unavailable_attempts ?? 0) + 1 : 0;
   const exhausted = outcome.is_unavailable && attempts >= Math.max(1, limit);
-  return { status: exhausted ? "rejected" : "acknowledged",
+  return { status: exhausted ? "failed" : "acknowledged",
     payload: { ...outcome.payload, observe_unavailable_attempts: attempts,
       ...(exhausted ? { failure: { kind: "observation_rejection" as const, detail: outcome.detail },
         last_detail: `observation unavailable after ${attempts} consecutive attempts: ${outcome.detail}` } : {}) } };

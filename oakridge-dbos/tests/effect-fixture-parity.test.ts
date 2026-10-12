@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
 import type { DefinitionBundle } from "../src/core-client/core-types";
-import { operationBundle, sessionBundle } from "./effect-fixture";
+import { operationWorkflow, sessionWorkflow } from "./effect-fixture";
 
 test("effect fixture worker result schemas equal their shipped declarations", async () => {
   const shipped: DefinitionBundle = await Bun.file(resolve(import.meta.dir, "../../workflow-config/definitions/development.json")).json();
@@ -11,7 +11,7 @@ test("effect fixture worker result schemas equal their shipped declarations", as
     shipped.scopes.find((scope) => scope.key === "implementation")!.workers.find((worker) => worker.key === "pr_observer")!.result_schema,
     shipped.scopes.find((scope) => scope.key === "spec_analysis")!.workers.find((worker) => worker.key === "author")!.result_schema,
   ];
-  const fixtures = [await operationBundle("repository.prepare"), await operationBundle("pull_request.observe"), await sessionBundle()];
+  const fixtures = [operationWorkflow("repository.prepare"), operationWorkflow("pull_request.observe"), sessionWorkflow()];
   expect(fixtures.map((bundle) => bundle.scopes[0]!.workers[0]!.result_schema)).toEqual(expected);
   const started = CoreClient.start({ binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), deadlineMs: 10_000 });
   if (!started.ok) throw new Error(JSON.stringify(started.error));

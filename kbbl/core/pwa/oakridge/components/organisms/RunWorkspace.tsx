@@ -76,12 +76,12 @@ export function RunWorkspace({ runId, routePane, scopeId, onBack }: Props) {
       <RunWorkspaceSidebar run={run} scopes={scopes} onOpenScope={(id) => navigate(id)}
         onOpenArtifact={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
       <div className="or-run-workspace__panes" data-testid="or-run-panes">
-        {routePane?.kind === "artifact" ? <ArtifactReview revisionId={routePane.artifact_id} scopes={scopes} schemas={schemas}
+        {routePane?.kind === "artifact" ? <ArtifactReview revisionId={routePane.artifact_id} scopes={scopes}
           scopeDefinitions={definition.data?.source.scopes ?? []}
           onBack={() => navigate(scopeId)} onRefresh={refresh} onRevised={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
           : routePane?.kind === "session" ? <RunSessionPane sessionId={routePane.session_id} onOpenSession={(id) => navigate({ kind: "session", session_id: id })} />
-          : <><RunOverviewPane run={run} scopes={scopes} schemas={schemas} onOpenScope={(id) => navigate(id)} />
-            {detail ? <RunDetail scope={detail} schemas={schemas} onRefresh={refresh} />
+          : <><RunOverviewPane run={run} scopes={scopes} onOpenScope={(id) => navigate(id)} />
+            {detail ? <RunDetail scope={detail} onRefresh={refresh} />
               : selectedQuery?.isError ? <p role="alert">Could not load scope: {String(selectedQuery.error)}</p>
               : <p role="status">Loading scope…</p>}</>}
       </div>

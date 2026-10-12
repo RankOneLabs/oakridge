@@ -1,13 +1,11 @@
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
-import type { CheckedValue } from "../core-client/core-types";
 import { recoverConfiguredFailure, recoverSessionFailure, recoverStartFailure } from "../effects/operations/production-provider";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import { deliverEvidence, undeliveredEvidence } from "../effects/evidence";
 import { readIntent, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { bounded, exhaustStart, resolveObserve, resolveStart, resolveStop, settleObserveRetry, startAttemptsExhausted, type StartOutcome } from "../effects/outcomes";
 import type { EffectProvider, ProviderResult } from "../effects/provider";
-import { advanceChildrenPage, type LifecycleFailure } from "../runtime/advance-children";
 import { claimStartAttempt, persistEffectResult } from "../storage/effect-results";
 import { claimRunGeneration, currentRunAddress, currentRunGeneration, RUN_NEEDS_WORK_SQL, runNeedsWork } from "../storage/run-lifecycle";
 import type { MutationService } from "../storage/mutation-service";
@@ -122,13 +120,13 @@ export async function performStartAttempt(intent_id: string): Promise<StartOutco
     const intent = await readIntent(db, intent_id);
     return intent?.status === "pending" && startAttemptsExhausted(intent.payload) ? exhaustStart(intent.payload) : null;
   }
-  const result = await callProvider(payload.invocation.selection.definition.deadline_ms,
+  const result = await callProvider(payload.invocation.deadline_ms,
     (signal) => provider.start(payload.invocation, { signal }));
   return resolveStart(payload, result);
 }
 const startStep = DBOS.registerStep(performStartAttempt, { name: "oakridgeStart" });
 const observeStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
+  callProvider(payload.invocation.deadline_ms, (signal) => current().provider.observe(payload.invocation, payload.handle, { signal })), { name: "oakridgeObserve" });
 const startRejectionStep = DBOS.registerStep(async (payload: EffectPayload): Promise<EffectPayload> => {
   if (payload.evidence) return payload;
   const failure = payload.failure;
@@ -151,9 +149,9 @@ const observationRejectionStep = DBOS.registerStep(async (payload: EffectPayload
 }, { name: "oakridgeObservationRejection", retriesAllowed: true, maxAttempts: 5 });
 
 const stopStep = DBOS.registerStep(async (payload: EffectPayload): Promise<ProviderResult<unknown>> =>
-  callProvider(payload.invocation.selection.definition.deadline_ms, (signal) => current().provider.stop(payload.invocation, payload.handle, { signal })), { name: "oakridgeStop" });
+  callProvider(payload.invocation.deadline_ms, (signal) => current().provider.stop(payload.invocation, payload.handle, { signal })), { name: "oakridgeStop" });
 
-interface PersistInput { readonly intent_id: string; readonly status: EffectStatus; readonly payload: EffectPayload; readonly terminal_result: CheckedValue | null }
+interface PersistInput { readonly intent_id: string; readonly status: EffectStatus; readonly payload: EffectPayload }
 const persistStep = DBOS.registerStep(async (input: PersistInput): Promise<EffectStatus | null> => persistEffectResult(current().db, input),
   { name: "oakridgePersistEffect", retriesAllowed: true, maxAttempts: 5 });
 
@@ -165,6 +163,8 @@ const deliverEvidenceStep = DBOS.registerStep(async (intent_id: string): Promise
   return delivery.kind === "deferred" ? delivery.detail : null;
 }, { name: "oakridgeDeliverEvidence", retriesAllowed: true, maxAttempts: 5 });
 
+/** A unit whose recheck could not be completed; reported, never thrown. */
+export interface LifecycleFailure { readonly unit_id: string; readonly detail: string }
 export interface RunAdvance {
   readonly is_terminal: boolean;
   readonly next_cursor: string | null;
@@ -177,23 +177,20 @@ export interface RunAdvance {
  * deferred evidence, and list the intents that still need a workflow. A scope
  * whose trigger is rejected is reported, not thrown — it never blocks the rest.
  */
-const advanceRunStep = DBOS.registerStep(async (run_id: RunId, cursor: string | null): Promise<RunAdvance> => {
-  const { db, core, mutations } = current();
-  const timing = current().timing;
-  const page = await advanceChildrenPage({ db, core, mutations, run_ids: [run_id], after_scope_id: cursor,
-    max_scopes: timing.child_scan_max_scopes, per_scope_deadline_ms: timing.child_scan_per_scope_deadline_ms,
-    max_request_deadline_ms: timing.child_scan_max_request_deadline_ms });
-  const failures: LifecycleFailure[] = [...page.failures];
+const advanceRunStep = DBOS.registerStep(async (run_id: RunId, _cursor: string | null): Promise<RunAdvance> => {
+  const { db, mutations } = current();
+  const failures: LifecycleFailure[] = [];
   for (const row of await undeliveredEvidence(db, run_id)) {
-    const delivery = await deliverEvidence(db, mutations, row);
-    if (delivery.kind === "deferred") failures.push({ scope_id: row.scope_id, detail: `evidence ${row.payload.evidence?.id ?? row.id}: ${delivery.detail}` });
+    const delivery = await deliverEvidence(db, mutations, { id: row.id, run_id: row.run_id, payload: row.payload });
+    if (delivery.kind === "deferred") failures.push({ unit_id: row.unit_id, detail: `evidence ${row.id}: ${delivery.detail}` });
   }
-  const intents = await db.query<{ id: string; status: EffectStatus }>(`SELECT e.id,e.status FROM authority.effect_intent e JOIN authority.scope_instance s ON s.id=e.scope_id
-    WHERE s.run_id=$1 AND ((e.payload->>'action'='start' AND e.status IN ('pending','acknowledged')) OR e.status='cleanup_pending') ORDER BY e.id`, [run_id]);
-  const roots = await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE run_id=$1 AND parent_id IS NULL", [run_id]);
-  return { is_terminal: roots[0]?.is_terminal ?? true, next_cursor: page.next_cursor,
-    pending_starts: intents.filter((intent) => intent.status !== "cleanup_pending").map((intent) => intent.id),
-    pending_stops: intents.filter((intent) => intent.status === "cleanup_pending").map((intent) => intent.id), failures };
+  const intents = await db.query<{ id: string; status: EffectStatus }>(`SELECT e.id,e.status FROM authority.effect_intent e
+    WHERE e.run_id=$1 AND e.status IN ('pending','acknowledged','stop_requested') ORDER BY e.id`, [run_id]);
+  const roots = await db.query<{ is_terminal: boolean }>(`SELECT (u.status->>'kind' IN ('done','cancelled')) AS is_terminal
+    FROM authority.unit u WHERE u.run_id=$1 AND u.parent_id IS NULL`, [run_id]);
+  return { is_terminal: roots[0]?.is_terminal ?? true, next_cursor: null,
+    pending_starts: intents.filter((intent) => intent.status !== "stop_requested").map((intent) => intent.id),
+    pending_stops: intents.filter((intent) => intent.status === "stop_requested").map((intent) => intent.id), failures };
 }, { name: "oakridgeAdvanceRun", retriesAllowed: true, maxAttempts: 5, timeoutMS: 180_000 });
 
 // ------------------------------------------------------------ workflows -----
@@ -220,10 +217,9 @@ export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => until
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   let intent = await loadIntentStep(intent_id);
-  if (!intent || intent.payload.action !== "start") return intent?.status ?? null;
+  if (!intent) return null;
   let payload = intent.payload;
   let status = intent.status;
-  let terminal: CheckedValue | null = null;
   for (let attempt = 0; status === "pending"; attempt++) {
     const outcome = await startStep(intent_id);
     if (!outcome) {
@@ -234,7 +230,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     payload = outcome.payload;
     if (outcome.kind === "rejected") payload = await startRejectionStep(payload);
     if (outcome.kind === "retry") {
-      const written = await persistStep({ intent_id, status: "pending", payload, terminal_result: null });
+      const written = await persistStep({ intent_id, status: "pending", payload });
       if (written !== "pending") return written;
       await DBOS.sleepSeconds(backoff(attempt, timing));
       intent = await loadIntentStep(intent_id);
@@ -243,9 +239,8 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
       payload = { ...intent.payload, ...payload, handle: intent.payload.handle ?? payload.handle };
       continue;
     }
-    if (outcome.kind === "completed") terminal = outcome.result;
-    const next: EffectStatus = outcome.kind === "acknowledged" ? "acknowledged" : outcome.kind === "completed" ? "cleanup_confirmed" : "rejected";
-    const written = await persistStep({ intent_id, status: next, payload, terminal_result: terminal });
+    const next: EffectStatus = outcome.kind === "acknowledged" ? "acknowledged" : outcome.kind === "completed" ? "stopped" : "failed";
+    const written = await persistStep({ intent_id, status: next, payload });
     if (written === null) return null;
     status = written;
   }
@@ -253,22 +248,21 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     const outcome = resolveObserve(payload, await observeStep(payload));
     if (outcome.kind === "terminal") {
       payload = outcome.payload;
-      terminal = outcome.result;
-      const written = await persistStep({ intent_id, status: "cleanup_confirmed", payload, terminal_result: terminal });
-      status = written ?? "cleanup_confirmed";
+      const written = await persistStep({ intent_id, status: "stopped", payload });
+      status = written ?? "stopped";
       break;
     }
     if (outcome.kind === "rejected" || outcome.kind === "retry") {
-      const settled = outcome.kind === "rejected" ? { status: "rejected" as const, payload: outcome.payload }
+      const settled = outcome.kind === "rejected" ? { status: "failed" as const, payload: outcome.payload }
         : settleObserveRetry(payload, outcome, timing.max_observe_unavailable_attempts);
-      payload = settled.status === "rejected" ? await observationRejectionStep(settled.payload) : settled.payload;
+      payload = settled.status === "failed" ? await observationRejectionStep(settled.payload) : settled.payload;
       const next = settled.status;
-      const written = await persistStep({ intent_id, status: next, payload, terminal_result: null });
+      const written = await persistStep({ intent_id, status: next, payload });
       status = written ?? next;
       if (status !== "acknowledged") break;
     } else {
       payload = { ...payload, observe_unavailable_attempts: 0 };
-      await persistStep({ intent_id, status: "acknowledged", payload, terminal_result: null });
+      await persistStep({ intent_id, status: "acknowledged", payload });
     }
     await DBOS.sleepSeconds(timing.observe_interval_seconds);
     intent = await loadIntentStep(intent_id);
@@ -279,7 +273,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     const deferred = await deliverEvidenceStep(intent_id);
     if (deferred) DBOS.logger.warn(`effect ${intent_id}: evidence deferred to the run recheck: ${deferred}`);
   }
-  await wakeRunOf(intent.scope_id);
+  await wakeRunOf(intent.unit_id);
   return status;
 }
 
@@ -288,18 +282,18 @@ export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => unti
 async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   const intent = await loadIntentStep(intent_id);
-  if (!intent || intent.payload.action !== "stop") return intent?.status ?? null;
+  if (!intent || intent.status !== "stop_requested") return intent?.status ?? null;
   let payload = intent.payload;
   for (let attempt = 0; ; attempt++) {
     const outcome = resolveStop(await stopStep(payload));
     if (outcome.kind === "confirmed") {
-      const written = await persistStep({ intent_id, status: "cleanup_confirmed", payload, terminal_result: null });
-      await wakeRunOf(intent.scope_id);
+      const written = await persistStep({ intent_id, status: "stopped", payload });
+      await wakeRunOf(intent.unit_id);
       return written;
     }
     payload = { ...payload, last_detail: outcome.detail };
-    const written = await persistStep({ intent_id, status: "cleanup_pending", payload, terminal_result: null });
-    if (written !== "cleanup_pending") return written;
+    const written = await persistStep({ intent_id, status: "stop_requested", payload });
+    if (written !== "stop_requested") return written;
     await DBOS.sleepSeconds(backoff(attempt, timing));
     // The start may have learned its handle after this stop was recorded.
     const refreshed = await loadIntentStep(intent_id);
@@ -378,7 +372,7 @@ async function settleExpiredEffect(intent_id: string): Promise<void> {
   if (!intent || (intent.status !== "pending" && intent.status !== "acknowledged")) return;
   const payload = await startRejectionStep({ ...intent.payload,
     failure: { kind: "attempt_budget_exhausted", detail: `execution deadline exceeded for ${intent_id}` } });
-  await persistStep({ intent_id, status: "rejected", payload, terminal_result: null });
+  await persistStep({ intent_id, status: "failed", payload });
   await deliverEvidenceStep(intent_id);
   DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
 }
@@ -409,7 +403,7 @@ export async function dispatchChild(run_id: string, intent_id: string, kind: "st
     const intent = await loadIntentStep(intent_id);
     const needs_dispatch = intent !== null && (kind === "start"
       ? intent.payload.action === "start" && (intent.status === "pending" || intent.status === "acknowledged")
-      : intent.status === "cleanup_pending");
+      : intent.status === "stop_requested");
     if (needs_dispatch)
       throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains pending`);
   }
@@ -430,7 +424,7 @@ export const runWorkflow = DBOS.registerWorkflow(async (run_id: string, initial_
       await DBOS.sleepSeconds(timing.retry_cap_seconds);
       continue;
     }
-    for (const failure of advance.failures) DBOS.logger.warn(`run ${run_id}: scope ${failure.scope_id}: ${failure.detail}`);
+    for (const failure of advance.failures) DBOS.logger.warn(`run ${run_id}: unit ${failure.unit_id}: ${failure.detail}`);
     // DBOS statuses and authority intents are durable; no local dispatch set survives a restart.
     try {
       for (const id of advance.pending_starts) await dispatchChild(run_id, id, "start");
@@ -511,7 +505,7 @@ export async function wakeRunOf(scope_id: string): Promise<void> {
 }
 interface RunAddress { readonly run_id: string; readonly current_generation: string | number }
 const runOfScopeStep = DBOS.registerStep(async (scope_id: string): Promise<RunAddress | null> => {
-  const rows = await current().db.query<RunAddress>("SELECT s.run_id,r.current_generation FROM authority.scope_instance s JOIN authority.run r ON r.id=s.run_id WHERE s.id=$1", [scope_id]);
+  const rows = await current().db.query<RunAddress>("SELECT u.run_id,r.current_generation FROM authority.unit u JOIN authority.run r ON r.id=u.run_id WHERE u.id=$1", [scope_id]);
   return rows[0] ?? null;
 }, { name: "oakridgeRunOfScope", retriesAllowed: true, maxAttempts: 5 });
 

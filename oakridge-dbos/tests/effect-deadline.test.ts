@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
 import { DEFAULT_WORKFLOW_TIMING, intentWorkflowId } from "../src/workflows/topology";
-import { begin, sessionBundle, withDatabase } from "./effect-fixture";
+import { begin, sessionWorkflow, withDatabase } from "./effect-fixture";
 
 test("effect workflows carry no wall-clock deadline by default, so a working session is never cut off", () => {
   expect(DEFAULT_WORKFLOW_TIMING.execution_deadline_ms).toBeNull();
@@ -11,7 +11,7 @@ test("effect workflows carry no wall-clock deadline by default, so a working ses
 
 test("execution_deadline_ms cancels a long-running effect and records a visible rejection", async () => withDatabase(async ({ url, db }) => {
   const composition = await createProductionComposition({ database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { execution_deadline_ms: 200, observe_interval_seconds: 0.05, wake_timeout_seconds: 0.05 },
     effect_provider: {
       start: async () => ({ kind: "acknowledged", value: { kind: "kbbl_session", session_id: "slow-session" } }),
@@ -19,7 +19,7 @@ test("execution_deadline_ms cancels a long-running effect and records a visible 
       stop: async () => ({ kind: "acknowledged", value: { stopped: true } }),
     } });
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "wait",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "wait",
       workdir: "/tmp", session_name: "deadline", session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     let intent_id: string | null = null;
     const until = Date.now() + 10_000;
@@ -40,7 +40,7 @@ test("execution_deadline_ms cancels a long-running effect and records a visible 
 
 test("startup settles an expired CANCELLED effect with evidence instead of resuming it", async () => withDatabase(async ({ url, db }) => {
   const options = { database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { execution_deadline_ms: 60_000, observe_interval_seconds: 0.05, wake_timeout_seconds: 5 },
     effect_provider: {
       start: async () => ({ kind: "acknowledged" as const, value: { kind: "kbbl_session" as const, session_id: "restart-session" } }),
@@ -50,7 +50,7 @@ test("startup settles an expired CANCELLED effect with evidence instead of resum
   };
   let composition = await createProductionComposition(options);
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "wait",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "wait",
       workdir: "/tmp", session_name: "restart-deadline", session_identity: {},
       worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     let intent_id: string | null = null;

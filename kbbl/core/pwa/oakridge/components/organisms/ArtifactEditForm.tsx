@@ -1,16 +1,15 @@
 import { useState } from "react";
-import type { OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorOutputDefinition, OperatorOutputSlotView, OperatorSchema, OperatorScopeView } from "../../operator-contracts";
+import type { OperatorArtifactRevisionRecord, OperatorCommandDefinition, OperatorOutputDefinition, OperatorOutputSlotView, OperatorUnitView } from "../../operator-contracts";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
-import { replaceCheckedText, selectCheckedTextFields } from "../../lib/checked-text-edit";
+import { replaceCheckedText, selectTextFields } from "../../lib/checked-text-edit";
 import { Button } from "../../../components/atoms/Button";
 
 interface Props {
-  readonly scope: OperatorScopeView;
+  readonly scope: OperatorUnitView;
   readonly output: OperatorOutputSlotView;
   readonly outputDefinition: OperatorOutputDefinition;
   readonly revision: OperatorArtifactRevisionRecord;
   readonly command: OperatorCommandDefinition;
-  readonly schemas: readonly OperatorSchema[];
   readonly onEdited: () => void;
 }
 
@@ -18,7 +17,7 @@ export function ArtifactEditForm({ scope, output, outputDefinition, revision, co
   const [isEditing, setIsEditing] = useState(false);
   const [values, setValues] = useState<Readonly<{ readonly [key: string]: string }>>({});
   const edit = useAtomEdit();
-  const fields = selectCheckedTextFields(revision.body, schemas);
+  const fields = selectTextFields(revision.body);
   const shape = schemas.find((schema) => schema.key === outputDefinition.schema)?.shape;
   const collectionFieldId = outputDefinition.collection_key && shape?.kind === "record"
     ? shape.fields.findIndex((field) => field.key === outputDefinition.collection_key) : null;

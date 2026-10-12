@@ -37,6 +37,7 @@ test("active schema and symbols reflect the scope authority", () => {
     "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
     "authority.capacity_pool", "authority.capacity_reservation", "authority.collaboration_thread",
     "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery",
+    "authority.operator_event",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
   expect(activeSource).toContain("createMutationService");

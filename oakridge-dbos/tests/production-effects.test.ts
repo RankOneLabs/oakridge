@@ -7,7 +7,7 @@ import type { CheckedValue } from "../src/core-client/core-types";
 import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { EffectPayload } from "../src/effects/intents";
 import type { StableInvocation } from "../src/effects/provider";
-import { unit, withDatabase, waitUntil, operationBundle, sessionBundle, begin } from "./effect-fixture";
+import { unit, withDatabase, waitUntil, operationWorkflow, sessionWorkflow, begin } from "./effect-fixture";
 import type { StartedRun } from "../src/storage/mutation-service";
 import { activeRoutes } from "../src/http/routes";
 import { Hono } from "hono";
@@ -152,7 +152,7 @@ test("every table write rejects non-JSON bodies and unlisted browser origins on 
   try {
     await withDatabase(async ({ url }) => {
       const composition = await createProductionComposition({ database_url: url,
-        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+        host: "127.0.0.1" });
       const proxy = new Hono();
       mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"] });
       try {
@@ -189,7 +189,7 @@ test("recovery replays the pinned prompt verbatim and its secret publishes witho
   try {
     await withDatabase(async ({ url, db }) => {
       const composition = await createProductionComposition({ database_url: url,
-        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+        host: "127.0.0.1",
         control_token: "operator-only", kbbl_base_url: adapter.url.href,
         provider_capabilities: { check_github: async () => ({ ok: true, value: true }) },
         timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
@@ -236,7 +236,7 @@ test("the composed app registers exactly the active route table and gates raw in
       else delete process.env.OAKRIDGE_ENABLE_RAW_INGRESS;
       await withDatabase(async ({ url }) => {
         const composition = await createProductionComposition({ database_url: url,
-          core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1" });
+          host: "127.0.0.1" });
         try {
           const registered = composition.app.routes.filter((route) => route.method !== "ALL")
             .map((route) => `${route.method} ${route.path}`).sort();
@@ -257,7 +257,7 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
   let starts = 0;
   const stopped: StableInvocation[] = [];
   let can_confirm_stop = false;
-  const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+  const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1",
     timing: { retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, wake_timeout_seconds: 0.05 },
     effect_provider: {
       start: async () => ++starts === 1 ? { kind: "uncertain", detail: "start response lost" }
@@ -270,7 +270,7 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
       },
     } });
   try {
-    const shipped = await operationBundle("repository.prepare");
+    const shipped = operationWorkflow("repository.prepare");
     const root = shipped.scopes[0]!;
     if (root.tree.kind !== "match") throw new Error("effect fixture must dispatch facts");
     const bundle: DefinitionBundle = { ...shipped, scopes: [{ ...root,
@@ -293,7 +293,7 @@ test("rejection after uncertainty cleans up even when its evidence makes the run
 test("observe rejection settles, delivers evidence, and cleans up its acknowledged session", async () => withDatabase(async ({ url, db }) => {
   let stops = 0;
   const composition = await createProductionComposition({ database_url: url,
-    core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1",
+    host: "127.0.0.1",
     timing: { retry_initial_seconds: 0.01, retry_cap_seconds: 0.05, observe_interval_seconds: 0.01, wake_timeout_seconds: 0.05 },
     effect_provider: {
       start: async () => ({ kind: "acknowledged", value: { kind: "kbbl_session", session_id: "session" } }),
@@ -302,7 +302,7 @@ test("observe rejection settles, delivers evidence, and cleans up its acknowledg
       stop: async () => { stops++; return { kind: "acknowledged", value: { stopped: true } }; },
     } });
   try {
-    const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "publish", workdir: "/tmp", session_name: "rejected",
+    const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "publish", workdir: "/tmp", session_name: "rejected",
       session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
     await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='stop'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
     expect((await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status).toBe("rejected");
@@ -313,9 +313,9 @@ test("observe rejection settles, delivers evidence, and cleans up its acknowledg
 
 test("production prepares the selected repository and routes durable results into configured scope decisions", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+    const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
-      const bundle = await operationBundle("repository.prepare");
+      const bundle = operationWorkflow("repository.prepare");
       const run = await begin(composition, bundle, { repository_path: resolve(import.meta.dir, "../.."), expected_head: null });
       await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
       const facts = await db.query<{ fact_key: string }>("SELECT fact_key FROM authority.fact WHERE scope_id=$1", [run.root_scope_id]);
@@ -331,9 +331,9 @@ test("production prepares the selected repository and routes durable results int
 
 test("production rejects a lost worktree when the shipped scope declares no recovery fact", async () => {
   await withDatabase(async ({ url, db }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+    const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1", timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
-      const run = await begin(composition, await operationBundle("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
+      const run = await begin(composition, operationWorkflow("repository.prepare"), { repository_path: `/tmp/missing-${crypto.randomUUID()}`, expected_head: null });
       await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "rejected");
       expect((await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.fact WHERE fact_key='worktree_unrecoverable'", []))[0]?.count).toBe("0");
     } finally { await composition.close(); }
@@ -352,9 +352,9 @@ test("production PR discovery retries a real HTTP 503 and persists its selected 
   try {
     await withDatabase(async ({ url, db }) => {
       const reader = new GithubPullRequestReader({ token: "test", api_base_url: server.url.href });
-      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", pull_requests: reader, provider_capabilities: { check_github: async () => ({ ok: true, value: true }) }, timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
+      const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1", pull_requests: reader, provider_capabilities: { check_github: async () => ({ ok: true, value: true }) }, timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
-        const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
+        const run = await begin(composition, operationWorkflow("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
         await waitUntil(async () => calls >= 1 && (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]))[0]?.status === "pending");
         const before = await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1", [run.root_scope_id]);
         is_available = true;
@@ -375,10 +375,10 @@ test("GitHub 403 publishes a typed auth fact and does not retry", async () => {
     return new Response("forbidden", { status: 403 });
   }) as unknown as typeof fetch);
   await withDatabase(async ({ url, db }) => {
-    const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
+    const composition = await createProductionComposition({ database_url: url,
       host: "127.0.0.1", pull_requests: reader, provider_capabilities: { check_github: async () => ({ ok: true, value: true }) }, timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
     try {
-      const run = await begin(composition, await operationBundle("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
+      const run = await begin(composition, operationWorkflow("pull_request.observe"), { query: { owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" } });
       await waitUntil(async () => (await db.query<{ is_terminal: boolean }>("SELECT is_terminal FROM authority.scope_instance WHERE id=$1", [run.root_scope_id]))[0]?.is_terminal === true);
       const facts = await db.query<{ fact_key: string }>("SELECT fact_key FROM authority.fact WHERE scope_id=$1", [run.root_scope_id]);
       expect({ calls, has_auth_fact: facts.some((fact) => fact.fact_key === "auth") }).toEqual({ calls: 1, has_auth_fact: true });
@@ -396,11 +396,10 @@ test("a shipped unit session result commits an execution and confirms cleanup", 
   try {
     await withDatabase(async ({ url, db }) => {
       const composition = await createProductionComposition({ database_url: url,
-        core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"),
         host: "127.0.0.1", kbbl_base_url: server.url.href,
         timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
-        const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: "publish the result", workdir: "/tmp", session_name: "completed",
+        const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: "publish the result", workdir: "/tmp", session_name: "completed",
           session_identity: {}, worktree: { branchName: "selected", worktreeSubdir: "selected" } });
         await waitUntil(async () => (await db.query<{ status: string }>("SELECT status FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.status === "cleanup_confirmed");
         expect((await db.query<{ status: string; result: CheckedValue }>("SELECT status,result FROM authority.execution WHERE scope_id=$1", [run.root_scope_id]))[0])
@@ -412,7 +411,7 @@ test("a shipped unit session result commits an execution and confirms cleanup", 
 });
 
 test("changed repository head and PR observations cannot enrich a selected kbbl request on replay", async () => {
-  const { sessionBundle } = await import("./effect-fixture");
+  const { sessionWorkflow } = await import("./effect-fixture");
   const requests: string[] = [];
   let should_attach = false;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
@@ -425,11 +424,11 @@ test("changed repository head and PR observations cannot enrich a selected kbbl 
   } });
   try {
     await withDatabase(async ({ url, db }) => {
-      const composition = await createProductionComposition({ database_url: url, core_binary: resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli"), host: "127.0.0.1", kbbl_base_url: server.url.href,
+      const composition = await createProductionComposition({ database_url: url, host: "127.0.0.1", kbbl_base_url: server.url.href,
         timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, wake_timeout_seconds: 1 } });
       try {
         const selected_head = "a".repeat(40);
-        const run = await begin(composition, await sessionBundle(), { runtime: "claude-code", rendered_prompt: `Review PR 1 at ${selected_head}`, workdir: "/tmp", session_name: "replay",
+        const run = await begin(composition, sessionWorkflow(), { runtime: "claude-code", rendered_prompt: `Review PR 1 at ${selected_head}`, workdir: "/tmp", session_name: "replay",
           session_identity: { run_id: "selected-run", stage_instance_id: "selected-scope", unit_id: "author" }, worktree: { branchName: "selected", worktreeSubdir: "selected", baseRef: selected_head } });
         await waitUntil(async () => requests.length >= 1 && (await db.query<{ payload: EffectPayload }>("SELECT payload FROM authority.effect_intent WHERE scope_id=$1 AND payload->>'action'='start'", [run.root_scope_id]))[0]?.payload.has_uncertain_start === true);
         for (const key of ["repository", "pull_request"]) {

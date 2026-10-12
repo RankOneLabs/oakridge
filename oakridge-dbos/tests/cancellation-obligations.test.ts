@@ -42,17 +42,6 @@ test("v2 run deletion is allowed when every action row is terminal", async () =>
   expect(await deletionEligibility(db, "run-1")).toEqual({ kind: "allowed" });
 });
 
-test("cleanup is owed exactly when an external execution may exist", () => {
-  expect(requiresCleanup({ status: "pending", payload: start })).toBe(false);
-  expect(requiresCleanup({ status: "pending", payload: { ...start, has_dispatched: true } })).toBe(true);
-  expect(requiresCleanup({ status: "rejected", payload: { ...start, has_dispatched: true } })).toBe(false);
-  expect(requiresCleanup({ status: "rejected", payload: { ...start, has_dispatched: true, has_uncertain_start: true } })).toBe(true);
-  expect(requiresCleanup({ status: "acknowledged", payload: { ...start, handle: { kind: "kbbl_session", session_id: "s" } } })).toBe(true);
-  expect(requiresCleanup({ status: "revoked", payload: { ...start, handle: { kind: "kbbl_session", session_id: "s" } } })).toBe(true);
-  expect(requiresCleanup({ status: "cleanup_confirmed", payload: { ...start, handle: { kind: "kbbl_session", session_id: "s" } } })).toBe(false);
-  expect(requiresCleanup({ status: "acknowledged", payload: { ...start, handle: { kind: "completed", result: unit } } })).toBe(false);
-});
-
 test("cancelling an uncertain start retains its identity in a stop intent", async () => {
   const inserted: Array<readonly unknown[]> = [];
   const db = {

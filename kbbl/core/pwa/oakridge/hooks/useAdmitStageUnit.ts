@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
+import type { OperatorCommandDefinition, OperatorUnitView } from "../operator-contracts";
 import { submitOperatorCommand } from "../client";
 import { selectDraftKey } from "../lib/operator-selectors";
 import { queryKeys } from "../queryKeys";
 import { randomUuid } from "../../lib/random-uuid";
 
-interface AdmitInput { readonly scope: OperatorScopeView; readonly command: OperatorCommandDefinition }
+interface AdmitInput { readonly scope: OperatorUnitView; readonly command: OperatorCommandDefinition }
 export function useAdmitStageUnit() {
   const client = useQueryClient();
   return useMutation({ mutationFn: async ({ scope, command }: AdmitInput) => {

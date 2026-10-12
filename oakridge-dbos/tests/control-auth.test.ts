@@ -9,10 +9,9 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { HTTP_ROUTES } from "../src/http/routes";
-import { hasExecutionSecret } from "../src/http/selected-publication";
 import { installDefinitionApi, type DefinitionApiDependencies } from "../src/http/app";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import type { RunId, ScopeId } from "../src/storage/schema-records";
+import type { RunId, UnitId } from "../src/storage/schema-records";
 
 import { controlTokenMiddleware, isLoopbackHost, requiresControlToken, selectControlPlaneAccess } from "../src/http/control-auth";
 
@@ -75,7 +74,7 @@ test("an active execution accepts only its minted secret and revocation refuses 
   const secret = "worker-only-secret";
   let is_selected = true;
   const db = { async query() { return is_selected ? [{ publication_secret_hash: createHash("sha256").update(secret).digest("hex") }] : []; } } as unknown as TransactionalSqlExecutor;
-  const check = (header: string) => hasExecutionSecret(db, "run" as RunId, "scope" as ScopeId, "execution", header);
+  const check = (header: string) => hasExecutionSecret(db, "run" as RunId, "scope" as UnitId, "execution", header);
   expect(await check(`Bearer ${secret}`)).toBe(true);
   expect(await check("Bearer operator-token")).toBe(false);
   is_selected = false;

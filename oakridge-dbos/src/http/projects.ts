@@ -5,7 +5,7 @@ import { listProjects } from "../storage/projection-reader";
 import type { MutationService } from "../storage/mutation-service";
 import type { ProjectId, ProjectRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
-import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type CommandError } from "./scope-commands";
+import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type CommandError } from "./unit-decisions";
 
 export type { ProjectDraft } from "../domain/projects";
 /** A saved project as the operator API returns it. */

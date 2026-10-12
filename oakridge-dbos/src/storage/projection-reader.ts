@@ -1,67 +1,58 @@
-import type { CompiledBundle, DefinitionBundle } from "../core-client/core-types";
-import type { TransactionalSqlExecutor } from "./sql-executor";
+import type { Workflow } from "../core-client/core-types";
+import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { RunEventCursor } from "../projections/run-event";
 import type { OperatorEventDeliveryRow } from "../projections/operator-event";
-import type { ProjectRecord, RunId, RunRecord, ScopeId, ScopeInstanceRecord, ResourceBindingRecord } from "./schema-records";
-import { readScopeObservations } from "./snapshot-reader";
-import { currentPrefill, currentTargetRevisions } from "./command-selection";
-import { normalizeExecutionRecord, normalizeRecordVersion, type StoredExecutionRecord, type StoredVersionedRecord } from "../projections/record-selectors";
-import { normalizeOutputSlot, selectAvailableCommands, type ScopeView, type StoredOutputSlotView, type TransitionRow } from "../projections/scope-view";
+import type { ArtifactRevisionRecord, ProjectRecord, ReviewItemRecord, RunId, RunRecord, UnitId, UnitRecord } from "./schema-records";
+import { isTerminalStatus, selectArtifactSchemas, selectAvailableDecisions, type UnitView } from "../projections/unit-view";
 import { selectInboxItems, type InboxPage, type InboxRow } from "../projections/inbox";
 import type { RunView } from "../projections/run-view";
 
-export async function readScopeView(db: TransactionalSqlExecutor, scope_id: ScopeId): Promise<ScopeView | null> {
+/** The pinned workflow a run is executing. */
+async function pinnedWorkflow(tx: SqlExecutor, run_id: string): Promise<{ readonly source: Workflow; readonly digest: string } | null> {
+  return (await tx.query<{ source: Workflow; digest: string }>(
+    "SELECT b.source,b.digest FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [run_id]))[0] ?? null;
+}
+
+export async function readUnitView(db: TransactionalSqlExecutor, run_id: RunId, unit_id: UnitId): Promise<UnitView | null> {
   return db.transaction(async (tx) => {
-    const scope = (await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE id=$1", [scope_id]))[0];
-    if (!scope) return null;
-    const pinned = (await tx.query<{ source: DefinitionBundle; checked_program: CompiledBundle }>("SELECT b.source,b.checked_program FROM authority.definition_bundle b JOIN authority.run r ON r.definition_bundle_id=b.id WHERE r.id=$1", [scope.run_id]))[0];
-    const bundle = pinned?.source;
-    if (!bundle) throw new Error(`pinned definition missing for ${scope.run_id}`);
-    const definition = bundle.scopes.find((item) => item.key === scope.scope_key);
-    if (!definition) throw new Error(`scope definition missing for ${scope.id}`);
-    const [executions, outputs, resources, transitions] = await Promise.all([
-      tx.query<StoredExecutionRecord>("SELECT * FROM authority.execution WHERE scope_id=$1 ORDER BY id", [scope.id]),
-      tx.query<StoredVersionedRecord<StoredOutputSlotView>>("SELECT s.*, row_to_json(r) AS current_revision FROM authority.output_slot s LEFT JOIN authority.artifact_revision r ON r.id=s.current_revision_id AND r.scope_id=s.scope_id WHERE s.scope_id=$1 ORDER BY s.id", [scope.id]),
-      tx.query<StoredVersionedRecord<ResourceBindingRecord>>("SELECT * FROM authority.resource_binding WHERE scope_id=$1 ORDER BY id", [scope.id]),
-      tx.query<TransitionRow>("SELECT id,decision FROM authority.transition WHERE scope_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1", [scope.id]),
+    const unit = (await tx.query<UnitRecord>("SELECT * FROM authority.unit WHERE run_id=$1 AND id=$2", [run_id, unit_id]))[0];
+    if (!unit) return null;
+    const pinned = await pinnedWorkflow(tx, unit.run_id);
+    if (!pinned) throw new Error(`pinned definition missing for ${unit.run_id}`);
+    const [revisions, open_reviews, latest_event] = await Promise.all([
+      tx.query<ArtifactRevisionRecord>("SELECT * FROM authority.artifact_revision WHERE run_id=$1 AND unit_id=$2 ORDER BY created_at,id", [run_id, unit_id]),
+      tx.query<ReviewItemRecord>("SELECT * FROM authority.review_item WHERE run_id=$1 AND unit_id=$2 AND body->>'status'='open' ORDER BY created_at,id", [run_id, unit_id]),
+      tx.query<{ id: string }>("SELECT id FROM authority.event WHERE run_id=$1 AND unit_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1", [run_id, unit_id]),
     ]);
-    const commands = selectAvailableCommands(bundle, scope);
-    const reads = pinned?.checked_program.scopes.find((item) => item.key === scope.scope_key)?.reads;
-    if (!reads) throw new Error(`checked scope missing for ${scope.id}`);
-    const { observations } = await readScopeObservations(tx, { owner: scope, scope: definition, bundle, reads });
-    const command_targets = Object.fromEntries(await Promise.all(commands.map(async (command) =>
-      [command.key, await currentTargetRevisions(tx, scope_id, command, observations)] as const)));
-    const command_prefill = Object.fromEntries(commands.map((command) => [command.key, currentPrefill(bundle, command, observations)] as const));
-    return { scope_id, run_id: scope.run_id, scope_key: scope.scope_key, label: definition.presentation.label,
-      state: scope.local_state, outcome: scope.outcome, is_terminal: scope.is_terminal,
-      commands, command_targets, command_prefill, executions: executions.map(normalizeExecutionRecord),
-      outputs: outputs.map(normalizeOutputSlot), resources: resources.map(normalizeRecordVersion),
-      decision: transitions[0]?.decision ?? null,
-      cursor: { scope_version: Number(scope.version), transition_id: transitions[0]?.id ?? null } };
+    return { run_id: unit.run_id, unit_id: unit.id, unit_key: unit.declaration, stage: unit.stage,
+      status: unit.status, version: Number(unit.version), revisions, open_reviews,
+      decisions: selectAvailableDecisions(pinned.source, unit.stage),
+      artifact_schemas: selectArtifactSchemas(pinned.source, unit.stage),
+      cursor: { unit_version: Number(unit.version), event_id: latest_event[0]?.id ?? null } };
   }, "repeatable read");
 }
 
 export const DEFAULT_INBOX_LIMIT = 100;
 export interface InboxQuery { readonly run_id?: RunId; readonly cursor?: string; readonly limit?: number }
-interface InboxScopeRow extends Omit<InboxRow, "source"> { readonly definition_bundle_id: string }
+interface InboxUnitRow extends Omit<InboxRow, "source" | "open_reviews"> { readonly definition_bundle_id: string; readonly open_reviews: readonly ReviewItemRecord[] | null }
 export async function readInbox(db: TransactionalSqlExecutor, query: InboxQuery = {}): Promise<InboxPage> {
   const limit = Math.min(Math.max(1, query.limit ?? DEFAULT_INBOX_LIMIT), DEFAULT_INBOX_LIMIT);
   const after = query.cursor ? JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")) as readonly [string, string] : null;
   if (after && (!Array.isArray(after) || after.length !== 2 || after.some((item) => typeof item !== "string"))) throw new Error("invalid inbox cursor");
   return db.transaction(async (tx) => {
-    const rows = await tx.query<InboxScopeRow>(`SELECT s.*, r.definition_bundle_id,
-      (SELECT t.decision FROM authority.transition t WHERE t.scope_id=s.id ORDER BY t.created_at DESC,t.id DESC LIMIT 1) AS decision,
-      (SELECT jsonb_agg(jsonb_build_object('fact_key', f.fact_key) ORDER BY f.id) FROM authority.fact f WHERE f.scope_id=s.id) AS diagnostics
-      FROM authority.scope_instance s JOIN authority.run r ON r.id=s.run_id
-      WHERE ($1::text IS NULL OR s.run_id=$1) AND ($2::text IS NULL OR (s.run_id,s.id)>($2,$3))
-      ORDER BY s.run_id,s.id LIMIT $4`, [query.run_id ?? null, after?.[0] ?? null, after?.[1] ?? null, limit + 1]);
+    const rows = await tx.query<InboxUnitRow>(`SELECT u.*, r.definition_bundle_id,
+      (SELECT jsonb_agg(to_jsonb(i) ORDER BY i.created_at,i.id) FROM authority.review_item i
+        WHERE i.run_id=u.run_id AND i.unit_id=u.id AND i.body->>'status'='open') AS open_reviews
+      FROM authority.unit u JOIN authority.run r ON r.id=u.run_id
+      WHERE ($1::text IS NULL OR u.run_id=$1) AND ($2::text IS NULL OR (u.run_id,u.id)>($2,$3))
+      ORDER BY u.run_id,u.id LIMIT $4`, [query.run_id ?? null, after?.[0] ?? null, after?.[1] ?? null, limit + 1]);
     const page = rows.slice(0, limit);
     const bundle_ids = [...new Set(page.map((row) => row.definition_bundle_id))];
-    const bundles = bundle_ids.length ? await tx.query<{ id: string; source: DefinitionBundle }>(
+    const bundles = bundle_ids.length ? await tx.query<{ id: string; source: Workflow }>(
       "SELECT id,source FROM authority.definition_bundle WHERE id=ANY($1::text[])", [bundle_ids]) : [];
     const sources = new Map(bundles.map((bundle) => [bundle.id, bundle.source]));
     const last = page.at(-1);
-    return { cursor: page.map((row) => ({ scope_id: row.id, version: Number(row.version) })),
+    return { cursor: page.map((row) => ({ unit_id: row.id, version: Number(row.version) })),
       items: page.flatMap((row) => selectInboxItems({ ...row, source: sources.get(row.definition_bundle_id) ?? null })),
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify([last.run_id, last.id])).toString("base64url") : null };
   }, "repeatable read");
@@ -71,16 +62,16 @@ export async function readRunView(db: TransactionalSqlExecutor, run_id: RunId): 
   return db.transaction(async (tx) => {
     const run = (await tx.query<RunRecord>("SELECT * FROM authority.run WHERE id=$1", [run_id]))[0];
     if (!run) return null;
-    const pinned = (await tx.query<{ source: DefinitionBundle; digest: string }>("SELECT source,digest FROM authority.definition_bundle WHERE id=$1", [run.definition_bundle_id]))[0];
+    const pinned = await pinnedWorkflow(tx, run_id);
     if (!pinned) throw new Error(`pinned definition missing for ${run_id}`);
-    const scopes = await tx.query<ScopeInstanceRecord>("SELECT * FROM authority.scope_instance WHERE run_id=$1 ORDER BY id", [run_id]);
+    const units = await tx.query<UnitRecord>("SELECT * FROM authority.unit WHERE run_id=$1 ORDER BY id", [run_id]);
     return { run_id, definition_bundle_id: run.definition_bundle_id, definition_digest: pinned.digest, version: Number(run.version),
       created_at: run.created_at, archived_at: run.archived_at,
-      cursor: scopes.map((scope) => ({ scope_id: scope.id, version: Number(scope.version) })),
-      scopes: scopes.map((scope) => ({ scope_id: scope.id, scope_key: scope.scope_key,
-        label: pinned.source.scopes.find((item) => item.key === scope.scope_key)?.presentation.label ?? scope.scope_key,
-        version: Number(scope.version), is_terminal: scope.is_terminal,
-        available_commands: selectAvailableCommands(pinned.source, scope).map((item) => item.key) })) };
+      cursor: units.map((unit) => ({ unit_id: unit.id, version: Number(unit.version) })),
+      units: units.map((unit) => ({ unit_id: unit.id, unit_key: unit.declaration,
+        label: unit.stage ?? unit.declaration, version: Number(unit.version),
+        is_terminal: isTerminalStatus(unit.status),
+        available_decisions: selectAvailableDecisions(pinned.source, unit.stage).map((item) => item.decision) })) };
   }, "repeatable read");
 }
 

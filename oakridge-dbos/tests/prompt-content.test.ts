@@ -3,15 +3,15 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import type { DefinitionBundle } from "../src/core-client/core-types";
-import { readStoredPrompts, resolveBundlePrompts, type PromptContent } from "../src/storage/prompt-content";
+import type { Workflow } from "../src/core-client/core-types";
+import { readStoredPrompts, resolveWorkflowPrompts, type PromptContent } from "../src/storage/prompt-content";
 import { listPromptCatalog, resolvePromptKeys } from "../../workflow-config/src/prompt-catalog";
 import type { SqlExecutor } from "../src/storage/sql-executor";
 
 const PATH = "workflow-config/prompts/dev-flow/test_prompt.md";
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
-const bundleWith = (content_digest: string): DefinitionBundle =>
-  ({ key: "prompt-test", prompts: [{ key: "build", path: PATH, input_schema: "session_action", content_digest }] }) as unknown as DefinitionBundle;
+const bundleWith = (content_digest: string): Workflow =>
+  ({ key: "prompt-test", prompts: [{ key: "build", path: PATH, input_schema: "session_action", content_digest }] }) as unknown as Workflow;
 
 /** The prompt_content table, keyed by digest, behind the one lookup statement the module issues. */
 function promptStore(rows: readonly PromptContent[]): SqlExecutor {
@@ -41,20 +41,20 @@ afterEach(() => {
 test("a pinned prompt resolves from stored content after its file is edited", async () => {
   const pinned = "Build the brief.\n";
   writeFileSync(resolve(root, PATH), "Build the brief, revised.\n");
-  const resolved = await resolveBundlePrompts(promptStore([{ content_digest: digest(pinned), content: pinned }]), bundleWith(digest(pinned)), "start_run");
+  const resolved = await resolveWorkflowPrompts(promptStore([{ content_digest: digest(pinned), content: pinned }]), bundleWith(digest(pinned)), "start_run");
   expect(resolved).toEqual({ ok: true, value: [{ content_digest: digest(pinned), content: pinned }] });
 });
 
 test("an unpinned prompt is read from its authored file", async () => {
   const authored = "Assess the build.\n";
   writeFileSync(resolve(root, PATH), authored);
-  const resolved = await resolveBundlePrompts(promptStore([]), bundleWith(digest(authored)), "pin_definition");
+  const resolved = await resolveWorkflowPrompts(promptStore([]), bundleWith(digest(authored)), "pin_definition");
   expect(resolved).toEqual({ ok: true, value: [{ content_digest: digest(authored), content: authored }] });
 });
 
 test("an unpinned prompt whose file drifted from its digest is rejected", async () => {
   writeFileSync(resolve(root, PATH), "Edited after generation.\n");
-  const resolved = await resolveBundlePrompts(promptStore([]), bundleWith(digest("Generated.\n")), "pin_definition");
+  const resolved = await resolveWorkflowPrompts(promptStore([]), bundleWith(digest("Generated.\n")), "pin_definition");
   expect(resolved.ok ? null : resolved.error.operation).toBe("pin_definition");
 });
 
