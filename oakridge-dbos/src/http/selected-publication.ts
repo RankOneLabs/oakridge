@@ -8,9 +8,9 @@ import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { MAX_PUBLICATION_VALUE_BYTES, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { CORE_MAX_FRAME_BYTES } from "../core-client/generated-contracts";
+import { MAX_SNAPSHOT_BYTES } from "../core-client/client";
 import { readScopeView } from "../storage/projection-reader";
-import { measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
+import { measureSnapshotSize } from "../effects/operations/selected-publication-contract";
 import { readSnapshot } from "../storage/snapshot-reader";
 
 interface SelectedOutputRequest { readonly request_id: string; readonly predecessor_id: string | null; readonly collection_key: string; readonly body: unknown }
@@ -55,22 +55,22 @@ export function installSelectedPublicationApi(app: Hono, deps: PublicationDepend
     const scope = selected?.source.scopes.find((scope) => scope.key === selected.scope_key);
     if (!selected || !scope) return c.json({ error: "selected execution not found" }, 404);
     const selected_keys = selected.payload.invocation.selection.definition.outputs;
-    let remaining_frame_bytes = CORE_MAX_FRAME_BYTES;
+    let remaining_snapshot_bytes = MAX_SNAPSHOT_BYTES;
     for (const output_key of selected_keys) {
       const output = scope.outputs.find((output) => output.key === output_key);
       const event = scope.facts.find((fact) => fact.key === output?.publication_trigger);
       if (!output?.publication_trigger || !event) return c.json({ error: "publication trigger is not configured" }, 422);
       const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
       if (!trigger.ok || trigger.value.kind !== "validated") return c.json({ error: "publication trigger payload is invalid" }, 422);
-      const measured = await readSnapshot(deps.db, scope_id, { id: "frame-budget", key: output.publication_trigger, payload: trigger.value.value });
+      const measured = await readSnapshot(deps.db, scope_id, { id: "snapshot-budget", key: output.publication_trigger, payload: trigger.value.value });
       if (!measured) return c.json({ error: "scope_not_found" }, 404);
       // The shared budget must fit every output this execution can publish.
-      remaining_frame_bytes = Math.min(remaining_frame_bytes, Math.max(0, CORE_MAX_FRAME_BYTES - measureAuthoritySnapshot(measured).bytes));
+      remaining_snapshot_bytes = Math.min(remaining_snapshot_bytes, Math.max(0, MAX_SNAPSHOT_BYTES - measureSnapshotSize(measured).bytes));
     }
     return c.json({ scope_id, execution_id, scope_version: view.cursor.scope_version,
       outputs: view.outputs.filter((slot) => selected_keys.includes(slot.output_key)).map((slot) => ({ output_key: slot.output_key, collection_key: slot.collection_key,
         predecessor_id: slot.current_revision?.id ?? null, slot_version: slot.version })),
-      remaining_frame_bytes });
+      remaining_snapshot_bytes });
   });
   app.put("/api/runs/:run_id/scopes/:scope_id/executions/:execution_id/outputs/:output_key", async (c) => {
     let raw: unknown;

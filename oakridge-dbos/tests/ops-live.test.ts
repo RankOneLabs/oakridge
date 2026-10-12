@@ -5,11 +5,11 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { runWorkflowId, wakeRun } from "../src/workflows/topology";
 import { withDatabase } from "./effect-fixture";
 
-const CORE_BINARY = resolve(import.meta.dir, "../../workflow-core/target/debug/workflow-cli");
+const CORE_WASM = resolve(import.meta.dir, "../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
 
 async function cli(args: readonly string[], url: string): Promise<unknown> {
   const child = Bun.spawn({ cmd: ["bun", "run", "src/ops.ts", "--", ...args], cwd: resolve(import.meta.dir, ".."),
-    env: { ...process.env, DBOS_SYSTEM_DATABASE_URL: url, OAKRIDGE_CORE_BINARY: CORE_BINARY }, stdout: "pipe", stderr: "pipe" });
+    env: { ...process.env, DBOS_SYSTEM_DATABASE_URL: url, OAKRIDGE_CORE_WASM: CORE_WASM }, stdout: "pipe", stderr: "pipe" });
   const [output, errors, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (exit !== 0) throw new Error(`ops exited ${exit}: ${errors}\n${output}`);
   const lines = output.split("\n");

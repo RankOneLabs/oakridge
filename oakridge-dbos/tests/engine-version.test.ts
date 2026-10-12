@@ -28,9 +28,9 @@ test("changes in every engine dependency change the recovery version", () => {
     mkdirSync(dirname(baseline), { recursive: true });
     writeFileSync(baseline, "original storage");
     const workflows = resolve(root, "workflows");
-    const core_binary = resolve(root, "workflow-cli");
-    writeFileSync(core_binary, "original core");
-    const version = (): string => computeEngineVersion({ workflows_dir: workflows, core_binary });
+    const wasm_path = resolve(root, "workflow_evaluator.wasm");
+    writeFileSync(wasm_path, "original core");
+    const version = (): string => computeEngineVersion({ workflows_dir: workflows, wasm_path });
     const original = version();
     writeFileSync(baseline, "changed storage");
     expect(version()).not.toBe(original);
@@ -41,9 +41,9 @@ test("changes in every engine dependency change the recovery version", () => {
     expect(computeStorageBaselineDigest(workflows)).not.toBe(storage_digest);
     expect(computeEngineSourceDigest(workflows)).toBe(source_digest);
     writeFileSync(baseline, "original storage");
-    writeFileSync(core_binary, "rebuilt core");
+    writeFileSync(wasm_path, "rebuilt core");
     expect(version()).not.toBe(original);
-    writeFileSync(core_binary, "original core");
+    writeFileSync(wasm_path, "original core");
     for (const name of ENGINE_SOURCE_MANIFEST) {
       writeFileSync(resolve(root, name), "changed");
       expect(version()).not.toBe(original);
@@ -58,5 +58,5 @@ test("changes in every engine dependency change the recovery version", () => {
 });
 
 test("operator version override is retained", () => {
-  expect(selectApplicationVersion("/nonexistent/workflow-cli", { DBOS_APPLICATION_VERSION: " rollback " })).toBe("rollback");
+  expect(selectApplicationVersion("/nonexistent/workflow_evaluator.wasm", { DBOS_APPLICATION_VERSION: " rollback " })).toBe("rollback");
 });

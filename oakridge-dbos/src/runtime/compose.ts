@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
-import { CORE_MAX_DEPTH, decodeCoreResponse } from "../core-client/generated-contracts";
+import { decodeCoreResponse } from "../core-client/generated-contracts";
 import type { DefinitionBundle, Trigger } from "../core-client/generated-contracts";
 import { CoreClient } from "../core-client/client";
 import { activeRoutes } from "../http/routes";
@@ -23,7 +23,7 @@ import { selectApplicationVersion } from "../workflows/engine-version";
 import { DEFAULT_WORKFLOW_TIMING, ensureRunWorkflow, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, wakeRun, type WorkflowTiming } from "../workflows/topology";
 
 export interface ProductionOptions {
-  readonly database_url: string; readonly core_binary: string; readonly host: string; readonly control_token?: string;
+  readonly database_url: string; readonly host: string; readonly control_token?: string;
   readonly kbbl_base_url?: string; readonly pull_requests?: PullRequestReader; readonly effect_provider?: EffectProvider;
   readonly provider_capabilities?: ProviderCapabilities;
   /** Overrides for tests; production uses the defaults. */
@@ -136,9 +136,8 @@ function isCancellationPayloads(value: unknown): value is readonly ScopeCancella
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
-  const started = CoreClient.start({ binary: options.core_binary,
-    args: ["--max-list-items", "10000", "--max-depth", String(CORE_MAX_DEPTH), "--evaluation-budget", "1000000"], deadlineMs: 10_000 });
-  if (!started.ok) throw new Error(`workflow-cli could not start: ${started.error.detail.detail}`);
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(`workflow WASM could not load: ${started.error.detail.detail}`);
   const core = started.value;
   let db: PgPostgresExecutor;
   try { db = PgPostgresExecutor.connect(options.database_url); }
@@ -151,7 +150,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const mutations = createMutationService(db, core, provider_capabilities);
   const repositories = authorityRepositories(db);
   const provider = options.effect_provider ?? createEffectProvider({ db, core, kbbl_base_url: options.kbbl_base_url ?? process.env.KBBL_BASE_URL ?? "http://127.0.0.1:8788", pull_requests: options.pull_requests });
-  const application_version = options.application_version ?? selectApplicationVersion(options.core_binary);
+  const application_version = options.application_version ?? selectApplicationVersion();
   registerWorkflowServices({ db, core, mutations, provider, timing: { ...DEFAULT_WORKFLOW_TIMING, ...options.timing } });
   DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: options.database_url, applicationVersion: application_version });
   launch_attempted = true;

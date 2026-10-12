@@ -1,24 +1,11 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-/// Bumped whenever the request or response shape changes. v2: non-compile
-/// operations address a cached bundle by `bundle_digest` instead of carrying
-/// the source, `available_operations` is gone, and `compiled` returns the
-/// digest and scope summaries rather than the checked program. v3: the frame
-/// cap rose from 1 MiB to 64 MiB. v4: the operations are compile and step over
-/// the section 2 workflow model; payload validation, materialization and
-/// explanation are gone with the scope definition they served.
+/// Bumped whenever the request or response shape changes. v4 uses compile and
+/// step over the section 2 workflow model.
 pub const PROTOCOL_VERSION: u32 = 4;
-/// Guards the line reader, not the domain: a scope's whole snapshot travels in
-/// one evaluate frame, so this cap must sit far above any legitimate state.
-/// It changes only with a protocol version bump and regenerated TypeScript contracts.
-pub const MAX_FRAME_BYTES: usize = 64 * 1_048_576;
-pub const MAX_RESPONSE_BYTES: usize = MAX_FRAME_BYTES;
 
-/// Deepest container nesting the Rust reader accepts: serde_json refuses more
-/// than 127 nested arrays/objects (its fixed recursion guard, which protects the
-/// stack). Every request frame has to fit, so every bundle and value the
-/// compiler and evaluator accept has to fit with its envelope.
+/// Deepest container nesting serde_json accepts.
 pub const WIRE_MAX_JSON_DEPTH: usize = 127;
 /// JSON containers one `max_depth` unit can cost on the wire. A nested
 /// `CheckedValue` is the worst: `{schema, data:{kind:"record", fields:[{field_id,
@@ -38,7 +25,7 @@ pub const WIRE_ENVELOPE_CONTAINERS: usize = 11;
 /// wire with four containers to spare: 4 * 28 + 11 = 123 <= 127. At 30 it would
 /// be 131, so a legal bundle or value could be refused as a malformed frame
 /// rather than a domain error. Lowering it is a compatible change; raising it
-/// requires the wire reader's depth budget to be raised first.
+/// requires the JSON reader's depth budget to be raised first.
 pub const MAX_DEPTH_CEILING: usize = 28;
 const _: () = assert!(
     JSON_CONTAINERS_PER_DEPTH_UNIT * MAX_DEPTH_CEILING + WIRE_ENVELOPE_CONTAINERS
@@ -100,14 +87,10 @@ pub struct CompiledWorkflow {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportErrorKind {
-    MalformedFrame,
+    MalformedRequest,
     UnsupportedVersion,
     OversizedPayload,
     UnknownOperation,
-    TerminatedChild,
-    UnresponsiveChild,
-    MismatchedRequestId,
-    QueueFull,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TransportError {

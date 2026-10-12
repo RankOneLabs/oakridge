@@ -9,8 +9,8 @@ import type { ChildCollectionMember, CommitReceipt, ScopeId } from "./schema-rec
 import { inTransaction, type SqlExecutor, type TransactionalSqlExecutor } from "./sql-executor";
 import { pinProviderRequest, resolveSelectedSessionSettings } from "../effects/operations/selected-request";
 import { readStoredPrompts } from "./prompt-content";
-import { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
-export { MAX_SNAPSHOT_BYTES, measureAuthoritySnapshot } from "../effects/operations/selected-publication-contract";
+import { MAX_SNAPSHOT_BYTES, measureSnapshotSize } from "../effects/operations/selected-publication-contract";
+export { MAX_SNAPSHOT_BYTES, measureSnapshotSize } from "../effects/operations/selected-publication-contract";
 import { selectedInvocation, type InvocationId } from "../effects/provider";
 import type { EffectPayload } from "../effects/intents";
 import type { Result as SharedResult } from "../domain/primitives";
@@ -50,7 +50,7 @@ async function measureWrittenSnapshots(tx: SqlExecutor, source: AuthoritySnapsho
     // checked trigger is a synthetic measurement trigger for that parent.
     const measured = await readSnapshot(inTransaction(tx), scope_id, source.snapshot.trigger, source.snapshot.random_seed, definition);
     if (!measured) continue;
-    const measurement = measureAuthoritySnapshot(measured);
+    const measurement = measureSnapshotSize(measured);
     if (scope_id === source.owner.id && JSON.stringify(measurement.roots) !== JSON.stringify(source.reads))
       fail({ kind: "Rejected", reason: "invalid", detail: "measured observation roots differ from the decision roots" });
     if (measurement.bytes <= MAX_SNAPSHOT_BYTES) continue;

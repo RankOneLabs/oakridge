@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CORE_WASM_PATH } from "../core-client/client";
 
 /**
  * Runtime sources reachable from the workflows and their injected services:
@@ -12,10 +13,9 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "adapters/kbbl.ts",
   "core-client/bundle-content-hash.ts",
   "core-client/client.ts",
-  "core-client/generated-contracts.ts",
+  "core-client/core-types.ts",
   "core-client/observation-roots.ts",
   "core-client/plain-value.ts",
-  "core-client/transport-errors.ts",
   "domain/execution.ts",
   "domain/primitives.ts",
   "domain/run-session-policy.ts",
@@ -67,7 +67,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
  * The DBOS application version scopes workflow recovery: a process only resumes
  * PENDING workflows recorded under its own version. The version therefore has
  * to move when workflow behavior changes, including imported engine logic and
- * injected services, and when the Rust core binary changes. Routes,
+ * injected services, and when the Rust WASM module changes. Routes,
  * projections, bundles and UI sources are outside the engine manifest and do
  * not change the recovery version.
  */
@@ -89,15 +89,14 @@ export function computeStorageBaselineDigest(workflows_dir: string = import.meta
 
 /**
  * The Rust core decides every transition, so its build is part of the engine.
- * The digest covers the binary this process actually spawns, not the source
- * tree, so a stale build cannot share a version with the source it lags.
+ * The digest covers the WASM module loaded by the Bun host.
  */
-export function computeCoreBinaryDigest(core_binary: string): string {
-  return createHash("sha256").update(readFileSync(core_binary)).digest("hex");
+export function computeCoreWasmDigest(wasm_path: string = CORE_WASM_PATH): string {
+  return createHash("sha256").update(readFileSync(wasm_path)).digest("hex");
 }
 
 export interface EngineVersionSources {
-  readonly core_binary: string;
+  readonly wasm_path?: string;
   readonly workflows_dir?: string;
 }
 
@@ -108,12 +107,12 @@ export function computeEngineVersion(sources: EngineVersionSources): string {
   hash.update(computeEngineSourceDigest(workflows_dir));
   hash.update("\0storage-baseline\0");
   hash.update(computeStorageBaselineDigest(workflows_dir));
-  hash.update("\0core-binary\0");
-  hash.update(computeCoreBinaryDigest(sources.core_binary));
+  hash.update("\0core-wasm\0");
+  hash.update(computeCoreWasmDigest(sources.wasm_path));
   return hash.digest("hex").slice(0, 16);
 }
 
 /** An operator override for forks and rollbacks; otherwise the engine digest. */
-export function selectApplicationVersion(core_binary: string, env: NodeJS.ProcessEnv = process.env): string {
-  return env.DBOS_APPLICATION_VERSION?.trim() || computeEngineVersion({ core_binary });
+export function selectApplicationVersion(wasm_path: string = CORE_WASM_PATH, env: NodeJS.ProcessEnv = process.env): string {
+  return env.DBOS_APPLICATION_VERSION?.trim() || computeEngineVersion({ wasm_path });
 }
