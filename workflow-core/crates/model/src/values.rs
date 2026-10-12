@@ -249,6 +249,7 @@ pub struct StepResult {
 /// worker's declared inputs, an unresolved read (such as `latest` of an
 /// unpublished artifact) as null. The engine inputs are present only for the
 /// mode that uses them: `previous` and `feedback` for revise, `subject` for review.
+/// `workspace` is the repository a `repository(<expr>)` workspace names; None for `none`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
@@ -261,7 +262,6 @@ pub struct ResolvedRunWorker {
     #[schemars(with = "Option<Value>")]
     pub feedback: Option<Value>,
     pub subject: Option<RevisionState>,
-    /// The repository a `repository(<expr>)` workspace names; None for `none`.
     #[serde(with = "crate::wire_numbers::optional_json")]
     #[schemars(with = "Option<Value>")]
     pub workspace: Option<Value>,
