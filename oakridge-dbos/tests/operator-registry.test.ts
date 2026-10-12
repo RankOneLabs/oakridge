@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { importProjects } from "../scripts/import-projects";
 import { installDefinitionApi } from "../src/http/app";
 import { openDatabase } from "../src/storage/database";
-import { launch, openAuthority, pinSample, type Authority } from "./authority-fixture";
+import { launch, openAuthority, pinSample, sampleWorkflow, type Authority } from "./authority-fixture";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
@@ -91,6 +91,22 @@ test("projects are created, listed and edited, with names kept unique", async ()
   expect((await app.request("/api/projects/missing", json("PUT", project))).status).toBe(404);
   const listed = await (await app.request("/api/projects")).json() as { items: { id: string; forge_repository: unknown }[] };
   expect(listed.items).toEqual([expect.objectContaining({ id, forge_repository: project.forge_repository })]);
+}));
+
+test("a workflow with a code worker compiles and pins", async () => withApi(async ({ app }) => {
+  expect((await app.request("/api/definitions", json("POST", sampleWorkflow("fan-out")))).status).toBe(201);
+}));
+
+test("a prompt map with a non-string path is a 422, not a fault", async () => withApi(async ({ app }) => {
+  const workflow = sampleWorkflow("review-loop");
+  const [stage_key, stage] = Object.entries(workflow.stages)[0]!;
+  const [worker_key, worker] = Object.entries(stage.workers).find(([, candidate]) => candidate.kind === "agent")!;
+  const [review_key, review] = Object.entries(stage.reviews ?? {})[0]!;
+  const withStage = (patch: object) => ({ ...workflow, stages: { ...workflow.stages, [stage_key]: { ...stage, ...patch } } });
+  const bad_agent = withStage({ workers: { ...stage.workers, [worker_key]: { ...worker, prompts: { initial: 42 } } } });
+  const bad_review = withStage({ reviews: { ...stage.reviews, [review_key]: { ...review, prompt: ["x"] } } });
+  const statuses = await Promise.all([bad_agent, bad_review].map(async (body) => (await app.request("/api/definitions/compile", json("POST", body))).status));
+  expect(statuses).toEqual([422, 422]);
 }));
 
 test("an archived run and definition leave the active listings and return when unarchived", async () => withApi(async ({ authority, app }) => {

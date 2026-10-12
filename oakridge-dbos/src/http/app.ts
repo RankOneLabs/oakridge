@@ -48,12 +48,16 @@ function archivedQuery(raw: string | undefined): boolean | MalformedRequestError
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 const requestId = (value: unknown): value is string => typeof value === "string" && value.length >= 1 && value.length <= 200;
 
-/** The workflow's outline, enough to find its prompts; the core checks the rest when it compiles. */
+const isPromptPath = (value: unknown): boolean => typeof value === "string";
+const isOptionalPromptPath = (value: unknown): boolean => value === undefined || value === null || isPromptPath(value);
+/** The workflow's outline, enough to read its prompts; the core checks the rest when it compiles. */
 function isWorkflowOutline(value: unknown): value is Workflow {
   return isObject(value) && typeof value.workflow === "string" && isObject(value.run) && isObject(value.stages)
     && Object.values(value.stages).every((stage) => isObject(stage) && isObject(stage.workers)
-      && Object.values(stage.workers).every((worker) => isObject(worker) && (worker.kind !== "agent" || isObject(worker.prompts)))
-      && (stage.reviews === undefined || isObject(stage.reviews) && Object.values(stage.reviews).every(isObject)));
+      && Object.values(stage.workers).every((worker) => isObject(worker)
+        && (worker.kind !== "agent" || isObject(worker.prompts) && Object.values(worker.prompts).every(isPromptPath)))
+      && (stage.reviews === undefined || isObject(stage.reviews)
+        && Object.values(stage.reviews).every((review) => isObject(review) && isOptionalPromptPath(review.prompt))));
 }
 
 /** One commit outcome as an HTTP response: a step rejection is 409, as is a reused ingress id. */
