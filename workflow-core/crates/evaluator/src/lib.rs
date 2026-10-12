@@ -467,6 +467,82 @@ mod v2_step {
         }
         Ok(wanted)
     }
+    /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
+    fn resolve_run_worker(
+        program: &CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+        action: &RunWorkerAction<'_>,
+        context: &EvaluationContext<'_>,
+    ) -> Result<ResolvedRunWorker, StepError> {
+        let checked = checked_stage(program, unit)?
+            .workers
+            .iter()
+            .find(|candidate| candidate.key == *action.worker)
+            .ok_or_else(|| invalid(format!("checked worker {} absent", action.worker)))?;
+        let mut inputs = serde_json::Map::new();
+        for field in &checked.inputs {
+            let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
+            inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
+        }
+        let workspace = match &checked.workspace {
+            None => None,
+            Some(expression) => Some(
+                eval_expression(&expression.expression, unit, state, None, None, context)?
+                    .ok_or_else(|| invalid(format!("workspace of {} unresolved", action.worker)))?,
+            ),
+        };
+        let source = worker(stage(program, unit)?, action.worker)?;
+        let (previous, feedback) = match action.mode {
+            Mode::Revise => match changes_requested_on(state, &unit.id, creates(source)) {
+                Some((revision, decision)) => {
+                    (Some(revision.clone()), Some(decision.payload.clone()))
+                }
+                None => (None, None),
+            },
+            _ => (None, None),
+        };
+        let subject = match (action.mode, source) {
+            (
+                Mode::Review,
+                Worker::Agent {
+                    reviews: Some(of), ..
+                },
+            ) => latest(state, &unit.id, of).cloned(),
+            _ => None,
+        };
+        Ok(ResolvedRunWorker {
+            action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
+            inputs: Value::Object(inputs),
+            previous,
+            feedback,
+            subject,
+            workspace,
+        })
+    }
+    /// The newest request_changes decision on the latest revision of one of
+    /// `artifacts`, with that revision: what a revise attempt revises.
+    fn changes_requested_on<'a>(
+        state: &'a ScopedSnapshot,
+        unit: &UnitId,
+        artifacts: &[SymbolKey],
+    ) -> Option<(&'a RevisionState, &'a DecisionState)> {
+        state.decisions.iter().rev().find_map(|decision| {
+            if decision.unit != *unit || decision.effect != DecisionEffect::RequestChanges {
+                return None;
+            }
+            artifacts
+                .iter()
+                .filter_map(|artifact| latest(state, unit, artifact))
+                .find(|revision| revision.id == decision.target)
+                .map(|revision| (revision, decision))
+        })
+    }
+    struct RunWorkerAction<'a> {
+        worker: &'a WorkerKey,
+        mode: &'a Mode,
+        cause: &'a Cause,
+    }
     fn group_for<'a>(
         program: &'a CheckedWorkflow,
         state: &ScopedSnapshot,
@@ -1242,6 +1318,7 @@ mod v2_step {
             }
         }
         let mut wanted = Vec::new();
+        let mut resolved = Vec::new();
         let active: Vec<_> = state
             .units
             .iter()
@@ -1249,6 +1326,7 @@ mod v2_step {
             .cloned()
             .collect();
         for unit in active {
+            let stage_unit = unit.clone();
             let actions = stage_actions(program, &state, &unit)?;
             for action in &actions {
                 if let Action::RunWorker {
@@ -1259,6 +1337,17 @@ mod v2_step {
                 } = action
                 {
                     let id = action_id(unit, worker, mode, cause);
+                    resolved.push(resolve_run_worker(
+                        program,
+                        &state,
+                        &stage_unit,
+                        &RunWorkerAction {
+                            worker,
+                            mode,
+                            cause,
+                        },
+                        &context,
+                    )?);
                     if !state.attempts.iter().any(|a| a.action_id == id) {
                         state.attempts.push(AttemptState {
                             action_id: id,
@@ -1285,6 +1374,7 @@ mod v2_step {
             snapshot: state,
             statuses,
             wanted,
+            resolved,
         })
     }
     #[cfg(test)]
@@ -1782,6 +1872,131 @@ mod v2_step {
                 assert_eq!(actual, expected, "row {row_number} new workers");
             }
             state
+        }
+        /// Steps each event spec in order; returns the last step's result.
+        fn step_specs(
+            program: &CheckedWorkflow,
+            state: &ScopedSnapshot,
+            specs: &[Value],
+        ) -> StepResult {
+            let mut state = state.clone();
+            let mut last = None;
+            for (index, spec) in specs.iter().enumerate() {
+                let incoming = incoming(event(spec, &state), &format!("resolved:{index}"));
+                let result = step(program, &state, &incoming).unwrap();
+                state = result.snapshot.clone();
+                last = Some(result);
+            }
+            last.unwrap()
+        }
+        fn resolved_for<'a>(result: &'a StepResult, worker: &str) -> &'a ResolvedRunWorker {
+            let attempt = result
+                .snapshot
+                .attempts
+                .iter()
+                .rev()
+                .find(|attempt| attempt.worker.0 == worker)
+                .unwrap();
+            result
+                .resolved
+                .iter()
+                .find(|resolved| resolved.action_id == attempt.action_id)
+                .unwrap()
+        }
+        #[test]
+        fn initial_worker_inputs_resolve_with_unpublished_reads_as_null() {
+            let program = sample("review-loop");
+            let result = step_specs(
+                &program,
+                &snapshot(),
+                &[serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}})],
+            );
+            let writer = resolved_for(&result, "writer");
+            assert_eq!(
+                (
+                    &writer.inputs,
+                    &writer.previous,
+                    &writer.subject,
+                    &writer.workspace
+                ),
+                (
+                    &serde_json::json!({"topic":"Oakridge","critique":null}),
+                    &None,
+                    &None,
+                    &None
+                )
+            );
+        }
+        #[test]
+        fn reviewer_receives_the_revision_it_reviews_as_subject() {
+            let program = sample("review-loop");
+            let result = step_specs(
+                &program,
+                &snapshot(),
+                &[
+                    serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+                    serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+                    serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                        "artifact":"draft","body":{"title":"First","body":"Long"}}),
+                ],
+            );
+            let subject = resolved_for(&result, "critic").subject.as_ref().unwrap();
+            assert_eq!(
+                (&subject.id.0, &subject.body),
+                (
+                    &"draft:1".to_owned(),
+                    &serde_json::json!({"title":"First","body":"Long"})
+                )
+            );
+        }
+        #[test]
+        fn revise_receives_the_requested_revision_and_decision_payload() {
+            let program = sample("review-loop");
+            let result = step_specs(
+                &program,
+                &snapshot(),
+                &[
+                    serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+                    serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+                    serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                        "artifact":"draft","body":{"title":"First","body":"Long"}}),
+                    serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+                    serde_json::json!({"op":"decide","unit":"run/document","review":"editor",
+                        "decision":"request_changes","target":"draft:1","payload":{"feedback":"shorter"}}),
+                ],
+            );
+            let writer = resolved_for(&result, "writer");
+            assert_eq!(
+                (
+                    writer
+                        .previous
+                        .as_ref()
+                        .map(|revision| revision.id.0.as_str()),
+                    &writer.feedback
+                ),
+                (
+                    Some("draft:1"),
+                    &Some(serde_json::json!({"feedback":"shorter"}))
+                )
+            );
+        }
+        #[test]
+        fn repository_workspace_resolves_from_the_stage_input() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let rows = trace["rows"].as_array().unwrap();
+            // The workspace publication completes prepare and starts the items.
+            let specs = [rows[0]["events"][0].clone(), rows[1]["events"][0].clone()];
+            let result = step_specs(&program, &snapshot(), &specs);
+            let item = resolved_for(&result, "worker");
+            assert_eq!(
+                item.workspace,
+                Some(
+                    serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc"})
+                )
+            );
         }
         #[test]
         fn sample_traces_replay_every_prefix_and_never_regress_unit_status() {

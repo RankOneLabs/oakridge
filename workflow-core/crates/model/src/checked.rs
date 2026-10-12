@@ -52,6 +52,8 @@ pub struct CheckedStage {
 pub struct CheckedWorker {
     pub key: WorkerKey,
     pub inputs: Vec<CheckedNamedExpression>,
+    /// The expression inside `repository(<expr>)`; None for `none` or no workspace.
+    pub workspace: Option<CheckedStageExpression>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

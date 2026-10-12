@@ -240,6 +240,31 @@ pub struct StepResult {
     pub snapshot: ScopedSnapshot,
     pub statuses: Vec<(UnitId, UnitStatus)>,
     pub wanted: Vec<(UnitId, Vec<Action>)>,
+    /// What each wanted `RunWorker` runs with, evaluated against the stepped
+    /// state, so the run layer can pin it without evaluating expressions.
+    pub resolved: Vec<ResolvedRunWorker>,
+}
+
+/// The inputs of one wanted `RunWorker` (part 1 §2.5). `inputs` holds the
+/// worker's declared inputs, an unresolved read (such as `latest` of an
+/// unpublished artifact) as null. The engine inputs are present only for the
+/// mode that uses them: `previous` and `feedback` for revise, `subject` for review.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedRunWorker {
+    pub action_id: ActionKey,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub inputs: Value,
+    pub previous: Option<RevisionState>,
+    #[serde(with = "crate::wire_numbers::optional_json")]
+    #[schemars(with = "Option<Value>")]
+    pub feedback: Option<Value>,
+    pub subject: Option<RevisionState>,
+    /// The repository a `repository(<expr>)` workspace names; None for `none`.
+    #[serde(with = "crate::wire_numbers::optional_json")]
+    #[schemars(with = "Option<Value>")]
+    pub workspace: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
