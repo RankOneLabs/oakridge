@@ -1,7 +1,7 @@
 //! The workflow compiler: decode strict JSON, then type-check the section
 //! 2.1-2.3 model into a CheckedWorkflow.
 mod scopes;
-pub use scopes::{compile_workflow, decode_workflow};
+pub use scopes::{compile_workflow, compile_workflow_with_limits, decode_workflow};
 use workflow_model::*;
 
 pub(crate) fn error(

@@ -76,3 +76,43 @@ fn both_samples_compile_from_yaml_json() {
         assert_eq!(checked.stages.len(), source.stages.len());
     }
 }
+
+#[test]
+fn collection_dependencies_must_be_lists_of_keys() {
+    let mut source =
+        decode_workflow(include_bytes!("../../../fixtures/bundles/fan-out.json")).unwrap();
+    let item = source
+        .run
+        .units
+        .get_mut("work")
+        .unwrap()
+        .group
+        .as_mut()
+        .unwrap()
+        .units
+        .get_mut("item")
+        .unwrap();
+    item.after = UnitDependencies::Each("each.text".into());
+    let error = compile_workflow(&source, &operations(), &prompts()).unwrap_err();
+    assert_eq!(&*error.entity_id, "check 2");
+    assert!(error.detail.contains("collection after"));
+}
+
+#[test]
+fn host_depth_limit_rejects_workflow_before_compilation() {
+    let source =
+        decode_workflow(include_bytes!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    let limits = ResourceLimits {
+        max_depth: 2,
+        ..ResourceLimits::default()
+    };
+    let error = workflow_compiler::compile_workflow_with_limits(
+        &source,
+        &operations(),
+        &prompts(),
+        &limits,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
+    assert_eq!(&*error.detail, "max_depth exceeded");
+}

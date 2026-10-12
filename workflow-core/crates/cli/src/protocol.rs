@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
-use workflow_compiler::{compile_workflow, decode_unique_json, decode_workflow};
-use workflow_evaluator::step;
+use workflow_compiler::{decode_unique_json, decode_workflow};
 use workflow_model::protocol::{
     Operation, Output, Request, Response, ResponseResult, TransportError, TransportErrorKind,
     MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
@@ -87,7 +86,6 @@ fn member_string_value(rest: &[u8]) -> Option<String> {
     (!id.is_empty() && id.len() <= MAX_REQUEST_ID_BYTES).then_some(id)
 }
 pub struct CliState {
-    #[allow(dead_code)]
     host: ResourceLimits,
     programs: VecDeque<CheckedWorkflow>,
 }
@@ -254,12 +252,19 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
             DomainError::new(DomainErrorKind::InvalidSnapshot, "step", detail)
         }
     };
+    let host = state.host.clone();
     let result = match request.operation {
         Operation::Compile {
             workflow,
             operations,
             prompts,
-        } => compile_workflow(workflow.as_ref(), &operations, &prompts).map(|program| {
+        } => workflow_compiler::compile_workflow_with_limits(
+            workflow.as_ref(),
+            &operations,
+            &prompts,
+            &state.host,
+        )
+        .map(|program| {
             let output = workflow_model::protocol::CompiledWorkflow {
                 digest: program.digest.clone(),
                 stages: program
@@ -278,7 +283,10 @@ pub fn handle_frame(state: &mut CliState, frame: &[u8]) -> Response {
         } => state
             .find(&workflow_digest)
             .ok_or_else(|| unknown(&workflow_digest))
-            .and_then(|program| step(program, snapshot.as_ref(), &incoming).map_err(domain))
+            .and_then(|program| {
+                workflow_evaluator::step_with_limits(program, snapshot.as_ref(), &incoming, &host)
+                    .map_err(domain)
+            })
             .map(|result| Output::Stepped(Box::new(result))),
     };
     Response {
@@ -453,6 +461,90 @@ mod tests {
         // Launching the run starts the one unit and wants its writer.
         assert_eq!(result.wanted.len(), 1);
         assert!(matches!(result.snapshot.run.status, UnitStatus::Active));
+    }
+
+    #[test]
+    fn configured_host_limits_reach_compile_and_step() {
+        let mut depth_limited = CliState::new(ResourceLimits {
+            max_depth: 2,
+            ..host()
+        });
+        let response = handle_frame(&mut depth_limited, &compile_frame());
+        assert!(matches!(response.result, ResponseResult::DomainError(error)
+            if error.kind == DomainErrorKind::ResourceLimit && &*error.detail == "max_depth exceeded"));
+
+        let mut budget_limited = CliState::new(ResourceLimits {
+            evaluation_budget: 0,
+            ..host()
+        });
+        let ResponseResult::Ok(Output::Compiled(compiled)) =
+            handle_frame(&mut budget_limited, &compile_frame()).result
+        else {
+            panic!("workflow should compile before its evaluation budget is used")
+        };
+        let response = handle_frame(
+            &mut budget_limited,
+            &frame(
+                "step",
+                Operation::Step {
+                    workflow_digest: compiled.digest,
+                    snapshot: Box::new(empty_snapshot()),
+                    incoming: Incoming {
+                        event: Event::Launched { input: json!({}) },
+                        writer: Writer::Engine,
+                        ingress_id: Some("launch".into()),
+                    },
+                },
+            ),
+        );
+        assert!(matches!(response.result, ResponseResult::DomainError(error)
+            if &*error.detail == "evaluation_budget exceeded"));
+
+        let mut list_limited = CliState::new(ResourceLimits {
+            max_list_items: 1,
+            ..host()
+        });
+        let mut source = workflow();
+        source.input = workflow_model::TypeExpression::Record(
+            [(
+                "items".into(),
+                workflow_model::TypeExpression::Name("list(text)".into()),
+            )]
+            .into(),
+        );
+        let compiled = handle_frame(
+            &mut list_limited,
+            &frame(
+                "compile",
+                Operation::Compile {
+                    workflow: Box::new(source),
+                    operations: vec![],
+                    prompts: [("write.md".into(), String::new())].into(),
+                },
+            ),
+        );
+        let ResponseResult::Ok(Output::Compiled(compiled)) = compiled.result else {
+            panic!("workflow should compile")
+        };
+        let response = handle_frame(
+            &mut list_limited,
+            &frame(
+                "step",
+                Operation::Step {
+                    workflow_digest: compiled.digest,
+                    snapshot: Box::new(empty_snapshot()),
+                    incoming: Incoming {
+                        event: Event::Launched {
+                            input: json!({"items": ["a", "b"]}),
+                        },
+                        writer: Writer::Engine,
+                        ingress_id: Some("launch".into()),
+                    },
+                },
+            ),
+        );
+        assert!(matches!(response.result, ResponseResult::DomainError(error)
+            if &*error.detail == "max_list_items exceeded"));
     }
 
     #[test]

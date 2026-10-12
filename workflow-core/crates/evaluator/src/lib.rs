@@ -1,6 +1,7 @@
 //! Pure checked-program evaluation. All dynamic inputs are revalidated at this boundary.
 mod v2_step {
     use serde_json::Value;
+    use std::cell::Cell;
     use std::collections::{BTreeMap, BTreeSet};
     use workflow_model::*;
 
@@ -12,6 +13,43 @@ mod v2_step {
     fn invalid(detail: impl Into<String>) -> StepError {
         StepError::Invalid {
             detail: detail.into(),
+        }
+    }
+    struct EvaluationContext<'a> {
+        limits: &'a ResourceLimits,
+        remaining: Cell<usize>,
+        exhausted: Cell<bool>,
+        limit_error: Cell<Option<&'static str>>,
+    }
+    impl<'a> EvaluationContext<'a> {
+        fn new(limits: &'a ResourceLimits) -> Self {
+            Self {
+                limits,
+                remaining: Cell::new(limits.evaluation_budget),
+                exhausted: Cell::new(false),
+                limit_error: Cell::new(None),
+            }
+        }
+        fn charge(&self) -> bool {
+            let remaining = self.remaining.get();
+            if remaining == 0 {
+                self.exhausted.set(true);
+                false
+            } else {
+                self.remaining.set(remaining - 1);
+                true
+            }
+        }
+        fn check_value(&self, value: &Value) -> Result<(), StepError> {
+            self.limits.check_value(value).map_err(rejected)
+        }
+        fn check_list_len(&self, len: usize) -> bool {
+            if len > self.limits.max_list_items {
+                self.limit_error.set(Some("max_list_items exceeded"));
+                false
+            } else {
+                true
+            }
         }
     }
     fn latest<'a>(
@@ -99,7 +137,31 @@ mod v2_step {
         state: &ScopedSnapshot,
         each: Option<&Value>,
         own_body: Option<(&str, &Value)>,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Option<Value>, StepError> {
+        let result = eval_expression_inner(expression, unit, state, each, own_body, context);
+        if let Some(reason) = context.limit_error.get() {
+            return Err(rejected(reason));
+        }
+        if context.exhausted.get() {
+            return Err(rejected("evaluation_budget exceeded"));
+        }
+        if let Some(value) = &result {
+            context.check_value(value)?;
+        }
+        Ok(result)
+    }
+    fn eval_expression_inner(
+        expression: &Expression,
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        each: Option<&Value>,
+        own_body: Option<(&str, &Value)>,
+        context: &EvaluationContext<'_>,
     ) -> Option<Value> {
+        if !context.charge() {
+            return None;
+        }
         fn decided(
             state: &ScopedSnapshot,
             unit: &UnitState,
@@ -116,14 +178,14 @@ mod v2_step {
         }
         let integers = |left: &Expression, right: &Expression| -> Option<(i64, i64)> {
             Some((
-                eval_expression(left, unit, state, each, own_body)?.as_i64()?,
-                eval_expression(right, unit, state, each, own_body)?.as_i64()?,
+                eval_expression_inner(left, unit, state, each, own_body, context)?.as_i64()?,
+                eval_expression_inner(right, unit, state, each, own_body, context)?.as_i64()?,
             ))
         };
         match expression {
             Expression::Literal { value, .. } => Some(value.clone()),
             Expression::Len { value } => Some(Value::from(
-                match eval_expression(value, unit, state, each, own_body)? {
+                match eval_expression_inner(value, unit, state, each, own_body, context)? {
                     Value::String(text) => text.chars().count(),
                     Value::Array(items) => items.len(),
                     _ => return None,
@@ -145,23 +207,41 @@ mod v2_step {
                 let (left, right) = integers(left, right)?;
                 Some(Value::Bool(left <= right))
             }
-            Expression::List { items, .. } => items
-                .iter()
-                .map(|item| eval_expression(item, unit, state, each, own_body))
-                .collect::<Option<Vec<_>>>()
-                .map(Value::Array),
+            Expression::List { items, .. } => {
+                if !context.check_list_len(items.len()) {
+                    return None;
+                }
+                items
+                    .iter()
+                    .map(|item| eval_expression_inner(item, unit, state, each, own_body, context))
+                    .collect::<Option<Vec<_>>>()
+                    .map(Value::Array)
+            }
             Expression::Map {
                 source,
                 value: projection,
                 ..
             } => {
-                let Value::Array(items) = eval_expression(source, unit, state, each, own_body)?
+                let Value::Array(items) =
+                    eval_expression_inner(source, unit, state, each, own_body, context)?
                 else {
                     return None;
                 };
+                if !context.check_list_len(items.len()) {
+                    return None;
+                }
                 items
                     .iter()
-                    .map(|item| eval_expression(projection, unit, state, Some(item), own_body))
+                    .map(|item| {
+                        eval_expression_inner(
+                            projection,
+                            unit,
+                            state,
+                            Some(item),
+                            own_body,
+                            context,
+                        )
+                    })
                     .collect::<Option<Vec<_>>>()
                     .map(Value::Array)
             }
@@ -201,10 +281,19 @@ mod v2_step {
                     )),
                     ReferenceRoot::MemberOutcomes { unit: collection } => {
                         let mut values = Vec::new();
-                        for child in state.units.iter().filter(|candidate| {
-                            candidate.parent.as_ref() == Some(&unit.id)
-                                && candidate.declaration.0 == collection.0
-                        }) {
+                        let mut children: Vec<_> = state
+                            .units
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.parent.as_ref() == Some(&unit.id)
+                                    && candidate.declaration.0 == collection.0
+                            })
+                            .collect();
+                        children.sort_by(|left, right| left.id.cmp(&right.id));
+                        if !context.check_list_len(children.len()) {
+                            return None;
+                        }
+                        for child in children {
                             let UnitStatus::Done { outcome } = &child.status else {
                                 return None;
                             };
@@ -234,15 +323,18 @@ mod v2_step {
         unit: &UnitState,
         state: &ScopedSnapshot,
         each: Option<&Value>,
-    ) -> Option<Value> {
-        fields
-            .iter()
-            .map(|field| {
-                eval_expression(&field.value.expression, unit, state, each, None)
-                    .map(|value| (field.key.clone(), value))
-            })
-            .collect::<Option<serde_json::Map<_, _>>>()
-            .map(Value::Object)
+        context: &EvaluationContext<'_>,
+    ) -> Result<Option<Value>, StepError> {
+        let mut result = serde_json::Map::new();
+        for field in fields {
+            let Some(value) =
+                eval_expression(&field.value.expression, unit, state, each, None, context)?
+            else {
+                return Ok(None);
+            };
+            result.insert(field.key.clone(), value);
+        }
+        Ok(Some(Value::Object(result)))
     }
     fn latest_retry<'a>(
         state: &'a ScopedSnapshot,
@@ -296,7 +388,7 @@ mod v2_step {
                     let Some(subject) = latest(state, &unit.id, subject) else {
                         continue;
                     };
-                    let already = creates.iter().any(|artifact| {
+                    let already = creates.iter().all(|artifact| {
                         state.revisions.iter().any(|r| {
                             r.unit == unit.id
                                 && r.artifact == *artifact
@@ -435,12 +527,21 @@ mod v2_step {
             .find(|candidate| candidate.key.0 == declaration)
             .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
     }
-    fn check_type(ty: &TypeExpression, value: &Value) -> bool {
+    fn check_type(
+        ty: &TypeExpression,
+        value: &Value,
+        aliases: &BTreeMap<String, TypeExpression>,
+    ) -> bool {
+        if let TypeExpression::Name(name) = ty {
+            if let Some(alias) = aliases.get(name) {
+                return check_type(alias, value, aliases);
+            }
+        }
         match ty {
             TypeExpression::Record(fields) => value.as_object().is_some_and(|object| {
                 fields
                     .iter()
-                    .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v)))
+                    .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v, aliases)))
             }),
             TypeExpression::Name(name) if name == "text" || name == "repo_path" => {
                 value.is_string()
@@ -456,7 +557,9 @@ mod v2_step {
             TypeExpression::Name(name) if name.starts_with("optional(") => name
                 .strip_prefix("optional(")
                 .and_then(|s| s.strip_suffix(')'))
-                .is_some_and(|inner| value.is_null() || check_type(&inline_type(inner), value)),
+                .is_some_and(|inner| {
+                    value.is_null() || check_type(&inline_type(inner), value, aliases)
+                }),
             TypeExpression::Name(name) if name.starts_with("list(") => name
                 .strip_prefix("list(")
                 .and_then(|s| s.strip_suffix(')'))
@@ -464,11 +567,11 @@ mod v2_step {
                     value.as_array().is_some_and(|items| {
                         items
                             .iter()
-                            .all(|item| check_type(&inline_type(inner), item))
+                            .all(|item| check_type(&inline_type(inner), item, aliases))
                     })
                 }),
             TypeExpression::Name(name) if name.starts_with('{') && name.ends_with('}') => {
-                check_type(&inline_type(name), value)
+                check_type(&inline_type(name), value, aliases)
             }
             _ => false,
         }
@@ -506,6 +609,7 @@ mod v2_step {
         program: &CheckedWorkflow,
         state: &mut ScopedSnapshot,
         group_id: &UnitId,
+        context: &EvaluationContext<'_>,
     ) -> Result<(), StepError> {
         let parent = state
             .units
@@ -518,18 +622,35 @@ mod v2_step {
         for (key, unit) in &group.units {
             let collection = checked_unit(&checked, key)?.collection.clone();
             let each_values = if let Some(collection) = &collection {
-                eval_expression(&collection.source.expression, &parent, state, None, None)
-                    .and_then(|v| v.as_array().cloned())
-                    .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
+                eval_expression(
+                    &collection.source.expression,
+                    &parent,
+                    state,
+                    None,
+                    None,
+                    context,
+                )?
+                .and_then(|v| v.as_array().cloned())
+                .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
             } else {
                 vec![Value::Null]
             };
+            if each_values.len() > context.limits.max_list_items {
+                return Err(rejected("max_list_items exceeded"));
+            }
             let mut keys = BTreeSet::new();
             for each in &each_values {
                 let member = if let Some(collection) = &collection {
-                    eval_expression(&collection.key.expression, &parent, state, Some(each), None)
-                        .and_then(|v| v.as_str().map(str::to_owned))
-                        .ok_or_else(|| rejected(format!("collection {key} key is not text")))?
+                    eval_expression(
+                        &collection.key.expression,
+                        &parent,
+                        state,
+                        Some(each),
+                        None,
+                        context,
+                    )?
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or_else(|| rejected(format!("collection {key} key is not text")))?
                 } else {
                     key.clone()
                 };
@@ -551,23 +672,28 @@ mod v2_step {
                         let after = collection
                             .as_ref()
                             .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
-                        eval_expression(&after.after.expression, &parent, state, Some(each), None)
-                            .and_then(|v| v.as_array().cloned())
-                            .ok_or_else(|| {
-                                rejected(format!("collection {key} after is not a list"))
-                            })?
-                            .iter()
-                            .map(|v| {
-                                v.as_str()
-                                    .map(str::to_owned)
-                                    .ok_or_else(|| rejected("prerequisite key is not text"))
-                            })
-                            .collect::<Result<Vec<_>, _>>()?
+                        eval_expression(
+                            &after.after.expression,
+                            &parent,
+                            state,
+                            Some(each),
+                            None,
+                            context,
+                        )?
+                        .and_then(|v| v.as_array().cloned())
+                        .ok_or_else(|| rejected(format!("collection {key} after is not a list")))?
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| rejected("prerequisite key is not text"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
                     }
                 };
                 let declared_input = &checked_unit(&checked, key)?.input;
                 let input = if unit.for_each.is_some() {
-                    eval_fields(declared_input, &parent, state, Some(each))
+                    eval_fields(declared_input, &parent, state, Some(each), context)?
                         .ok_or_else(|| rejected("collection input unresolved"))?
                 } else {
                     Value::Null
@@ -630,13 +756,15 @@ mod v2_step {
         program: &CheckedWorkflow,
         state: &mut ScopedSnapshot,
         incoming: &Incoming,
+        context: &EvaluationContext<'_>,
     ) -> Result<(), StepError> {
         match &incoming.event {
             Event::Launched { input } => {
                 if state.run.input.is_some() {
                     return Ok(());
                 }
-                if !check_type(&program.source.input, input) {
+                context.check_value(input)?;
+                if !check_type(&program.source.input, input, &program.source.schemas) {
                     return Err(rejected("launch input fails schema"));
                 }
                 state.run.input = Some(input.clone());
@@ -652,7 +780,7 @@ mod v2_step {
                     pool: None,
                 });
                 let root = state.run.root.clone();
-                materialize_group(program, state, &root)?;
+                materialize_group(program, state, &root, context)?;
             }
             Event::WorkerStarted {
                 action,
@@ -732,6 +860,7 @@ mod v2_step {
                 subject,
                 by,
             } => {
+                context.check_value(body)?;
                 let owner = state
                     .units
                     .iter()
@@ -745,7 +874,7 @@ mod v2_step {
                     .artifacts
                     .get(&artifact.0)
                     .ok_or_else(|| rejected("artifact absent"))?;
-                if !check_type(&artifact_definition.schema, body) {
+                if !check_type(&artifact_definition.schema, body, &program.source.schemas) {
                     return Err(rejected("artifact body fails schema"));
                 }
                 if latest(state, unit, artifact)
@@ -774,6 +903,34 @@ mod v2_step {
                 if previous.map(|r| &r.id) != predecessor.as_ref() {
                     return Err(rejected("stale predecessor"));
                 }
+                let checked_checks = checked_stage(program, owner)?
+                    .validations
+                    .iter()
+                    .find(|validation| validation.artifact == *artifact)
+                    .map(|validation| validation.checks.as_slice())
+                    .unwrap_or_default();
+                let mut messages = Vec::new();
+                for (rule, checked) in artifact_definition.validate.iter().zip(checked_checks) {
+                    if eval_expression(
+                        &checked.expression,
+                        owner,
+                        state,
+                        None,
+                        Some((&artifact.0, body)),
+                        context,
+                    )? != Some(Value::Bool(true))
+                    {
+                        messages.push(rule.message.clone());
+                    }
+                }
+                if !messages.is_empty() && matches!(producer, Worker::Code { .. }) {
+                    state.attempts[attempt_index].status = AttemptStatus::Failed {
+                        code: "validation_failed".into(),
+                        detail: messages.join("; "),
+                    };
+                    state.attempts[attempt_index].ended_at = Some(attempt.seq as i64);
+                    return Ok(());
+                }
                 let id = revision_id(state, unit, artifact);
                 state.revisions.push(RevisionState {
                     id: id.clone(),
@@ -784,46 +941,17 @@ mod v2_step {
                     subject: subject.clone(),
                     by: by.clone(),
                 });
-                let checked_checks = checked_stage(program, owner)?
-                    .validations
-                    .iter()
-                    .find(|validation| validation.artifact == *artifact)
-                    .map(|validation| validation.checks.as_slice())
-                    .unwrap_or_default();
-                let messages: Vec<_> = artifact_definition
-                    .validate
-                    .iter()
-                    .zip(checked_checks)
-                    .filter(|(_, checked)| {
-                        eval_expression(
-                            &checked.expression,
-                            owner,
-                            state,
-                            None,
-                            Some((&artifact.0, body)),
-                        ) != Some(Value::Bool(true))
-                    })
-                    .map(|(rule, _)| rule.message.clone())
-                    .collect();
-                if !messages.is_empty() {
-                    if matches!(producer, Worker::Code { .. }) {
-                        state.attempts[attempt_index].status = AttemptStatus::Failed {
-                            code: "validation_failed".into(),
-                            detail: messages.join("; "),
-                        };
-                        state.attempts[attempt_index].ended_at = Some(attempt.seq as i64);
-                    } else {
-                        let decision = decision_id(state);
-                        state.decisions.push(DecisionState {
-                            id: decision,
-                            unit: unit.clone(),
-                            review: SymbolKey::from("engine:validator"),
-                            decision: SymbolKey::from("request_changes"),
-                            effect: DecisionEffect::RequestChanges,
-                            target: id,
-                            payload: serde_json::json!({"feedback": messages.join("; ")}),
-                        });
-                    }
+                if !messages.is_empty() && !matches!(producer, Worker::Code { .. }) {
+                    let decision = decision_id(state);
+                    state.decisions.push(DecisionState {
+                        id: decision,
+                        unit: unit.clone(),
+                        review: SymbolKey::from("engine:validator"),
+                        decision: SymbolKey::from("request_changes"),
+                        effect: DecisionEffect::RequestChanges,
+                        target: id,
+                        payload: serde_json::json!({"feedback": messages.join("; ")}),
+                    });
                 }
             }
             Event::OperatorDecided {
@@ -833,6 +961,7 @@ mod v2_step {
                 target,
                 payload,
             } => {
+                context.check_value(payload)?;
                 let owner = state
                     .units
                     .iter()
@@ -856,7 +985,11 @@ mod v2_step {
                 }) {
                     return Ok(());
                 }
-                let current = latest(state, unit, &review_definition.of)
+                let target_artifact = decision_definition
+                    .on
+                    .as_ref()
+                    .unwrap_or(&review_definition.of);
+                let current = latest(state, unit, target_artifact)
                     .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
                 if current.id != *target {
                     return Err(rejected("target is not latest revision"));
@@ -869,7 +1002,7 @@ mod v2_step {
                     return Err(rejected("review already decided on latest revision"));
                 }
                 if let Some(ty) = &decision_definition.payload {
-                    if !check_type(ty, payload) {
+                    if !check_type(ty, payload, &program.source.schemas) {
                         return Err(rejected("decision payload fails schema"));
                     }
                 }
@@ -937,7 +1070,11 @@ mod v2_step {
         }
         Ok(())
     }
-    fn advance(program: &CheckedWorkflow, state: &mut ScopedSnapshot) -> Result<bool, StepError> {
+    fn advance(
+        program: &CheckedWorkflow,
+        state: &mut ScopedSnapshot,
+        context: &EvaluationContext<'_>,
+    ) -> Result<bool, StepError> {
         for index in 0..state.units.len() {
             let unit = state.units[index].clone();
             if matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
@@ -945,18 +1082,16 @@ mod v2_step {
             }
             if unit.stage.is_some() && matches!(unit.status, UnitStatus::Active) {
                 let definition = checked_stage(program, &unit)?;
-                if eval_expression(&definition.done_when.expression, &unit, state, None, None)
-                    == Some(Value::Bool(true))
+                if eval_expression(
+                    &definition.done_when.expression,
+                    &unit,
+                    state,
+                    None,
+                    None,
+                    context,
+                )? == Some(Value::Bool(true))
                 {
-                    let outcome = definition
-                        .outcome
-                        .iter()
-                        .map(|field| {
-                            eval_expression(&field.value.expression, &unit, state, None, None)
-                                .map(|value| (field.key.clone(), value))
-                        })
-                        .collect::<Option<serde_json::Map<_, _>>>()
-                        .map(Value::Object)
+                    let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
                         .ok_or_else(|| invalid("stage outcome unresolved"))?;
                     state.units[index].status = UnitStatus::Done { outcome };
                     return Ok(true);
@@ -978,7 +1113,8 @@ mod v2_step {
                         &unit,
                         state,
                         None,
-                    )
+                        context,
+                    )?
                     .ok_or_else(|| invalid("group outcome unresolved"))?;
                     state.units[index].status = UnitStatus::Done { outcome };
                     return Ok(true);
@@ -1054,12 +1190,13 @@ mod v2_step {
                     checked_group_for(program, state, parent)?,
                     &unit.declaration.0,
                 )?;
-                state.units[index].input = eval_fields(&declared.input, parent, state, None)
-                    .ok_or_else(|| invalid("unit input unresolved"))?;
+                state.units[index].input =
+                    eval_fields(&declared.input, parent, state, None, context)?
+                        .ok_or_else(|| invalid("unit input unresolved"))?;
             }
             state.units[index].status = UnitStatus::Active;
             if unit.stage.is_none() {
-                materialize_group(program, state, &unit.id)?;
+                materialize_group(program, state, &unit.id, context)?;
             }
             return Ok(true);
         }
@@ -1072,10 +1209,34 @@ mod v2_step {
         snapshot: &ScopedSnapshot,
         incoming: &Incoming,
     ) -> Result<StepResult, StepError> {
+        step_with_limits(program, snapshot, incoming, &ResourceLimits::default())
+    }
+    pub fn step_with_limits(
+        program: &CheckedWorkflow,
+        snapshot: &ScopedSnapshot,
+        incoming: &Incoming,
+        limits: &ResourceLimits,
+    ) -> Result<StepResult, StepError> {
+        let context = EvaluationContext::new(limits);
+        if let Some(input) = &snapshot.run.input {
+            context.check_value(input)?;
+        }
+        for unit in &snapshot.units {
+            context.check_value(&unit.input)?;
+            if let UnitStatus::Done { outcome } = &unit.status {
+                context.check_value(outcome)?;
+            }
+        }
+        for revision in &snapshot.revisions {
+            context.check_value(&revision.body)?;
+        }
+        for decision in &snapshot.decisions {
+            context.check_value(&decision.payload)?;
+        }
         let mut state = snapshot.clone();
-        reduce(program, &mut state, incoming)?;
+        reduce(program, &mut state, incoming, &context)?;
         if !matches!(state.run.status, UnitStatus::Cancelled) {
-            while advance(program, &mut state)? {}
+            while advance(program, &mut state, &context)? {}
             if let Some(root) = state.units.iter().find(|u| u.id == state.run.root) {
                 state.run.status = root.status.clone();
             }
@@ -1325,6 +1486,260 @@ mod v2_step {
                     );
                 }
             }
+        }
+
+        #[test]
+        fn named_schemas_resolve_through_optional_lists_and_records() {
+            let aliases = BTreeMap::from([
+                ("title".into(), TypeExpression::Name("text".into())),
+                ("titles".into(), TypeExpression::Name("list(title)".into())),
+            ]);
+            let ty = TypeExpression::Record(BTreeMap::from([(
+                "items".into(),
+                TypeExpression::Name("optional(titles)".into()),
+            )]));
+            assert!(check_type(
+                &ty,
+                &serde_json::json!({"items": ["one"]}),
+                &aliases
+            ));
+            assert!(check_type(
+                &ty,
+                &serde_json::json!({"items": null}),
+                &aliases
+            ));
+            assert!(!check_type(
+                &ty,
+                &serde_json::json!({"items": [1]}),
+                &aliases
+            ));
+        }
+
+        #[test]
+        fn host_limits_reject_large_inputs_and_exhausted_expression_budget() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let launch = incoming(event(&trace["rows"][0]["events"][0], &snapshot()), "launch");
+            let mut limits = ResourceLimits {
+                max_list_items: 3,
+                ..ResourceLimits::default()
+            };
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "max_list_items exceeded")
+            );
+            limits.max_list_items = 10_000;
+            limits.evaluation_budget = 0;
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "evaluation_budget exceeded")
+            );
+            limits.evaluation_budget = 1_000_000;
+            limits.max_depth = 1;
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "max_depth exceeded")
+            );
+        }
+
+        #[test]
+        fn reviewer_needs_every_output_for_its_subject() {
+            let mut program = sample("review-loop");
+            let stage = program.source.stages.get_mut("document").unwrap();
+            let Worker::Agent { creates, .. } = stage.workers.get_mut("critic").unwrap() else {
+                panic!("critic is an agent")
+            };
+            creates.push(SymbolKey::from("summary"));
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=1].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            state
+                .attempts
+                .retain(|attempt| attempt.worker.0 != "critic");
+            state.revisions.push(RevisionState {
+                id: RevisionId::from("critique:1"),
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("critique"),
+                body: serde_json::json!({"notes": []}),
+                predecessor: None,
+                subject: Some(RevisionId::from("draft:1")),
+                by: ActionKey::from("previous-review"),
+            });
+            let unit = state
+                .units
+                .iter()
+                .find(|unit| unit.id.0 == "run/document")
+                .unwrap();
+            assert!(stage_actions(&program, &state, unit).unwrap().iter().any(|action| matches!(
+                action, Action::RunWorker { worker, mode: Mode::Review, .. } if worker.0 == "critic"
+            )));
+        }
+
+        #[test]
+        fn member_outcomes_are_projected_in_key_order() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=1].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            for child in state
+                .units
+                .iter_mut()
+                .filter(|unit| unit.parent.as_ref().is_some_and(|id| id.0 == "run/work"))
+            {
+                child.status = UnitStatus::Done {
+                    outcome: Value::String(child.id.0.clone()),
+                };
+            }
+            state.units.reverse();
+            let owner = state
+                .units
+                .iter()
+                .find(|unit| unit.id.0 == "run/work")
+                .unwrap();
+            let expression = Expression::Reference {
+                root: ReferenceRoot::MemberOutcomes {
+                    unit: SymbolKey::from("item"),
+                },
+                path: vec![],
+            };
+            assert_eq!(
+                eval_expression(
+                    &expression,
+                    owner,
+                    &state,
+                    None,
+                    None,
+                    &EvaluationContext::new(&ResourceLimits::default())
+                ),
+                Ok(Some(serde_json::json!([
+                    "run/work/a",
+                    "run/work/b",
+                    "run/work/c",
+                    "run/work/d"
+                ])))
+            );
+        }
+
+        #[test]
+        fn failed_code_validation_does_not_publish_a_revision() {
+            let mut source: Workflow =
+                serde_json::from_str(include_str!("../../../fixtures/bundles/fan-out.json"))
+                    .unwrap();
+            source
+                .stages
+                .get_mut("prepare")
+                .unwrap()
+                .artifacts
+                .get_mut("workspace")
+                .unwrap()
+                .validate
+                .push(ValidationCheck {
+                    check: "false".into(),
+                    message: "invalid workspace".into(),
+                });
+            let original = sample("fan-out");
+            let operations = [CodeOperation {
+                key: SymbolKey::from("repository.prepare"),
+                version: 1,
+                input_schema: TypeExpression::Record(BTreeMap::from([
+                    (
+                        "repository_path".into(),
+                        TypeExpression::Name("repo_path".into()),
+                    ),
+                    (
+                        "expected_head".into(),
+                        TypeExpression::Name("optional(text)".into()),
+                    ),
+                ])),
+                output_schema: source.stages["prepare"].artifacts["workspace"]
+                    .schema
+                    .clone(),
+                error_codes: vec![],
+            }];
+            let prompts = BTreeMap::from([("fan-out/item.md".into(), String::new())]);
+            let program = compile_workflow(&source, &operations, &prompts).unwrap();
+            assert_eq!(program.stages.len(), original.stages.len());
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let launch = &trace["rows"][0]["events"][0];
+            let state = step(
+                &program,
+                &snapshot(),
+                &incoming(event(launch, &snapshot()), "launch"),
+            )
+            .unwrap()
+            .snapshot;
+            let publication = event(&trace["rows"][1]["events"][0], &state);
+            let result = step(&program, &state, &incoming(publication, "publish")).unwrap();
+            assert!(result.snapshot.revisions.is_empty());
+            assert!(matches!(
+                result.snapshot.attempts[0].status,
+                AttemptStatus::Failed { .. }
+            ));
+            assert!(matches!(
+                result
+                    .snapshot
+                    .units
+                    .iter()
+                    .find(|unit| unit.id.0 == "run/prepare")
+                    .unwrap()
+                    .status,
+                UnitStatus::Active
+            ));
+        }
+
+        #[test]
+        fn operator_decision_uses_its_declared_target_artifact() {
+            let mut program = sample("review-loop");
+            program
+                .source
+                .stages
+                .get_mut("document")
+                .unwrap()
+                .reviews
+                .get_mut("editor")
+                .unwrap()
+                .decisions
+                .get_mut("approve")
+                .unwrap()
+                .on = Some(SymbolKey::from("critique"));
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=2].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let result = step(
+                &program,
+                &state,
+                &incoming(
+                    Event::OperatorDecided {
+                        unit: UnitId::from("run/document"),
+                        review: SymbolKey::from("editor"),
+                        decision: SymbolKey::from("approve"),
+                        target: RevisionId::from("critique:1"),
+                        payload: serde_json::json!({}),
+                    },
+                    "approve-critique",
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                result.snapshot.decisions.last().unwrap().target.0,
+                "critique:1"
+            );
         }
         fn apply_row(
             program: &CheckedWorkflow,
@@ -1813,4 +2228,4 @@ mod v2_step {
         }
     }
 }
-pub use v2_step::step;
+pub use v2_step::{step, step_with_limits};

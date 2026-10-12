@@ -16,6 +16,46 @@ pub struct ResourceLimits {
     #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub evaluation_budget: usize,
 }
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_list_items: 10_000,
+            max_depth: crate::protocol::MAX_DEPTH_CEILING,
+            evaluation_budget: 1_000_000,
+        }
+    }
+}
+impl ResourceLimits {
+    /// Bound every JSON container before the compiler or evaluator walks it.
+    pub fn check_value(&self, value: &Value) -> Result<(), &'static str> {
+        fn visit(limits: &ResourceLimits, value: &Value, depth: usize) -> Result<(), &'static str> {
+            match value {
+                Value::Array(items) => {
+                    if depth >= limits.max_depth {
+                        return Err("max_depth exceeded");
+                    }
+                    if items.len() > limits.max_list_items {
+                        return Err("max_list_items exceeded");
+                    }
+                    for item in items {
+                        visit(limits, item, depth + 1)?;
+                    }
+                }
+                Value::Object(fields) => {
+                    if depth >= limits.max_depth {
+                        return Err("max_depth exceeded");
+                    }
+                    for field in fields.values() {
+                        visit(limits, field, depth + 1)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        visit(self, value, 0)
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReferenceRoot {

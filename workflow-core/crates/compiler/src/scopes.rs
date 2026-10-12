@@ -1041,6 +1041,24 @@ pub fn compile_workflow(
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,
 ) -> Result<CheckedWorkflow, DomainError> {
+    compile_workflow_with_limits(source, operations, prompts, &ResourceLimits::default())
+}
+pub fn compile_workflow_with_limits(
+    source: &Workflow,
+    operations: &[CodeOperation],
+    prompts: &BTreeMap<String, String>,
+    limits: &ResourceLimits,
+) -> Result<CheckedWorkflow, DomainError> {
+    let source_value = serde_json::to_value(source).map_err(|error| {
+        DomainError::new(
+            DomainErrorKind::UnknownConstruct,
+            "workflow",
+            error.to_string(),
+        )
+    })?;
+    limits
+        .check_value(&source_value)
+        .map_err(|detail| DomainError::new(DomainErrorKind::ResourceLimit, "workflow", detail))?;
     validate_type(&source.input, &source.schemas, &mut BTreeSet::new())?;
     for ty in source.schemas.values() {
         validate_type(ty, &source.schemas, &mut BTreeSet::new())?;
