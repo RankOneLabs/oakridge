@@ -217,6 +217,8 @@ pub struct RunState {
     pub id: String,
     pub root: UnitId,
     pub status: UnitStatus,
+    #[serde(with = "crate::wire_numbers::optional_json")]
+    #[schemars(with = "Option<Value>")]
     pub input: Option<Value>,
 }
 

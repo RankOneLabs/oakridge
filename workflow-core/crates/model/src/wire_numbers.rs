@@ -123,11 +123,47 @@ pub mod json {
         Ok(value)
     }
 }
+pub mod optional_json {
+    use super::*;
+    pub fn serialize<S: Serializer>(
+        value: &Option<Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if let Some(value) = value {
+            validate_json(value).map_err(serde::ser::Error::custom)?;
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<Value>, D::Error> {
+        let value = Option::<Value>::deserialize(decoder)?;
+        if let Some(value) = &value {
+            validate_json(value).map_err(serde::de::Error::custom)?;
+        }
+        Ok(value)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{ActionKey, AttemptState, AttemptStatus, Cause, Mode, UnitId, WorkerKey};
+
+    #[test]
+    fn optional_run_input_rejects_wide_wire_numbers() {
+        let input = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
+        let run = crate::RunState {
+            id: "run".into(),
+            root: UnitId::from("run"),
+            status: crate::UnitStatus::NotStarted,
+            input: Some(input),
+        };
+        assert!(serde_json::to_value(&run).is_err());
+        let raw = serde_json::json!({
+            "id": "run", "root": "run", "status": {"kind": "not_started"},
+            "input": {"nested": [MAX_SAFE_INTEGER + 1]}
+        });
+        assert!(serde_json::from_value::<crate::RunState>(raw).is_err());
+    }
 
     fn attempt(ended_at: Option<i64>) -> AttemptState {
         AttemptState {
