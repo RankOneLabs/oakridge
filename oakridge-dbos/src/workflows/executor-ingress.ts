@@ -11,8 +11,13 @@ export type WorkerReport =
   /** `publication_secret_hash` is the hash of the secret minted for an agent's session; null when none was minted. */
   | { readonly kind: "started"; readonly session_id: string | null; readonly publication_secret_hash: string | null }
   | { readonly kind: "ended"; readonly result: WorkerResult }
-  /** A code worker's output, published by the action it ran (part 1 §7.2). */
-  | { readonly kind: "published"; readonly unit: string; readonly artifact: string; readonly body: unknown };
+  /**
+   * A code worker's output, published by the action it ran (part 1 §7.2).
+   * `predecessor` is the artifact's latest revision when the executor read it,
+   * null for the first: step refuses a changed body on any other. The caller
+   * resolves it once, so a re-sent report is the same event and replays.
+   */
+  | { readonly kind: "published"; readonly unit: string; readonly artifact: string; readonly body: unknown; readonly predecessor: string | null };
 export interface ExecutorReport {
   readonly run_id: RunId;
   readonly attempt: { readonly action_id: string; readonly seq: number };
@@ -29,7 +34,7 @@ export function selectReportEvent(input: ExecutorReport): { readonly event: Even
     case "ended": return { event: { kind: "worker_ended", action: action_id, result: report.result },
       ingress_id: `worker_ended:${action_id}:${seq}` };
     case "published": return { event: { kind: "revision_published", unit: report.unit, artifact: report.artifact, body: report.body,
-      predecessor: null, subject: null, by: action_id }, ingress_id: `revision_published:${action_id}:${seq}:${report.artifact}` };
+      predecessor: report.predecessor, subject: null, by: action_id }, ingress_id: `revision_published:${action_id}:${seq}:${report.artifact}` };
   }
 }
 
