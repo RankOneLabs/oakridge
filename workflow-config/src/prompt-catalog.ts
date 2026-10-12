@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { resolve, relative, sep } from "node:path";
-import type { Prompt, WorkflowDefinitionDescriptor } from "./source-contracts";
 
 const repositoryRoot = resolve(import.meta.dir, "../..");
 
@@ -32,19 +31,4 @@ export function listPromptCatalog(): PromptCatalogEntry[] {
     return { key: generated ? `${generated[1]}_v3` : path,
       path, content_digest: createHash("sha256").update(readFileSync(file)).digest("hex") };
   }).sort((left, right) => left.path.localeCompare(right.path));
-}
-
-export type PromptResolution = { readonly ok: true; readonly value: WorkflowDefinitionDescriptor }
-  | { readonly ok: false; readonly key: string; readonly detail: string };
-
-/** Resolve each prompt key in a pinned bundle to its path and server digest. */
-export function resolvePromptKeys(bundle: WorkflowDefinitionDescriptor): PromptResolution {
-  const catalog = new Map(listPromptCatalog().map((prompt) => [prompt.key, prompt]));
-  const prompts: Prompt[] = [];
-  for (const prompt of bundle.prompts) {
-    const found = catalog.get(prompt.key);
-    if (!found) return { ok: false, key: prompt.key, detail: "prompt key is not in the catalog" };
-    prompts.push({ ...prompt, path: found.path, content_digest: found.content_digest });
-  }
-  return { ok: true, value: { ...bundle, prompts } };
 }

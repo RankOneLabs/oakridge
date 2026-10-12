@@ -16,7 +16,7 @@ fn main() -> io::Result<()> {
     if std::env::args().any(|arg| arg == "--source-schema") {
         println!(
             "{}",
-            serde_json::to_string_pretty(&schemars::schema_for!(workflow_model::DefinitionBundle))?
+            serde_json::to_string_pretty(&schemars::schema_for!(workflow_model::Workflow))?
         );
         return Ok(());
     }
