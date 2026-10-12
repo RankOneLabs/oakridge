@@ -34,7 +34,7 @@ test("active schema and symbols reflect the scope authority", () => {
     "authority.definition_bundle", "authority.project", "authority.prompt_content", "authority.run", "authority.unit",
     "authority.unit_dependency", "authority.attempt", "authority.artifact_revision", "authority.review_decision",
     "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
-    "authority.capacity_pool", "authority.capacity_reservation", "authority.collaboration_thread",
+    "authority.collaboration_thread",
     "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery", "authority.operator_event",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");

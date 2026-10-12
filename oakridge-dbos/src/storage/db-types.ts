@@ -50,21 +50,6 @@ export interface AuthorityAttempt {
   worker: string;
 }
 
-export interface AuthorityCapacityPool {
-  capacity: number;
-  id: string;
-  pool_key: string;
-  run_id: string;
-}
-
-export interface AuthorityCapacityReservation {
-  id: string;
-  is_active: Generated<boolean>;
-  pool_id: string;
-  run_id: string;
-  unit_id: string;
-}
-
 export interface AuthorityCollaborationDelivery {
   created_at: Generated<Timestamp>;
   id: string;
@@ -286,8 +271,6 @@ export interface AuthorityWantedLog {
 export interface DB {
   "authority.artifact_revision": AuthorityArtifactRevision;
   "authority.attempt": AuthorityAttempt;
-  "authority.capacity_pool": AuthorityCapacityPool;
-  "authority.capacity_reservation": AuthorityCapacityReservation;
   "authority.collaboration_delivery": AuthorityCollaborationDelivery;
   "authority.collaboration_message": AuthorityCollaborationMessage;
   "authority.collaboration_thread": AuthorityCollaborationThread;

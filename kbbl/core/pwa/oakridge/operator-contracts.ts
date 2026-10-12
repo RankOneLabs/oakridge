@@ -148,8 +148,6 @@ export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs"
 export interface OperatorDB {
   "authority.artifact_revision": OperatorAuthorityArtifactRevision;
   "authority.attempt": OperatorAuthorityAttempt;
-  "authority.capacity_pool": OperatorAuthorityCapacityPool;
-  "authority.capacity_reservation": OperatorAuthorityCapacityReservation;
   "authority.collaboration_delivery": OperatorAuthorityCollaborationDelivery;
   "authority.collaboration_message": OperatorAuthorityCollaborationMessage;
   "authority.collaboration_thread": OperatorAuthorityCollaborationThread;
@@ -216,21 +214,6 @@ export interface OperatorAuthorityAttempt {
   status: OperatorJsonColumn<OperatorAttemptStatus>;
   unit_id: string;
   worker: string;
-}
-
-export interface OperatorAuthorityCapacityPool {
-  capacity: number;
-  id: string;
-  pool_key: string;
-  run_id: string;
-}
-
-export interface OperatorAuthorityCapacityReservation {
-  id: string;
-  is_active: OperatorGenerated<boolean>;
-  pool_id: string;
-  run_id: string;
-  unit_id: string;
 }
 
 export interface OperatorAuthorityCollaborationDelivery {
