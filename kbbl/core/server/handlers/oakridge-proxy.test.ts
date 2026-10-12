@@ -33,9 +33,9 @@ describe("oakridge proxy", () => {
       }
     }
     const authorized = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer shared-token" }, body: "{}" };
-    expect((await direct.request("/runs", authorized)).status).toBe(200);
-    expect((await direct.request("/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
-    expect((await proxy.request("/oakridge/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await direct.request("/api/runs", authorized)).status).toBe(200);
+    expect((await direct.request("/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
   });
 
   test("a control cookie authenticates the PWA on both paths and stays off the upstream wire", async () => {
@@ -55,18 +55,18 @@ describe("oakridge proxy", () => {
       coreControlToken: "shared-token", allowedOrigins: ["https://operator.example"] });
     const request = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example",
       cookie: "kbbl_ctrl=shared-token" }, body: "{}" };
-    expect((await direct.request("/runs", request)).status).toBe(200);
-    expect((await proxy.request("/oakridge/api/runs", request)).status).toBe(200);
+    expect((await direct.request("/api/runs", request)).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/api/runs", request)).status).toBe(200);
     expect(String(upstream_authorization)).toBe("Bearer shared-token");
-    expect((await direct.request("/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
-    expect((await proxy.request("/oakridge/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
-    expect((await direct.request("/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
-    expect((await proxy.request("/oakridge/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    expect((await direct.request("/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await direct.request("/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
     const no_origin = { ...request, headers: { "content-type": "application/json", cookie: "kbbl_ctrl=shared-token" } };
-    expect((await direct.request("/runs", no_origin)).status).toBe(401);
-    expect((await proxy.request("/oakridge/api/runs", no_origin)).status).toBe(401);
-    expect((await direct.request("/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
-    expect((await proxy.request("/oakridge/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+    expect((await direct.request("/api/runs", no_origin)).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", no_origin)).status).toBe(401);
+    expect((await direct.request("/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
   });
   test("serves the operator refresh interval so it is settable without a PWA rebuild", async () => {
     const app = new Hono();
@@ -157,8 +157,8 @@ describe("oakridge proxy", () => {
       coreControlToken: "core-secret",
     });
 
-    expect((await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
-    await app.request("/oakridge/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer kbbl-token" }, body: "{}" });
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer kbbl-token" }, body: "{}" });
     expect(captured.authHeader).toBe("Bearer core-secret");
   });
 
@@ -179,12 +179,12 @@ describe("oakridge proxy", () => {
       browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
     const cookie = { cookie: "kbbl_ctrl=kbbl-token" };
     expect((await app.request("/oakridge/api/api/runs", { headers: cookie })).status).toBe(200);
-    expect((await app.request("/oakridge/api/runs", { method: "POST", body: "{}",
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", body: "{}",
       headers: { ...cookie, "content-type": "application/json", origin: "https://operator.example" } })).status).toBe(200);
     // Every upstream hop carries the core token, never kbbl's.
     expect(forwarded).toEqual(["Bearer core-secret", "Bearer core-secret"]);
     // The upstream credential is not a browser credential: presenting it fails.
-    expect((await app.request("/oakridge/api/runs", { method: "POST", body: "{}",
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", body: "{}",
       headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer core-secret" } })).status).toBe(401);
   });
 

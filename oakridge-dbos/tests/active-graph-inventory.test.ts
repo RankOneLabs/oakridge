@@ -13,15 +13,14 @@ const deleted = [
   "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
   "oakridge-dbos/src/validation", "oakridge-dbos/src/adapters/dev-flow.ts",
 ];
-test("production entry reaches one evaluator bridge and one mutation authority", () => {
+test("production entry reaches one core bridge and one writer", () => {
   expect(files).toContain("oakridge-dbos/src/core-client/client.ts");
-  const mutationEntry = resolve(root, "oakridge-dbos/src/storage/mutation-service.ts");
-  expect(evaluationCallSites(nodes)).toEqual([mutationEntry]);
+  const commit = resolve(root, "oakridge-dbos/src/storage/commit.ts");
+  expect(evaluationCallSites(nodes)).toEqual([commit]);
   expect(declarations(nodes, "CoreClient")).toEqual([resolve(root, "oakridge-dbos/src/core-client/client.ts")]);
-  expect(declarations(nodes, "createMutationService")).toEqual([mutationEntry]);
-  const mutationNodes = new Set(reachable(graph, mutationEntry).map((node) => node.path));
-  expect(labels(root, evaluatorViolations(nodes, mutationNodes))).toEqual([]);
-  expect(files.filter((path) => /(?:legacy-wire|compile-v15|\/decision\/|\/validation\/|dev-flow\.ts)/.test(path))).toEqual([]);
+  expect(declarations(nodes, "commitEvent")).toEqual([commit]);
+  expect(labels(root, evaluatorViolations(nodes, new Set([commit, resolve(root, "oakridge-dbos/src/core-client/client.ts")])))).toEqual([]);
+  expect(files.filter((path) => /(?:legacy-wire|compile-v15|\/decision\/|\/validation\/|dev-flow\.ts|mutation-service|sql-executor)/.test(path))).toEqual([]);
 });
 test("deleted modules and legacy schema authority are absent from the active graph", () => {
   expect(deleted.filter((path) => existsSync(resolve(root, path)))).toEqual([]);
@@ -36,15 +35,15 @@ test("active schema and symbols reflect the scope authority", () => {
     "authority.unit_dependency", "authority.attempt", "authority.artifact_revision", "authority.review_decision",
     "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
     "authority.capacity_pool", "authority.capacity_reservation", "authority.collaboration_thread",
-    "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery",
+    "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery", "authority.operator_event",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
-  expect(activeSource).toContain("createMutationService");
+  expect(activeSource).toContain("commitEvent");
   expect(activeSource).toContain("createProductionComposition");
   expect(activeSource).not.toMatch(/CREATE\s+TABLE\s+oakridge\./i);
 });
 
-test("a second mutation authority declaration fails the symbol inventory", () => {
-  const duplicate = { path: resolve(root, "oakridge-dbos/src/injected.ts"), source: "export function createMutationService() {}", imports: [], packages: [] };
-  expect(declarations([...nodes, duplicate], "createMutationService")).toHaveLength(2);
+test("a second writer declaration fails the symbol inventory", () => {
+  const duplicate = { path: resolve(root, "oakridge-dbos/src/injected.ts"), source: "export function commitEvent() {}", imports: [], packages: [] };
+  expect(declarations([...nodes, duplicate], "commitEvent")).toHaveLength(2);
 });

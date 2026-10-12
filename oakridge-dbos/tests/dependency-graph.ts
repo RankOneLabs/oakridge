@@ -71,60 +71,13 @@ export function reachable(graph: ModuleGraph, from: string, barriers: ReadonlySe
   return result;
 }
 
-/** Inspect SQL literals in each reachable module, including helpers and template SQL. */
-export function writtenAuthorityTables(node: ModuleNode): readonly string[] {
-  const tables: string[] = [];
-  const parsed = parseModule(node.path, node.source);
-  function visit(child: ts.Node): void {
-    if (ts.isStringLiteralLike(child) || ts.isTemplateExpression(child)) {
-      const text = ts.isTemplateExpression(child) ? child.getText(parsed) : child.text;
-      for (const match of text.matchAll(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+["']?authority["']?\s*\.\s*["']?([\w]+|\$\{)/gi)) {
-        if (match[1]) tables.push(match[1]);
-      }
-    }
-    ts.forEachChild(child, visit);
-  }
-  visit(parsed);
-  return tables;
-}
-function opaqueSqlCalls(node: ModuleNode): readonly BoundaryViolation[] {
-  // The executor is the transport boundary; statement inspection happens at its callers.
-  if (node.path.endsWith("/storage/sql-executor.ts")) return [];
-  const parsed = parseModule(node.path, node.source);
-  const literalMaps = new Set<string>();
-  function collect(child: ts.Node): void {
-    if (ts.isVariableDeclaration(child) && ts.isIdentifier(child.name) && child.initializer && ts.isObjectLiteralExpression(child.initializer)
-      && child.initializer.properties.every((property) => ts.isPropertyAssignment(property) && ts.isStringLiteralLike(property.initializer))) literalMaps.add(child.name.text);
-    ts.forEachChild(child, collect);
-  }
-  collect(parsed);
-  const violations: BoundaryViolation[] = [];
-  function visit(child: ts.Node): void {
-    if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression) && child.expression.name.text === "query") {
-      const sql = child.arguments[0];
-      const isLiteralMap = sql && ts.isElementAccessExpression(sql) && ts.isIdentifier(sql.expression) && literalMaps.has(sql.expression.text);
-      if (!sql || !(ts.isStringLiteralLike(sql) || isLiteralMap))
-        violations.push({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
-    }
-    ts.forEachChild(child, visit);
-  }
-  visit(parsed);
-  return violations;
-}
-export function mutationViolations(graph: ModuleGraph, entries: readonly string[], mutationEntry: string): readonly BoundaryViolation[] {
-  const subjects = new Map(entries.flatMap((entry) => reachable(graph, entry, new Set([mutationEntry]))).map((node) => [node.path, node]));
-  return [...subjects.values()].flatMap((node) => [...opaqueSqlCalls(node), ...writtenAuthorityTables(node)
-    // Effect-intent leases, handles and delivery bookkeeping belong to the IO ledger.
-    // Every other authority table is domain state and crosses the mutation entry.
-    .filter((table) => table !== "effect_intent")
-    .map((table) => ({ path: node.path, detail: `domain write to authority.${table} bypasses mutation service` }))]);
-}
 export function projectionViolations(nodes: readonly ModuleNode[]): readonly BoundaryViolation[] {
   return nodes.flatMap((node) => {
     const violations: BoundaryViolation[] = node.packages.map((name) => ({ path: node.path, detail: `projection imports external runtime package ${name}` }));
     const parsed = parseModule(node.path, node.source);
     function visit(child: ts.Node): void {
-      if (ts.isIdentifier(child) && ["fetch", "Bun", "Deno", "Date", "crypto", "process", "performance", "setTimeout", "setInterval", "XMLHttpRequest", "EventSource"].includes(child.text))
+      // A type annotation naming Date is not a call to the clock.
+      if (ts.isIdentifier(child) && !ts.isTypeReferenceNode(child.parent) && ["fetch", "Bun", "Deno", "Date", "crypto", "process", "performance", "setTimeout", "setInterval", "XMLHttpRequest", "EventSource"].includes(child.text))
         violations.push({ path: node.path, detail: `projection references IO capability ${child.text}` });
       if (ts.isPropertyAccessExpression(child) && child.expression.getText(parsed) === "Math" && child.name.text === "random")
         violations.push({ path: node.path, detail: "projection references IO capability Math.random" });
@@ -171,15 +124,16 @@ export function closedCommandViolations(nodes: readonly ModuleNode[]): readonly 
     return violations;
   });
 }
+/** Core `compile`/`step` calls outside the approved modules: commit steps, the core client compiles. */
 export function evaluatorViolations(nodes: readonly ModuleNode[], mutationNodes: ReadonlySet<string>): readonly BoundaryViolation[] {
   return nodes.flatMap((node) => {
     const violations: BoundaryViolation[] = [];
     const parsed = parseModule(node.path, node.source);
     function visit(child: ts.Node): void {
       if (ts.isCallExpression(child) && child.arguments[0] && ts.isStringLiteral(child.arguments[0])
-        && ["compile", "evaluate"].includes(child.arguments[0].text)
+        && ["compile", "step"].includes(child.arguments[0].text)
         && child.expression.getText(parsed).endsWith(".request") && !mutationNodes.has(node.path))
-        violations.push({ path: node.path, detail: "evaluator call bypasses mutation service" });
+        violations.push({ path: node.path, detail: "core call outside commit and the core client" });
       ts.forEachChild(child, visit);
     }
     visit(parsed);
@@ -207,7 +161,7 @@ export function evaluationCallSites(nodes: readonly ModuleNode[]): readonly stri
     const parsed = parseModule(node.path, node.source);
     function visit(child: ts.Node): void {
       if (ts.isCallExpression(child) && child.arguments[0] && ts.isStringLiteral(child.arguments[0])
-        && child.arguments[0].text === "evaluate" && child.expression.getText(parsed).endsWith(".request")) paths.push(node.path);
+        && child.arguments[0].text === "step" && child.expression.getText(parsed).endsWith(".request")) paths.push(node.path);
       ts.forEachChild(child, visit);
     }
     visit(parsed);

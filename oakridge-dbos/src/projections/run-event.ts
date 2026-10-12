@@ -1,29 +1,16 @@
-import type { AttentionMetadata, DecisionOutcome } from "../core-client/core-types";
-import type { RunId, ScopeId } from "../storage/schema-records";
+import type { Event, UnitStatus } from "../core-client/core-types";
+import type { RunId, UnitId } from "../domain/primitives";
 
-/** One committed transition as the operator event stream delivers it (GET /events). */
+/** One committed event as the operator event stream delivers it (GET /events). */
 export interface RunEvent {
-  readonly transition_id: string;
+  readonly event_id: string;
   readonly run_id: RunId;
-  readonly scope_id: ScopeId;
-  readonly scope_key: string;
-  readonly decision: DecisionOutcome["kind"];
-  /** Set when the scope now waits on the operator. */
-  readonly attention: AttentionMetadata | null;
-  readonly is_terminal: boolean;
-  /** ISO-8601, as the transition log recorded it. */
+  /** The unit the event addressed; null for a launch or a cancel. */
+  readonly unit_id: UnitId | null;
+  readonly kind: Event["kind"];
+  readonly run_status: UnitStatus["kind"];
+  /** ISO-8601, as the event log recorded it. */
   readonly occurred_at: string;
 }
 /** Resume position in the operator outbox: the last delivered row, by writing transaction then id. */
 export interface RunEventCursor { readonly commit_txid: string; readonly id: string }
-
-export interface TransitionEventRow {
-  readonly id: string; readonly run_id: RunId; readonly scope_id: ScopeId; readonly scope_key: string;
-  readonly decision: DecisionOutcome; readonly created_at: string;
-}
-export function selectRunEvent(row: TransitionEventRow): RunEvent {
-  return { transition_id: row.id, run_id: row.run_id, scope_id: row.scope_id, scope_key: row.scope_key, decision: row.decision.kind,
-    attention: row.decision.kind === "wait" ? row.decision.attention ?? null : null,
-    // A transition finishes its scope exactly when it applies an outcome.
-    is_terminal: row.decision.kind === "apply" && row.decision.outcome != null, occurred_at: row.created_at };
-}

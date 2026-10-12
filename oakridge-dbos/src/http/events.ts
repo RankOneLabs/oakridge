@@ -2,8 +2,8 @@ import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { RunEventCursor } from "../projections/run-event";
 import { selectOperatorFrame } from "../projections/operator-event";
-import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/projection-reader";
-import type { TransactionalSqlExecutor } from "../storage/sql-executor";
+import type { Database } from "../storage/database";
+import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/read-store";
 
 /** The SSE id is the base64url JSON cursor; Last-Event-ID hands it back on reconnect. */
 const encodeEventCursor = (cursor: RunEventCursor): string => Buffer.from(JSON.stringify(cursor)).toString("base64url");
@@ -25,7 +25,7 @@ const PAGE = 100;
  * id is its resume cursor, so a reconnect with Last-Event-ID continues where it
  * stopped; a new subscriber starts from now.
  */
-export function installEventStream(app: Hono, deps: { readonly db: TransactionalSqlExecutor; readonly timing?: EventStreamTiming }): void {
+export function installEventStream(app: Hono, deps: { readonly db: Database; readonly timing?: EventStreamTiming }): void {
   const timing = deps.timing ?? DEFAULT_EVENT_TIMING;
   app.get("/events", async (c) => {
     const resume = c.req.header("last-event-id");
@@ -39,7 +39,7 @@ export function installEventStream(app: Hono, deps: { readonly db: Transactional
       await stream.write(": ready\n\n");
       let last_write = Date.now();
       while (!stream.aborted && !stream.closed) {
-        const rows = await readOperatorEventsAfter(deps.db, cursor, PAGE, is_reconnect ? boundary.snapshot : null);
+        const rows = await readOperatorEventsAfter(deps.db, { after: cursor, limit: PAGE, subscription_snapshot: is_reconnect ? boundary.snapshot : null });
         for (const row of rows) {
           cursor = { commit_txid: row.commit_txid, id: row.id };
           const frame = selectOperatorFrame(row);

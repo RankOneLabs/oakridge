@@ -25,6 +25,8 @@ export const PROVIDER_ERROR_CODES = {
   start_rejected: "start_rejected",
   start_attempts_exhausted: "start_attempts_exhausted",
   provider_start_failed: "provider_start_failed",
+  provider_not_ported: "provider_not_ported",
+  invalid_instruction: "invalid_instruction",
 } as const;
 
 export const PROVIDER_CATALOG = {

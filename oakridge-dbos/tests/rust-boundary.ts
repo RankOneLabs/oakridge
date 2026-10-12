@@ -116,7 +116,9 @@ export function rustCapabilityViolations(source: string): readonly string[] {
   if (/\buse\s+std\s*:\s*:\s*\{[^;]*(?:\b(?:fs|net|process|env|time|thread|io)\b|\*)/.test(text)
     || /\buse\s+std\s+(?:as\b|;)/.test(text) || /\buse\s+std\s*:\s*:\s*\*/.test(text)) violations.push("unbounded or IO std import");
   if (/\b(tokio|reqwest|ureq|rand|getrandom|chrono|postgres|sqlx|rusqlite|diesel)\s*:\s*:/.test(text)) violations.push("external crate capability");
-  if (/\b(include|include_str|include_bytes|env|option_env)\s*!/.test(text) || /\bextern\b/.test(text)) violations.push("unresolved external code or environment capability");
+  // `extern fn` (string ABI tokens are dropped above) exports the WASM host ABI; an
+  // `extern` block or `extern crate` imports foreign code.
+  if (/\b(include|include_str|include_bytes|env|option_env)\s*!/.test(text) || /\bextern\s+(crate\b|\{)/.test(text)) violations.push("unresolved external code or environment capability");
   return violations;
 }
 export function workflowLiteralViolations(source: string): readonly string[] {

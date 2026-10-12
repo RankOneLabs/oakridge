@@ -1,62 +1,31 @@
-import type { CheckedValue, Invocation, Trigger } from "../core-client/core-types";
-import { INPUT_CONTRACTS } from "./provider-catalog";
-import type { SessionInvocationSettings } from "../domain/session-settings";
+import type { WorkerResult } from "../core-client/core-types";
+import type { EffectInstruction } from "../domain/effect-instruction";
+import type { INPUT_CONTRACTS } from "./provider-catalog";
 
-/** The selection in the decision ledger is the source of the provider request. */
+/** Kept by the kbbl adapter's request vocabulary. */
 export type InvocationId = string & { readonly __invocation_id: unique symbol };
-export type EffectId = string & { readonly __effect_id: unique symbol };
-
-export interface StableInvocation {
-  readonly id: InvocationId;
-  readonly execution_id: string;
-  readonly selection: Invocation;
-  readonly session_settings: SessionInvocationSettings | null;
-  /** Persisted request bytes. Recovery sends these bytes without re-rendering. */
-  readonly bytes: string;
-  readonly request?: ProviderRequest;
-}
-
-/** Versioned transport metadata; bytes contains the exact selected request body. */
-export type ProviderRequest =
-  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.session; readonly session_key: string }
-  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.repository }
-  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.pull_request }
-  | { readonly version: 1; readonly kind: typeof INPUT_CONTRACTS.stub };
 export interface ProviderCallOptions { readonly signal?: AbortSignal }
 
 export type ProviderResult<Value> =
   | { readonly kind: "acknowledged"; readonly value: Value }
-  | { readonly kind: "permanently_rejected"; readonly code: string; readonly detail: string; readonly evidence?: Trigger }
+  | { readonly kind: "permanently_rejected"; readonly code: string; readonly detail: string }
   | { readonly kind: "transiently_unavailable"; readonly detail: string }
   | { readonly kind: "uncertain"; readonly detail: string };
 
+/** What a start produced: a live agent session, or a finished code operation's result. */
 export type ExternalHandle =
-  | { readonly kind: "completed"; readonly result: CheckedValue; readonly evidence?: Trigger }
   | { readonly kind: typeof INPUT_CONTRACTS.session; readonly session_id: string }
-  | { readonly kind: "repository"; readonly path: string }
-  | { readonly kind: "pull_request"; readonly owner: string; readonly name: string; readonly number: number };
+  | { readonly kind: "completed"; readonly result: WorkerResult };
+export type TerminalObservation = { readonly kind: "running" } | { readonly kind: "terminal"; readonly result: WorkerResult };
 
-export type TerminalObservation =
-  | { readonly kind: "running" }
-  | { readonly kind: "terminal"; readonly result: CheckedValue; readonly evidence?: Trigger };
-
+/**
+ * Carries one effect instruction to the outside world. Every call is
+ * idempotent by the instruction's attempt, so a carrier re-run after a crash
+ * reaches the same execution.
+ */
 export interface EffectProvider {
-  /** A repeated id must resolve to the same external action. */
-  start(invocation: StableInvocation, options?: ProviderCallOptions): Promise<ProviderResult<ExternalHandle>>;
-  /** Stop by invocation id, including a start whose response was lost. */
-  stop(invocation: StableInvocation, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<{ readonly stopped: true }>>;
-  observe(invocation: StableInvocation, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<TerminalObservation>>;
-}
-
-export function selectedInvocation(id: InvocationId, execution_id: string, selection: Invocation, session_settings: SessionInvocationSettings | null): StableInvocation {
-  return { id, execution_id, selection, session_settings, bytes: JSON.stringify({ invocation_id: id, execution_id, selection, session_settings }) };
-}
-
-export function repeatInvocation(invocation: StableInvocation): StableInvocation {
-  return invocation;
-}
-
-export function deliberateRetry(previous: StableInvocation, next_id: InvocationId, session_settings: SessionInvocationSettings | null): StableInvocation {
-  if (next_id === previous.id) throw new Error("a deliberate retry requires a new invocation identity");
-  return selectedInvocation(next_id, previous.execution_id, previous.selection, session_settings);
+  start(instruction: EffectInstruction, options?: ProviderCallOptions): Promise<ProviderResult<ExternalHandle>>;
+  observe(instruction: EffectInstruction, handle: ExternalHandle, options?: ProviderCallOptions): Promise<ProviderResult<TerminalObservation>>;
+  /** Stop by attempt, including a start whose response was lost; a null handle means none was recorded. */
+  stop(instruction: EffectInstruction, handle: ExternalHandle | null, options?: ProviderCallOptions): Promise<ProviderResult<{ readonly stopped: true }>>;
 }

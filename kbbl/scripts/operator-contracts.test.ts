@@ -15,7 +15,8 @@ test("every operator API export is generated, and the PWA contract imports nothi
 });
 
 test("the backend declares no hand-mirrored operator wire types", () => {
-  const projections = ["scope-view.ts", "inbox.ts", "run-view.ts"].map((file) => read(`oakridge-dbos/src/projections/${file}`)).join("\n");
+  const projections = ["run-view.ts", "definition-view.ts", "collaboration-view.ts", "run-event.ts"]
+    .map((file) => read(`oakridge-dbos/src/projections/${file}`)).join("\n");
   expect(projections).not.toMatch(/export (interface|type) Operator/);
 });
 

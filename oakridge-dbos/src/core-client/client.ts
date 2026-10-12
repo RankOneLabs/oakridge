@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
-import type { CoreDomainError, CoreRequest, CoreTransportError, Output } from "./core-types";
+import type { Action, CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, Workflow } from "./core-types";
+import { traced, type Traced } from "../domain/primitives";
 
 export const CORE_WASM_PATH = process.env.OAKRIDGE_CORE_WASM ?? resolve(import.meta.dir, "../../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
 export const MAX_SNAPSHOT_BYTES = 64 * 1_048_576;
@@ -79,4 +80,24 @@ export class CoreClient {
   }
 
   close(): void { this.closed = true; }
+}
+
+/** Source and prompt texts (by path) that a workflow compiles from. */
+export interface CompileInput { readonly workflow: Workflow; readonly prompts: { readonly [path: string]: string } }
+/**
+ * Compile a workflow and leave it in the core's program cache. Code
+ * operations are not registered until the operation registry is wired in, so
+ * a workflow with a code worker does not compile yet.
+ */
+export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledWorkflow>> {
+  const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [] });
+  if (!response.ok) return traced("compile", input.workflow.workflow, response.error.kind === "domain" ? response.error.detail.detail : response.error.detail.detail);
+  if (response.value.kind !== "compiled") return traced("compile", input.workflow.workflow, "core returned a non-compiled response");
+  return { ok: true, value: response.value.value };
+}
+
+/** Each active stage's wanted actions. The response decoder already checked the tuple shape; the generated type does not carry it. */
+export interface WantedForUnit { readonly unit_id: string; readonly actions: readonly Action[] }
+export function selectWanted(step: StepResult): readonly WantedForUnit[] {
+  return (step.wanted as unknown as readonly (readonly [string, readonly Action[]])[]).map(([unit_id, actions]) => ({ unit_id, actions }));
 }

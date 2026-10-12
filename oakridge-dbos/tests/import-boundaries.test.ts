@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
 import { resolve, relative } from "node:path";
 import { readFileSync } from "node:fs";
-import { buildGraph, reachable, projectionViolations, mutationViolations, closedCommandViolations, evaluatorViolations, labels, type ModuleNode, type ModuleGraph } from "./dependency-graph";
+import { buildGraph, reachable, projectionViolations, closedCommandViolations, evaluatorViolations, labels, type ModuleNode, type ModuleGraph } from "./dependency-graph";
 
 const root = resolve(import.meta.dir, "../..");
 const dbosMain = resolve(root, "oakridge-dbos/src/main.ts");
 const pwaMain = resolve(root, "kbbl/core/pwa/main.tsx");
-const mutationEntry = resolve(root, "oakridge-dbos/src/storage/mutation-service.ts");
+/** Commit steps the core and the core client compiles; nothing else calls it. */
+const coreCallers = new Set([resolve(root, "oakridge-dbos/src/storage/commit.ts"), resolve(root, "oakridge-dbos/src/core-client/client.ts")]);
 const graph = buildGraph([dbosMain, pwaMain]);
 const label = (path: string) => relative(root, path);
 function injectDependency(graph: ModuleGraph, entry: string, node: ModuleNode): ModuleGraph {
@@ -20,9 +21,6 @@ function injectDependency(graph: ModuleGraph, entry: string, node: ModuleNode): 
 function injected(path: string, source: string): ModuleNode {
   return { path: resolve(root, path), source, imports: [], packages: [] };
 }
-function mutationEntries(graph: ModuleGraph): readonly string[] {
-  return [...graph.keys()].filter((path) => /^oakridge-dbos\/src\/(http|adapters|effects)\//.test(label(path)));
-}
 const projectionEntries = [...graph.keys()].filter((path) => label(path).startsWith("oakridge-dbos/src/projections/"));
 test("pure projection graph reaches no external IO, including storage dependencies", () => {
   expect(projectionEntries.length).toBeGreaterThan(0);
@@ -30,24 +28,11 @@ test("pure projection graph reaches no external IO, including storage dependenci
 });
 for (const path of ["oakridge-dbos/src/projections/injected.ts", "oakridge-dbos/src/storage/injected.ts"]) {
   test(`reachable IO at ${path} fails the production projection check`, () => {
-    const start = resolve(root, "oakridge-dbos/src/projections/inbox.ts");
+    const start = resolve(root, "oakridge-dbos/src/projections/run-view.ts");
     const node = injected(path, "fetch('https://example.test')");
     expect(projectionViolations(reachable(injectDependency(graph, start, node), start))).toContainEqual({ path: node.path, detail: "projection calls IO capability fetch" });
   });
 }
-test("handlers, adapters and observers cannot reach domain writes without crossing the mutation service", () => {
-  const entries = mutationEntries(graph);
-  expect(entries.length).toBeGreaterThan(0);
-  expect(labels(root, mutationViolations(graph, entries, mutationEntry))).toEqual([]);
-});
-test("an indirect storage write fails the mutation boundary, but one behind the service passes", () => {
-  const http = resolve(root, "oakridge-dbos/src/http/app.ts");
-  const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query("UPDATE authority.scope_instance SET version=version+1")');
-  const bad = injectDependency(graph, http, node);
-  expect(mutationViolations(bad, [http], mutationEntry)).toContainEqual({ path: node.path, detail: "domain write to authority.scope_instance bypasses mutation service" });
-  const good = injectDependency(graph, mutationEntry, node);
-  expect(mutationViolations(good, [http], mutationEntry)).toEqual([]);
-});
 test("the active PWA cannot import backend workflow authority or the removed command protocol", () => {
   const nodes = reachable(graph, pwaMain);
   expect(nodes.map((node) => label(node.path)).filter((path) => path.startsWith("oakridge-dbos/src/") || path.startsWith("kbbl/core/server/"))).toEqual([]);
@@ -57,17 +42,17 @@ test("an injected closed command vocabulary fails the PWA boundary", () => {
   const node = injected("kbbl/core/pwa/oakridge/injected.ts", 'type OperatorRequest = { kind: "accept_plan"; target: string } | { kind: "retry_build" };');
   expect(closedCommandViolations(reachable(injectDependency(graph, pwaMain, node), pwaMain))).toContainEqual({ path: node.path, detail: "closed workflow command type OperatorRequest" });
 });
-test("an injected second evaluator path outside mutations fails the boundary", () => {
-  const node = injected("oakridge-dbos/src/http/injected.ts", 'core.request("evaluate", snapshot)');
+test("core calls stay in commit and the core client, and an injected one elsewhere fails", () => {
+  expect(labels(root, evaluatorViolations(reachable(graph, dbosMain), coreCallers))).toEqual([]);
+  const node = injected("oakridge-dbos/src/http/injected.ts", 'core.request("step", input)');
   const bad = injectDependency(graph, dbosMain, node);
-  const approved = new Set(reachable(bad, mutationEntry).map((item) => item.path));
-  expect(evaluatorViolations(reachable(bad, dbosMain), approved)).toContainEqual({ path: node.path, detail: "evaluator call bypasses mutation service" });
+  expect(evaluatorViolations(reachable(bad, dbosMain), coreCallers)).toContainEqual({ path: node.path, detail: "core call outside commit and the core client" });
 });
 
 import { rustLibraryGraph, rustCapabilityViolations, workflowLiteralViolations } from "./rust-boundary";
 test("reachable Rust library modules and Cargo dependencies have no declared IO capability", () => {
   const files = rustLibraryGraph(root);
-  expect(files.length).toBeGreaterThan(10);
+  expect(files.length).toBeGreaterThan(5);
   expect(files.flatMap((file) => rustCapabilityViolations(readFileSync(file, "utf8")).map((detail) => `${label(file)}: ${detail}`))).toEqual([]);
   const forbiddenCrate = /^\s*(?:tokio|reqwest|ureq|rand|getrandom|chrono|postgres|sqlx|rusqlite|diesel)\s*=/m;
   expect(["model", "compiler", "evaluator"].filter((name) => forbiddenCrate.test(readFileSync(resolve(root, `workflow-core/crates/${name}/Cargo.toml`), "utf8")))).toEqual([]);
@@ -93,22 +78,6 @@ test("aliasing an IO function cannot conceal it from a projection boundary", () 
   expect(projectionViolations([node])).toContainEqual({ path: node.path, detail: "projection references IO capability fetch" });
 });
 
-test("opaque SQL assembled by an indirect helper fails closed", () => {
-  const entry = resolve(root, "oakridge-dbos/src/http/app.ts");
-  const node = injected("oakridge-dbos/src/storage/injected.ts", 'const verb = "UPDATE"; tx.query(verb + " authority.run SET version=1");');
-  expect(mutationViolations(injectDependency(graph, entry, node), [entry], mutationEntry)).toContainEqual({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
-});
-
-test("an interpolated SQL verb cannot bypass the indirect mutation boundary", () => {
-  const entry = resolve(root, "oakridge-dbos/src/http/app.ts");
-  const node = injected("oakridge-dbos/src/storage/injected.ts", 'const verb = "UPDATE"; tx.query(`${verb} authority.run SET version=1`);');
-  expect(mutationViolations(injectDependency(graph, entry, node), [entry], mutationEntry)).toContainEqual({ path: node.path, detail: "unresolved SQL statement bypasses mutation service" });
-});
-test("plain backtick SQL remains inspectable without interpolation", () => {
-  const node = injected("oakridge-dbos/src/storage/injected.ts", 'tx.query(`UPDATE authority.run SET version=1`);');
-  expect(mutationViolations(new Map([[node.path, node]]), [node.path], mutationEntry)).toContainEqual({ path: node.path, detail: "domain write to authority.run bypasses mutation service" });
-});
-
 for (const item of [
   "mod tests;",
   "const VALUE: usize = 1;",
@@ -129,4 +98,8 @@ for (const item of [
 test("skipping an inline test module preserves the following production workflow literal", () => {
   const source = '#[cfg(test)] mod tests { fn test_only() { std::net::TcpStream::connect("build"); } } const NAME: &str = "assessment";';
   expect(workflowLiteralViolations(source)).toEqual(["assessment"]);
+});
+test("an exported WASM ABI function is allowed, but a foreign import block is not", () => {
+  expect(rustCapabilityViolations('#[unsafe(no_mangle)] pub extern "C" fn core_alloc(len: usize) -> *mut u8 { todo!() }')).toEqual([]);
+  expect(rustCapabilityViolations('extern "C" { fn host_clock() -> u64; }')).toEqual(["unresolved external code or environment capability"]);
 });

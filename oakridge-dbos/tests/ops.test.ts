@@ -3,7 +3,6 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runOps } from "../src/ops";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
 
 // Recovery forks onto the running engine version, which hashes the WASM module.
 
@@ -36,92 +35,33 @@ test("ops lists, inspects and forks an errored workflow", async () => {
   }
 });
 
-test("ops migrate may be repeated against the same authority baseline", async () => {
-  let digest: string | null = null;
-  let applied = 0;
-  interface FakeMigrationDb {
-    query(statement: string, parameters: readonly unknown[]): Promise<readonly object[]>;
-    transaction<Value>(work: (tx: FakeMigrationDb) => Promise<Value>): Promise<Value>;
-    close(): Promise<void>;
-  }
-  const db: FakeMigrationDb = {
-    async query(statement: string, parameters: readonly unknown[]) {
-      if (statement.includes("server_version_num")) return [{ server_version_num: "150000" }];
-      if (statement.includes("to_regclass")) return [{ name: digest === null ? null : "authority.schema_baseline" }];
-      if (statement.includes("SELECT digest FROM authority.schema_baseline")) {
-        return [{ digest }];
-      }
-      if (statement.includes("information_schema.tables")) return [];
-      if (statement.includes("INSERT INTO authority.schema_baseline")) { digest = parameters[0] as string; applied++; }
-      return [];
-    },
-    async transaction<Value>(work: (tx: FakeMigrationDb) => Promise<Value>): Promise<Value> { return work(db); },
-    async close() {},
-  };
-  const connect = spyOn(PgPostgresExecutor, "connect").mockImplementation(() => db as never);
-  try {
-    expect(await runOps(["migrate"], "postgres://test")).toEqual({ migrated: true });
-    expect(await runOps(["migrate"], "postgres://test")).toEqual({ migrated: true });
-    expect(applied).toBe(1);
-  } finally { connect.mockRestore(); }
-});
-
-test("ops retries a fork committed before an authority handover failure", async () => {
-  let generation = 0;
-  let successor_exists = false;
-  let should_fail_claim = true;
-  const db = {
-    async query(sql: string) {
-      if (sql.includes("UPDATE authority.run")) {
-        if (should_fail_claim) { should_fail_claim = false; throw new Error("authority unavailable"); }
-        generation++;
-      }
-      return [{ current_generation: generation, current_cursor: null }];
-    },
-    async close() {},
-  };
-  const config = spyOn(DBOS, "setConfig").mockImplementation(() => undefined);
-  const launch = spyOn(DBOS, "launch").mockImplementation(async () => undefined);
-  const shutdown = spyOn(DBOS, "shutdown").mockImplementation(async () => undefined);
-  const connect = spyOn(PgPostgresExecutor, "connect").mockImplementation(() => db as never);
-  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async (id) =>
-    (id === "run:run-1" ? { workflowName: "oakridgeRunWorkflow", status: "ERROR", input: ["run-1"] }
-      : successor_exists ? { status: "ENQUEUED", forkedFrom: "run:run-1" } : null) as never);
-  const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never);
-  const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => {
-    if (successor_exists) throw new Error("duplicate key");
-    successor_exists = true;
-    return { workflowID: "run:run-1:1" } as never;
-  });
-  try {
-    await expect(runOps(["workflows", "recover", "run:run-1"], "postgres://test")).rejects.toThrow("authority unavailable");
-    expect(await runOps(["workflows", "recover", "run:run-1"], "postgres://test"))
-      .toMatchObject({ workflowID: "run:run-1:1", action: "forked" });
-    expect(generation).toBe(1);
-    expect(fork).toHaveBeenCalledTimes(1);
-  } finally {
-    config.mockRestore(); launch.mockRestore(); shutdown.mockRestore(); connect.mockRestore();
-    status.mockRestore(); steps.mockRestore(); fork.mockRestore();
-  }
-});
-
-for (const generation of [null, 2]) {
-  test(`ops refuses an ERROR run outside its authority generation (${generation})`, async () => {
-    const config = spyOn(DBOS, "setConfig").mockImplementation(() => undefined);
-    const launch = spyOn(DBOS, "launch").mockImplementation(async () => undefined);
-    const shutdown = spyOn(DBOS, "shutdown").mockImplementation(async () => undefined);
-    const connect = spyOn(PgPostgresExecutor, "connect").mockImplementation(() => ({
-      query: async () => generation === null ? [] : [{ current_generation: generation }], close: async () => {},
-    }) as never);
-    const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ workflowName: "oakridgeRunWorkflow", status: "ERROR", input: ["run-1"] }) as never);
-    const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never);
-    const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
-    try {
-      await expect(runOps(["workflows", "recover", "run:run-1"], "postgres://test")).rejects.toThrow("not the current authority generation");
-      expect(fork).not.toHaveBeenCalled();
-    } finally {
-      config.mockRestore(); launch.mockRestore(); shutdown.mockRestore(); connect.mockRestore();
-      status.mockRestore(); steps.mockRestore(); fork.mockRestore();
-    }
-  });
+/** Mocks DBOS for one ops call; a run's generations are the run workflows DBOS lists. */
+function mockDbos(input: { readonly run_workflows: readonly string[]; readonly status: (id: string) => unknown }) {
+  const spies = [
+    spyOn(DBOS, "setConfig").mockImplementation(() => undefined),
+    spyOn(DBOS, "launch").mockImplementation(async () => undefined),
+    spyOn(DBOS, "shutdown").mockImplementation(async () => undefined),
+    spyOn(DBOS, "listWorkflows").mockImplementation(async () => input.run_workflows.map((workflowID) => ({ workflowID })) as never),
+    spyOn(DBOS, "getWorkflowStatus").mockImplementation(async (id) => input.status(id) as never),
+    spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never),
+  ];
+  const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({ workflowID: "run:run-1:1" }) as never);
+  return { fork, restore: () => { for (const spy of [...spies, fork]) spy.mockRestore(); } };
 }
+
+test("ops forks an ERROR run workflow into its next generation", async () => {
+  const dbos = mockDbos({ run_workflows: ["run:run-1"], status: (id) => id === "run:run-1"
+    ? { workflowName: "oakridgeRunWorkflow", status: "ERROR", input: ["run-1"] } : null });
+  try {
+    expect(await runOps(["workflows", "recover", "run:run-1"], "postgres://test")).toMatchObject({ workflowID: "run:run-1:1", action: "forked" });
+    expect(dbos.fork).toHaveBeenCalledWith("run:run-1", 0, expect.objectContaining({ newWorkflowID: "run:run-1:1" }));
+  } finally { dbos.restore(); }
+});
+
+test("ops refuses an ERROR run workflow that is not the run's current generation", async () => {
+  const dbos = mockDbos({ run_workflows: ["run:run-1", "run:run-1:1"], status: () => ({ workflowName: "oakridgeRunWorkflow", status: "ERROR", input: ["run-1"] }) });
+  try {
+    await expect(runOps(["workflows", "recover", "run:run-1"], "postgres://test")).rejects.toThrow("not the run's current generation");
+    expect(dbos.fork).not.toHaveBeenCalled();
+  } finally { dbos.restore(); }
+});

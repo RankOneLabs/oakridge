@@ -1,9 +1,8 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import { openDatabase } from "./storage/database";
 import { migrateEmptyDatabase } from "./storage/migrate";
-import { claimRunGeneration, currentRunGeneration } from "./storage/run-lifecycle";
-import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
-import { ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
+import { currentRunGeneration, ensureRunRecoveryFork, forkStartStep, runGenerationOf, runWorkflowId } from "./workflows/topology";
 
 /** Recovery forks onto the version of the running engine and its WASM core. */
 function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
@@ -16,9 +15,9 @@ export async function runOps(args: readonly string[], database_url: string | und
   const command = (args[0] === "--" ? args.slice(1) : args) as OpsCommand;
   if (!database_url) throw new Error("DBOS_SYSTEM_DATABASE_URL is required");
   if (command[0] === "migrate") {
-    const db = PgPostgresExecutor.connect(database_url);
+    const db = openDatabase(database_url);
     try { await migrateEmptyDatabase(db); return { migrated: true }; }
-    finally { await db.close(); }
+    finally { await db.destroy(); }
   }
   if (command[0] !== "workflows" || !["list", "inspect", "recover"].includes(command[1]))
     throw new Error("usage: ops -- workflows list|inspect <id>|recover <id> OR ops -- migrate");
@@ -40,18 +39,14 @@ export async function runOps(args: readonly string[], database_url: string | und
     const steps = await DBOS.listWorkflowSteps(workflow_id!) ?? [];
     const startStep = forkStartStep(steps);
     let newWorkflowID: string | undefined;
-    let runGeneration: { readonly run_id: string; readonly generation: number } | null = null;
     if (status.workflowName === "oakridgeRunWorkflow") {
       if (typeof status.input?.[0] !== "string") throw new Error(`run workflow ${workflow_id} has no run identity`);
       const run_id = status.input[0];
-      const db = PgPostgresExecutor.connect(database_url);
-      try {
-        const generation = await currentRunGeneration(db, run_id);
-        if (generation === null || runWorkflowId(run_id, generation) !== workflow_id)
-          throw new Error(`run workflow ${workflow_id} is not the current authority generation`);
-        newWorkflowID = runWorkflowId(run_id, generation + 1);
-        runGeneration = { run_id, generation };
-      } finally { await db.close(); }
+      // The newest run workflow is the run's current generation; only it may be recovered.
+      const generation = runGenerationOf(run_id, workflow_id!);
+      if (generation === null || await currentRunGeneration(run_id) !== generation)
+        throw new Error(`run workflow ${workflow_id} is not the run's current generation`);
+      newWorkflowID = runWorkflowId(run_id, generation + 1);
     }
     const application_version = opsApplicationVersion();
     let recovered_workflow_id: string;
@@ -65,16 +60,6 @@ export async function runOps(args: readonly string[], database_url: string | und
           ...(status.workflowName === "oakridgeEffectWorkflow" && status.timeoutMS !== undefined
             ? { timeoutMS: status.timeoutMS } : {}) });
       recovered_workflow_id = forked.workflowID;
-    }
-    if (runGeneration) {
-      const db = PgPostgresExecutor.connect(database_url);
-      try {
-        if (await claimRunGeneration(db, runGeneration.run_id, runGeneration.generation) === null) {
-          const generation = await currentRunGeneration(db, runGeneration.run_id);
-          if (generation === null || generation <= runGeneration.generation)
-            throw new Error(`run ${runGeneration.run_id} generation changed during recovery`);
-        }
-      } finally { await db.close(); }
     }
     return { workflowID: recovered_workflow_id, action: "forked", startStep };
   } finally { await DBOS.shutdown(); }

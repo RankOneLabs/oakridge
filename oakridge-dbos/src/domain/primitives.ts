@@ -10,6 +10,12 @@ export type ScopeId = Brand<string, "ScopeId">;
 export type RevisionId = Brand<string, "RevisionId">;
 export type PoolId = Brand<string, "PoolId">;
 export type UnitId = Brand<string, "UnitId">;
+/** A core action key: one per RunWorker action, shared by every attempt of a periodic worker. */
+export type ActionId = Brand<string, "ActionId">;
+export type EventId = Brand<string, "EventId">;
+export type DecisionId = Brand<string, "DecisionId">;
+export type EffectIntentId = Brand<string, "EffectIntentId">;
+export type DefinitionBundleId = Brand<string, "DefinitionBundleId">;
 export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
 export type RunTransitionId = Brand<string, "RunTransitionId">;
 export type CohortId = Brand<string, "CohortId">;
@@ -30,3 +36,9 @@ export type Result<Value, ErrorValue> =
 
 export const ok = <Value>(value: Value): Result<Value, never> => ({ ok: true, value });
 export const err = <ErrorValue>(error: ErrorValue): Result<never, ErrorValue> => ({ ok: false, error });
+
+/** A failure traced to the operation and entity it occurred on. */
+export interface TracedError { readonly operation: string; readonly entity_id: string; readonly detail: string }
+export type Traced<Value> = Result<Value, TracedError>;
+export const traced = (operation: string, entity_id: string, detail: string): Result<never, TracedError> =>
+  ({ ok: false, error: { operation, entity_id, detail } });

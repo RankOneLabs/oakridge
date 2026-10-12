@@ -11,7 +11,7 @@ const { computeEngineSourceDigest, computeEngineVersion, computeStorageBaselineD
 test("engine manifest covers workflow imports and injected service implementations", () => {
   const root = resolve(import.meta.dir, "../src");
   const entries = ["workflows/topology.ts", "workflows/engine-version.ts", "core-client/client.ts",
-    "storage/mutation-service.ts", "storage/sql-executor.ts", "effects/operations/production-provider.ts"];
+    "storage/commit.ts", "storage/database.ts", "effects/operations/production-provider.ts"];
   const sources = [...buildGraph(entries.map((path) => resolve(root, path))).keys()].map((path) => relative(root, path)).sort();
   expect([...ENGINE_SOURCE_MANIFEST].sort()).toEqual(sources);
 });
@@ -49,7 +49,7 @@ test("changes in every engine dependency change the recovery version", () => {
       expect(version()).not.toBe(original);
       writeFileSync(resolve(root, name), "original");
     }
-    for (const name of ["http/app.ts", "projections/run-view.ts", "workflows/topology.test.ts"]) {
+    for (const name of ["http/app.ts", "projections/collaboration-view.ts", "workflows/topology.test.ts"]) {
       mkdirSync(dirname(resolve(root, name)), { recursive: true });
       writeFileSync(resolve(root, name), "unrelated change");
     }

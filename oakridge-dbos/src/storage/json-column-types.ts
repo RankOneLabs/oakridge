@@ -1,31 +1,41 @@
 /**
  * TypeScript types of the authority's jsonb columns. The baseline names one of
  * these per column with `COMMENT ON COLUMN ... IS '@type {Name}'`, and
- * scripts/generate-storage-records.ts imports them into generated-records.ts.
+ * scripts/generate-storage-records.ts imports them into db-types.ts.
  */
+import type { ColumnType } from "kysely";
 import type { Action, Event, Workflow } from "../core-client/core-types";
-import type { ScopeId } from "./schema-records";
-import type { JsonValue } from "../domain/primitives";
+
+/**
+ * A jsonb value serialized for a write. pg would send an array as a Postgres
+ * array and a bare string as text, so every jsonb write goes through
+ * `jsonText` (database.ts), and the brand keeps the value's type.
+ */
+export type JsonText<Value> = string & { readonly __json: Value };
+export type JsonColumn<Value> = ColumnType<Value, JsonText<Value>, JsonText<Value>>;
+export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value> | null, JsonText<Value> | null>;
 
 export type { AttemptStatus, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
-/** The authoring input and every event body are schema-checked by the Rust core. */
+export type { EffectInstruction } from "../domain/effect-instruction";
+export type { SessionPolicy } from "../domain/session-settings";
+export type { OperatorEventPayload } from "../projections/operator-event";
+/** Run input, unit input, revision bodies and decision payloads are schema-checked by the Rust core. */
 export type RuntimeValue = unknown;
 export type CoreEvent = Event;
 export type DefinitionBundleSource = Workflow;
 export type WantedActions = readonly Action[];
-export type { SessionPolicy } from "../domain/session-settings";
+/** Prompt path -> content digest, pinned when the definition is compiled (D9). */
+export type PinnedPrompts = { readonly [path: string]: string };
+/** What an ingress id resolved to. A rejection is stored so a replay returns it again. */
+export type CommitReceipt =
+  | { readonly kind: "committed"; readonly event_id: string }
+  | { readonly kind: "rejected"; readonly reason: string };
 
-export interface OperatorEventPayload { readonly kind: string; readonly data: JsonValue }
 export interface CollaborationThreadContext { readonly title: string; readonly anchor: string | null }
 export interface CollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }
 export interface ReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
 export type CollaborationDeliveryPayload =
   | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
   | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
-
-export interface ChildCollectionMember { readonly id: ScopeId; readonly key: string; readonly depends_on: readonly string[] }
-export type ChildCollectionMembers = readonly (string | ChildCollectionMember)[];
-export interface CommitReceipt { readonly event_id: string }
-export type EffectIntentPayload = Action;
 /** The GitHub repository a project's checkout pushes to. */
 export interface ForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
