@@ -1434,7 +1434,7 @@ pub mod workflow_v2 {
                     source: source.clone(),
                     expression: Expression::Map {
                         source: Box::new(Expression::Reference {
-                            root: ReferenceRoot::UnitOutcome {
+                            root: ReferenceRoot::MemberOutcomes {
                                 unit: SymbolKey::from(collection),
                             },
                             path: vec![],

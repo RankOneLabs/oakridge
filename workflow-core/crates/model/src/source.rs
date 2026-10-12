@@ -432,6 +432,10 @@ pub enum ReferenceRoot {
     UnitOutcome {
         unit: SymbolKey,
     },
+    /// Every member outcome of a collection, in key order.
+    MemberOutcomes {
+        unit: SymbolKey,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

@@ -267,7 +267,8 @@ fn reference_schema(
         | ReferenceRoot::Published { .. }
         | ReferenceRoot::Approved { .. }
         | ReferenceRoot::ChangesRequested { .. }
-        | ReferenceRoot::UnitOutcome { .. } => {
+        | ReferenceRoot::UnitOutcome { .. }
+        | ReferenceRoot::MemberOutcomes { .. } => {
             return Err(crate::error(
                 DomainErrorKind::UnknownConstruct,
                 owner.key.0.clone(),

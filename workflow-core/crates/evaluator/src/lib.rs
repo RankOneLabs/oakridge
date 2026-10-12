@@ -2,7 +2,7 @@
 mod collections;
 mod expressions;
 mod v2_step {
-    use serde_json::{Map, Value};
+    use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
     use workflow_model::*;
 
@@ -92,153 +92,6 @@ mod v2_step {
             current = current.get(*part)?;
         }
         Some(current.clone())
-    }
-    fn split_args(text: &str) -> Vec<&str> {
-        let mut depth = 0usize;
-        let mut start = 0usize;
-        let mut args = Vec::new();
-        for (index, ch) in text.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                ',' if depth == 0 => {
-                    args.push(text[start..index].trim());
-                    start = index + 1;
-                }
-                _ => {}
-            }
-        }
-        args.push(text[start..].trim());
-        args
-    }
-    fn function<'a>(text: &'a str, name: &str) -> Option<&'a str> {
-        text.strip_prefix(name)?
-            .strip_prefix('(')?
-            .strip_suffix(')')
-    }
-    fn eval(
-        text: &str,
-        unit: &UnitState,
-        state: &ScopedSnapshot,
-        each: Option<&Value>,
-        own_body: Option<(&str, &Value)>,
-    ) -> Option<Value> {
-        let text = text.trim();
-        if let Some(body) = function(text, "len") {
-            let value = eval(body, unit, state, each, own_body)?;
-            return Some(Value::from(match value {
-                Value::String(s) => s.chars().count(),
-                Value::Array(a) => a.len(),
-                _ => return None,
-            }));
-        }
-        for (symbol, compare) in [(" >= ", 0), (" <= ", 1), (" > ", 2), (" < ", 3)] {
-            if let Some((left, right)) = text.split_once(symbol) {
-                let left = eval(left, unit, state, each, own_body)?.as_i64()?;
-                let right = eval(right, unit, state, each, own_body)?.as_i64()?;
-                return Some(Value::Bool(match compare {
-                    0 => left >= right,
-                    1 => left <= right,
-                    2 => left > right,
-                    _ => left < right,
-                }));
-            }
-        }
-        for (name, kind) in [
-            ("latest", 0),
-            ("published", 1),
-            ("approved", 2),
-            ("changes_requested", 3),
-        ] {
-            if let Some(artifact) = function(text, name) {
-                let revision = latest(state, &unit.id, &SymbolKey::from(artifact.trim()));
-                return Some(match kind {
-                    0 => revision.map(|r| r.body.clone()).unwrap_or(Value::Null),
-                    1 => Value::Bool(revision.is_some()),
-                    2 | 3 => Value::Bool(revision.is_some_and(|r| {
-                        state.decisions.iter().any(|d| {
-                            d.unit == unit.id
-                                && d.target == r.id
-                                && d.effect
-                                    == if kind == 2 {
-                                        DecisionEffect::Approve
-                                    } else {
-                                        DecisionEffect::RequestChanges
-                                    }
-                        })
-                    })),
-                    _ => unreachable!(),
-                });
-            }
-        }
-        if let Some(rest) = text.strip_prefix("input.") {
-            return path(&unit.input, &rest.split('.').collect::<Vec<_>>());
-        }
-        if text == "input" {
-            return Some(unit.input.clone());
-        }
-        if let Some(rest) = text.strip_prefix("each.") {
-            return path(each?, &rest.split('.').collect::<Vec<_>>());
-        }
-        if text == "each" {
-            return each.cloned();
-        }
-        if let Some((artifact, body)) = own_body {
-            if text == artifact {
-                return Some(body.clone());
-            }
-            if let Some(rest) = text
-                .strip_prefix(artifact)
-                .and_then(|v| v.strip_prefix('.'))
-            {
-                return path(body, &rest.split('.').collect::<Vec<_>>());
-            }
-        }
-        if let Some((child, rest)) = text.split_once(".outcome") {
-            let child = state.units.iter().find(|candidate| {
-                candidate.parent.as_ref() == Some(&unit.id)
-                    && (candidate.declaration.0 == child
-                        || candidate.id.0.ends_with(&format!("/{child}")))
-            })?;
-            let UnitStatus::Done { outcome } = &child.status else {
-                return None;
-            };
-            return if rest.is_empty() {
-                Some(outcome.clone())
-            } else {
-                path(
-                    outcome,
-                    &rest.strip_prefix('.')?.split('.').collect::<Vec<_>>(),
-                )
-            };
-        }
-        if let Some(rest) = text.strip_prefix("latest(") {
-            let (artifact, suffix) = rest.split_once(')')?;
-            let body = latest(state, &unit.id, &SymbolKey::from(artifact))?
-                .body
-                .clone();
-            return if suffix.is_empty() {
-                Some(body)
-            } else {
-                path(
-                    &body,
-                    &suffix.strip_prefix('.')?.split('.').collect::<Vec<_>>(),
-                )
-            };
-        }
-        if text == "true" {
-            return Some(Value::Bool(true));
-        }
-        if text == "false" {
-            return Some(Value::Bool(false));
-        }
-        if let Ok(value) = text.parse::<i64>() {
-            return Some(Value::from(value));
-        }
-        if text.starts_with('"') {
-            return serde_json::from_str(text).ok();
-        }
-        None
     }
     /// Walk a resolved stage expression. The compiler already type-checked it,
     /// so an unresolvable read is None rather than an error.
@@ -348,6 +201,19 @@ mod v2_step {
                         artifact,
                         DecisionEffect::RequestChanges,
                     )),
+                    ReferenceRoot::MemberOutcomes { unit: collection } => {
+                        let mut values = Vec::new();
+                        for child in state.units.iter().filter(|candidate| {
+                            candidate.parent.as_ref() == Some(&unit.id)
+                                && candidate.declaration.0 == collection.0
+                        }) {
+                            let UnitStatus::Done { outcome } = &child.status else {
+                                return None;
+                            };
+                            values.push(read(outcome)?);
+                        }
+                        Some(Value::Array(values))
+                    }
                     ReferenceRoot::UnitOutcome { unit: child_key } => {
                         let child = state.units.iter().find(|candidate| {
                             candidate.parent.as_ref() == Some(&unit.id)
@@ -365,20 +231,20 @@ mod v2_step {
             _ => None,
         }
     }
-    fn eval_record(
-        fields: &BTreeMap<String, String>,
+    fn eval_fields(
+        fields: &[CheckedNamedExpression],
         unit: &UnitState,
         state: &ScopedSnapshot,
         each: Option<&Value>,
     ) -> Option<Value> {
-        let mut value = Map::new();
-        for (key, source) in fields {
-            value.insert(key.clone(), eval(source, unit, state, each, None)?);
-        }
-        Some(Value::Object(value))
-    }
-    fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
-        ActionKey(format!("{}:{}:{mode:?}:{cause:?}", unit.0, worker.0))
+        fields
+            .iter()
+            .map(|field| {
+                eval_expression(&field.value.expression, unit, state, each, None)
+                    .map(|value| (field.key.clone(), value))
+            })
+            .collect::<Option<serde_json::Map<_, _>>>()
+            .map(Value::Object)
     }
     fn latest_retry<'a>(
         state: &'a ScopedSnapshot,
@@ -535,24 +401,41 @@ mod v2_step {
             .and_then(|u| u.group.as_deref())
             .ok_or_else(|| invalid("group declaration absent"))
     }
-    fn unit_definition<'a>(
+    /// The checked group mirroring group_for, so the engine can read compiled
+    /// unit expressions instead of the source text beside them.
+    fn checked_group_for<'a>(
         program: &'a CheckedWorkflow,
         state: &ScopedSnapshot,
         unit: &UnitState,
-    ) -> Result<&'a Unit, StepError> {
+    ) -> Result<&'a CheckedGroup, StepError> {
+        if unit.id == state.run.root {
+            return Ok(&program.root);
+        }
         let parent_id = unit
             .parent
             .as_ref()
-            .ok_or_else(|| invalid("root has no unit declaration"))?;
+            .ok_or_else(|| invalid("group has no parent"))?;
         let parent = state
             .units
             .iter()
             .find(|u| u.id == *parent_id)
             .ok_or_else(|| invalid("parent absent"))?;
-        group_for(program, state, parent)?
+        checked_group_for(program, state, parent)?
             .units
-            .get(&unit.declaration.0)
-            .ok_or_else(|| invalid("unit declaration absent"))
+            .iter()
+            .find(|candidate| candidate.key.0 == unit.declaration.0)
+            .and_then(|candidate| candidate.group.as_deref())
+            .ok_or_else(|| invalid("checked group declaration absent"))
+    }
+    fn checked_unit<'a>(
+        group: &'a CheckedGroup,
+        declaration: &str,
+    ) -> Result<&'a CheckedUnit, StepError> {
+        group
+            .units
+            .iter()
+            .find(|candidate| candidate.key.0 == declaration)
+            .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
     }
     fn check_type(ty: &TypeExpression, value: &Value) -> bool {
         match ty {
@@ -618,6 +501,9 @@ mod v2_step {
         }
         TypeExpression::Record(fields)
     }
+    fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
+        ActionKey(format!("{}:{}:{mode:?}:{cause:?}", unit.0, worker.0))
+    }
     fn materialize_group(
         program: &CheckedWorkflow,
         state: &mut ScopedSnapshot,
@@ -630,9 +516,11 @@ mod v2_step {
             .cloned()
             .ok_or_else(|| invalid("group absent"))?;
         let group = group_for(program, state, &parent)?.clone();
+        let checked = checked_group_for(program, state, &parent)?.clone();
         for (key, unit) in &group.units {
-            let each_values = if let Some(source) = &unit.for_each {
-                eval(source, &parent, state, None, None)
+            let collection = checked_unit(&checked, key)?.collection.clone();
+            let each_values = if let Some(collection) = &collection {
+                eval_expression(&collection.source.expression, &parent, state, None, None)
                     .and_then(|v| v.as_array().cloned())
                     .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
             } else {
@@ -640,8 +528,8 @@ mod v2_step {
             };
             let mut keys = BTreeSet::new();
             for each in &each_values {
-                let member = if let Some(source) = &unit.key {
-                    eval(source, &parent, state, Some(each), None)
+                let member = if let Some(collection) = &collection {
+                    eval_expression(&collection.key.expression, &parent, state, Some(each), None)
                         .and_then(|v| v.as_str().map(str::to_owned))
                         .ok_or_else(|| rejected(format!("collection {key} key is not text")))?
                 } else {
@@ -661,8 +549,11 @@ mod v2_step {
                 let dependencies = match &unit.after {
                     UnitDependencies::None => vec![],
                     UnitDependencies::Fixed(items) => items.iter().map(|v| v.0.clone()).collect(),
-                    UnitDependencies::Each(source) => {
-                        eval(source, &parent, state, Some(each), None)
+                    UnitDependencies::Each(_) => {
+                        let after = collection
+                            .as_ref()
+                            .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
+                        eval_expression(&after.after.expression, &parent, state, Some(each), None)
                             .and_then(|v| v.as_array().cloned())
                             .ok_or_else(|| {
                                 rejected(format!("collection {key} after is not a list"))
@@ -676,8 +567,9 @@ mod v2_step {
                             .collect::<Result<Vec<_>, _>>()?
                     }
                 };
+                let declared_input = &checked_unit(&checked, key)?.input;
                 let input = if unit.for_each.is_some() {
-                    eval_record(&unit.input, &parent, state, Some(each))
+                    eval_fields(declared_input, &parent, state, Some(each))
                         .ok_or_else(|| rejected("collection input unresolved"))?
                 } else {
                     Value::Null
@@ -1047,41 +939,6 @@ mod v2_step {
         }
         Ok(())
     }
-    fn group_outcome(group: &Group, owner: &UnitState, state: &ScopedSnapshot) -> Option<Value> {
-        let mut fields = Map::new();
-        for (key, source) in &group.outcome {
-            if let Some(inner) = function(source, "map") {
-                let args = split_args(inner);
-                if args.len() != 2 {
-                    return None;
-                }
-                let mut values = Vec::new();
-                for child in state
-                    .units
-                    .iter()
-                    .filter(|u| u.parent.as_ref() == Some(&owner.id) && u.declaration.0 == args[0])
-                {
-                    let UnitStatus::Done { outcome } = &child.status else {
-                        return None;
-                    };
-                    let suffix = args[1].strip_prefix(args[0])?.strip_prefix(".outcome")?;
-                    let value = if suffix.is_empty() {
-                        outcome.clone()
-                    } else {
-                        path(
-                            outcome,
-                            &suffix.strip_prefix('.')?.split('.').collect::<Vec<_>>(),
-                        )?
-                    };
-                    values.push(value);
-                }
-                fields.insert(key.clone(), Value::Array(values));
-            } else {
-                fields.insert(key.clone(), eval(source, owner, state, None, None)?);
-            }
-        }
-        Some(Value::Object(fields))
-    }
     fn advance(program: &CheckedWorkflow, state: &mut ScopedSnapshot) -> Result<bool, StepError> {
         for index in 0..state.units.len() {
             let unit = state.units[index].clone();
@@ -1118,8 +975,13 @@ mod v2_step {
                         .iter()
                         .all(|u| matches!(u.status, UnitStatus::Done { .. }))
                 {
-                    let outcome = group_outcome(group_for(program, state, &unit)?, &unit, state)
-                        .ok_or_else(|| invalid("group outcome unresolved"))?;
+                    let outcome = eval_fields(
+                        &checked_group_for(program, state, &unit)?.outcome,
+                        &unit,
+                        state,
+                        None,
+                    )
+                    .ok_or_else(|| invalid("group outcome unresolved"))?;
                     state.units[index].status = UnitStatus::Done { outcome };
                     return Ok(true);
                 }
@@ -1185,13 +1047,16 @@ mod v2_step {
                 }
             }
             if unit.input.is_null() {
-                let definition = unit_definition(program, state, &unit)?;
                 let parent = state
                     .units
                     .iter()
                     .find(|u| Some(&u.id) == unit.parent.as_ref())
                     .ok_or_else(|| invalid("parent absent"))?;
-                state.units[index].input = eval_record(&definition.input, parent, state, None)
+                let declared = checked_unit(
+                    checked_group_for(program, state, parent)?,
+                    &unit.declaration.0,
+                )?;
+                state.units[index].input = eval_fields(&declared.input, parent, state, None)
                     .ok_or_else(|| invalid("unit input unresolved"))?;
             }
             state.units[index].status = UnitStatus::Active;
