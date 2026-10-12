@@ -256,6 +256,9 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const intent = loaded.intent;
   let status: EffectStatus | null = intent.status;
   let handle = intent.handle;
+  // WorkerStarted commits the session before the intent is acknowledged; a
+  // carrier re-run between the two resumes that session rather than starting another.
+  if (status === "pending" && handle !== null) status = await markAcknowledgedStep(intent_id);
   for (let attempt = 0; status === "pending"; attempt++) {
     const claim = await claimStartStep(intent);
     if (claim.kind === "missing") return null;

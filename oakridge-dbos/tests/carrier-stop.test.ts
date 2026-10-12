@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import type { EffectInstruction } from "../src/domain/effect-instruction";
 import type { EffectProvider, ExternalHandle, ProviderResult, TerminalObservation } from "../src/effects/provider";
 import { INPUT_CONTRACTS } from "../src/effects/provider-catalog";
@@ -19,6 +20,7 @@ const session = (session_id: string): ExternalHandle => ({ kind: INPUT_CONTRACTS
 const STOPPED = { kind: "acknowledged", value: { stopped: true } } as const;
 const scripts = new Map<string, Script>();
 const stop_calls = new Map<string, (ExternalHandle | null)[]>();
+const start_calls = new Map<string, number>();
 const runOf = (instruction: EffectInstruction): string => instruction.action.unit.split("/")[0]!;
 const scriptOf = (instruction: EffectInstruction): Script => {
   const script = scripts.get(runOf(instruction));
@@ -26,7 +28,10 @@ const scriptOf = (instruction: EffectInstruction): Script => {
   return script;
 };
 const provider: EffectProvider = {
-  async start(instruction) { return scriptOf(instruction).start; },
+  async start(instruction) {
+    start_calls.set(runOf(instruction), (start_calls.get(runOf(instruction)) ?? 0) + 1);
+    return scriptOf(instruction).start;
+  },
   async observe(instruction) { return scriptOf(instruction).observe; },
   async stop(instruction, handle) {
     const calls = stop_calls.get(runOf(instruction)) ?? [];
@@ -55,16 +60,15 @@ afterAll(async () => {
   await scratch.drop();
 });
 
-async function launchScripted(script: Script): Promise<string> {
-  const request_id = crypto.randomUUID();
+async function launchScripted(script: Script, request_id: string = crypto.randomUUID()): Promise<string> {
   scripts.set(launchRunId(request_id), script);
   const launched = await composition.app.request("/api/runs", json({ digest, input: { topic: "Oakridge" }, request_id }));
   return (await launched.json() as { readonly run_id: string }).run_id;
 }
 const intentOf = (run_id: string) => db.selectFrom("authority.effect_intent").select(["status", "last_error"]).where("run_id", "=", run_id).executeTakeFirstOrThrow();
 const attemptOf = (run_id: string) => db.selectFrom("authority.attempt").select("status").where("run_id", "=", run_id).executeTakeFirstOrThrow();
-async function until(run_id: string, is_done: (status: string) => boolean): Promise<void> {
-  for (let poll = 0; poll < 150 && !is_done((await intentOf(run_id)).status); poll++) await Bun.sleep(100);
+async function until(run_id: string, is_done: (status: string) => boolean, polls = 150): Promise<void> {
+  for (let poll = 0; poll < polls && !is_done((await intentOf(run_id)).status); poll++) await Bun.sleep(100);
 }
 const isSettled = (status: string): boolean => status === "stopped" || status === "failed";
 
@@ -113,3 +117,22 @@ test("cancelling a run with a live session stops it through the cleanup carrier"
   await until(run_id, isSettled);
   expect({ status: (await intentOf(run_id)).status, stops: stop_calls.get(run_id) }).toEqual({ status: "stopped", stops: [session("s-cancel")] });
 }, 30_000);
+
+test("a carrier re-run after its session started resumes that session rather than starting another", async () => {
+  const request_id = crypto.randomUUID();
+  // Acknowledging fails past its step retries, so the carrier body runs again with the intent still pending.
+  await sql`CREATE SEQUENCE public.ack_faults; CREATE TABLE public.ack_fault_run (run_id text PRIMARY KEY);
+    CREATE FUNCTION public.fail_acknowledge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.status = 'acknowledged' AND OLD.status = 'pending' AND EXISTS (SELECT 1 FROM public.ack_fault_run WHERE run_id = NEW.run_id)
+        AND nextval('public.ack_faults') <= 5 THEN RAISE EXCEPTION 'acknowledge refused'; END IF;
+      RETURN NEW; END $$;
+    CREATE TRIGGER fail_acknowledge BEFORE UPDATE ON authority.effect_intent FOR EACH ROW EXECUTE FUNCTION public.fail_acknowledge()`.execute(db);
+  await sql`INSERT INTO public.ack_fault_run VALUES (${launchRunId(request_id)})`.execute(db);
+  const run_id = await launchScripted({ start: { kind: "acknowledged", value: session("s-resumed") },
+    observe: { kind: "acknowledged", value: { kind: "running" } }, stops: [STOPPED] }, request_id);
+  await until(run_id, (status) => status === "acknowledged", 450);
+  const faults = await sql<{ last_value: string }>`SELECT last_value FROM public.ack_faults`.execute(db);
+  expect({ status: (await intentOf(run_id)).status, starts: start_calls.get(run_id),
+    was_refused_past_retries: Number(faults.rows[0]?.last_value) > 5 })
+    .toEqual({ status: "acknowledged", starts: 1, was_refused_past_retries: true });
+}, 60_000);
