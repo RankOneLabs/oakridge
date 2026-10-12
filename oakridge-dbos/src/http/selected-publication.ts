@@ -8,10 +8,6 @@ import { requestDigest, findReceipt } from "../storage/receipts";
 import type { OutputSlotRecord, RunId, ScopeId, ScopeInstanceRecord } from "../storage/schema-records";
 import type { TransactionalSqlExecutor } from "../storage/sql-executor";
 import { MAX_PUBLICATION_VALUE_BYTES, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
-import { MAX_SNAPSHOT_BYTES } from "../core-client/client";
-import { readScopeView } from "../storage/projection-reader";
-import { measureSnapshotSize } from "../effects/operations/selected-publication-contract";
-import { readSnapshot } from "../storage/snapshot-reader";
 
 interface SelectedOutputRequest { readonly request_id: string; readonly predecessor_id: string | null; readonly collection_key: string; readonly body: unknown }
 interface PublicationDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
@@ -44,34 +40,6 @@ async function readSelectedExecution(db: TransactionalSqlExecutor, scope_id: Sco
 
 /** Raw worker bodies cross the checked core boundary before any publication is committed. */
 export function installSelectedPublicationApi(app: Hono, deps: PublicationDependencies): void {
-  app.get("/api/runs/:run_id/scopes/:scope_id/executions/:execution_id/contract", async (c) => {
-    const run_id = c.req.param("run_id") as RunId;
-    const scope_id = c.req.param("scope_id") as ScopeId;
-    const execution_id = c.req.param("execution_id");
-    if (!await hasExecutionSecret(deps.db, run_id, scope_id, execution_id, c.req.header("authorization"))) return c.json({ error: "execution_authority_refused" }, 403);
-    const view = await readScopeView(deps.db, scope_id);
-    if (!view || view.run_id !== run_id) return c.json({ error: "scope_not_found" }, 404);
-    const selected = await readSelectedExecution(deps.db, scope_id, execution_id);
-    const scope = selected?.source.scopes.find((scope) => scope.key === selected.scope_key);
-    if (!selected || !scope) return c.json({ error: "selected execution not found" }, 404);
-    const selected_keys = selected.payload.invocation.selection.definition.outputs;
-    let remaining_snapshot_bytes = MAX_SNAPSHOT_BYTES;
-    for (const output_key of selected_keys) {
-      const output = scope.outputs.find((output) => output.key === output_key);
-      const event = scope.facts.find((fact) => fact.key === output?.publication_trigger);
-      if (!output?.publication_trigger || !event) return c.json({ error: "publication trigger is not configured" }, 422);
-      const trigger = await deps.core.request("validate_payload", { bundle: selected.source, schema: event.payload_schema, payload: {} });
-      if (!trigger.ok || trigger.value.kind !== "validated") return c.json({ error: "publication trigger payload is invalid" }, 422);
-      const measured = await readSnapshot(deps.db, scope_id, { id: "snapshot-budget", key: output.publication_trigger, payload: trigger.value.value });
-      if (!measured) return c.json({ error: "scope_not_found" }, 404);
-      // The shared budget must fit every output this execution can publish.
-      remaining_snapshot_bytes = Math.min(remaining_snapshot_bytes, Math.max(0, MAX_SNAPSHOT_BYTES - measureSnapshotSize(measured).bytes));
-    }
-    return c.json({ scope_id, execution_id, scope_version: view.cursor.scope_version,
-      outputs: view.outputs.filter((slot) => selected_keys.includes(slot.output_key)).map((slot) => ({ output_key: slot.output_key, collection_key: slot.collection_key,
-        predecessor_id: slot.current_revision?.id ?? null, slot_version: slot.version })),
-      remaining_snapshot_bytes });
-  });
   app.put("/api/runs/:run_id/scopes/:scope_id/executions/:execution_id/outputs/:output_key", async (c) => {
     let raw: unknown;
     try { raw = await c.req.json(); } catch { return c.json({ error: "invalid JSON" }, 400); }

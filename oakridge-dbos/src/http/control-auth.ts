@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { matchRoute } from "./routes";
 import type { BrowserWritePolicy } from "./browser-write-policy";
+import type { Writer } from "../core-client/core-types";
 
 /**
  * The control plane's bind policy, decided once at startup.
@@ -51,6 +52,17 @@ function equalToken(header: string | undefined, token: string): boolean {
   return timingSafeEqual(supplied, expected);
 }
 export const isValidControlToken = equalToken;
+
+/** Stable, non-secret identifier for the credential that passed control auth.
+ * The request body has no role in choosing the event writer. */
+export function operatorWriterFromCredential(request: Request): Writer {
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  const credential = bearer ?? controlCookie(request.headers.get("cookie"));
+  return { kind: "operator", subject: credential
+    ? `credential:${createHash("sha256").update(credential).digest("hex").slice(0, 24)}`
+    : "local-control" };
+}
 
 function controlCookie(header: string | null): string | null {
   for (const part of (header ?? "").split(";")) {

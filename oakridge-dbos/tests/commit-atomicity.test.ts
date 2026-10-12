@@ -1,83 +1,112 @@
 import { expect, test } from "bun:test";
+import { Hono } from "hono";
 import { Pool } from "pg";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor, type TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import { readSnapshot } from "../src/storage/snapshot-reader";
-import { commitDecision, type CommitRequest } from "../src/storage/commit";
-import { createMutationService } from "../src/storage/mutation-service";
+import { commitEvent } from "../src/storage/commit";
 import type { CoreClient } from "../src/core-client/client";
-import type { CheckedValue } from "../src/core-client/core-types";
-import { MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
-import type { PoolId, RunId, ScopeId } from "../src/storage/schema-records";
+import type { Incoming, ScopedSnapshot, StepResult } from "../src/core-client/core-types";
+import { readRunInspect } from "../src/projections/run-view";
+import { installDefinitionApi } from "../src/http/app";
+import { controlTokenMiddleware } from "../src/http/control-auth";
 
-test("a fault after state, output and reservation writes rolls the entire decision back", async () => {
+function fakeCore(): CoreClient {
+  return { request: async (_operation: string, input: { snapshot: ScopedSnapshot; incoming: Incoming }) => {
+    const before = input.snapshot;
+    const snapshot: ScopedSnapshot = input.incoming.event.kind === "launched"
+      ? { ...before, run: { ...before.run, input: input.incoming.event.input, status: { kind: "active" } },
+        units: [{ id: before.run.root, parent: null, declaration: "$root", stage: null, pool: null,
+          input: input.incoming.event.input, status: { kind: "active" }, after: [] }] }
+      : { ...before, run: { ...before.run, status: { kind: "cancelled" } },
+        units: before.units.map((unit) => ({ ...unit, status: { kind: "cancelled" } })) };
+    const value: StepResult = { snapshot, statuses: snapshot.units.map((unit) => [unit.id, unit.status]), wanted: [] };
+    return { ok: true, value: { kind: "stepped", value } };
+  } } as unknown as CoreClient;
+}
+
+test("event, writer, snapshot delta and receipt roll back together", async () => {
   const admin_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
-  if (!admin_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for PostgreSQL commit tests");
-  const name = `atomic_${crypto.randomUUID().replaceAll("-", "")}`;
+  if (!admin_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
+  const name = `commit_${crypto.randomUUID().replaceAll("-", "")}`;
   const admin = new Pool({ connectionString: admin_url });
   const url = new URL(admin_url); url.pathname = `/${name}`;
   await admin.query(`CREATE DATABASE ${name}`);
   const db = PgPostgresExecutor.connect(url.href);
-  const value: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: [] } };
   try {
     await migrateEmptyDatabase(db);
-    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest',$1,$2)", [JSON.stringify({ limits: { max_depth: 64, max_list_items: 100 }, schemas: [{ key: "unit", shape: { kind: "record", fields: [], dictionary: "text" } }, { key: "text", shape: { kind: "string", min_length: 0, max_length: 2_000_000 } }], scopes: [{ key: "root", tree: { kind: "wait", reason: "storage fixture" }, commands: [], state_schema: "unit", outcome_schema: "unit", children: [], exports: [], resources: [], workers: [], pools: [{ key: "workers", limit: 1 }], outputs: [{ key: "report", schema: "unit", producers: [], publication_trigger: "start" }] }] }), JSON.stringify({ digest: "digest", scopes: [{ key: "root", reads: [] }] })]);
-    await db.query("INSERT INTO authority.run (id,definition_bundle_id) VALUES ('run','bundle')", []);
-    await db.query("INSERT INTO authority.scope_instance (id,run_id,scope_key,input,local_state) VALUES ('scope','run','root',$1,$1)", [JSON.stringify(value)]);
-    await db.query("INSERT INTO authority.capacity_pool (id,run_id,pool_key,capacity) VALUES ('pool','run','workers',1)", []);
-    const trigger = { id: "t", key: "start", payload: value };
-    const source = (await readSnapshot(db, "scope" as ScopeId, trigger))!;
-    const request: CommitRequest = {
-      identity: { run_id: "run" as RunId, scope_id: "scope" as ScopeId, ingress_id: "i", request_digest: "digest" },
-      read_set: source.read_set, operator_version: null,
-      decision: { kind: "apply", explanation: { bundle_digest: "digest", node_id: "n", owner: "scope", read_set: [], trace: [], trigger_id: "t" }, mutations: [{ kind: "set_state", value }, { kind: "acquire", pool: "workers" }], invocations: [], targets: [] },
-      outputs: [{ scope_id: "scope" as ScopeId, output_key: "report", collection_key: "", body: value, predecessor_id: null, expected_slot_version: null, execution_id: null }],
-      capacity: [{ kind: "acquire", pool_id: "pool" as PoolId, scope_id: "scope" as ScopeId }],
-      effects: [],
-    };
-    // The receipt is the last write of a decision; a fault there must undo every earlier one.
-    const faulting: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) => db.transaction((tx) => operation({ query: async (sql, params) => {
-      if (sql.startsWith("INSERT INTO authority.ingress_receipt")) throw new Error("injected fault after domain writes");
-      return tx.query(sql, params);
-    } }), isolation) };
-    const hostile = { ...request, decision: { ...request.decision, mutations: [{ kind: "overwrite_everything" }] } } as unknown as CommitRequest;
-    const rejected = await commitDecision(db, hostile, source);
-    expect(rejected.ok).toBe(false);
-    const observation = await commitDecision(db, { ...request, decision: { ...request.decision, kind: "apply", mutations: [{ kind: "observe", resource: "repo" }], invocations: [], targets: [] } }, source);
-    expect(observation).toMatchObject({ ok: false, error: { operation: "validate_commit", detail: "observe requires a resource observation provider; unsupported by this composition" } });
-    if (request.decision.kind !== "apply") throw new Error("fixture requires an apply decision");
-    // Schema-valid (each entry within the fixture's 2,000,000-char text bound) yet larger than one evaluate frame.
-    const entry_chars = 1_000_000;
-    const huge: CheckedValue = { schema: "unit", data: { kind: "record", fields: [], dictionary: Array.from({ length: Math.ceil(MAX_SNAPSHOT_BYTES / entry_chars) + 1 },
-      (_, index) => ({ key: `payload-${String(index).padStart(3, "0")}`, value: { schema: "text", data: { kind: "string", value: "x".repeat(entry_chars) } } })) } };
-    const oversized = await commitDecision(db, { ...request, decision: { ...request.decision, mutations: [{ kind: "set_state", value: huge }], invocations: [], targets: [] } }, source);
-    expect(oversized).toMatchObject({ ok: true, value: { kind: "snapshot_too_large", scope: "scope", limit: MAX_SNAPSHOT_BYTES, bytes: expect.any(Number), largest_roots: expect.any(Array) } });
-    const aborted = await db.query<{ count: string }>("SELECT count(*)::text AS count FROM authority.ingress_receipt", []);
-    expect(aborted[0]?.count).toBe("0");
-    const forced = (code: string, constraint?: string): TransactionalSqlExecutor => ({ query: db.query.bind(db), transaction: async () => { throw { code, constraint }; } });
-    expect(await commitDecision(forced("40P01"), request, source)).toMatchObject({ ok: true, value: { kind: "Conflict" } });
-    expect(await commitDecision(forced("23505", "transition_scope_id_trigger_id_key"), request, source)).toMatchObject({ ok: true, value: { kind: "Rejected", constraint: "transition_scope_id_trigger_id_key" } });
-    let queries = 0;
-    const no_sql: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: async (operation) => operation({ query: async () => { queries++; throw new Error("unexpected SQL"); } }) };
-    const forged_relation = { ...request, read_set: { ...request.read_set, rows: [{ relation: "unknown_relation", id: "scope", version: 0 }] } } as unknown as CommitRequest;
-    expect(await commitDecision(no_sql, forged_relation, source)).toMatchObject({ ok: true, value: { kind: "Rejected", detail: "unknown read relation: unknown_relation" } });
-    expect(queries).toBe(0);
-    const result = await commitDecision(faulting, request, source);
-    expect(result.ok).toBe(false);
-    const rows = await db.query<{ state_version: string; receipt_count: string; output_count: string; reservation_count: string; effect_count: string }>("SELECT (SELECT version::text FROM authority.scope_instance WHERE id='scope') AS state_version, (SELECT count(*)::text FROM authority.ingress_receipt) AS receipt_count, (SELECT count(*)::text FROM authority.output_slot) AS output_count, (SELECT count(*)::text FROM authority.capacity_reservation) AS reservation_count, (SELECT count(*)::text FROM authority.effect_intent) AS effect_count", []);
-    expect(rows[0]).toEqual({ state_version: "0", receipt_count: "0", output_count: "0", reservation_count: "0", effect_count: "0" });
-    let snapshots = 0;
-    let deadlocks = 0;
-    const retrying: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) => {
-      if (isolation === "repeatable read") { snapshots++; return db.transaction(operation, isolation); }
-      if (deadlocks++ === 0) return Promise.reject({ code: "40P01" });
-      return db.transaction(operation, isolation);
-    } };
-    const core = { request: async () => ({ ok: true, value: { kind: "evaluated", value: { kind: "wait", reason: "pause",
-      continuations: [], explanation: { bundle_digest: "digest", node_id: "n", owner: "scope", read_set: [], trace: [], trigger_id: "t" } } } }) } as unknown as CoreClient;
-    const retried = await createMutationService(retrying, core).decide({ run_id: "run" as RunId, scope_id: "scope" as ScopeId,
-      ingress_id: "retried", trigger, operator_version: null });
-    expect({ result: retried.ok && retried.value.kind, snapshots }).toEqual({ result: "Committed", snapshots: 2 });
+    await db.query("INSERT INTO authority.definition_bundle (id,digest,source,checked_program) VALUES ('bundle','digest','{}','{}')", []);
+    const request = { run_id: "run", ingress_id: "launch", definition_bundle_id: "bundle",
+      event: { kind: "launched" as const, input: {} }, writer: { kind: "operator" as const, subject: "credential-user" } };
+    const rejecting = { request: async () => ({ ok: false, error: { kind: "domain", detail: "invalid input" } }) } as unknown as CoreClient;
+    expect(await commitEvent(db, rejecting, request)).toMatchObject({ ok: true, value: { kind: "rejected" } });
+    expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.run", []))[0]?.count).toBe(0);
+    const faulting: TransactionalSqlExecutor = { query: db.query.bind(db), transaction: (operation, isolation) =>
+      db.transaction((tx) => operation({ query: (sql, params) => {
+        if (sql.includes("INSERT INTO authority.ingress_receipt")) throw new Error("injected receipt fault");
+        return tx.query(sql, params);
+      } }), isolation) };
+    expect((await commitEvent(faulting, fakeCore(), request)).ok).toBe(false);
+    const rolled_back = await db.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.run", []);
+    expect(rolled_back[0]?.count).toBe(0);
+
+    const committed = await commitEvent(db, fakeCore(), request);
+    expect(committed).toMatchObject({ ok: true, value: { kind: "committed" } });
+    const replayed = await commitEvent(db, fakeCore(), request);
+    expect(replayed).toEqual({ ok: true, value: { kind: "replayed", event_id: committed.ok && "event_id" in committed.value ? committed.value.event_id : "" } });
+    const other = await commitEvent(db, fakeCore(), { ...request, run_id: "run-2" });
+    expect(other).toMatchObject({ ok: true, value: { kind: "committed" } });
+    const cancelled = await commitEvent(db, fakeCore(), { run_id: "run-2", ingress_id: "cancel",
+      event: { kind: "cancel_requested" }, writer: request.writer });
+    expect(cancelled).toMatchObject({ ok: true, value: { kind: "committed" } });
+    const rows = await db.query<{ writer: { kind: string; subject: string }; unit_count: number; receipt_count: number }>(
+      "SELECT writer,(SELECT count(*)::int FROM authority.unit) AS unit_count,(SELECT count(*)::int FROM authority.ingress_receipt) AS receipt_count FROM authority.event WHERE run_id='run'", []);
+    expect(rows).toEqual([{ writer: request.writer, unit_count: 2, receipt_count: 3 }]);
+    await db.query(`INSERT INTO authority.unit (id,run_id,parent_id,unit_key,declaration,stage,input,status)
+      VALUES ('run/analysis','run','run','analysis','analysis','analysis','{}','{"kind":"active"}')`, []);
+    await db.query(`INSERT INTO authority.attempt (action_id,seq,run_id,unit_id,worker,mode,cause,status)
+      VALUES ('failed-action',1,'run','run/analysis','writer','{"kind":"initial"}','{"kind":"missing"}',
+        '{"kind":"failed","code":"worker_exit","detail":"session stopped"}')`, []);
+    expect((await readRunInspect(db, "run"))?.attention).toEqual([
+      { kind: "stalled_worker", unit_id: "run/analysis", worker: "writer", action_id: "failed-action", detail: "session stopped" },
+    ]);
+    const app = new Hono();
+    app.use("*", controlTokenMiddleware("operator-secret"));
+    installDefinitionApi(app, { db, core: fakeCore(), mutations: {} as Parameters<typeof installDefinitionApi>[1]["mutations"], wake: async () => undefined });
+    const http_body = { request_id: "http-launch", digest: "digest", input: {}, writer: { kind: "engine" } };
+    const send = () => app.request("http://localhost/api/runs", { method: "POST",
+      headers: { authorization: "Bearer operator-secret", "content-type": "application/json" }, body: JSON.stringify(http_body) });
+    const launched = await send();
+    expect(launched.status).toBe(201);
+    const launched_body = await launched.json() as { run_id: string };
+    expect((await send()).status).toBe(200);
+    const cancel = await app.request(`http://localhost/api/runs/${launched_body.run_id}/cancel`, { method: "POST",
+      headers: { authorization: "Bearer operator-secret", "content-type": "application/json" },
+      body: JSON.stringify({ request_id: "http-cancel", writer: { kind: "engine" } }) });
+    expect(cancel.status).toBe(201);
+    const event_count = await db.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.event WHERE run_id=$1", [launched_body.run_id]);
+    expect(event_count[0]?.count).toBe(2);
+    const retry = await app.request("http://localhost/api/runs/run/units/run%2Fanalysis/workers/writer/retry", { method: "POST",
+      headers: { authorization: "Bearer operator-secret", "content-type": "application/json" },
+      body: JSON.stringify({ request_id: "http-retry", writer: { kind: "engine" } }) });
+    expect(retry.status).toBe(201);
+    expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM authority.event WHERE ingress_id='http-retry'", []))[0]?.count).toBe(1);
+    const http_events = await db.query<{ writer: { kind: string; subject: string } }>(
+      "SELECT writer FROM authority.event WHERE ingress_id='http-launch'", []);
+    expect(http_events).toEqual([{ writer: { kind: "operator", subject: expect.stringMatching(/^credential:/) } }]);
+
+    await db.query("UPDATE authority.definition_bundle SET source=$1 WHERE id='bundle'", [JSON.stringify({
+      stages: { analysis: { reviews: { check: { of: "report" } } } },
+    })]);
+    await db.query(`INSERT INTO authority.artifact_revision
+      (id,run_id,unit_id,artifact,body,by_id,created_at) VALUES
+      ('old','run','run/analysis','report','{}','writer','2026-01-01'),
+      ('new','run','run/analysis','report','{}','writer','2026-01-02')`, []);
+    const stale = await commitEvent(db, fakeCore(), { run_id: "run", ingress_id: "stale-decision",
+      event: { kind: "operator_decided", unit: "run/analysis", review: "check", decision: "approve",
+        target: "old", payload: {} }, writer: request.writer });
+    expect(stale).toMatchObject({ ok: true, value: { kind: "conflict", detail: "review target revision changed" } });
+    expect((await db.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM authority.event WHERE ingress_id='stale-decision'", []))[0]?.count).toBe(0);
   } finally {
     await db.close();
     await admin.query(`DROP DATABASE ${name}`);

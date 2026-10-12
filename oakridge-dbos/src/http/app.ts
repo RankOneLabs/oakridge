@@ -15,10 +15,14 @@ import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
 import type { DefinitionBundle } from "../core-client/core-types";
 import { readScopeDiagnostics, readScopeHistory } from "./diagnostics";
 import type { RunPage } from "../projections/run-view";
+import { readRunInspect } from "../projections/run-view";
 import { plainValue } from "../core-client/plain-value";
 import { MAX_PUBLICATION_VALUE_BYTES, parsePublication, publicationReceipt, publicationRevisionId, publicationValueBytes } from "./publication";
 import { commandStatus, ConflictError, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, submitScopeCommand, type CommandError, type CommandResult } from "./scope-commands";
 import { selectDecision } from "../projections/scope-view";
+import { commitEvent } from "../storage/commit";
+import { operatorWriterFromCredential } from "./control-auth";
+import { createHash } from "node:crypto";
 
 export interface DefinitionApiDependencies { readonly db: TransactionalSqlExecutor; readonly core: CoreClient; readonly mutations: MutationService; readonly wake: (run_id: RunId) => Promise<void> }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -92,6 +96,25 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
     const run_page: RunPage = { items: runs.filter((run) => run !== null), next_cursor };
     return Response.json(run_page);
   } catch (cause) { return fault(cause); } });
+  app.post("/api/runs", async (c) => {
+    const raw = await body(c.req.raw);
+    if (raw instanceof MalformedRequestError) return response({ ok: false, error: raw });
+    if (!raw || typeof raw !== "object" || !("request_id" in raw) || typeof raw.request_id !== "string" || !raw.request_id
+      || !("digest" in raw) || typeof raw.digest !== "string" || !("input" in raw))
+      return c.json({ error: "request_id, digest and input are required" }, 400);
+    const pinned = (await deps.db.query<{ id: string }>(
+      "SELECT id FROM authority.definition_bundle WHERE digest=$1 AND archived_at IS NULL", [raw.digest]))[0];
+    if (!pinned) return c.json({ error: "definition_not_found" }, 404);
+    const run_id = "run-" + createHash("sha256").update(raw.request_id).digest("hex").slice(0, 32);
+    const result = await commitEvent(deps.db, deps.core, { run_id, ingress_id: raw.request_id,
+      definition_bundle_id: pinned.id, event: { kind: "launched", input: raw.input },
+      writer: operatorWriterFromCredential(c.req.raw) });
+    if (!result.ok) return c.json({ error: result.error.detail }, 500);
+    if (result.value.kind === "conflict") return c.json(result.value, 409);
+    if (result.value.kind === "rejected") return c.json(result.value, 422);
+    if (result.value.kind === "committed") void deps.wake(run_id as RunId).catch(() => undefined);
+    return c.json({ run_id, event_id: result.value.event_id }, result.value.kind === "committed" ? 201 : 200);
+  });
   app.get("/api/definitions", async (c) => { try {
     const page = pageQuery(c.req.query("limit"), c.req.query("cursor"));
     if (page instanceof MalformedRequestError) return response({ ok: false, error: page });
@@ -154,6 +177,39 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   app.get("/api/runs/:run_id", async (c) => { try {
     const view = await readRunView(deps.db, c.req.param("run_id") as RunId);
     return view ? c.json(view) : response({ ok: false, error: new MissingEntityError("run not found") });
+  } catch (cause) { return fault(cause); } });
+  app.post("/api/runs/:run_id/cancel", async (c) => {
+    const raw = await body(c.req.raw);
+    if (raw instanceof MalformedRequestError) return response({ ok: false, error: raw });
+    if (!raw || typeof raw !== "object" || !("request_id" in raw) || typeof raw.request_id !== "string" || !raw.request_id)
+      return c.json({ error: "request_id is required" }, 400);
+    const run_id = c.req.param("run_id");
+    const result = await commitEvent(deps.db, deps.core, { run_id, ingress_id: raw.request_id,
+      event: { kind: "cancel_requested" }, writer: operatorWriterFromCredential(c.req.raw) });
+    if (!result.ok) return c.json({ error: result.error.detail }, 500);
+    if (result.value.kind === "conflict") return c.json(result.value, 409);
+    if (result.value.kind === "rejected") return c.json(result.value, 422);
+    if (result.value.kind === "committed") void deps.wake(run_id as RunId).catch(() => undefined);
+    return c.json({ run_id, event_id: result.value.event_id }, result.value.kind === "committed" ? 201 : 200);
+  });
+  app.post("/api/runs/:run_id/units/:unit_id/workers/:worker/retry", async (c) => {
+    const raw = await body(c.req.raw);
+    if (raw instanceof MalformedRequestError) return response({ ok: false, error: raw });
+    if (!raw || typeof raw !== "object" || !("request_id" in raw) || typeof raw.request_id !== "string" || !raw.request_id)
+      return c.json({ error: "request_id is required" }, 400);
+    const run_id = c.req.param("run_id");
+    const result = await commitEvent(deps.db, deps.core, { run_id, ingress_id: raw.request_id,
+      event: { kind: "retry_requested", unit: c.req.param("unit_id"), worker: c.req.param("worker") },
+      writer: operatorWriterFromCredential(c.req.raw) });
+    if (!result.ok) return c.json({ error: result.error.detail }, 500);
+    if (result.value.kind === "conflict") return c.json(result.value, 409);
+    if (result.value.kind === "rejected") return c.json(result.value, 422);
+    if (result.value.kind === "committed") void deps.wake(run_id as RunId).catch(() => undefined);
+    return c.json({ run_id, event_id: result.value.event_id }, result.value.kind === "committed" ? 201 : 200);
+  });
+  app.get("/api/runs/:run_id/inspect", async (c) => { try {
+    const inspect = await readRunInspect(deps.db, c.req.param("run_id"));
+    return inspect ? c.json(inspect) : c.json({ error: "run_not_found" }, 404);
   } catch (cause) { return fault(cause); } });
   app.get("/api/runs/:run_id/definition", async (c) => { try {
     const pinned = await readPinnedDefinition(deps.db, c.req.param("run_id"));

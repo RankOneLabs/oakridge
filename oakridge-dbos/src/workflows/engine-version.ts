@@ -17,7 +17,6 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/plain-value.ts",
   "domain/execution.ts",
   "domain/primitives.ts",
-  "domain/run-session-policy.ts",
   "domain/session-settings.ts",
   "effects/evidence.ts",
   "effects/intents.ts",
