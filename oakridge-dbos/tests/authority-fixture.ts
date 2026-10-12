@@ -56,9 +56,12 @@ export function sampleWorkflow(name: "review-loop" | "fan-out"): Workflow {
 }
 
 /** Compile and pin a sample, as POST /api/definitions does. */
-export async function pinSample(authority: Pick<Authority, "db" | "core">, name: "review-loop" | "fan-out" = "review-loop"):
+export function pinSample(authority: Pick<Authority, "db" | "core">, name: "review-loop" | "fan-out" = "review-loop"):
   Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
-  const workflow = sampleWorkflow(name);
+  return pinWorkflow(authority, sampleWorkflow(name));
+}
+export async function pinWorkflow(authority: Pick<Authority, "db" | "core">, workflow: Workflow):
+  Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
   const prompts = readWorkflowPrompts(workflow);
   if (!prompts.ok) throw new Error(prompts.error.detail);
   const compiled = await compileWorkflow(authority.core, { workflow,

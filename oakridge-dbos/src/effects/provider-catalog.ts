@@ -1,3 +1,5 @@
+import type { CodeOperation } from "../core-client/core-types";
+
 /** Provider-owned declarations. This is the only declaration site for provider routing and error codes. */
 export const PROVIDER_KINDS = {
   repository: "git",
@@ -69,6 +71,20 @@ export const PROVIDER_CATALOG = {
     { kind: PROVIDER_KINDS.stub, input_contract: INPUT_CONTRACTS.stub },
   ],
 } as const;
+
+const REPOSITORY_PREPARE = PROVIDER_CATALOG.operations[0];
+/**
+ * The code operations a workflow may name, as the core checks them when it
+ * compiles: a code worker's inputs must match `input_schema` and the artifact
+ * it creates must match `output_schema`. The executor runs none of them until
+ * the operation registry is wired in (R3).
+ */
+export const CODE_OPERATIONS: readonly CodeOperation[] = [
+  { key: REPOSITORY_PREPARE.key, version: REPOSITORY_PREPARE.version,
+    input_schema: { repository_path: "repo_path", expected_head: "optional(text)" },
+    output_schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" },
+    error_codes: [...REPOSITORY_PREPARE.emitted_codes] },
+];
 
 export type ProviderKind = typeof PROVIDER_KINDS[keyof typeof PROVIDER_KINDS];
 export type InputContract = typeof INPUT_CONTRACTS[keyof typeof INPUT_CONTRACTS];

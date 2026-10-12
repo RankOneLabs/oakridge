@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
+import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { commitEvent } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { executor, launch, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -178,4 +179,39 @@ test("a core that has not compiled the pinned workflow compiles it from the pinn
     const { result } = await launch(fresh, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
     expect(result.ok && result.value.kind).toBe("committed");
   } finally { started.value.close(); }
+});
+
+test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {
+  const { bundle_id: fan_out } = await pinSample(authority, "fan-out");
+  const { run_id } = await launch(authority, { bundle_id: fan_out, request_id: crypto.randomUUID(),
+    input: { repository: { repository_path: "/srv/repo", expected_head: null }, items: [] } });
+  const instructions = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload));
+  expect(instructions.map((decoded) => decoded.ok && [decoded.value.worker, decoded.value.inputs]))
+    .toEqual([[{ kind: "code", operation: "repository.prepare", every: null }, { repository_path: "/srv/repo", expected_head: null }]]);
+});
+
+const PERIODIC: Workflow = {
+  workflow: "periodic", input: { repository_path: "repo_path", expected_head: "optional(text)" },
+  run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } }, outcome: {} },
+  stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)" },
+    artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" } } },
+    workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
+      inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } },
+    done_when: "false", outcome: {} } },
+};
+test("a periodic worker keeps one intent across its attempts, which carries the schedule", async () => {
+  const { bundle_id: periodic } = await pinWorkflow(authority, PERIODIC);
+  const { run_id } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  const [first] = await intents(run_id);
+  if (!first) throw new Error("launch wrote no intent");
+  const submit = submitter(authority);
+  for (const seq of [1, 2]) {
+    await submit({ run_id, event: { kind: "worker_started", action: first.action_id, kbbl_session_id: null }, writer: executor(first.action_id), ingress_id: `started:${seq}` });
+    await submit({ run_id, event: { kind: "worker_ended", action: first.action_id, result: { kind: "succeeded" } }, writer: executor(first.action_id), ingress_id: `ended:${seq}` });
+  }
+  const [rows, attempts] = await Promise.all([intents(run_id),
+    authority.db.selectFrom("authority.attempt").select("seq").where("run_id", "=", run_id).orderBy("seq").execute()]);
+  const instruction = decodeEffectInstruction(rows[0]?.payload);
+  expect({ intents: rows.map((row) => row.seq), attempts: attempts.map((attempt) => attempt.seq), every: instruction.ok && instruction.value.worker })
+    .toEqual({ intents: [1], attempts: [1, 2], every: { kind: "code", operation: "repository.prepare", every: "1s" } });
 });

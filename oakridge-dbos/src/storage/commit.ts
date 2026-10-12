@@ -239,6 +239,8 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
   const wanted = selectWanted(step)
     .flatMap(({ actions }) => actions.filter((action): action is RunWorkerAction => action.kind === "run_worker"));
   const resolved = new Map<string, ResolvedRunWorker>(step.resolved.map((item) => [item.action_id, item]));
+  // One intent per action: a periodic worker's later attempts reuse its action id, and its
+  // carrier starts each one (WorkerStarted on an ended periodic attempt opens the next seq).
   const existing = new Set((await trx.selectFrom("authority.effect_intent").select("action_id")
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(unit_ids)).execute()).map((row) => row.action_id));
   for (const action of wanted) {

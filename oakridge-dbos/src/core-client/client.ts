@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
 import type { Action, CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
+import { CODE_OPERATIONS } from "../effects/provider-catalog";
 
 export const CORE_WASM_PATH = process.env.OAKRIDGE_CORE_WASM ?? resolve(import.meta.dir, "../../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
 export const MAX_SNAPSHOT_BYTES = 64 * 1_048_576;
@@ -84,13 +85,9 @@ export class CoreClient {
 
 /** Source and prompt texts (by path) that a workflow compiles from. */
 export interface CompileInput { readonly workflow: Workflow; readonly prompts: { readonly [path: string]: string } }
-/**
- * Compile a workflow and leave it in the core's program cache. Code
- * operations are not registered until the operation registry is wired in, so
- * a workflow with a code worker does not compile yet.
- */
+/** Compile a workflow against the declared code operations and leave it in the core's program cache. */
 export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledWorkflow>> {
-  const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [] });
+  const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...CODE_OPERATIONS] });
   if (!response.ok) return traced("compile", input.workflow.workflow, response.error.kind === "domain" ? response.error.detail.detail : response.error.detail.detail);
   if (response.value.kind !== "compiled") return traced("compile", input.workflow.workflow, "core returned a non-compiled response");
   return { ok: true, value: response.value.value };
