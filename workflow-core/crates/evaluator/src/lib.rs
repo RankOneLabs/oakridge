@@ -38,6 +38,20 @@ mod v2_step {
             .get(&key.0)
             .ok_or_else(|| invalid(format!("stage {key} absent")))
     }
+    fn checked_stage<'a>(
+        program: &'a CheckedWorkflow,
+        unit: &UnitState,
+    ) -> Result<&'a CheckedStage, StepError> {
+        let key = unit
+            .stage
+            .as_ref()
+            .ok_or_else(|| invalid("unit is a group"))?;
+        program
+            .stages
+            .iter()
+            .find(|stage| stage.key == *key)
+            .ok_or_else(|| invalid(format!("checked stage {key} absent")))
+    }
     fn worker<'a>(stage: &'a Stage, key: &WorkerKey) -> Result<&'a Worker, StepError> {
         stage
             .workers
@@ -225,6 +239,131 @@ mod v2_step {
             return serde_json::from_str(text).ok();
         }
         None
+    }
+    /// Walk a resolved stage expression. The compiler already type-checked it,
+    /// so an unresolvable read is None rather than an error.
+    fn eval_expression(
+        expression: &Expression,
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        each: Option<&Value>,
+        own_body: Option<(&str, &Value)>,
+    ) -> Option<Value> {
+        fn decided(
+            state: &ScopedSnapshot,
+            unit: &UnitState,
+            artifact: &SymbolKey,
+            effect: DecisionEffect,
+        ) -> Value {
+            Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
+                state.decisions.iter().any(|decision| {
+                    decision.unit == unit.id
+                        && decision.target == revision.id
+                        && decision.effect == effect
+                })
+            }))
+        }
+        let integers = |left: &Expression, right: &Expression| -> Option<(i64, i64)> {
+            Some((
+                eval_expression(left, unit, state, each, own_body)?.as_i64()?,
+                eval_expression(right, unit, state, each, own_body)?.as_i64()?,
+            ))
+        };
+        match expression {
+            Expression::Literal { value, .. } => Some(value.clone()),
+            Expression::Len { value } => Some(Value::from(
+                match eval_expression(value, unit, state, each, own_body)? {
+                    Value::String(text) => text.chars().count(),
+                    Value::Array(items) => items.len(),
+                    _ => return None,
+                },
+            )),
+            Expression::GreaterThan { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left > right))
+            }
+            Expression::GreaterOrEqual { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left >= right))
+            }
+            Expression::LessThan { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left < right))
+            }
+            Expression::LessOrEqual { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left <= right))
+            }
+            Expression::List { items, .. } => items
+                .iter()
+                .map(|item| eval_expression(item, unit, state, each, own_body))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Array),
+            Expression::Map {
+                source,
+                value: projection,
+                ..
+            } => {
+                let Value::Array(items) = eval_expression(source, unit, state, each, own_body)?
+                else {
+                    return None;
+                };
+                items
+                    .iter()
+                    .map(|item| eval_expression(projection, unit, state, Some(item), own_body))
+                    .collect::<Option<Vec<_>>>()
+                    .map(Value::Array)
+            }
+            Expression::Reference {
+                root,
+                path: segments,
+            } => {
+                let parts: Vec<&str> = segments.iter().map(String::as_str).collect();
+                let read = |value: &Value| -> Option<Value> {
+                    if parts.is_empty() {
+                        Some(value.clone())
+                    } else {
+                        path(value, &parts)
+                    }
+                };
+                match root {
+                    ReferenceRoot::UnitInput => read(&unit.input),
+                    ReferenceRoot::EachMember | ReferenceRoot::Item => read(each?),
+                    ReferenceRoot::ValidationBody { artifact } => {
+                        let (bound, body) = own_body?;
+                        (bound == artifact.0).then(|| read(body)).flatten()
+                    }
+                    ReferenceRoot::Latest { artifact } => {
+                        read(&latest(state, &unit.id, artifact)?.body)
+                    }
+                    ReferenceRoot::Published { artifact } => {
+                        Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
+                    }
+                    ReferenceRoot::Approved { artifact } => {
+                        Some(decided(state, unit, artifact, DecisionEffect::Approve))
+                    }
+                    ReferenceRoot::ChangesRequested { artifact } => Some(decided(
+                        state,
+                        unit,
+                        artifact,
+                        DecisionEffect::RequestChanges,
+                    )),
+                    ReferenceRoot::UnitOutcome { unit: child_key } => {
+                        let child = state.units.iter().find(|candidate| {
+                            candidate.parent.as_ref() == Some(&unit.id)
+                                && (candidate.declaration.0 == child_key.0
+                                    || candidate.id.0.ends_with(&format!("/{child_key}")))
+                        })?;
+                        let UnitStatus::Done { outcome } = &child.status else {
+                            return None;
+                        };
+                        read(outcome)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
     fn eval_record(
         fields: &BTreeMap<String, String>,
@@ -755,14 +894,26 @@ mod v2_step {
                     subject: subject.clone(),
                     by: by.clone(),
                 });
+                let checked_checks = checked_stage(program, owner)?
+                    .validations
+                    .iter()
+                    .find(|validation| validation.artifact == *artifact)
+                    .map(|validation| validation.checks.as_slice())
+                    .unwrap_or_default();
                 let messages: Vec<_> = artifact_definition
                     .validate
                     .iter()
-                    .filter(|check| {
-                        eval(&check.check, owner, state, None, Some((&artifact.0, body)))
-                            != Some(Value::Bool(true))
+                    .zip(checked_checks)
+                    .filter(|(_, checked)| {
+                        eval_expression(
+                            &checked.expression,
+                            owner,
+                            state,
+                            None,
+                            Some((&artifact.0, body)),
+                        ) != Some(Value::Bool(true))
                     })
-                    .map(|check| check.message.clone())
+                    .map(|(rule, _)| rule.message.clone())
                     .collect();
                 if !messages.is_empty() {
                     if matches!(producer, Worker::Code { .. }) {
@@ -938,14 +1089,19 @@ mod v2_step {
                 continue;
             }
             if unit.stage.is_some() && matches!(unit.status, UnitStatus::Active) {
-                let definition = stage(program, &unit)?;
-                if definition
-                    .done_when
-                    .as_ref()
-                    .and_then(|s| eval(s, &unit, state, None, None))
+                let definition = checked_stage(program, &unit)?;
+                if eval_expression(&definition.done_when.expression, &unit, state, None, None)
                     == Some(Value::Bool(true))
                 {
-                    let outcome = eval_record(&definition.outcome, &unit, state, None)
+                    let outcome = definition
+                        .outcome
+                        .iter()
+                        .map(|field| {
+                            eval_expression(&field.value.expression, &unit, state, None, None)
+                                .map(|value| (field.key.clone(), value))
+                        })
+                        .collect::<Option<serde_json::Map<_, _>>>()
+                        .map(Value::Object)
                         .ok_or_else(|| invalid("stage outcome unresolved"))?;
                     state.units[index].status = UnitStatus::Done { outcome };
                     return Ok(true);
@@ -1116,15 +1272,12 @@ mod v2_step {
                 "workflow":"simple", "input":{}, "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{"draft":"document.outcome.draft"}},
                 "stages":{"document":{"input":{},"artifacts":{"draft":{"schema":"text"}},"workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"creates":["draft"]}},"done_when":"approved(draft)","outcome":{"draft":"latest(draft)"}}}
             })).unwrap();
-            CheckedWorkflow {
-                source,
-                digest: BundleDigest("test".into()),
-                stages: vec![],
-                root: CheckedGroup {
-                    units: vec![],
-                    outcome: vec![],
-                },
-            }
+            // Compiled rather than hand-assembled: the engine reads the
+            // checked stages, so a stub with empty stages is not a program.
+            let prompts: BTreeMap<String, String> = [("write.md".to_owned(), String::new())]
+                .into_iter()
+                .collect();
+            workflow_compiler::compile_workflow(&source, &[], &prompts).unwrap()
         }
         fn snapshot() -> ScopedSnapshot {
             ScopedSnapshot {
@@ -1562,15 +1715,15 @@ mod v2_step {
                 "workflow":"periodic", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
                 "stages":{"watch":{"input":{},"artifacts":{"observation":{"schema":"text"}},"workers":{"observer":{"kind":"code","operation":"observe","inputs":{},"creates":["observation"],"every":"1s"}},"done_when":"false","outcome":{}}}
             })).unwrap();
-            let program = CheckedWorkflow {
-                source,
-                digest: BundleDigest("periodic".into()),
-                stages: vec![],
-                root: CheckedGroup {
-                    units: vec![],
-                    outcome: vec![],
-                },
-            };
+            let observe = vec![CodeOperation {
+                key: SymbolKey::from("observe"),
+                version: 1,
+                input_schema: TypeExpression::Record(BTreeMap::new()),
+                output_schema: TypeExpression::Name("text".into()),
+                error_codes: vec![],
+            }];
+            let program =
+                workflow_compiler::compile_workflow(&source, &observe, &BTreeMap::new()).unwrap();
             let launched = step(
                 &program,
                 &snapshot(),
