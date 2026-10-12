@@ -110,6 +110,9 @@ mod v2_step {
             .rev()
             .find(|a| a.unit == *unit && a.worker == *worker)
     }
+    /// Revision and decision ids are prefixed with their unit, which is already
+    /// run-scoped, so they are unique across units and runs. A unit's snapshot
+    /// always carries all of that unit's revisions and decisions.
     fn revision_id(state: &ScopedSnapshot, unit: &UnitId, artifact: &SymbolKey) -> RevisionId {
         let seq = state
             .revisions
@@ -117,10 +120,16 @@ mod v2_step {
             .filter(|revision| revision.unit == *unit && revision.artifact == *artifact)
             .count()
             + 1;
-        RevisionId(format!("{}:{seq}", artifact.0))
+        RevisionId(format!("{}:{}:{seq}", unit.0, artifact.0))
     }
-    fn decision_id(state: &ScopedSnapshot) -> DecisionId {
-        DecisionId(format!("d{}", state.decisions.len() + 1))
+    fn decision_id(state: &ScopedSnapshot, unit: &UnitId) -> DecisionId {
+        let seq = state
+            .decisions
+            .iter()
+            .filter(|decision| decision.unit == *unit)
+            .count()
+            + 1;
+        DecisionId(format!("{}:d{seq}", unit.0))
     }
     fn path(value: &Value, parts: &[&str]) -> Option<Value> {
         let mut current = value;
@@ -1018,7 +1027,7 @@ mod v2_step {
                     by: by.clone(),
                 });
                 if !messages.is_empty() && !matches!(producer, Worker::Code { .. }) {
-                    let decision = decision_id(state);
+                    let decision = decision_id(state, unit);
                     state.decisions.push(DecisionState {
                         id: decision,
                         unit: unit.clone(),
@@ -1090,7 +1099,7 @@ mod v2_step {
                 {
                     return Err(rejected("request_changes requires feedback"));
                 }
-                let id = decision_id(state);
+                let id = decision_id(state, unit);
                 state.decisions.push(DecisionState {
                     id,
                     unit: unit.clone(),
@@ -1653,12 +1662,12 @@ mod v2_step {
                 .attempts
                 .retain(|attempt| attempt.worker.0 != "critic");
             state.revisions.push(RevisionState {
-                id: RevisionId::from("critique:1"),
+                id: RevisionId::from("run/document:critique:1"),
                 unit: UnitId::from("run/document"),
                 artifact: SymbolKey::from("critique"),
                 body: serde_json::json!({"notes": []}),
                 predecessor: None,
-                subject: Some(RevisionId::from("draft:1")),
+                subject: Some(RevisionId::from("run/document:draft:1")),
                 by: ActionKey::from("previous-review"),
             });
             let unit = state
@@ -1819,7 +1828,7 @@ mod v2_step {
                         unit: UnitId::from("run/document"),
                         review: SymbolKey::from("editor"),
                         decision: SymbolKey::from("approve"),
-                        target: RevisionId::from("critique:1"),
+                        target: RevisionId::from("run/document:critique:1"),
                         payload: serde_json::json!({}),
                     },
                     "approve-critique",
@@ -1828,7 +1837,7 @@ mod v2_step {
             .unwrap();
             assert_eq!(
                 result.snapshot.decisions.last().unwrap().target.0,
-                "critique:1"
+                "run/document:critique:1"
             );
         }
         fn apply_row(
@@ -1944,7 +1953,7 @@ mod v2_step {
             assert_eq!(
                 (&subject.id.0, &subject.body),
                 (
-                    &"draft:1".to_owned(),
+                    &"run/document:draft:1".to_owned(),
                     &serde_json::json!({"title":"First","body":"Long"})
                 )
             );
@@ -1962,7 +1971,7 @@ mod v2_step {
                         "artifact":"draft","body":{"title":"First","body":"Long"}}),
                     serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
                     serde_json::json!({"op":"decide","unit":"run/document","review":"editor",
-                        "decision":"request_changes","target":"draft:1","payload":{"feedback":"shorter"}}),
+                        "decision":"request_changes","target":"run/document:draft:1","payload":{"feedback":"shorter"}}),
                 ],
             );
             let writer = resolved_for(&result, "writer");
@@ -1975,7 +1984,7 @@ mod v2_step {
                     &writer.feedback
                 ),
                 (
-                    Some("draft:1"),
+                    Some("run/document:draft:1"),
                     &Some(serde_json::json!({"feedback":"shorter"}))
                 )
             );
@@ -1997,6 +2006,19 @@ mod v2_step {
                     serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc"})
                 )
             );
+        }
+        #[test]
+        fn revision_and_decision_ids_are_unique_across_units() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap().iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let ids: BTreeSet<_> = state.revisions.iter().map(|r| r.id.0.clone()).collect();
+            assert_eq!((ids.len() > 1, ids.len()), (true, state.revisions.len()));
         }
         #[test]
         fn sample_traces_replay_every_prefix_and_never_regress_unit_status() {
@@ -2078,7 +2100,7 @@ mod v2_step {
                             unit: unit.clone(),
                             review: SymbolKey::from("editor"),
                             decision: SymbolKey::from("approve"),
-                            target: RevisionId::from("draft:1"),
+                            target: RevisionId::from("run/document:draft:1"),
                             payload: serde_json::json!({}),
                         },
                         Event::RetryRequested {
@@ -2399,7 +2421,7 @@ mod v2_step {
                             unit: UnitId::from("run/document"),
                             review: SymbolKey::from("editor"),
                             decision: SymbolKey::from("approve"),
-                            target: RevisionId::from("draft:1"),
+                            target: RevisionId::from("run/document:draft:1"),
                             payload: serde_json::json!({})
                         },
                         "stale"
