@@ -1,5 +1,6 @@
-import type { CheckedValue, Trigger } from "../core-client/generated-contracts";
-import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
+import type { CheckedValue, Trigger } from "../core-client/core-types";
+import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/core-types";
+import { MAX_SNAPSHOT_BYTES } from "../core-client/client";
 import type { OutputPublication } from "../storage/commit";
 import type { ScopeId } from "../storage/schema-records";
 import type { CommitReceipt } from "../storage/schema-records";
@@ -21,8 +22,8 @@ export interface PublicationReceipt {
 export function publicationReceipt(request_id: string, receipt: CommitReceipt, revision_id: string | null): PublicationReceipt {
   return { kind: "accepted_pending", request_id, transition_id: receipt.transition_id, scope_version: receipt.scope_version, revision_id };
 }
-/** A published value must fit the evaluate frame that will later carry it; the commit measures the whole snapshot. */
-export const MAX_PUBLICATION_VALUE_BYTES = CORE_MAX_FRAME_BYTES;
+/** A published value must fit the snapshot that will later carry it. */
+export const MAX_PUBLICATION_VALUE_BYTES = MAX_SNAPSHOT_BYTES;
 export function publicationValueBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value)); }
 const object = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 const version = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;

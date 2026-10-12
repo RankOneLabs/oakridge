@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use workflow_model::protocol::{
     Request, Response, DECODER_MAX_JSON_DEPTH, DECODER_MAX_SCHEMA_HOPS, MAX_DEPTH_CEILING,
-    MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    PROTOCOL_VERSION,
 };
 
 /// The decoder source with its depth guards filled in from the protocol constants.
@@ -148,7 +148,7 @@ pub fn generate() -> String {
         }
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
-    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_FRAME_BYTES = {MAX_FRAME_BYTES};\nexport const CORE_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\n"));
+    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\n"));
     for (name, schema) in definitions {
         output.push_str(&format!("export type {name} = {};\n", schema_to_ts(schema)));
     }

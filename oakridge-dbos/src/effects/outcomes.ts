@@ -1,4 +1,4 @@
-import { decodeCoreResponse, type CheckedValue, type Trigger } from "../core-client/generated-contracts";
+import { decodeCoreResponse, type CheckedValue, type Trigger } from "../core-client/core-types";
 import type { EffectPayload } from "./intents";
 import type { ExternalHandle, ProviderResult, TerminalObservation } from "./provider";
 import { INPUT_CONTRACTS } from "./provider-catalog";

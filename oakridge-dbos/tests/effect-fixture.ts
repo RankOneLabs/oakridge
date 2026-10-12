@@ -6,7 +6,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 process.env.OAKRIDGE_EFFECT_ENCRYPTION_KEY ??= Buffer.alloc(32, 17).toString("base64url");
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { createProductionComposition } from "../src/runtime/compose";
-import type { DefinitionBundle, ScopeDefinition, CheckedValue, Schema } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle, ScopeDefinition, CheckedValue, Schema } from "../src/core-client/core-types";
 import type { RunId, ScopeId } from "../src/storage/schema-records";
 import type { ProviderCapabilities } from "../src/storage/mutation-service";
 import { PROVIDER_KINDS } from "../src/effects/provider-catalog";

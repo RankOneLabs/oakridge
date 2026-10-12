@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import type { CheckedValue, DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle } from "../src/core-client/core-types";
 import { policyFromRunInput } from "../src/domain/run-session-policy";
 import { resolveSessionSettings, type SessionSettingsContext } from "../src/domain/session-settings";
 import { readRunPolicy } from "../src/storage/snapshot-reader";

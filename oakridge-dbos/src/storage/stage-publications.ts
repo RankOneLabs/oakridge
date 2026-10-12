@@ -1,4 +1,4 @@
-import type { CheckedValue, DefinitionBundle, VersionedValue } from "../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, VersionedValue } from "../core-client/core-types";
 import { observationRootKey, selectObservationRoots } from "../core-client/observation-roots";
 import type { OutputPublication, Result } from "./commit";
 import type { AuthoritySnapshot } from "./snapshot-reader";

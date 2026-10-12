@@ -4,12 +4,11 @@ import type { SessionPolicy } from "../domain/session-settings";
 import { setDefinitionArchived, setRunArchived } from "./archive";
 import { findLaunchReceipt, type LaunchReceiptLookup } from "./launch-receipts";
 import type { DefinitionSummary } from "../projections/definition-view";
-import type { CoreResult } from "../core-client/transport-errors";
 import { stagePublications } from "./stage-publications";
 import { currentTargetRevisions, targetsMatch, type TargetRevision } from "./command-selection";
 import { prepareChildCancellations } from "./child-cancellation";
-import { CORE_MAX_FRAME_BYTES, type CompiledBundle, type DecisionOutcome, type DefinitionBundle, type Trigger, type Output } from "../core-client/generated-contracts";
-import type { CoreClient } from "../core-client/client";
+import { type CompiledBundle, type DecisionOutcome, type DefinitionBundle, type Trigger, type Output } from "../core-client/core-types";
+import type { CoreClient, CoreResult } from "../core-client/client";
 import { commitDecision, type CommitRequest, type CommitResult, type OutputPublication, type Result } from "./commit";
 import { requestDigest, findReceipt, type IngressIdentity } from "./receipts";
 import { readSnapshot, type AuthoritySnapshot } from "./snapshot-reader";
@@ -64,7 +63,6 @@ function launchReplay(prior: LaunchReceiptLookup, request_id: string): Result<St
     prior.kind === "gone" ? "the launched run was deleted" : "request ID reused with different launch content");
 }
 export async function compileBundle(core: CoreClient, request: CompileRequest): Promise<Result<CompileResult>> {
-  if (Buffer.byteLength(JSON.stringify(request.bundle)) > CORE_MAX_FRAME_BYTES) return error("compile", request.bundle.key, `oversized_payload: definition bundle exceeds ${CORE_MAX_FRAME_BYTES} bytes`);
   const response = await core.request("compile", { bundle: request.bundle });
   if (!response.ok) return error("compile", request.bundle.key, JSON.stringify(response.error));
   if (response.value.kind !== "compiled") return error("compile", request.bundle.key, "core returned a non-compiled response");

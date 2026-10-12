@@ -1,4 +1,4 @@
-import type { CompiledBundle, DefinitionBundle } from "../core-client/generated-contracts";
+import type { CompiledBundle, DefinitionBundle } from "../core-client/core-types";
 import type { WorkflowAuthoring } from "../../../workflow-config/src/authoring";
 
 /** A pinned definition as the catalog lists it (GET/POST /api/definitions). */

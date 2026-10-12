@@ -7,7 +7,7 @@ import { withDatabase } from "./effect-fixture";
 import { developmentBundle, runtimeFixture, repository, brief, revision, build_body, pr_body, launch } from "./development-runtime-fixture";
 import { HTTP_ROUTES } from "../src/http/routes";
 import type { PublicationRequest, PublicationReceipt } from "../src/http/publication";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import type { CommitRequest } from "../src/storage/commit";
 import { validateStorageAuthority } from "../src/storage/storage-validator";
 import type { ScopeId } from "../src/storage/schema-records";

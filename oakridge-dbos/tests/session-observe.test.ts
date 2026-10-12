@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { resolveObserve } from "../src/effects/outcomes";
 import { createEffectProvider } from "../src/effects/operations/production-provider";
 import type { ExternalHandle, InvocationId, StableInvocation } from "../src/effects/provider";

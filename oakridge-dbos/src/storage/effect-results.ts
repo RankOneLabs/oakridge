@@ -1,4 +1,4 @@
-import type { CheckedValue } from "../core-client/generated-contracts";
+import type { CheckedValue } from "../core-client/core-types";
 import type { TransactionalSqlExecutor } from "./sql-executor";
 import { requiresCleanup, type EffectIntent, type EffectPayload, type EffectStatus } from "../effects/intents";
 import { ensureStopIntent } from "./revocation";

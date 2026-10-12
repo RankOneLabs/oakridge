@@ -5,12 +5,9 @@ import { PgPostgresExecutor } from "./storage/sql-executor";
 import { selectApplicationVersion } from "./workflows/engine-version";
 import { ensureRunRecoveryFork, forkStartStep, runWorkflowId } from "./workflows/topology";
 
-/** Recovery forks onto the version the production process runs, which includes its core binary. */
+/** Recovery forks onto the version of the running engine and its WASM core. */
 function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
-  const core_binary = env.OAKRIDGE_CORE_BINARY;
-  if (!core_binary && !env.DBOS_APPLICATION_VERSION?.trim())
-    throw new Error("recover requires OAKRIDGE_CORE_BINARY (or DBOS_APPLICATION_VERSION) to select the running engine version");
-  return selectApplicationVersion(core_binary ?? "", env);
+  return selectApplicationVersion(undefined, env);
 }
 
 type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];

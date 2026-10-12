@@ -1,5 +1,5 @@
 import { observationRootKey, selectObservationRoots } from "../core-client/observation-roots";
-import type { CheckedValue, CompiledBundle, DefinitionBundle, ReferenceRoot, Snapshot, Trigger, VersionedValue } from "../core-client/generated-contracts";
+import type { CheckedValue, CompiledBundle, DefinitionBundle, ReferenceRoot, Snapshot, Trigger, VersionedValue } from "../core-client/core-types";
 import type { CapacityPoolRecord, OutputSlotRecord, RevisionId, ResourceBindingRecord, ScopeExportRecord, ScopeId, ScopeInstanceRecord } from "./schema-records";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { SessionPolicy } from "../domain/session-settings";

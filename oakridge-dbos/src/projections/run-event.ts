@@ -1,4 +1,4 @@
-import type { AttentionMetadata, DecisionOutcome } from "../core-client/generated-contracts";
+import type { AttentionMetadata, DecisionOutcome } from "../core-client/core-types";
 import type { RunId, ScopeId } from "../storage/schema-records";
 
 /** One committed transition as the operator event stream delivers it (GET /events). */

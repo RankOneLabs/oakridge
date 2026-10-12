@@ -1,4 +1,4 @@
-import type { CheckedValue, DefinitionBundle, LifecyclePayloadProjection, Trigger } from "../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, LifecyclePayloadProjection, Trigger } from "../core-client/core-types";
 import type { CoreClient } from "../core-client/client";
 import type { Result } from "./commit";
 

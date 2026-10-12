@@ -3,8 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { CoreClient } from "../src/core-client/client";
-import { decodeCoreResponse } from "../src/core-client/generated-contracts";
-import { transportFailure } from "../src/core-client/transport-errors";
+import { decodeCoreResponse } from "../src/core-client/core-types";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
@@ -37,8 +36,7 @@ const retainedPaths = [
   "oakridge-dbos/src/http/app.ts",
 
   "oakridge-dbos/src/core-client/client.ts",
-  "oakridge-dbos/src/core-client/generated-contracts.ts",
-  "oakridge-dbos/src/core-client/transport-errors.ts",
+  "oakridge-dbos/src/core-client/core-types.ts",
   "oakridge-dbos/src/storage/sql-executor.ts",
   "oakridge-dbos/src/runtime/git-command-runner.ts",
   "oakridge-dbos/src/runtime/github-pull-requests.ts",
@@ -63,9 +61,8 @@ test("only leaf support types remain in the former domain directory", () => {
 });
 
 test("retained operations import and execute", async () => {
-  expect(CoreClient.start({ binary: "unused", deadlineMs: 0 }).ok).toBe(false);
+  expect(CoreClient.start({ wasm_path: "/nonexistent/workflow_evaluator.wasm" }).ok).toBe(false);
   expect(decodeCoreResponse(null)).toBeNull();
-  expect(transportFailure("malformed_frame", "check").ok).toBe(false);
   const sql = PgPostgresExecutor.connect("postgres://localhost/oakridge");
   await sql.close();
   expect((await new BunGitCommandRunner().run(root, ["rev-parse", "--is-inside-work-tree"])).exit_code).toBe(0);

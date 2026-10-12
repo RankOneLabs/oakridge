@@ -4,7 +4,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { PgPostgresExecutor } from "../src/storage/sql-executor";
 import { readSnapshot } from "../src/storage/snapshot-reader";
 import { commitDecision, type CommitRequest } from "../src/storage/commit";
-import type { CheckedValue } from "../src/core-client/generated-contracts";
+import type { CheckedValue } from "../src/core-client/core-types";
 import type { PoolId, RunId, ScopeId } from "../src/storage/schema-records";
 
 async function runCapacityCase(pool_keys: readonly [string, string]) {

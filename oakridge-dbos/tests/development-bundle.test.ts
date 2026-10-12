@@ -11,7 +11,7 @@ import { readAuthoredPrompt } from "../src/storage/prompt-content";
 import { createMutationService } from "../src/storage/mutation-service";
 import type { DefinitionSummary } from "../src/projections/definition-view";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
-import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, Snapshot } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
 const bundle: DefinitionBundle = await Bun.file(resolve(root, "workflow-config/definitions/development.json")).json();

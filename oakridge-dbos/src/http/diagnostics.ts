@@ -16,7 +16,7 @@ export interface ScopeDiagnostics {
   readonly effects: readonly EffectDiagnosticRecord[];
   readonly cursor: DiagnosticsCursor;
 }
-export interface ScopeFactHistory { readonly id: string; readonly fact_key: string; readonly payload: import("../core-client/generated-contracts").CheckedValue }
+export interface ScopeFactHistory { readonly id: string; readonly fact_key: string; readonly payload: import("../core-client/core-types").CheckedValue }
 export interface ScopeHistory {
   readonly scope_id: string;
   readonly transitions: readonly TransitionHistory<Date>[];

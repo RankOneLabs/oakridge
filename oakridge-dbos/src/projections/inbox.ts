@@ -1,4 +1,4 @@
-import type { DefinitionBundle, DecisionOutcome } from "../core-client/generated-contracts";
+import type { DefinitionBundle, DecisionOutcome } from "../core-client/core-types";
 import type { ScopeInstanceRecord } from "../storage/schema-records";
 import { selectAvailableCommands } from "./scope-view";
 

@@ -1,4 +1,4 @@
-import type { Trigger } from "../core-client/generated-contracts";
+import type { Trigger } from "../core-client/core-types";
 import type { SqlExecutor } from "../storage/sql-executor";
 import type { EffectIntentRecord, EffectStatus } from "../storage/schema-records";
 import type { ExternalHandle, StableInvocation } from "./provider";

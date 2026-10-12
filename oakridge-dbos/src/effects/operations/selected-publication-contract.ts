@@ -1,20 +1,16 @@
-import type { DefinitionBundle, InvocationSetting } from "../../core-client/generated-contracts";
+import type { DefinitionBundle, InvocationSetting } from "../../core-client/core-types";
 import type { ScopeInstanceRecord } from "../../storage/schema-records";
 import type { StableInvocation } from "../provider";
-import { CORE_MAX_FRAME_BYTES, CORE_PROTOCOL_VERSION } from "../../core-client/generated-contracts";
 import type { AuthoritySnapshot } from "../../storage/snapshot-reader";
 
-export const MAX_SNAPSHOT_BYTES = CORE_MAX_FRAME_BYTES;
+export { MAX_SNAPSHOT_BYTES } from "../../core-client/client";
 export type InvocationSettingRole = "result_fact" | "evidence_fact";
 export function settingForRole(settings: readonly InvocationSetting[], role: InvocationSettingRole): string | null {
   return settings.find((setting) => setting.key === role)?.value ?? null;
 }
 export interface SnapshotMeasurement { readonly roots: AuthoritySnapshot["reads"]; readonly bytes: number; readonly largest_roots: readonly { readonly root: string; readonly bytes: number }[] }
-const WIDEST_EVALUATE_ENVELOPE = { version: CORE_PROTOCOL_VERSION, request_id: String(Number.MAX_SAFE_INTEGER), operation: "evaluate", bundle_digest: "f".repeat(64) } as const;
-export function measureAuthoritySnapshot(source: AuthoritySnapshot): SnapshotMeasurement {
-  const { bundle_digest, ...envelope } = WIDEST_EVALUATE_ENVELOPE;
-  const frame = JSON.stringify({ ...envelope, input: { bundle_digest, snapshot: source.snapshot } }) + "\n";
-  return { roots: source.reads, bytes: Buffer.byteLength(frame),
+export function measureSnapshotSize(source: AuthoritySnapshot): SnapshotMeasurement {
+  return { roots: source.reads, bytes: Buffer.byteLength(JSON.stringify(source.snapshot)),
     largest_roots: source.snapshot.observations.map((observation) => ({ root: JSON.stringify(observation.root),
       bytes: Buffer.byteLength(JSON.stringify(observation)) })).sort((a, b) => b.bytes - a.bytes).slice(0, 5) };
 }

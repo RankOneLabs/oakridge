@@ -1,5 +1,5 @@
 import { PROVIDER_CATALOG, PROVIDER_ERROR_CODES, INPUT_CONTRACTS } from "../provider-catalog";
-import type { CheckedValue, DefinitionBundle, ScopeDefinition, Trigger } from "../../core-client/generated-contracts";
+import type { CheckedValue, DefinitionBundle, ScopeDefinition, Trigger } from "../../core-client/core-types";
 import type { CoreClient } from "../../core-client/client";
 import type { ExecutionId, JsonValue } from "../../domain/primitives";
 import type { SqlExecutor } from "../../storage/sql-executor";

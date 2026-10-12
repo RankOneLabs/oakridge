@@ -1,8 +1,8 @@
-import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/generated-contracts";
-import type { DecisionOutcome } from "../core-client/generated-contracts";
+import { CORE_PROTOCOL_VERSION, decodeCoreResponse } from "../core-client/core-types";
+import type { DecisionOutcome } from "../core-client/core-types";
 import type { AuthoritySnapshot } from "./snapshot-reader";
 import type { CommitRequest, CommitRejectionReason, Result } from "./commit";
-import type { DefinitionBundle, OutputDefinition } from "../core-client/generated-contracts";
+import type { DefinitionBundle, OutputDefinition } from "../core-client/core-types";
 import type { SqlExecutor } from "./sql-executor";
 
 function reject(operation: string, entity_id: string, detail: string, reason?: CommitRejectionReason): Result<never> {

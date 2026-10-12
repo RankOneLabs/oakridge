@@ -1,4 +1,4 @@
-import type { CheckedValue, Invocation, Trigger } from "../core-client/generated-contracts";
+import type { CheckedValue, Invocation, Trigger } from "../core-client/core-types";
 import { INPUT_CONTRACTS } from "./provider-catalog";
 import type { SessionInvocationSettings } from "../domain/session-settings";
 

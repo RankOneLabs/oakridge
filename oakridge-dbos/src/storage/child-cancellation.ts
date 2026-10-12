@@ -1,5 +1,5 @@
 import type { CoreClient } from "../core-client/client";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 import type { Result, CommitRequest } from "./commit";
 import type { MutationInput, Decision } from "./mutation-service";
 import { prepareCommit, requestEvaluation } from "./mutation-service";

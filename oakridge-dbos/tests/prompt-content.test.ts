@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { readStoredPrompts, resolveBundlePrompts, type PromptContent } from "../src/storage/prompt-content";
 import { listPromptCatalog, resolvePromptKeys } from "../../workflow-config/src/prompt-catalog";
 import type { SqlExecutor } from "../src/storage/sql-executor";

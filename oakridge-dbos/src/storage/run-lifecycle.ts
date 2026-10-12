@@ -1,7 +1,7 @@
 import { inTransaction, type TransactionalSqlExecutor } from "./sql-executor";
 import type { CoreClient } from "../core-client/client";
 import { createMutationService } from "./mutation-service";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 import type { RunId, ScopeId } from "./schema-records";
 import { pendingCleanupCount, type DeleteEligibility } from "../effects/intents";
 import { revokeStarts } from "./revocation";

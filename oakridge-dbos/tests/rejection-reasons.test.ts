@@ -8,7 +8,7 @@ import type { CommitRejectionReason } from "../src/storage/commit";
 import type { CommitRequest } from "../src/storage/commit";
 import type { AuthoritySnapshot } from "../src/storage/snapshot-reader";
 import type { SqlExecutor } from "../src/storage/sql-executor";
-import type { DefinitionBundle } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle } from "../src/core-client/core-types";
 import { validateStorageAuthority } from "../src/storage/storage-validator";
 
 const rejectionDetailMatch = /\b(?:outcome|rejection|commit_result|result\.value)\.detail\s*(?:===|!==|==|!=|\.startsWith\s*\(|\.includes\s*\()/;

@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import type { CoreClient } from "../core-client/client";
-import type { DefinitionBundle } from "../core-client/generated-contracts";
+import type { DefinitionBundle } from "../core-client/core-types";
 import type { EffectPayload } from "../effects/intents";
 import type { MutationService } from "../storage/mutation-service";
 import { findReceipt, requestDigest } from "../storage/receipts";

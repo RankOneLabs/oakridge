@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { DefinitionBundle, DecisionOutcome, ReferenceRoot, VersionedValue } from "../src/core-client/generated-contracts";
+import type { DefinitionBundle, DecisionOutcome, ReferenceRoot, VersionedValue } from "../src/core-client/core-types";
 import { availableCommand, COMMAND_STATUS, commandStatus, ConflictError, currentTargetRevisions, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, parseScopeCommand, targetsMatch, TransientServiceError } from "../src/http/scope-commands";
 import type { ScopeId } from "../src/storage/schema-records";
 import type { TransactionalSqlExecutor } from "../src/storage/sql-executor";
