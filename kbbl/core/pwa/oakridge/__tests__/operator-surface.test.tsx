@@ -9,8 +9,10 @@ import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorV
 import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
 
 function shippedBundle(name: string): unknown {
-  const path = resolve(process.cwd(), `../../../workflow-config/definitions/${name}.json`);
-  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  // The pinned development definition is the only one committed; the
+  // verification variant is derived from it below.
+  const path = resolve(import.meta.dirname, "../__fixtures__/development-definition.json");
+  if (name === "development" && existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
   // PR 4's third bundle is absent at the integration baseline. Keep its extra
   // root field represented there so the test fails for the missing form behavior.
   if (name !== "development-verification") throw new Error(`Missing shipped bundle: ${name}`);

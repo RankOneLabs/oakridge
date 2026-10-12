@@ -64,6 +64,53 @@ pub fn validate_json(value: &Value) -> Result<(), &'static str> {
         _ => Ok(()),
     }
 }
+pub mod word_map {
+    use super::*;
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer>(
+        value: &BTreeMap<String, u32>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        decoder: D,
+    ) -> Result<BTreeMap<String, u32>, D::Error> {
+        BTreeMap::<String, u32>::deserialize(decoder)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 0, "maximum": u32::MAX}
+        })
+    }
+}
+pub mod optional_signed {
+    use super::*;
+    fn valid(value: i64) -> bool {
+        (MIN_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+    }
+    pub fn serialize<S: Serializer>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error> {
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::ser::Error::custom(RANGE_ERROR));
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<i64>, D::Error> {
+        let value = Option::<i64>::deserialize(decoder)?;
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::de::Error::custom(RANGE_ERROR));
+        }
+        Ok(value)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": ["integer", "null"],
+            "minimum": MIN_SAFE_INTEGER,
+            "maximum": MAX_SAFE_INTEGER
+        })
+    }
+}
 pub mod json {
     use super::*;
     pub fn serialize<S: Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {
@@ -76,69 +123,106 @@ pub mod json {
         Ok(value)
     }
 }
+pub mod optional_json {
+    use super::*;
+    pub fn serialize<S: Serializer>(
+        value: &Option<Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if let Some(value) = value {
+            validate_json(value).map_err(serde::ser::Error::custom)?;
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<Value>, D::Error> {
+        let value = Option::<Value>::deserialize(decoder)?;
+        if let Some(value) = &value {
+            validate_json(value).map_err(serde::de::Error::custom)?;
+        }
+        Ok(value)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CheckedData, DefinitionBundle, ReadVersion};
+    use crate::{ActionKey, AttemptState, AttemptStatus, Cause, Mode, UnitId, WorkerKey};
 
     #[test]
-    fn checked_integers_round_trip_only_at_safe_values() {
-        for value in [MIN_SAFE_INTEGER, 0, MAX_SAFE_INTEGER] {
-            let data = CheckedData::Integer { value };
-            let bytes = serde_json::to_vec(&data).unwrap();
-            assert_eq!(serde_json::from_slice::<CheckedData>(&bytes).unwrap(), data);
+    fn optional_run_input_rejects_wide_wire_numbers() {
+        let input = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
+        let run = crate::RunState {
+            id: "run".into(),
+            root: UnitId::from("run"),
+            status: crate::UnitStatus::NotStarted,
+            input: Some(input),
+        };
+        assert!(serde_json::to_value(&run).is_err());
+        let raw = serde_json::json!({
+            "id": "run", "root": "run", "status": {"kind": "not_started"},
+            "input": {"nested": [MAX_SAFE_INTEGER + 1]}
+        });
+        assert!(serde_json::from_value::<crate::RunState>(raw).is_err());
+    }
+
+    fn attempt(ended_at: Option<i64>) -> AttemptState {
+        AttemptState {
+            action_id: ActionKey::from("action"),
+            seq: 1,
+            unit: UnitId::from("run/unit"),
+            worker: WorkerKey::from("worker"),
+            mode: Mode::Initial,
+            cause: Cause::Missing,
+            status: AttemptStatus::Running,
+            kbbl_session_id: None,
+            ended_at,
         }
+    }
+
+    #[test]
+    fn a_logical_end_counter_round_trips_only_at_safe_values() {
+        for value in [MIN_SAFE_INTEGER, 0, MAX_SAFE_INTEGER] {
+            let state = attempt(Some(value));
+            let bytes = serde_json::to_vec(&state).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<AttemptState>(&bytes)
+                    .unwrap()
+                    .ended_at,
+                Some(value)
+            );
+        }
+        assert_eq!(
+            serde_json::from_slice::<AttemptState>(&serde_json::to_vec(&attempt(None)).unwrap())
+                .unwrap()
+                .ended_at,
+            None
+        );
         for value in [
             MIN_SAFE_INTEGER - 1,
             MAX_SAFE_INTEGER + 1,
             i64::MIN,
             i64::MAX,
         ] {
-            assert!(serde_json::to_vec(&CheckedData::Integer { value }).is_err());
-            assert!(serde_json::from_value::<CheckedData>(
-                serde_json::json!({"kind":"integer","value":value})
-            )
-            .is_err());
-        }
-    }
-    #[test]
-    fn version_metadata_uses_the_same_unsigned_bound() {
-        let version = ReadVersion {
-            identity: "owner".into(),
-            version: MAX_SAFE_INTEGER as u64,
-        };
-        assert_eq!(
-            serde_json::from_slice::<ReadVersion>(&serde_json::to_vec(&version).unwrap()).unwrap(),
-            version
-        );
-        assert!(serde_json::to_vec(&ReadVersion {
-            version: u64::MAX,
-            ..version
-        })
-        .is_err());
-        assert!(serde_json::from_value::<ReadVersion>(
-            serde_json::json!({"identity":"owner","version":u64::MAX})
-        )
-        .is_err());
-    }
-    #[test]
-    fn bundle_limits_deadlines_and_unused_literals_cannot_smuggle_wide_numbers() {
-        let fixture: Value =
-            serde_json::from_str(include_str!("../../../fixtures/bundles/minimal.json")).unwrap();
-        for path in [
-            "/limits/evaluation_budget",
-            "/scopes/0/workers/0/actions/0/deadline_ms",
-            "/scopes/0/initial/value",
-        ] {
-            let mut source = fixture.clone();
-            *source.pointer_mut(path).unwrap() = Value::from(MAX_SAFE_INTEGER + 1);
             assert!(
-                serde_json::from_value::<DefinitionBundle>(source).is_err(),
-                "{path}"
+                serde_json::to_vec(&attempt(Some(value))).is_err(),
+                "{value}"
             );
         }
     }
+
+    #[test]
+    fn a_state_value_cannot_smuggle_a_wide_number() {
+        let wide = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
+        let status = crate::UnitStatus::Done {
+            outcome: wide.clone(),
+        };
+        assert!(serde_json::to_vec(&status).is_err());
+        assert!(serde_json::from_value::<crate::UnitStatus>(
+            serde_json::json!({"kind": "done", "outcome": wide})
+        )
+        .is_err());
+    }
+
     #[test]
     fn every_generated_integer_schema_is_bounded_for_javascript() {
         fn check(value: &Value) {

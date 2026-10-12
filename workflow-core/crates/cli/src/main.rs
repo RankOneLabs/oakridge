@@ -16,15 +16,11 @@ fn main() -> io::Result<()> {
     if std::env::args().any(|arg| arg == "--source-schema") {
         println!(
             "{}",
-            serde_json::to_string_pretty(&schemars::schema_for!(workflow_model::DefinitionBundle))?
+            serde_json::to_string_pretty(&schemars::schema_for!(workflow_model::Workflow))?
         );
         return Ok(());
     }
-    let mut host = workflow_model::ResourceLimits {
-        max_list_items: 10_000,
-        max_depth: workflow_model::protocol::MAX_DEPTH_CEILING,
-        evaluation_budget: 1_000_000,
-    };
+    let mut host = workflow_model::ResourceLimits::default();
     let mut arguments = std::env::args().skip(1);
     while let Some(flag) = arguments.next() {
         let slot = match flag.as_str() {

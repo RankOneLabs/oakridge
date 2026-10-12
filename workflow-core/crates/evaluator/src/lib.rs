@@ -1,446 +1,2231 @@
 //! Pure checked-program evaluation. All dynamic inputs are revalidated at this boundary.
-mod collections;
-mod expressions;
-pub use collections::materialize;
-use std::collections::BTreeSet;
-use workflow_compiler::validate_checked_value;
-use workflow_model::*;
-fn failure(
-    kind: DomainErrorKind,
-    entity: impl Into<String>,
-    detail: impl Into<String>,
-) -> DomainError {
-    let mut e = DomainError::new(kind, entity, detail);
-    e.operation = "evaluate".into();
-    e
-}
-pub(crate) fn owner<'a>(
-    program: &'a CheckedProgram,
-    snapshot: &Snapshot,
-) -> CoreResult<(&'a ScopeDefinition, &'a CheckedScope)> {
-    let source = program
-        .derived
-        .scopes
-        .iter()
-        .find(|s| s.key == snapshot.scope)
-        .ok_or_else(|| {
-            failure(
-                DomainErrorKind::MissingSymbol,
-                snapshot.scope.to_string(),
-                "scope not compiled",
-            )
-        })?;
-    let checked = program
-        .scopes
-        .iter()
-        .find(|s| s.key == snapshot.scope)
-        .ok_or_else(|| {
-            failure(
-                DomainErrorKind::MissingSymbol,
-                snapshot.scope.to_string(),
-                "checked scope unavailable",
-            )
-        })?;
-    Ok((source, checked))
-}
-/// Validation walks every value the snapshot carries, and the observation
-/// uniqueness checks compare each root against its predecessors, so both are
-/// charged to the evaluation budget before the work is done.
-pub(crate) fn snapshot_valid(
-    program: &CheckedProgram,
-    snapshot: &Snapshot,
-    budget: &mut usize,
-) -> CoreResult<()> {
-    let entity = snapshot.owner.0.as_str();
-    let carried = [&snapshot.input, &snapshot.state, &snapshot.trigger.payload]
-        .into_iter()
-        .chain(snapshot.observations.iter().map(|o| &o.value))
-        .fold(0usize, |cost, value| {
-            cost.saturating_add(expressions::value_cost(value))
-        });
-    expressions::charge(budget, carried, entity)?;
-    expressions::charge(
-        budget,
-        snapshot
-            .observations
-            .len()
-            .saturating_mul(snapshot.observations.len()),
-        entity,
-    )?;
-    let maximum = wire_numbers::MAX_SAFE_INTEGER as u64;
-    if snapshot.version > maximum
-        || snapshot.random_seed > maximum
-        || !(wire_numbers::MIN_SAFE_INTEGER..=wire_numbers::MAX_SAFE_INTEGER)
-            .contains(&snapshot.timestamp_ms)
-        || snapshot
-            .observations
-            .iter()
-            .any(|observation| observation.version > maximum)
-    {
-        return Err(failure(
-            DomainErrorKind::InvalidSnapshot,
-            snapshot.owner.to_string(),
-            "snapshot metadata exceeds JavaScript-safe wire range",
-        ));
-    }
-    let (scope, _) = owner(program, snapshot)?;
-    validate_checked_value(&program.derived, &scope.input_schema, &snapshot.input)?;
-    validate_checked_value(&program.derived, &scope.state_schema, &snapshot.state)?;
-    if snapshot.owner.0.is_empty() || snapshot.trigger.id.0.is_empty() {
-        return Err(failure(
-            DomainErrorKind::InvalidSnapshot,
-            snapshot.scope.to_string(),
-            "owner and trigger identities required",
-        ));
-    }
-    let payload_schema = scope
-        .commands
-        .iter()
-        .find(|c| c.key == snapshot.trigger.key)
-        .map(|c| &c.payload_schema)
-        .or_else(|| {
-            scope
-                .facts
-                .iter()
-                .find(|f| f.key == snapshot.trigger.key)
-                .map(|f| &f.payload_schema)
-        })
-        .ok_or_else(|| {
-            failure(
-                DomainErrorKind::UndeclaredTrigger,
-                snapshot.trigger.key.to_string(),
-                "event belongs to another scope or is undeclared",
-            )
-        })?;
-    validate_checked_value(&program.derived, payload_schema, &snapshot.trigger.payload)?;
-    let mut identities = BTreeSet::new();
-    let mut roots = Vec::new();
-    for observation in &snapshot.observations {
-        if observation.identity == snapshot.owner.0
-            || observation.identity.is_empty()
-            || !identities.insert(&observation.identity)
-            || roots.contains(&observation.root)
-        {
-            return Err(failure(
-                DomainErrorKind::InvalidSnapshot,
-                snapshot.owner.to_string(),
-                "duplicate observed identity or root",
-            ));
+mod v2_step {
+    use serde_json::Value;
+    use std::cell::Cell;
+    use std::collections::{BTreeMap, BTreeSet};
+    use workflow_model::*;
+
+    fn rejected(reason: impl Into<String>) -> StepError {
+        StepError::Rejected {
+            reason: reason.into(),
         }
-        roots.push(observation.root.clone());
-        let expected = match &observation.root {
-            ReferenceRoot::Output { key } => scope
-                .outputs
-                .iter()
-                .find(|x| x.key == *key)
-                .map(|x| &x.schema),
-            ReferenceRoot::Resource { key } => scope
-                .resources
-                .iter()
-                .find(|x| x.key == *key)
-                .map(|x| &x.schema),
-            ReferenceRoot::Result { worker } => scope
-                .workers
-                .iter()
-                .find(|x| x.key == *worker)
-                .map(|x| &x.result_schema),
-            ReferenceRoot::Child { key, export } => scope
-                .children
-                .iter()
-                .find(|c| c.key == *key && c.imports.contains(export))
-                .and_then(|c| program.derived.scopes.iter().find(|s| s.key == c.scope))
-                .and_then(|s| s.exports.iter().find(|e| e.key == *export))
-                .map(|e| &e.schema),
-            ReferenceRoot::OutputCollection { schema, .. }
-            | ReferenceRoot::OutputRevisions { schema, .. }
-            | ReferenceRoot::OutputRevision { schema, .. }
-            | ReferenceRoot::OptionalOutputRevision { schema, .. }
-            | ReferenceRoot::Children { schema, .. }
-            | ReferenceRoot::ChildrenOutcomes { schema, .. }
-            | ReferenceRoot::ChildrenComplete { schema, .. } => {
-                workflow_compiler::validate_observation_root(
-                    &program.derived,
-                    scope,
-                    &observation.root,
-                )?;
-                Some(schema)
+    }
+    fn invalid(detail: impl Into<String>) -> StepError {
+        StepError::Invalid {
+            detail: detail.into(),
+        }
+    }
+    struct EvaluationContext<'a> {
+        limits: &'a ResourceLimits,
+        remaining: Cell<usize>,
+        exhausted: Cell<bool>,
+        limit_error: Cell<Option<&'static str>>,
+    }
+    impl<'a> EvaluationContext<'a> {
+        fn new(limits: &'a ResourceLimits) -> Self {
+            Self {
+                limits,
+                remaining: Cell::new(limits.evaluation_budget),
+                exhausted: Cell::new(false),
+                limit_error: Cell::new(None),
+            }
+        }
+        fn charge(&self) -> bool {
+            let remaining = self.remaining.get();
+            if remaining == 0 {
+                self.exhausted.set(true);
+                false
+            } else {
+                self.remaining.set(remaining - 1);
+                true
+            }
+        }
+        fn check_value(&self, value: &Value) -> Result<(), StepError> {
+            self.limits.check_value(value).map_err(rejected)
+        }
+        fn check_list_len(&self, len: usize) -> bool {
+            if len > self.limits.max_list_items {
+                self.limit_error.set(Some("max_list_items exceeded"));
+                false
+            } else {
+                true
+            }
+        }
+    }
+    fn latest<'a>(
+        state: &'a ScopedSnapshot,
+        unit: &UnitId,
+        artifact: &SymbolKey,
+    ) -> Option<&'a RevisionState> {
+        state
+            .revisions
+            .iter()
+            .rev()
+            .find(|r| r.unit == *unit && r.artifact == *artifact)
+    }
+    fn stage<'a>(program: &'a CheckedWorkflow, unit: &UnitState) -> Result<&'a Stage, StepError> {
+        let key = unit
+            .stage
+            .as_ref()
+            .ok_or_else(|| invalid("unit is a group"))?;
+        program
+            .source
+            .stages
+            .get(&key.0)
+            .ok_or_else(|| invalid(format!("stage {key} absent")))
+    }
+    fn checked_stage<'a>(
+        program: &'a CheckedWorkflow,
+        unit: &UnitState,
+    ) -> Result<&'a CheckedStage, StepError> {
+        let key = unit
+            .stage
+            .as_ref()
+            .ok_or_else(|| invalid("unit is a group"))?;
+        program
+            .stages
+            .iter()
+            .find(|stage| stage.key == *key)
+            .ok_or_else(|| invalid(format!("checked stage {key} absent")))
+    }
+    fn worker<'a>(stage: &'a Stage, key: &WorkerKey) -> Result<&'a Worker, StepError> {
+        stage
+            .workers
+            .get(&key.0)
+            .ok_or_else(|| rejected(format!("worker {key} absent")))
+    }
+    fn creates(worker: &Worker) -> &[SymbolKey] {
+        match worker {
+            Worker::Agent { creates, .. } | Worker::Code { creates, .. } => creates,
+        }
+    }
+    fn attempt<'a>(
+        state: &'a ScopedSnapshot,
+        unit: &UnitId,
+        worker: &WorkerKey,
+    ) -> Option<&'a AttemptState> {
+        state
+            .attempts
+            .iter()
+            .rev()
+            .find(|a| a.unit == *unit && a.worker == *worker)
+    }
+    fn revision_id(state: &ScopedSnapshot, unit: &UnitId, artifact: &SymbolKey) -> RevisionId {
+        let seq = state
+            .revisions
+            .iter()
+            .filter(|revision| revision.unit == *unit && revision.artifact == *artifact)
+            .count()
+            + 1;
+        RevisionId(format!("{}:{seq}", artifact.0))
+    }
+    fn decision_id(state: &ScopedSnapshot) -> DecisionId {
+        DecisionId(format!("d{}", state.decisions.len() + 1))
+    }
+    fn path(value: &Value, parts: &[&str]) -> Option<Value> {
+        let mut current = value;
+        for part in parts {
+            current = current.get(*part)?;
+        }
+        Some(current.clone())
+    }
+    /// Walk a resolved stage expression. The compiler already type-checked it,
+    /// so an unresolvable read is None rather than an error.
+    fn eval_expression(
+        expression: &Expression,
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        each: Option<&Value>,
+        own_body: Option<(&str, &Value)>,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Option<Value>, StepError> {
+        let result = eval_expression_inner(expression, unit, state, each, own_body, context);
+        if let Some(reason) = context.limit_error.get() {
+            return Err(rejected(reason));
+        }
+        if context.exhausted.get() {
+            return Err(rejected("evaluation_budget exceeded"));
+        }
+        if let Some(value) = &result {
+            context.check_value(value)?;
+        }
+        Ok(result)
+    }
+    fn eval_expression_inner(
+        expression: &Expression,
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        each: Option<&Value>,
+        own_body: Option<(&str, &Value)>,
+        context: &EvaluationContext<'_>,
+    ) -> Option<Value> {
+        if !context.charge() {
+            return None;
+        }
+        fn decided(
+            state: &ScopedSnapshot,
+            unit: &UnitState,
+            artifact: &SymbolKey,
+            effect: DecisionEffect,
+        ) -> Value {
+            Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
+                state.decisions.iter().any(|decision| {
+                    decision.unit == unit.id
+                        && decision.target == revision.id
+                        && decision.effect == effect
+                })
+            }))
+        }
+        let integers = |left: &Expression, right: &Expression| -> Option<(i64, i64)> {
+            Some((
+                eval_expression_inner(left, unit, state, each, own_body, context)?.as_i64()?,
+                eval_expression_inner(right, unit, state, each, own_body, context)?.as_i64()?,
+            ))
+        };
+        match expression {
+            Expression::Literal { value, .. } => Some(value.clone()),
+            Expression::Len { value } => Some(Value::from(
+                match eval_expression_inner(value, unit, state, each, own_body, context)? {
+                    Value::String(text) => text.chars().count(),
+                    Value::Array(items) => items.len(),
+                    _ => return None,
+                },
+            )),
+            Expression::GreaterThan { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left > right))
+            }
+            Expression::GreaterOrEqual { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left >= right))
+            }
+            Expression::LessThan { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left < right))
+            }
+            Expression::LessOrEqual { left, right } => {
+                let (left, right) = integers(left, right)?;
+                Some(Value::Bool(left <= right))
+            }
+            Expression::List { items, .. } => {
+                if !context.check_list_len(items.len()) {
+                    return None;
+                }
+                items
+                    .iter()
+                    .map(|item| eval_expression_inner(item, unit, state, each, own_body, context))
+                    .collect::<Option<Vec<_>>>()
+                    .map(Value::Array)
+            }
+            Expression::Map {
+                source,
+                value: projection,
+                ..
+            } => {
+                let Value::Array(items) =
+                    eval_expression_inner(source, unit, state, each, own_body, context)?
+                else {
+                    return None;
+                };
+                if !context.check_list_len(items.len()) {
+                    return None;
+                }
+                items
+                    .iter()
+                    .map(|item| {
+                        eval_expression_inner(
+                            projection,
+                            unit,
+                            state,
+                            Some(item),
+                            own_body,
+                            context,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(Value::Array)
+            }
+            Expression::Reference {
+                root,
+                path: segments,
+            } => {
+                let parts: Vec<&str> = segments.iter().map(String::as_str).collect();
+                let read = |value: &Value| -> Option<Value> {
+                    if parts.is_empty() {
+                        Some(value.clone())
+                    } else {
+                        path(value, &parts)
+                    }
+                };
+                match root {
+                    ReferenceRoot::UnitInput => read(&unit.input),
+                    ReferenceRoot::EachMember | ReferenceRoot::Item => read(each?),
+                    ReferenceRoot::ValidationBody { artifact } => {
+                        let (bound, body) = own_body?;
+                        (bound == artifact.0).then(|| read(body)).flatten()
+                    }
+                    ReferenceRoot::Latest { artifact } => {
+                        read(&latest(state, &unit.id, artifact)?.body)
+                    }
+                    ReferenceRoot::Published { artifact } => {
+                        Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
+                    }
+                    ReferenceRoot::Approved { artifact } => {
+                        Some(decided(state, unit, artifact, DecisionEffect::Approve))
+                    }
+                    ReferenceRoot::ChangesRequested { artifact } => Some(decided(
+                        state,
+                        unit,
+                        artifact,
+                        DecisionEffect::RequestChanges,
+                    )),
+                    ReferenceRoot::MemberOutcomes { unit: collection } => {
+                        let mut values = Vec::new();
+                        let mut children: Vec<_> = state
+                            .units
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.parent.as_ref() == Some(&unit.id)
+                                    && candidate.declaration.0 == collection.0
+                            })
+                            .collect();
+                        children.sort_by(|left, right| left.id.cmp(&right.id));
+                        if !context.check_list_len(children.len()) {
+                            return None;
+                        }
+                        for child in children {
+                            let UnitStatus::Done { outcome } = &child.status else {
+                                return None;
+                            };
+                            values.push(read(outcome)?);
+                        }
+                        Some(Value::Array(values))
+                    }
+                    ReferenceRoot::UnitOutcome { unit: child_key } => {
+                        let child = state.units.iter().find(|candidate| {
+                            candidate.parent.as_ref() == Some(&unit.id)
+                                && (candidate.declaration.0 == child_key.0
+                                    || candidate.id.0.ends_with(&format!("/{child_key}")))
+                        })?;
+                        let UnitStatus::Done { outcome } = &child.status else {
+                            return None;
+                        };
+                        read(outcome)
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }
-        .ok_or_else(|| {
-            failure(
-                DomainErrorKind::PrivateRead,
-                snapshot.owner.to_string(),
-                "undeclared or private observed root",
-            )
-        })?;
-        validate_checked_value(&program.derived, expected, &observation.value)?;
     }
-    Ok(())
-}
-pub fn evaluate(program: &CheckedProgram, snapshot: &Snapshot) -> CoreResult<DecisionOutcome> {
-    let mut budget = program.derived.limits.evaluation_budget;
-    snapshot_valid(program, snapshot, &mut budget)?;
-    let (scope, checked) = owner(program, snapshot)?;
-    let state = expressions::variant(&snapshot.state)?;
-    let mut read_set = vec![ReadVersion {
-        identity: snapshot.owner.0.clone(),
-        version: snapshot.version,
-    }];
-    read_set.extend(snapshot.observations.iter().map(|o| ReadVersion {
-        identity: o.identity.clone(),
-        version: o.version,
-    }));
-    read_set.sort_by(|a, b| a.identity.cmp(&b.identity));
-    let mut explanation = Explanation {
-        bundle_digest: program.digest.clone(),
-        owner: snapshot.owner.clone(),
-        node_id: NodeId("".into()),
-        trigger_id: snapshot.trigger.id.clone(),
-        read_set,
-        trace: Vec::new(),
-    };
-    if let Some(command) = scope
-        .commands
-        .iter()
-        .find(|c| c.key == snapshot.trigger.key)
-    {
-        if !command.available_in.contains(&state) {
-            return Err(failure(
-                DomainErrorKind::UndeclaredTrigger,
-                command.key.to_string(),
-                "command unavailable in committed state",
-            ));
+    fn eval_fields(
+        fields: &[CheckedNamedExpression],
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        each: Option<&Value>,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Option<Value>, StepError> {
+        let mut result = serde_json::Map::new();
+        for field in fields {
+            let Some(value) =
+                eval_expression(&field.value.expression, unit, state, each, None, context)?
+            else {
+                return Ok(None);
+            };
+            result.insert(field.key.clone(), value);
         }
+        Ok(Some(Value::Object(result)))
     }
-    let mut node = &checked.tree;
-    loop {
-        if budget == 0 {
-            return Err(failure(
-                DomainErrorKind::ResourceLimit,
-                snapshot.owner.to_string(),
-                "evaluation budget exhausted; no workflow transition",
-            ));
-        }
-        budget -= 1;
-        let id = match node {
-            CheckedTree::Match { id, .. }
-            | CheckedTree::If { id, .. }
-            | CheckedTree::Apply { id, .. }
-            | CheckedTree::Wait { id, .. }
-            | CheckedTree::Reject { id, .. } => id,
+    fn latest_retry<'a>(
+        state: &'a ScopedSnapshot,
+        unit: &UnitId,
+        worker: &WorkerKey,
+    ) -> Option<&'a EventId> {
+        state
+            .retry_events
+            .iter()
+            .rev()
+            .find(|(u, w, _)| u == unit && w == worker)
+            .map(|(_, _, id)| id)
+    }
+    fn can_run(state: &ScopedSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
+        let Some(previous) = attempt(state, unit, worker) else {
+            return Some(None);
         };
-        explanation.node_id = id.clone();
-        explanation.trace.push(id.0.clone());
-        let mut context = expressions::EvaluationContext {
-            program,
-            snapshot,
-            item: None,
-            budget: &mut budget,
-        };
-        match node {
-            CheckedTree::Match {
-                value,
-                cases,
-                otherwise,
-                ..
-            } => {
-                let value = expressions::evaluate_expression(value, &mut context)?;
-                let choice = expressions::variant(&value)?;
-                node = if let Some(case) = cases.iter().find(|c| c.variant == choice) {
-                    &case.node
+        match previous.status {
+            AttemptStatus::Pending | AttemptStatus::Running => None,
+            AttemptStatus::Failed { .. } => {
+                let retry = latest_retry(state, unit, worker)?;
+                if matches!(previous.cause, Cause::Retry { ref event } if event == retry) {
+                    None
                 } else {
-                    otherwise.as_deref().ok_or_else(|| {
-                        failure(
-                            DomainErrorKind::InvalidSnapshot,
-                            id.to_string(),
-                            "checked match has no branch",
-                        )
-                    })?
-                };
-            }
-            CheckedTree::If {
-                condition,
-                then,
-                otherwise,
-                ..
-            } => {
-                node = if expressions::boolean(&expressions::evaluate_expression(
-                    condition,
-                    &mut context,
-                )?)? {
-                    then
-                } else {
-                    otherwise
-                };
-            }
-            CheckedTree::Wait {
-                continuations,
-                reason,
-                attention,
-                ..
-            } => {
-                return Ok(DecisionOutcome::Wait {
-                    explanation,
-                    continuations: continuations.clone(),
-                    reason: reason.clone(),
-                    attention: Some(attention.clone()),
-                })
-            }
-            CheckedTree::Reject { error, detail, .. } => {
-                return Ok(DecisionOutcome::Reject {
-                    explanation,
-                    error: error.clone(),
-                    detail: detail.clone(),
-                })
-            }
-            CheckedTree::Apply {
-                mutations,
-                actions,
-                outcome,
-                ..
-            } => {
-                let mut selected = Vec::new();
-                for mutation in mutations {
-                    selected.push(match mutation {
-                        CheckedMutation::SetState { value } => MutationValue::SetState {
-                            value: expressions::evaluate_expression(value, &mut context)?,
-                        },
-                        CheckedMutation::Export { key, value } => MutationValue::Export {
-                            key: key.clone(),
-                            value: expressions::evaluate_expression(value, &mut context)?,
-                        },
-                        CheckedMutation::ActivateChild { key } => {
-                            let child =
-                                checked.children.iter().find(|c| c.key == *key).ok_or_else(
-                                    || {
-                                        failure(
-                                            DomainErrorKind::MissingSymbol,
-                                            key.to_string(),
-                                            "checked child missing",
-                                        )
-                                    },
-                                )?;
-                            if child.collection.is_some() {
-                                selected.push(MutationValue::ActivateCollection {
-                                    key: key.clone(),
-                                    materialization: collections::materialize_with_budget(
-                                        program,
-                                        snapshot,
-                                        key,
-                                        context.budget,
-                                    )?,
-                                });
-                                continue;
-                            }
-                            MutationValue::ActivateChild {
-                                key: key.clone(),
-                                input: expressions::evaluate_expression(
-                                    &child.input,
-                                    &mut context,
-                                )?,
-                            }
-                        }
-                        CheckedMutation::ClearOutput { key } => {
-                            MutationValue::ClearOutput { key: key.clone() }
-                        }
-                        CheckedMutation::CancelChildren { key } => {
-                            MutationValue::CancelChildren { key: key.clone() }
-                        }
-                        CheckedMutation::Acquire { pool } => {
-                            MutationValue::Acquire { pool: pool.clone() }
-                        }
-                        CheckedMutation::Release { pool } => {
-                            MutationValue::Release { pool: pool.clone() }
-                        }
-                        CheckedMutation::Revoke { worker } => MutationValue::Revoke {
-                            worker: worker.clone(),
-                        },
-                        CheckedMutation::Stop { worker } => MutationValue::Stop {
-                            worker: worker.clone(),
-                        },
-                        CheckedMutation::BindResource { key, value } => {
-                            MutationValue::BindResource {
-                                key: key.clone(),
-                                value: expressions::evaluate_expression(value, &mut context)?,
-                            }
-                        }
-                        CheckedMutation::ClearResource { key } => {
-                            MutationValue::ClearResource { key: key.clone() }
-                        }
-                        CheckedMutation::Observe { resource } => MutationValue::Observe {
-                            resource: resource.clone(),
-                        },
-                    });
+                    Some(Some(Cause::Retry {
+                        event: retry.clone(),
+                    }))
                 }
-                let invocations: Vec<Invocation> = actions
-                    .iter()
-                    .map(|a| {
-                        Ok(Invocation {
-                            selection: a.selection.clone(),
-                            definition: a.definition.clone(),
-                            input: expressions::evaluate_expression(&a.input, &mut context)?,
-                            prompt_key: a.prompt_key.clone(),
+            }
+            AttemptStatus::Succeeded => Some(None),
+        }
+    }
+    fn stage_actions(
+        program: &CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+    ) -> Result<Vec<Action>, StepError> {
+        let definition = stage(program, unit)?;
+        let mut wanted = Vec::new();
+        for (key, definition_worker) in &definition.workers {
+            let worker_key = WorkerKey::from(key.as_str());
+            let Some(retry) = can_run(state, &unit.id, &worker_key) else {
+                continue;
+            };
+            let candidate = match definition_worker {
+                Worker::Agent {
+                    creates,
+                    reviews: Some(subject),
+                    ..
+                } => {
+                    let Some(subject) = latest(state, &unit.id, subject) else {
+                        continue;
+                    };
+                    let already = creates.iter().all(|artifact| {
+                        state.revisions.iter().any(|r| {
+                            r.unit == unit.id
+                                && r.artifact == *artifact
+                                && r.subject.as_ref() == Some(&subject.id)
                         })
-                    })
-                    .collect::<CoreResult<_>>()?;
-                let outcome = outcome
-                    .as_ref()
-                    .map(|e| expressions::evaluate_expression(e, &mut context))
-                    .transpose()?;
-                let targets = checked
-                    .command_targets
-                    .iter()
-                    .find(|c| c.command == snapshot.trigger.key)
-                    .map(|c| {
-                        c.targets
-                            .iter()
-                            .map(|e| expressions::evaluate_expression(e, &mut context))
-                            .collect::<CoreResult<Vec<_>>>()
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                if !selected.is_empty()
-                    && outcome.is_none()
-                    && invocations.is_empty()
-                    && selected
-                        .iter()
-                        .all(|mutation| matches!(mutation, MutationValue::SetState { .. }))
-                {
-                    let mut is_unchanged = true;
-                    for mutation in &selected {
-                        let MutationValue::SetState { value } = mutation else {
-                            unreachable!()
-                        };
-                        if !expressions::equal_values(value, &snapshot.state, context.budget)? {
-                            is_unchanged = false;
-                        }
-                    }
-                    if is_unchanged {
-                        return Ok(DecisionOutcome::Wait {
-                            explanation,
-                            continuations: vec![snapshot.trigger.key.clone()],
-                            reason: "unchanged state; awaiting a new trigger".into(),
-                            attention: None,
-                        });
-                    }
-                }
-                if selected.is_empty() && outcome.is_none() && actions.is_empty() {
-                    return Ok(DecisionOutcome::Wait {
-                        explanation,
-                        continuations: vec![snapshot.trigger.key.clone()],
-                        reason: "mutation-free leaf; no commit required".into(),
-                        attention: None,
                     });
+                    if already {
+                        None
+                    } else {
+                        Some((
+                            Mode::Review,
+                            Cause::ReviewOf {
+                                revision: subject.id.clone(),
+                            },
+                        ))
+                    }
                 }
-                return Ok(DecisionOutcome::Apply {
-                    explanation,
-                    mutations: selected,
-                    invocations,
-                    outcome,
-                    targets,
+                Worker::Agent {
+                    creates,
+                    reviews: None,
+                    ..
+                } => {
+                    if creates
+                        .iter()
+                        .any(|artifact| latest(state, &unit.id, artifact).is_none())
+                    {
+                        Some((Mode::Initial, Cause::Missing))
+                    } else {
+                        creates.iter().find_map(|artifact| {
+                            let latest = latest(state, &unit.id, artifact)?;
+                            state
+                                .decisions
+                                .iter()
+                                .rev()
+                                .find(|d| {
+                                    d.unit == unit.id
+                                        && d.target == latest.id
+                                        && d.effect == DecisionEffect::RequestChanges
+                                })
+                                .map(|d| {
+                                    (
+                                        Mode::Revise,
+                                        Cause::ChangesRequested {
+                                            decision: d.id.clone(),
+                                        },
+                                    )
+                                })
+                        })
+                    }
+                }
+                Worker::Code { every: Some(_), .. } => Some((Mode::Initial, Cause::Periodic)),
+                Worker::Code {
+                    creates,
+                    every: None,
+                    ..
+                } => {
+                    if creates
+                        .iter()
+                        .any(|artifact| latest(state, &unit.id, artifact).is_none())
+                    {
+                        Some((Mode::Initial, Cause::Missing))
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some((mode, cause)) = candidate {
+                let cause = retry.unwrap_or(cause);
+                wanted.push(Action::RunWorker {
+                    unit: unit.id.clone(),
+                    worker: worker_key,
+                    mode,
+                    cause,
                 });
             }
         }
+        Ok(wanted)
+    }
+    fn group_for<'a>(
+        program: &'a CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+    ) -> Result<&'a Group, StepError> {
+        if unit.id == state.run.root {
+            return Ok(&program.source.run);
+        }
+        let parent_id = unit
+            .parent
+            .as_ref()
+            .ok_or_else(|| invalid("group has no parent"))?;
+        let parent = state
+            .units
+            .iter()
+            .find(|u| u.id == *parent_id)
+            .ok_or_else(|| invalid("parent absent"))?;
+        let owner = group_for(program, state, parent)?;
+        owner
+            .units
+            .get(&unit.declaration.0)
+            .and_then(|u| u.group.as_deref())
+            .ok_or_else(|| invalid("group declaration absent"))
+    }
+    /// The checked group mirroring group_for, so the engine can read compiled
+    /// unit expressions instead of the source text beside them.
+    fn checked_group_for<'a>(
+        program: &'a CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+    ) -> Result<&'a CheckedGroup, StepError> {
+        if unit.id == state.run.root {
+            return Ok(&program.root);
+        }
+        let parent_id = unit
+            .parent
+            .as_ref()
+            .ok_or_else(|| invalid("group has no parent"))?;
+        let parent = state
+            .units
+            .iter()
+            .find(|u| u.id == *parent_id)
+            .ok_or_else(|| invalid("parent absent"))?;
+        checked_group_for(program, state, parent)?
+            .units
+            .iter()
+            .find(|candidate| candidate.key.0 == unit.declaration.0)
+            .and_then(|candidate| candidate.group.as_deref())
+            .ok_or_else(|| invalid("checked group declaration absent"))
+    }
+    fn checked_unit<'a>(
+        group: &'a CheckedGroup,
+        declaration: &str,
+    ) -> Result<&'a CheckedUnit, StepError> {
+        group
+            .units
+            .iter()
+            .find(|candidate| candidate.key.0 == declaration)
+            .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
+    }
+    fn check_type(
+        ty: &TypeExpression,
+        value: &Value,
+        aliases: &BTreeMap<String, TypeExpression>,
+    ) -> bool {
+        if let TypeExpression::Name(name) = ty {
+            if let Some(alias) = aliases.get(name) {
+                return check_type(alias, value, aliases);
+            }
+        }
+        match ty {
+            TypeExpression::Record(fields) => value.as_object().is_some_and(|object| {
+                fields
+                    .iter()
+                    .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v, aliases)))
+            }),
+            TypeExpression::Name(name) if name == "text" || name == "repo_path" => {
+                value.is_string()
+            }
+            TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(|text| {
+                !text.is_empty()
+                    && !text
+                        .chars()
+                        .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+            }),
+            TypeExpression::Name(name) if name == "boolean" => value.is_boolean(),
+            TypeExpression::Name(name) if name == "integer" => value.is_i64(),
+            TypeExpression::Name(name) if name.starts_with("optional(") => name
+                .strip_prefix("optional(")
+                .and_then(|s| s.strip_suffix(')'))
+                .is_some_and(|inner| {
+                    value.is_null() || check_type(&inline_type(inner), value, aliases)
+                }),
+            TypeExpression::Name(name) if name.starts_with("list(") => name
+                .strip_prefix("list(")
+                .and_then(|s| s.strip_suffix(')'))
+                .is_some_and(|inner| {
+                    value.as_array().is_some_and(|items| {
+                        items
+                            .iter()
+                            .all(|item| check_type(&inline_type(inner), item, aliases))
+                    })
+                }),
+            TypeExpression::Name(name) if name.starts_with('{') && name.ends_with('}') => {
+                check_type(&inline_type(name), value, aliases)
+            }
+            _ => false,
+        }
+    }
+    fn inline_type(text: &str) -> TypeExpression {
+        let text = text.trim();
+        let Some(body) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+            return TypeExpression::Name(text.into());
+        };
+        let mut fields = BTreeMap::new();
+        let mut depth = 0usize;
+        let mut start = 0usize;
+        for (index, ch) in body.char_indices() {
+            match ch {
+                '{' | '(' => depth += 1,
+                '}' | ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    if let Some((key, ty)) = body[start..index].split_once(':') {
+                        fields.insert(key.trim().into(), inline_type(ty));
+                    }
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        if let Some((key, ty)) = body[start..].split_once(':') {
+            fields.insert(key.trim().into(), inline_type(ty));
+        }
+        TypeExpression::Record(fields)
+    }
+    fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
+        ActionKey(format!("{}:{}:{mode:?}:{cause:?}", unit.0, worker.0))
+    }
+    fn materialize_group(
+        program: &CheckedWorkflow,
+        state: &mut ScopedSnapshot,
+        group_id: &UnitId,
+        context: &EvaluationContext<'_>,
+    ) -> Result<(), StepError> {
+        let parent = state
+            .units
+            .iter()
+            .find(|u| u.id == *group_id)
+            .cloned()
+            .ok_or_else(|| invalid("group absent"))?;
+        let group = group_for(program, state, &parent)?.clone();
+        let checked = checked_group_for(program, state, &parent)?.clone();
+        for (key, unit) in &group.units {
+            let collection = checked_unit(&checked, key)?.collection.clone();
+            let each_values = if let Some(collection) = &collection {
+                eval_expression(
+                    &collection.source.expression,
+                    &parent,
+                    state,
+                    None,
+                    None,
+                    context,
+                )?
+                .and_then(|v| v.as_array().cloned())
+                .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
+            } else {
+                vec![Value::Null]
+            };
+            if each_values.len() > context.limits.max_list_items {
+                return Err(rejected("max_list_items exceeded"));
+            }
+            let mut keys = BTreeSet::new();
+            for each in &each_values {
+                let member = if let Some(collection) = &collection {
+                    eval_expression(
+                        &collection.key.expression,
+                        &parent,
+                        state,
+                        Some(each),
+                        None,
+                        context,
+                    )?
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or_else(|| rejected(format!("collection {key} key is not text")))?
+                } else {
+                    key.clone()
+                };
+                if member.is_empty()
+                    || member.len() > 256
+                    || member
+                        .chars()
+                        .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+                    || !keys.insert(member.clone())
+                {
+                    return Err(rejected(format!(
+                        "collection {key} has illegal or duplicate key"
+                    )));
+                }
+                let dependencies = match &unit.after {
+                    UnitDependencies::None => vec![],
+                    UnitDependencies::Fixed(items) => items.iter().map(|v| v.0.clone()).collect(),
+                    UnitDependencies::Each(_) => {
+                        let after = collection
+                            .as_ref()
+                            .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
+                        eval_expression(
+                            &after.after.expression,
+                            &parent,
+                            state,
+                            Some(each),
+                            None,
+                            context,
+                        )?
+                        .and_then(|v| v.as_array().cloned())
+                        .ok_or_else(|| rejected(format!("collection {key} after is not a list")))?
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| rejected("prerequisite key is not text"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                    }
+                };
+                let declared_input = &checked_unit(&checked, key)?.input;
+                let input = if unit.for_each.is_some() {
+                    eval_fields(declared_input, &parent, state, Some(each), context)?
+                        .ok_or_else(|| rejected("collection input unresolved"))?
+                } else {
+                    Value::Null
+                };
+                state.units.push(UnitState {
+                    id: UnitId(format!("{group_id}/{member}")),
+                    parent: Some(group_id.clone()),
+                    declaration: SymbolKey::from(key.as_str()),
+                    stage: unit.stage.clone(),
+                    status: UnitStatus::NotStarted,
+                    input,
+                    after: dependencies
+                        .into_iter()
+                        .map(|d| UnitId(format!("{group_id}/{d}")))
+                        .collect(),
+                    pool: unit.pool.clone(),
+                });
+            }
+        }
+        let members: BTreeSet<_> = state
+            .units
+            .iter()
+            .filter(|u| u.parent.as_ref() == Some(group_id))
+            .map(|u| u.id.clone())
+            .collect();
+        if state
+            .units
+            .iter()
+            .filter(|u| u.parent.as_ref() == Some(group_id))
+            .any(|u| u.after.iter().any(|d| !members.contains(d)))
+        {
+            return Err(rejected("prerequisite references missing member"));
+        }
+        // Kahn's algorithm: every member must become reachable from an empty prerequisite set.
+        let mut ready: BTreeSet<_> = state
+            .units
+            .iter()
+            .filter(|u| u.parent.as_ref() == Some(group_id) && u.after.is_empty())
+            .map(|u| u.id.clone())
+            .collect();
+        let mut visited = BTreeSet::new();
+        while let Some(next) = ready.pop_first() {
+            visited.insert(next.clone());
+            for member in state
+                .units
+                .iter()
+                .filter(|u| u.parent.as_ref() == Some(group_id) && u.after.contains(&next))
+            {
+                if member.after.iter().all(|d| visited.contains(d)) {
+                    ready.insert(member.id.clone());
+                }
+            }
+        }
+        if visited != members {
+            return Err(rejected("cyclic prerequisite"));
+        }
+        Ok(())
+    }
+    fn reduce(
+        program: &CheckedWorkflow,
+        state: &mut ScopedSnapshot,
+        incoming: &Incoming,
+        context: &EvaluationContext<'_>,
+    ) -> Result<(), StepError> {
+        match &incoming.event {
+            Event::Launched { input } => {
+                if state.run.input.is_some() {
+                    return Ok(());
+                }
+                context.check_value(input)?;
+                if !check_type(&program.source.input, input, &program.source.schemas) {
+                    return Err(rejected("launch input fails schema"));
+                }
+                state.run.input = Some(input.clone());
+                state.run.status = UnitStatus::Active;
+                state.units.push(UnitState {
+                    id: state.run.root.clone(),
+                    parent: None,
+                    declaration: SymbolKey::from("$root"),
+                    stage: None,
+                    status: UnitStatus::Active,
+                    input: input.clone(),
+                    after: vec![],
+                    pool: None,
+                });
+                let root = state.run.root.clone();
+                materialize_group(program, state, &root, context)?;
+            }
+            Event::WorkerStarted {
+                action,
+                kbbl_session_id,
+            } => {
+                let index = state
+                    .attempts
+                    .iter()
+                    .rposition(|a| a.action_id == *action)
+                    .ok_or_else(|| rejected("action absent"))?;
+                let old = state.attempts[index].clone();
+                match old.status {
+                    AttemptStatus::Pending => {
+                        state.attempts[index].status = AttemptStatus::Running;
+                        state.attempts[index].kbbl_session_id = kbbl_session_id.clone();
+                    }
+                    AttemptStatus::Running => {}
+                    AttemptStatus::Succeeded if matches!(old.cause, Cause::Periodic) => {
+                        state.attempts.push(AttemptState {
+                            seq: old.seq + 1,
+                            status: AttemptStatus::Running,
+                            kbbl_session_id: kbbl_session_id.clone(),
+                            ended_at: None,
+                            ..old
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Event::WorkerEnded { action, result } => {
+                let index = state
+                    .attempts
+                    .iter()
+                    .rposition(|a| a.action_id == *action)
+                    .ok_or_else(|| rejected("action absent"))?;
+                if matches!(
+                    state.attempts[index].status,
+                    AttemptStatus::Succeeded | AttemptStatus::Failed { .. }
+                ) {
+                    return Ok(());
+                }
+                let attempt = state.attempts[index].clone();
+                let unit = state
+                    .units
+                    .iter()
+                    .find(|u| u.id == attempt.unit)
+                    .ok_or_else(|| invalid("attempt unit absent"))?;
+                let definition = worker(stage(program, unit)?, &attempt.worker)?;
+                state.attempts[index].status = match result {
+                    WorkerResult::Failed { code, detail } => AttemptStatus::Failed {
+                        code: code.clone(),
+                        detail: detail.clone(),
+                    },
+                    WorkerResult::Succeeded
+                        if !matches!(attempt.cause, Cause::Periodic)
+                            && creates(definition).iter().any(|artifact| {
+                                !state
+                                    .revisions
+                                    .iter()
+                                    .any(|r| r.by == attempt.action_id && r.artifact == *artifact)
+                            }) =>
+                    {
+                        AttemptStatus::Failed {
+                            code: "no_output".into(),
+                            detail: "worker ended before publishing every artifact".into(),
+                        }
+                    }
+                    WorkerResult::Succeeded => AttemptStatus::Succeeded,
+                };
+                state.attempts[index].ended_at = Some(attempt.seq as i64);
+            }
+            Event::RevisionPublished {
+                unit,
+                artifact,
+                body,
+                predecessor,
+                subject,
+                by,
+            } => {
+                context.check_value(body)?;
+                let owner = state
+                    .units
+                    .iter()
+                    .find(|u| u.id == *unit)
+                    .ok_or_else(|| rejected("unit absent"))?;
+                if !matches!(owner.status, UnitStatus::Active) {
+                    return Err(rejected("unit is not active"));
+                }
+                let definition = stage(program, owner)?.clone();
+                let artifact_definition = definition
+                    .artifacts
+                    .get(&artifact.0)
+                    .ok_or_else(|| rejected("artifact absent"))?;
+                if !check_type(&artifact_definition.schema, body, &program.source.schemas) {
+                    return Err(rejected("artifact body fails schema"));
+                }
+                if latest(state, unit, artifact)
+                    .is_some_and(|revision| revision.by == *by && revision.body == *body)
+                {
+                    return Ok(());
+                }
+                let attempt_index = state
+                    .attempts
+                    .iter()
+                    .rposition(|a| {
+                        a.action_id == *by
+                            && a.unit == *unit
+                            && matches!(a.status, AttemptStatus::Pending | AttemptStatus::Running)
+                    })
+                    .ok_or_else(|| rejected("publication attempt is not current"))?;
+                let attempt = state.attempts[attempt_index].clone();
+                let producer = worker(&definition, &attempt.worker)?;
+                if !creates(producer).contains(artifact) {
+                    return Err(rejected("worker does not create artifact"));
+                }
+                let previous = latest(state, unit, artifact);
+                if previous.is_some_and(|r| r.body == *body) {
+                    return Ok(());
+                }
+                if previous.map(|r| &r.id) != predecessor.as_ref() {
+                    return Err(rejected("stale predecessor"));
+                }
+                let checked_checks = checked_stage(program, owner)?
+                    .validations
+                    .iter()
+                    .find(|validation| validation.artifact == *artifact)
+                    .map(|validation| validation.checks.as_slice())
+                    .unwrap_or_default();
+                let mut messages = Vec::new();
+                for (rule, checked) in artifact_definition.validate.iter().zip(checked_checks) {
+                    if eval_expression(
+                        &checked.expression,
+                        owner,
+                        state,
+                        None,
+                        Some((&artifact.0, body)),
+                        context,
+                    )? != Some(Value::Bool(true))
+                    {
+                        messages.push(rule.message.clone());
+                    }
+                }
+                if !messages.is_empty() && matches!(producer, Worker::Code { .. }) {
+                    state.attempts[attempt_index].status = AttemptStatus::Failed {
+                        code: "validation_failed".into(),
+                        detail: messages.join("; "),
+                    };
+                    state.attempts[attempt_index].ended_at = Some(attempt.seq as i64);
+                    return Ok(());
+                }
+                let id = revision_id(state, unit, artifact);
+                state.revisions.push(RevisionState {
+                    id: id.clone(),
+                    unit: unit.clone(),
+                    artifact: artifact.clone(),
+                    body: body.clone(),
+                    predecessor: predecessor.clone(),
+                    subject: subject.clone(),
+                    by: by.clone(),
+                });
+                if !messages.is_empty() && !matches!(producer, Worker::Code { .. }) {
+                    let decision = decision_id(state);
+                    state.decisions.push(DecisionState {
+                        id: decision,
+                        unit: unit.clone(),
+                        review: SymbolKey::from("engine:validator"),
+                        decision: SymbolKey::from("request_changes"),
+                        effect: DecisionEffect::RequestChanges,
+                        target: id,
+                        payload: serde_json::json!({"feedback": messages.join("; ")}),
+                    });
+                }
+            }
+            Event::OperatorDecided {
+                unit,
+                review,
+                decision,
+                target,
+                payload,
+            } => {
+                context.check_value(payload)?;
+                let owner = state
+                    .units
+                    .iter()
+                    .find(|u| u.id == *unit)
+                    .ok_or_else(|| rejected("unit absent"))?;
+                let definition = stage(program, owner)?;
+                let review_definition = definition
+                    .reviews
+                    .get(&review.0)
+                    .ok_or_else(|| rejected("review absent"))?;
+                let decision_definition = review_definition
+                    .decisions
+                    .get(&decision.0)
+                    .ok_or_else(|| rejected("decision absent"))?;
+                if state.decisions.iter().any(|d| {
+                    d.unit == *unit
+                        && d.review == *review
+                        && d.decision == *decision
+                        && d.target == *target
+                        && d.payload == *payload
+                }) {
+                    return Ok(());
+                }
+                let target_artifact = decision_definition
+                    .on
+                    .as_ref()
+                    .unwrap_or(&review_definition.of);
+                let current = latest(state, unit, target_artifact)
+                    .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
+                if current.id != *target {
+                    return Err(rejected("target is not latest revision"));
+                }
+                if state
+                    .decisions
+                    .iter()
+                    .any(|d| d.unit == *unit && d.review == *review && d.target == *target)
+                {
+                    return Err(rejected("review already decided on latest revision"));
+                }
+                if let Some(ty) = &decision_definition.payload {
+                    if !check_type(ty, payload, &program.source.schemas) {
+                        return Err(rejected("decision payload fails schema"));
+                    }
+                }
+                if decision_definition.effect == DecisionEffect::RequestChanges
+                    && payload
+                        .get("feedback")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                {
+                    return Err(rejected("request_changes requires feedback"));
+                }
+                let id = decision_id(state);
+                state.decisions.push(DecisionState {
+                    id,
+                    unit: unit.clone(),
+                    review: review.clone(),
+                    decision: decision.clone(),
+                    effect: decision_definition.effect.clone(),
+                    target: target.clone(),
+                    payload: payload.clone(),
+                });
+            }
+            Event::RetryRequested { unit, worker } => {
+                if state.retry_events.iter().any(|(u, w, id)| {
+                    u == unit && w == worker && incoming.ingress_id.as_deref() == Some(&id.0)
+                }) {
+                    return Ok(());
+                }
+                let previous = attempt(state, unit, worker)
+                    .ok_or_else(|| rejected("worker has no attempt"))?;
+                if let Cause::Retry { event } = &previous.cause {
+                    if latest_retry(state, unit, worker) == Some(event)
+                        && !matches!(previous.status, AttemptStatus::Failed { .. })
+                    {
+                        return Ok(());
+                    }
+                }
+                if !matches!(previous.status, AttemptStatus::Failed { .. }) {
+                    return Err(rejected("latest attempt has not failed"));
+                }
+                if let Some(last) = latest_retry(state, unit, worker) {
+                    if matches!(&previous.cause, Cause::Retry { event } if event != last) {
+                        return Ok(());
+                    }
+                    if incoming.ingress_id.as_deref() == Some(&last.0) {
+                        return Ok(());
+                    }
+                }
+                let id = EventId(
+                    incoming
+                        .ingress_id
+                        .clone()
+                        .unwrap_or_else(|| format!("retry:{}", state.retry_events.len() + 1)),
+                );
+                state.retry_events.push((unit.clone(), worker.clone(), id));
+            }
+            Event::CancelRequested => {
+                for unit in &mut state.units {
+                    if !matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
+                        unit.status = UnitStatus::Cancelled;
+                    }
+                }
+                state.run.status = UnitStatus::Cancelled;
+            }
+        }
+        Ok(())
+    }
+    fn advance(
+        program: &CheckedWorkflow,
+        state: &mut ScopedSnapshot,
+        context: &EvaluationContext<'_>,
+    ) -> Result<bool, StepError> {
+        for index in 0..state.units.len() {
+            let unit = state.units[index].clone();
+            if matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
+                continue;
+            }
+            if unit.stage.is_some() && matches!(unit.status, UnitStatus::Active) {
+                let definition = checked_stage(program, &unit)?;
+                if eval_expression(
+                    &definition.done_when.expression,
+                    &unit,
+                    state,
+                    None,
+                    None,
+                    context,
+                )? == Some(Value::Bool(true))
+                {
+                    let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
+                        .ok_or_else(|| invalid("stage outcome unresolved"))?;
+                    state.units[index].status = UnitStatus::Done { outcome };
+                    return Ok(true);
+                }
+            }
+            if unit.stage.is_none() && matches!(unit.status, UnitStatus::Active) {
+                let children: Vec<_> = state
+                    .units
+                    .iter()
+                    .filter(|u| u.parent.as_ref() == Some(&unit.id))
+                    .collect();
+                if !children.is_empty()
+                    && children
+                        .iter()
+                        .all(|u| matches!(u.status, UnitStatus::Done { .. }))
+                {
+                    let outcome = eval_fields(
+                        &checked_group_for(program, state, &unit)?.outcome,
+                        &unit,
+                        state,
+                        None,
+                        context,
+                    )?
+                    .ok_or_else(|| invalid("group outcome unresolved"))?;
+                    state.units[index].status = UnitStatus::Done { outcome };
+                    return Ok(true);
+                }
+            }
+        }
+        let mut candidates: Vec<_> = state
+            .units
+            .iter()
+            .enumerate()
+            .filter(|(_, u)| {
+                matches!(
+                    u.status,
+                    UnitStatus::NotStarted | UnitStatus::Blocked { .. }
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+        candidates.sort_by_key(|&index| state.units[index].id.clone());
+        for index in candidates {
+            let unit = state.units[index].clone();
+            let waiting: Vec<_> = unit
+                .after
+                .iter()
+                .filter(|dep| {
+                    !state
+                        .units
+                        .iter()
+                        .any(|u| u.id == **dep && matches!(u.status, UnitStatus::Done { .. }))
+                })
+                .cloned()
+                .collect();
+            if !waiting.is_empty() {
+                state.units[index].status = UnitStatus::Blocked {
+                    reason: BlockedReason::WaitingOn { units: waiting },
+                };
+                continue;
+            }
+            if let Some(pool) = &unit.pool {
+                let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
+                let parent = state
+                    .units
+                    .iter()
+                    .find(|u| u.id == *parent_id)
+                    .ok_or_else(|| invalid("pool owner absent"))?;
+                let capacity = *group_for(program, state, parent)?
+                    .pools
+                    .get(&pool.0)
+                    .ok_or_else(|| invalid("pool absent"))? as usize;
+                let held = state
+                    .units
+                    .iter()
+                    .filter(|u| {
+                        u.parent.as_ref() == Some(parent_id)
+                            && u.pool.as_ref() == Some(pool)
+                            && matches!(u.status, UnitStatus::Active)
+                    })
+                    .count();
+                if held >= capacity {
+                    state.units[index].status = UnitStatus::Blocked {
+                        reason: BlockedReason::Capacity { pool: pool.clone() },
+                    };
+                    continue;
+                }
+            }
+            if unit.input.is_null() {
+                let parent = state
+                    .units
+                    .iter()
+                    .find(|u| Some(&u.id) == unit.parent.as_ref())
+                    .ok_or_else(|| invalid("parent absent"))?;
+                let declared = checked_unit(
+                    checked_group_for(program, state, parent)?,
+                    &unit.declaration.0,
+                )?;
+                state.units[index].input =
+                    eval_fields(&declared.input, parent, state, None, context)?
+                        .ok_or_else(|| invalid("unit input unresolved"))?;
+            }
+            state.units[index].status = UnitStatus::Active;
+            if unit.stage.is_none() {
+                materialize_group(program, state, &unit.id, context)?;
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    /// Pure reducer and bounded internal Start/Complete fixpoint. The snapshot carries
+    /// the affected unit, its ancestors, and the evidence required by those units.
+    pub fn step(
+        program: &CheckedWorkflow,
+        snapshot: &ScopedSnapshot,
+        incoming: &Incoming,
+    ) -> Result<StepResult, StepError> {
+        step_with_limits(program, snapshot, incoming, &ResourceLimits::default())
+    }
+    pub fn step_with_limits(
+        program: &CheckedWorkflow,
+        snapshot: &ScopedSnapshot,
+        incoming: &Incoming,
+        limits: &ResourceLimits,
+    ) -> Result<StepResult, StepError> {
+        let context = EvaluationContext::new(limits);
+        if let Some(input) = &snapshot.run.input {
+            context.check_value(input)?;
+        }
+        for unit in &snapshot.units {
+            context.check_value(&unit.input)?;
+            if let UnitStatus::Done { outcome } = &unit.status {
+                context.check_value(outcome)?;
+            }
+        }
+        for revision in &snapshot.revisions {
+            context.check_value(&revision.body)?;
+        }
+        for decision in &snapshot.decisions {
+            context.check_value(&decision.payload)?;
+        }
+        let mut state = snapshot.clone();
+        reduce(program, &mut state, incoming, &context)?;
+        if !matches!(state.run.status, UnitStatus::Cancelled) {
+            while advance(program, &mut state, &context)? {}
+            if let Some(root) = state.units.iter().find(|u| u.id == state.run.root) {
+                state.run.status = root.status.clone();
+            }
+        }
+        let mut wanted = Vec::new();
+        let active: Vec<_> = state
+            .units
+            .iter()
+            .filter(|u| u.stage.is_some() && matches!(u.status, UnitStatus::Active))
+            .cloned()
+            .collect();
+        for unit in active {
+            let actions = stage_actions(program, &state, &unit)?;
+            for action in &actions {
+                if let Action::RunWorker {
+                    unit,
+                    worker,
+                    mode,
+                    cause,
+                } = action
+                {
+                    let id = action_id(unit, worker, mode, cause);
+                    if !state.attempts.iter().any(|a| a.action_id == id) {
+                        state.attempts.push(AttemptState {
+                            action_id: id,
+                            seq: 1,
+                            unit: unit.clone(),
+                            worker: worker.clone(),
+                            mode: mode.clone(),
+                            cause: cause.clone(),
+                            status: AttemptStatus::Pending,
+                            kbbl_session_id: None,
+                            ended_at: None,
+                        });
+                    }
+                }
+            }
+            wanted.push((unit.id, actions));
+        }
+        let statuses = state
+            .units
+            .iter()
+            .map(|u| (u.id.clone(), u.status.clone()))
+            .collect();
+        Ok(StepResult {
+            snapshot: state,
+            statuses,
+            wanted,
+        })
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use workflow_compiler::compile_workflow;
+        fn program() -> CheckedWorkflow {
+            let source: Workflow = serde_json::from_value(serde_json::json!({
+                "workflow":"simple", "input":{}, "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{"draft":"document.outcome.draft"}},
+                "stages":{"document":{"input":{},"artifacts":{"draft":{"schema":"text"}},"workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"creates":["draft"]}},"done_when":"approved(draft)","outcome":{"draft":"latest(draft)"}}}
+            })).unwrap();
+            // Compiled rather than hand-assembled: the engine reads the
+            // checked stages, so a stub with empty stages is not a program.
+            let prompts: BTreeMap<String, String> = [("write.md".to_owned(), String::new())]
+                .into_iter()
+                .collect();
+            workflow_compiler::compile_workflow(&source, &[], &prompts).unwrap()
+        }
+        fn snapshot() -> ScopedSnapshot {
+            ScopedSnapshot {
+                run: RunState {
+                    id: "run".into(),
+                    root: UnitId::from("run"),
+                    status: UnitStatus::NotStarted,
+                    input: None,
+                },
+                units: vec![],
+                attempts: vec![],
+                revisions: vec![],
+                decisions: vec![],
+                retry_events: vec![],
+            }
+        }
+        fn incoming(event: Event, id: &str) -> Incoming {
+            Incoming {
+                event,
+                writer: Writer::Engine,
+                ingress_id: Some(id.into()),
+            }
+        }
+        fn sample(name: &str) -> CheckedWorkflow {
+            let content = match name {
+                "review-loop" => include_str!("../../../fixtures/bundles/review-loop.json"),
+                "fan-out" => include_str!("../../../fixtures/bundles/fan-out.json"),
+                _ => panic!("unknown sample"),
+            };
+            let source: Workflow = serde_json::from_str(content).unwrap();
+            let prompts: BTreeMap<String, String> = [
+                (
+                    "review-loop/write.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/write.md"),
+                ),
+                (
+                    "review-loop/revise.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/revise.md"),
+                ),
+                (
+                    "review-loop/critique.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/critique.md"),
+                ),
+                (
+                    "review-loop/editor.md",
+                    include_str!("../../../../workflow-config/prompts/review-loop/editor.md"),
+                ),
+                (
+                    "fan-out/item.md",
+                    include_str!("../../../../workflow-config/prompts/fan-out/item.md"),
+                ),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+            let operations = vec![CodeOperation {
+                key: SymbolKey::from("repository.prepare"),
+                version: 1,
+                input_schema: TypeExpression::Record(
+                    [
+                        (
+                            "repository_path".into(),
+                            TypeExpression::Name("repo_path".into()),
+                        ),
+                        (
+                            "expected_head".into(),
+                            TypeExpression::Name("optional(text)".into()),
+                        ),
+                    ]
+                    .into(),
+                ),
+                output_schema: TypeExpression::Record(
+                    [
+                        (
+                            "repository_path".into(),
+                            TypeExpression::Name("repo_path".into()),
+                        ),
+                        (
+                            "push_remote_owner".into(),
+                            TypeExpression::Name("ident".into()),
+                        ),
+                        ("head".into(), TypeExpression::Name("ident".into())),
+                    ]
+                    .into(),
+                ),
+                error_codes: vec![],
+            }];
+            compile_workflow(&source, &operations, &prompts).unwrap()
+        }
+        fn event(spec: &Value, state: &ScopedSnapshot) -> Event {
+            let unit = spec["unit"].as_str().unwrap_or("");
+            let worker = spec["worker"].as_str().unwrap_or("");
+            let action = || {
+                state
+                    .attempts
+                    .iter()
+                    .rev()
+                    .find(|a| a.unit.0 == unit && a.worker.0 == worker)
+                    .unwrap()
+                    .action_id
+                    .clone()
+            };
+            match spec["op"].as_str().unwrap() {
+                "launch" => Event::Launched {
+                    input: spec["input"].clone(),
+                },
+                "started" => Event::WorkerStarted {
+                    action: action(),
+                    kbbl_session_id: Some(format!("session:{unit}:{worker}")),
+                },
+                "ended" => Event::WorkerEnded {
+                    action: action(),
+                    result: if spec["result"] == "succeeded" {
+                        WorkerResult::Succeeded
+                    } else {
+                        WorkerResult::Failed {
+                            code: "failed".into(),
+                            detail: "test failure".into(),
+                        }
+                    },
+                },
+                "publish" => Event::RevisionPublished {
+                    unit: UnitId::from(unit),
+                    artifact: SymbolKey::from(spec["artifact"].as_str().unwrap()),
+                    body: spec["body"].clone(),
+                    predecessor: spec["predecessor"].as_str().map(RevisionId::from),
+                    subject: spec["subject"].as_str().map(RevisionId::from),
+                    by: action(),
+                },
+                "decide" => Event::OperatorDecided {
+                    unit: UnitId::from(unit),
+                    review: SymbolKey::from(spec["review"].as_str().unwrap()),
+                    decision: SymbolKey::from(spec["decision"].as_str().unwrap()),
+                    target: RevisionId::from(spec["target"].as_str().unwrap()),
+                    payload: spec["payload"].clone(),
+                },
+                "retry" => Event::RetryRequested {
+                    unit: UnitId::from(unit),
+                    worker: WorkerKey::from(worker),
+                },
+                _ => panic!("unknown event"),
+            }
+        }
+        fn status_name(status: &UnitStatus) -> &'static str {
+            match status {
+                UnitStatus::NotStarted => "not_started",
+                UnitStatus::Active => "active",
+                UnitStatus::Blocked { .. } => "blocked",
+                UnitStatus::Done { .. } => "done",
+                UnitStatus::Cancelled => "cancelled",
+            }
+        }
+        fn status_rank(status: &UnitStatus) -> u8 {
+            match status {
+                UnitStatus::NotStarted | UnitStatus::Blocked { .. } => 0,
+                UnitStatus::Active => 1,
+                UnitStatus::Done { .. } | UnitStatus::Cancelled => 2,
+            }
+        }
+        fn assert_never_regresses(before: &ScopedSnapshot, after: &ScopedSnapshot) {
+            for old in &before.units {
+                let current = after.units.iter().find(|unit| unit.id == old.id).unwrap();
+                assert!(
+                    status_rank(&current.status) >= status_rank(&old.status),
+                    "{} regressed",
+                    old.id
+                );
+            }
+        }
+        fn assert_one_live_attempt_per_worker(state: &ScopedSnapshot) {
+            let mut live = BTreeSet::new();
+            for attempt in &state.attempts {
+                if matches!(
+                    attempt.status,
+                    AttemptStatus::Pending | AttemptStatus::Running
+                ) {
+                    assert!(
+                        live.insert((attempt.unit.clone(), attempt.worker.clone())),
+                        "two live attempts for {}:{}",
+                        attempt.unit,
+                        attempt.worker
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn named_schemas_resolve_through_optional_lists_and_records() {
+            let aliases = BTreeMap::from([
+                ("title".into(), TypeExpression::Name("text".into())),
+                ("titles".into(), TypeExpression::Name("list(title)".into())),
+            ]);
+            let ty = TypeExpression::Record(BTreeMap::from([(
+                "items".into(),
+                TypeExpression::Name("optional(titles)".into()),
+            )]));
+            assert!(check_type(
+                &ty,
+                &serde_json::json!({"items": ["one"]}),
+                &aliases
+            ));
+            assert!(check_type(
+                &ty,
+                &serde_json::json!({"items": null}),
+                &aliases
+            ));
+            assert!(!check_type(
+                &ty,
+                &serde_json::json!({"items": [1]}),
+                &aliases
+            ));
+        }
+
+        #[test]
+        fn host_limits_reject_large_inputs_and_exhausted_expression_budget() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let launch = incoming(event(&trace["rows"][0]["events"][0], &snapshot()), "launch");
+            let mut limits = ResourceLimits {
+                max_list_items: 3,
+                ..ResourceLimits::default()
+            };
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "max_list_items exceeded")
+            );
+            limits.max_list_items = 10_000;
+            limits.evaluation_budget = 0;
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "evaluation_budget exceeded")
+            );
+            limits.evaluation_budget = 1_000_000;
+            limits.max_depth = 1;
+            assert!(
+                matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
+                Err(StepError::Rejected { reason }) if reason == "max_depth exceeded")
+            );
+        }
+
+        #[test]
+        fn reviewer_needs_every_output_for_its_subject() {
+            let mut program = sample("review-loop");
+            let stage = program.source.stages.get_mut("document").unwrap();
+            let Worker::Agent { creates, .. } = stage.workers.get_mut("critic").unwrap() else {
+                panic!("critic is an agent")
+            };
+            creates.push(SymbolKey::from("summary"));
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=1].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            state
+                .attempts
+                .retain(|attempt| attempt.worker.0 != "critic");
+            state.revisions.push(RevisionState {
+                id: RevisionId::from("critique:1"),
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("critique"),
+                body: serde_json::json!({"notes": []}),
+                predecessor: None,
+                subject: Some(RevisionId::from("draft:1")),
+                by: ActionKey::from("previous-review"),
+            });
+            let unit = state
+                .units
+                .iter()
+                .find(|unit| unit.id.0 == "run/document")
+                .unwrap();
+            assert!(stage_actions(&program, &state, unit).unwrap().iter().any(|action| matches!(
+                action, Action::RunWorker { worker, mode: Mode::Review, .. } if worker.0 == "critic"
+            )));
+        }
+
+        #[test]
+        fn member_outcomes_are_projected_in_key_order() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=1].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            for child in state
+                .units
+                .iter_mut()
+                .filter(|unit| unit.parent.as_ref().is_some_and(|id| id.0 == "run/work"))
+            {
+                child.status = UnitStatus::Done {
+                    outcome: Value::String(child.id.0.clone()),
+                };
+            }
+            state.units.reverse();
+            let owner = state
+                .units
+                .iter()
+                .find(|unit| unit.id.0 == "run/work")
+                .unwrap();
+            let expression = Expression::Reference {
+                root: ReferenceRoot::MemberOutcomes {
+                    unit: SymbolKey::from("item"),
+                },
+                path: vec![],
+            };
+            assert_eq!(
+                eval_expression(
+                    &expression,
+                    owner,
+                    &state,
+                    None,
+                    None,
+                    &EvaluationContext::new(&ResourceLimits::default())
+                ),
+                Ok(Some(serde_json::json!([
+                    "run/work/a",
+                    "run/work/b",
+                    "run/work/c",
+                    "run/work/d"
+                ])))
+            );
+        }
+
+        #[test]
+        fn failed_code_validation_does_not_publish_a_revision() {
+            let mut source: Workflow =
+                serde_json::from_str(include_str!("../../../fixtures/bundles/fan-out.json"))
+                    .unwrap();
+            source
+                .stages
+                .get_mut("prepare")
+                .unwrap()
+                .artifacts
+                .get_mut("workspace")
+                .unwrap()
+                .validate
+                .push(ValidationCheck {
+                    check: "false".into(),
+                    message: "invalid workspace".into(),
+                });
+            let original = sample("fan-out");
+            let operations = [CodeOperation {
+                key: SymbolKey::from("repository.prepare"),
+                version: 1,
+                input_schema: TypeExpression::Record(BTreeMap::from([
+                    (
+                        "repository_path".into(),
+                        TypeExpression::Name("repo_path".into()),
+                    ),
+                    (
+                        "expected_head".into(),
+                        TypeExpression::Name("optional(text)".into()),
+                    ),
+                ])),
+                output_schema: source.stages["prepare"].artifacts["workspace"]
+                    .schema
+                    .clone(),
+                error_codes: vec![],
+            }];
+            let prompts = BTreeMap::from([("fan-out/item.md".into(), String::new())]);
+            let program = compile_workflow(&source, &operations, &prompts).unwrap();
+            assert_eq!(program.stages.len(), original.stages.len());
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let launch = &trace["rows"][0]["events"][0];
+            let state = step(
+                &program,
+                &snapshot(),
+                &incoming(event(launch, &snapshot()), "launch"),
+            )
+            .unwrap()
+            .snapshot;
+            let publication = event(&trace["rows"][1]["events"][0], &state);
+            let result = step(&program, &state, &incoming(publication, "publish")).unwrap();
+            assert!(result.snapshot.revisions.is_empty());
+            assert!(matches!(
+                result.snapshot.attempts[0].status,
+                AttemptStatus::Failed { .. }
+            ));
+            assert!(matches!(
+                result
+                    .snapshot
+                    .units
+                    .iter()
+                    .find(|unit| unit.id.0 == "run/prepare")
+                    .unwrap()
+                    .status,
+                UnitStatus::Active
+            ));
+        }
+
+        #[test]
+        fn operator_decision_uses_its_declared_target_artifact() {
+            let mut program = sample("review-loop");
+            program
+                .source
+                .stages
+                .get_mut("document")
+                .unwrap()
+                .reviews
+                .get_mut("editor")
+                .unwrap()
+                .decisions
+                .get_mut("approve")
+                .unwrap()
+                .on = Some(SymbolKey::from("critique"));
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=2].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let result = step(
+                &program,
+                &state,
+                &incoming(
+                    Event::OperatorDecided {
+                        unit: UnitId::from("run/document"),
+                        review: SymbolKey::from("editor"),
+                        decision: SymbolKey::from("approve"),
+                        target: RevisionId::from("critique:1"),
+                        payload: serde_json::json!({}),
+                    },
+                    "approve-critique",
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                result.snapshot.decisions.last().unwrap().target.0,
+                "critique:1"
+            );
+        }
+        fn apply_row(
+            program: &CheckedWorkflow,
+            state: &ScopedSnapshot,
+            row: &Value,
+            row_number: usize,
+        ) -> ScopedSnapshot {
+            let mut state = state.clone();
+            let before = state.attempts.len();
+            for (index, spec) in row["events"].as_array().unwrap().iter().enumerate() {
+                let incoming = incoming(event(spec, &state), &format!("{row_number}:{index}"));
+                let next = step(program, &state, &incoming).unwrap().snapshot;
+                assert_never_regresses(&state, &next);
+                assert_one_live_attempt_per_worker(&next);
+                state = next;
+            }
+            for (key, expected) in row["status"].as_object().unwrap() {
+                let actual = if key == "run" {
+                    &state.run.status
+                } else {
+                    &state.units.iter().find(|u| u.id.0 == *key).unwrap().status
+                };
+                assert_eq!(
+                    status_name(actual),
+                    expected.as_str().unwrap(),
+                    "row {row_number} {key}"
+                );
+            }
+            if let Some(expected) = row.get("new_workers") {
+                let actual: Vec<_> = state.attempts[before..]
+                    .iter()
+                    .map(|a| format!("{}:{}", a.unit.0, a.worker.0))
+                    .collect();
+                let expected: Vec<_> = expected
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_str().unwrap().to_owned())
+                    .collect();
+                assert_eq!(actual, expected, "row {row_number} new workers");
+            }
+            state
+        }
+        #[test]
+        fn sample_traces_replay_every_prefix_and_never_regress_unit_status() {
+            for (name, trace) in [
+                (
+                    "review-loop",
+                    include_str!("../../../fixtures/traces/review-loop.json"),
+                ),
+                (
+                    "fan-out",
+                    include_str!("../../../fixtures/traces/fan-out.json"),
+                ),
+            ] {
+                let program = sample(name);
+                let trace: Value = serde_json::from_str(trace).unwrap();
+                let rows = trace["rows"].as_array().unwrap();
+                let mut state = snapshot();
+                for (index, row) in rows.iter().enumerate() {
+                    let before = state.clone();
+                    state = apply_row(&program, &state, row, index);
+                    assert_never_regresses(&before, &state);
+                    let mut replay = snapshot();
+                    for (prefix, row) in rows[..=index].iter().enumerate() {
+                        replay = apply_row(&program, &replay, row, prefix);
+                    }
+                    assert_eq!(replay, state, "{name} prefix {index}");
+                }
+            }
+        }
+        #[test]
+        fn every_event_kind_preserves_unit_status_order() {
+            for (name, trace) in [
+                (
+                    "review-loop",
+                    include_str!("../../../fixtures/traces/review-loop.json"),
+                ),
+                (
+                    "fan-out",
+                    include_str!("../../../fixtures/traces/fan-out.json"),
+                ),
+            ] {
+                let program = sample(name);
+                let trace: Value = serde_json::from_str(trace).unwrap();
+                let mut state = snapshot();
+                for (index, row) in trace["rows"].as_array().unwrap().iter().enumerate() {
+                    let action = state
+                        .attempts
+                        .last()
+                        .map(|attempt| attempt.action_id.clone())
+                        .unwrap_or_else(|| ActionKey::from("absent"));
+                    let unit = state
+                        .units
+                        .iter()
+                        .find(|unit| unit.stage.is_some())
+                        .map(|unit| unit.id.clone())
+                        .unwrap_or_else(|| UnitId::from("absent"));
+                    // Keep this list exhaustive against Event's wire schema below.
+                    let candidates = [
+                        Event::Launched {
+                            input: serde_json::json!({"topic":"Oakridge"}),
+                        },
+                        Event::WorkerStarted {
+                            action: action.clone(),
+                            kbbl_session_id: None,
+                        },
+                        Event::WorkerEnded {
+                            action: action.clone(),
+                            result: WorkerResult::Succeeded,
+                        },
+                        Event::RevisionPublished {
+                            unit: unit.clone(),
+                            artifact: SymbolKey::from("draft"),
+                            body: serde_json::json!({"title":"x","body":"x"}),
+                            predecessor: None,
+                            subject: None,
+                            by: action,
+                        },
+                        Event::OperatorDecided {
+                            unit: unit.clone(),
+                            review: SymbolKey::from("editor"),
+                            decision: SymbolKey::from("approve"),
+                            target: RevisionId::from("draft:1"),
+                            payload: serde_json::json!({}),
+                        },
+                        Event::RetryRequested {
+                            unit,
+                            worker: WorkerKey::from("writer"),
+                        },
+                        Event::CancelRequested,
+                    ];
+                    assert_eq!(candidates.len(), 7);
+                    for (kind, candidate) in candidates.into_iter().enumerate() {
+                        if let Ok(result) = step(
+                            &program,
+                            &state,
+                            &incoming(candidate, &format!("probe:{name}:{index}:{kind}")),
+                        ) {
+                            assert_never_regresses(&state, &result.snapshot);
+                            assert_one_live_attempt_per_worker(&result.snapshot);
+                        }
+                    }
+                    state = apply_row(&program, &state, row, index);
+                }
+            }
+        }
+        #[test]
+        fn fan_out_stall_variant_keeps_failed_attempt_and_held_slot() {
+            let program = sample("fan-out");
+            let variant: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out-stall.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in variant["rows"].as_array().unwrap().iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            for (key, expected) in variant["status"].as_object().unwrap() {
+                let actual = if key == "run" {
+                    &state.run.status
+                } else {
+                    &state.units.iter().find(|u| u.id.0 == *key).unwrap().status
+                };
+                assert_eq!(status_name(actual), expected.as_str().unwrap());
+            }
+            assert!(state
+                .attempts
+                .iter()
+                .any(|a| a.unit.0 == "run/work/b"
+                    && matches!(a.status, AttemptStatus::Failed { .. })));
+            assert!(!state.attempts.iter().any(|a| a.unit.0 == "run/work/d"));
+        }
+        #[test]
+        fn failed_attempt_stalls_until_retry_and_duplicates_change_nothing() {
+            let program = program();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap();
+            assert_eq!(launched.wanted.len(), 1);
+            let attempt = launched.snapshot.attempts[0].action_id.clone();
+            let started = step(
+                &program,
+                &launched.snapshot,
+                &incoming(
+                    Event::WorkerStarted {
+                        action: attempt.clone(),
+                        kbbl_session_id: Some("session".into()),
+                    },
+                    "start",
+                ),
+            )
+            .unwrap();
+            let ended = step(
+                &program,
+                &started.snapshot,
+                &incoming(
+                    Event::WorkerEnded {
+                        action: attempt.clone(),
+                        result: WorkerResult::Failed {
+                            code: "oops".into(),
+                            detail: "failed".into(),
+                        },
+                    },
+                    "end",
+                ),
+            )
+            .unwrap();
+            assert!(ended.wanted[0].1.is_empty());
+            let duplicate = step(
+                &program,
+                &ended.snapshot,
+                &incoming(
+                    Event::WorkerEnded {
+                        action: attempt,
+                        result: WorkerResult::Failed {
+                            code: "oops".into(),
+                            detail: "failed".into(),
+                        },
+                    },
+                    "end",
+                ),
+            )
+            .unwrap();
+            assert_eq!(duplicate.snapshot, ended.snapshot);
+            let retry = step(
+                &program,
+                &ended.snapshot,
+                &incoming(
+                    Event::RetryRequested {
+                        unit: UnitId::from("run/document"),
+                        worker: WorkerKey::from("writer"),
+                    },
+                    "retry",
+                ),
+            )
+            .unwrap();
+            assert_eq!(retry.wanted[0].1.len(), 1);
+            assert_eq!(retry.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
+            let source: Workflow = serde_json::from_value(serde_json::json!({
+                "workflow":"periodic", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
+                "stages":{"watch":{"input":{},"artifacts":{"observation":{"schema":"text"}},"workers":{"observer":{"kind":"code","operation":"observe","inputs":{},"creates":["observation"],"every":"1s"}},"done_when":"false","outcome":{}}}
+            })).unwrap();
+            let observe = vec![CodeOperation {
+                key: SymbolKey::from("observe"),
+                version: 1,
+                input_schema: TypeExpression::Record(BTreeMap::new()),
+                output_schema: TypeExpression::Name("text".into()),
+                error_codes: vec![],
+            }];
+            let program =
+                workflow_compiler::compile_workflow(&source, &observe, &BTreeMap::new()).unwrap();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap();
+            let mut state = launched.snapshot;
+            let action = state.attempts[0].action_id.clone();
+            for tick in 1..=3 {
+                state = step(
+                    &program,
+                    &state,
+                    &incoming(
+                        Event::WorkerStarted {
+                            action: action.clone(),
+                            kbbl_session_id: None,
+                        },
+                        &format!("start:{tick}"),
+                    ),
+                )
+                .unwrap()
+                .snapshot;
+                state = step(
+                    &program,
+                    &state,
+                    &incoming(
+                        Event::WorkerEnded {
+                            action: action.clone(),
+                            result: WorkerResult::Succeeded,
+                        },
+                        &format!("end:{tick}"),
+                    ),
+                )
+                .unwrap()
+                .snapshot;
+            }
+            assert_eq!(
+                state.attempts.iter().map(|a| a.seq).collect::<Vec<_>>(),
+                vec![1, 2, 3]
+            );
+            assert!(state
+                .attempts
+                .iter()
+                .all(|a| a.action_id == action && matches!(a.status, AttemptStatus::Succeeded)));
+            assert_eq!(
+                state
+                    .attempts
+                    .iter()
+                    .map(|a| a.ended_at)
+                    .collect::<Vec<_>>(),
+                vec![Some(1), Some(2), Some(3)]
+            );
+        }
+        #[test]
+        fn duplicate_event_vocabulary_keeps_the_snapshot_identical() {
+            let program = sample("review-loop");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let rows = trace["rows"].as_array().unwrap();
+            let launched = apply_row(&program, &snapshot(), &rows[0], 0);
+            let launch = event(&rows[0]["events"][0], &launched);
+            assert_eq!(
+                step(&program, &launched, &incoming(launch, "0:0"))
+                    .unwrap()
+                    .snapshot,
+                launched
+            );
+            let published = apply_row(&program, &launched, &rows[1], 1);
+            let writer = published
+                .attempts
+                .iter()
+                .find(|a| a.worker.0 == "writer")
+                .unwrap()
+                .action_id
+                .clone();
+            let started = Event::WorkerStarted {
+                action: writer.clone(),
+                kbbl_session_id: Some("session:run/document:writer".into()),
+            };
+            assert_eq!(
+                step(&program, &published, &incoming(started, "1:0"))
+                    .unwrap()
+                    .snapshot,
+                published
+            );
+            let publication = event(&rows[1]["events"][1], &published);
+            assert_eq!(
+                step(&program, &published, &incoming(publication, "1:1"))
+                    .unwrap()
+                    .snapshot,
+                published
+            );
+            let settled = apply_row(&program, &published, &rows[2], 2);
+            let ended = Event::WorkerEnded {
+                action: writer,
+                result: WorkerResult::Succeeded,
+            };
+            assert_eq!(
+                step(&program, &settled, &incoming(ended, "2:2"))
+                    .unwrap()
+                    .snapshot,
+                settled
+            );
+            let decided = apply_row(&program, &settled, &rows[3], 3);
+            let decision = event(&rows[3]["events"][0], &decided);
+            assert_eq!(
+                step(&program, &decided, &incoming(decision, "3:0"))
+                    .unwrap()
+                    .snapshot,
+                decided
+            );
+            let mut state = decided;
+            for (index, row) in rows[4..=6].iter().enumerate() {
+                state = apply_row(&program, &state, row, index + 4);
+            }
+            let retry = event(&rows[6]["events"][0], &state);
+            assert_eq!(
+                step(&program, &state, &incoming(retry, "6:0"))
+                    .unwrap()
+                    .snapshot,
+                state
+            );
+        }
+        #[test]
+        fn stale_review_retry_and_publication_are_rejected() {
+            let program = sample("review-loop");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let rows = trace["rows"].as_array().unwrap();
+            let launched = apply_row(&program, &snapshot(), &rows[0], 0);
+            assert!(matches!(
+                step(
+                    &program,
+                    &launched,
+                    &incoming(
+                        Event::RetryRequested {
+                            unit: UnitId::from("run/document"),
+                            worker: WorkerKey::from("writer")
+                        },
+                        "bad-retry"
+                    )
+                ),
+                Err(StepError::Rejected { .. })
+            ));
+            assert!(matches!(
+                step(
+                    &program,
+                    &launched,
+                    &incoming(
+                        Event::RevisionPublished {
+                            unit: UnitId::from("run/document"),
+                            artifact: SymbolKey::from("draft"),
+                            body: serde_json::json!({"title":"x","body":"x"}),
+                            predecessor: None,
+                            subject: None,
+                            by: ActionKey::from("forged")
+                        },
+                        "forged"
+                    )
+                ),
+                Err(StepError::Rejected { .. })
+            ));
+            let mut state = launched;
+            for (index, row) in rows[..=4].iter().enumerate().skip(1) {
+                state = apply_row(&program, &state, row, index);
+            }
+            assert!(matches!(
+                step(
+                    &program,
+                    &state,
+                    &incoming(
+                        Event::OperatorDecided {
+                            unit: UnitId::from("run/document"),
+                            review: SymbolKey::from("editor"),
+                            decision: SymbolKey::from("approve"),
+                            target: RevisionId::from("draft:1"),
+                            payload: serde_json::json!({})
+                        },
+                        "stale"
+                    )
+                ),
+                Err(StepError::Rejected { .. })
+            ));
+        }
+        #[test]
+        fn cancel_is_terminal_and_idempotent_across_the_group_tree() {
+            let program = sample("fan-out");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/fan-out.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap()[..=2].iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let cancelled = step(
+                &program,
+                &state,
+                &incoming(Event::CancelRequested, "cancel"),
+            )
+            .unwrap();
+            assert!(matches!(
+                cancelled.snapshot.run.status,
+                UnitStatus::Cancelled
+            ));
+            assert!(cancelled.snapshot.units.iter().all(|unit| matches!(
+                unit.status,
+                UnitStatus::Done { .. } | UnitStatus::Cancelled
+            )));
+            assert!(cancelled.wanted.is_empty());
+            let duplicate = step(
+                &program,
+                &cancelled.snapshot,
+                &incoming(Event::CancelRequested, "cancel"),
+            )
+            .unwrap();
+            assert_eq!(duplicate.snapshot, cancelled.snapshot);
+        }
     }
 }
+pub use v2_step::{step, step_with_limits};

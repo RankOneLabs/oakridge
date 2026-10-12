@@ -9,8 +9,6 @@ if [[ "$suite" == integration && -z "${OAKRIDGE_TEST_DATABASE_URL:-}" ]]; then
   echo "OAKRIDGE_TEST_DATABASE_URL is required for test:integration" >&2
   exit 2
 fi
-# Shipped bundles are generated, not committed.
-bash "$(dirname "$0")/../../scripts/generate-bundles.sh"
 if [[ "$suite" == integration ]]; then
   bun run --filter kbbl build:pwa
 fi

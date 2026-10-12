@@ -1,5 +1,6 @@
 //! Source contracts from the core replacement specification, sections 3–5.
-//! JSON is accepted only as source literals and ingress payloads. Evaluators use CheckedValue.
+//! JSON is accepted as source literals, ingress payloads and run state;
+//! every raw value crosses the wire under the safe-integer guard.
 mod checked;
 pub mod protocol;
 mod source;
@@ -100,5 +101,11 @@ id!(
     NodeId,
     InstanceId,
     TriggerId,
-    BundleDigest
+    BundleDigest,
+    UnitId,
+    RevisionId,
+    DecisionId,
+    EventId,
+    OperatorId,
+    SessionId
 );

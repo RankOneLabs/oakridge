@@ -1,0 +1,120 @@
+{
+  "sample": "fan-out",
+  "variant": "b fails while c occupies the other of two slots; d remains blocked before c finishes",
+  "section_9_delta": "With two slots, a completed c would free capacity and allow d to start even while failed b holds its slot. This trace ends before c completes.",
+  "rows": [
+    {
+      "events": [
+        {
+          "op": "launch",
+          "input": {
+            "repository": {
+              "repository_path": "/tmp/repo",
+              "expected_head": null
+            },
+            "items": [
+              {
+                "key": "a",
+                "text": "A",
+                "after": []
+              },
+              {
+                "key": "b",
+                "text": "B",
+                "after": []
+              },
+              {
+                "key": "c",
+                "text": "C",
+                "after": [
+                  "a"
+                ]
+              },
+              {
+                "key": "d",
+                "text": "D",
+                "after": []
+              }
+            ]
+          }
+        }
+      ],
+      "status": {
+        "run/prepare": "active",
+        "run/work": "blocked"
+      },
+      "new_workers": [
+        "run/prepare:git"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "publish",
+          "unit": "run/prepare",
+          "worker": "git",
+          "artifact": "workspace",
+          "body": {
+            "repository_path": "/tmp/repo",
+            "push_remote_owner": "owner",
+            "head": "abc"
+          }
+        },
+        {
+          "op": "ended",
+          "unit": "run/prepare",
+          "worker": "git",
+          "result": "succeeded"
+        }
+      ],
+      "status": {
+        "run/prepare": "done",
+        "run/work": "active",
+        "run/work/a": "active",
+        "run/work/b": "active",
+        "run/work/c": "blocked",
+        "run/work/d": "blocked"
+      }
+    },
+    {
+      "events": [
+        {
+          "op": "publish",
+          "unit": "run/work/a",
+          "worker": "worker",
+          "artifact": "result",
+          "body": "A done"
+        }
+      ],
+      "status": {
+        "run/work/a": "done",
+        "run/work/c": "active",
+        "run/work/d": "blocked"
+      },
+      "new_workers": [
+        "run/work/c:worker"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "ended",
+          "unit": "run/work/b",
+          "worker": "worker",
+          "result": "failed"
+        }
+      ],
+      "status": {
+        "run/work/b": "active",
+        "run/work": "active"
+      }
+    }
+  ],
+  "status": {
+    "run/work/b": "active",
+    "run/work/c": "active",
+    "run/work/d": "blocked",
+    "run/work": "active",
+    "run": "active"
+  }
+}

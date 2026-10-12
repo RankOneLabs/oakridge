@@ -1,0 +1,123 @@
+{
+  "workflow": "fan_out",
+  "input": {
+    "repository": {
+      "repository_path": "repo_path",
+      "expected_head": "optional(text)"
+    },
+    "items": "list({ key: ident, text: text, after: list(ident) })"
+  },
+  "run": {
+    "units": {
+      "prepare": {
+        "stage": "prepare",
+        "input": {
+          "repository": "input.repository"
+        }
+      },
+      "work": {
+        "after": [
+          "prepare"
+        ],
+        "input": {
+          "items": "input.items",
+          "workspace": "prepare.outcome.workspace"
+        },
+        "group": {
+          "pools": {
+            "slots": 2
+          },
+          "units": {
+            "item": {
+              "for_each": "input.items",
+              "key": "each.key",
+              "after": "each.after",
+              "stage": "item",
+              "input": {
+                "text": "each.text",
+                "workspace": "input.workspace"
+              },
+              "pool": "slots"
+            }
+          },
+          "outcome": {
+            "results": "map(item, item.outcome.result)"
+          }
+        }
+      }
+    },
+    "outcome": {
+      "results": "work.outcome.results"
+    }
+  },
+  "stages": {
+    "prepare": {
+      "input": {
+        "repository": {
+          "repository_path": "repo_path",
+          "expected_head": "optional(text)"
+        }
+      },
+      "artifacts": {
+        "workspace": {
+          "schema": {
+            "repository_path": "repo_path",
+            "push_remote_owner": "ident",
+            "head": "ident"
+          }
+        }
+      },
+      "workers": {
+        "git": {
+          "kind": "code",
+          "operation": "repository.prepare",
+          "inputs": {
+            "repository_path": "input.repository.repository_path",
+            "expected_head": "input.repository.expected_head"
+          },
+          "creates": [
+            "workspace"
+          ]
+        }
+      },
+      "done_when": "published(workspace)",
+      "outcome": {
+        "workspace": "latest(workspace)"
+      }
+    },
+    "item": {
+      "input": {
+        "text": "text",
+        "workspace": {
+          "repository_path": "repo_path",
+          "push_remote_owner": "ident",
+          "head": "ident"
+        }
+      },
+      "artifacts": {
+        "result": {
+          "schema": "text"
+        }
+      },
+      "workers": {
+        "worker": {
+          "kind": "agent",
+          "prompts": {
+            "initial": "fan-out/item.md"
+          },
+          "inputs": {
+            "text": "input.text"
+          },
+          "workspace": "repository(input.workspace)",
+          "creates": [
+            "result"
+          ]
+        }
+      },
+      "done_when": "published(result)",
+      "outcome": {
+        "result": "latest(result)"
+      }
+    }
+  }
+}

@@ -1,103 +1,272 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CheckedValue {
-    pub schema: SchemaId,
-    pub data: CheckedData,
+use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UnitStatus {
+    NotStarted,
+    Active,
+    Blocked {
+        reason: BlockedReason,
+    },
+    Done {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        outcome: Value,
+    },
+    Cancelled,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CheckedData {
-    Boolean {
-        value: bool,
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BlockedReason {
+    WaitingOn { units: Vec<UnitId> },
+    Capacity { pool: SymbolKey },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Writer {
+    Session {
+        session: SessionId,
+        attempt: ActionKey,
     },
-    Integer {
-        #[serde(with = "crate::wire_numbers::signed")]
-        #[schemars(schema_with = "crate::wire_numbers::signed::schema")]
-        value: i64,
+    Executor {
+        attempt: ActionKey,
     },
-    String {
-        value: String,
+    Operator {
+        subject: OperatorId,
     },
-    Enum {
-        variant: String,
+    Engine,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkerResult {
+    Succeeded,
+    Failed { code: String, detail: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Event {
+    Launched {
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        input: Value,
     },
-    Record {
-        fields: Vec<CheckedField>,
-        dictionary: Vec<DictionaryEntry>,
+    WorkerStarted {
+        action: ActionKey,
+        kbbl_session_id: Option<String>,
     },
-    List {
-        items: Vec<CheckedValue>,
+    WorkerEnded {
+        action: ActionKey,
+        result: WorkerResult,
     },
-    Optional {
-        value: Option<Box<CheckedValue>>,
+    RevisionPublished {
+        unit: UnitId,
+        artifact: SymbolKey,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        body: Value,
+        predecessor: Option<RevisionId>,
+        subject: Option<RevisionId>,
+        by: ActionKey,
     },
-    Variant {
-        variant: String,
-        value: Box<CheckedValue>,
+    OperatorDecided {
+        unit: UnitId,
+        review: SymbolKey,
+        decision: SymbolKey,
+        target: RevisionId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        payload: Value,
     },
-    Reference {
-        brand: ReferenceBrand,
-        id: String,
+    RetryRequested {
+        unit: UnitId,
+        worker: WorkerKey,
+    },
+    CancelRequested,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Incoming {
+    pub event: Event,
+    pub writer: Writer,
+    pub ingress_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Mode {
+    Initial,
+    Revise,
+    Review,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Cause {
+    Missing,
+    ChangesRequested { decision: DecisionId },
+    ReviewOf { revision: RevisionId },
+    Retry { event: EventId },
+    Periodic,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Action {
+    RunWorker {
+        unit: UnitId,
+        worker: WorkerKey,
+        mode: Mode,
+        cause: Cause,
+    },
+    Start {
+        unit: UnitId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        input: Value,
+    },
+    Complete {
+        unit: UnitId,
+        #[serde(with = "crate::wire_numbers::json")]
+        #[schemars(with = "Value")]
+        outcome: Value,
     },
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CheckedField {
-    #[serde(with = "crate::wire_numbers::index")]
-    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
-    pub field_id: usize,
-    pub value: Option<CheckedValue>,
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttemptStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed { code: String, detail: String },
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DictionaryEntry {
-    pub key: String,
-    pub value: CheckedValue,
+pub struct AttemptState {
+    pub action_id: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub seq: u32,
+    pub unit: UnitId,
+    pub worker: WorkerKey,
+    pub mode: Mode,
+    pub cause: Cause,
+    pub status: AttemptStatus,
+    pub kbbl_session_id: Option<String>,
+    /// A logical counter, not a clock: step is pure.
+    #[serde(with = "crate::wire_numbers::optional_signed")]
+    #[schemars(schema_with = "crate::wire_numbers::optional_signed::schema")]
+    pub ended_at: Option<i64>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct VersionedValue {
-    pub identity: String,
-    #[serde(with = "crate::wire_numbers::unsigned")]
-    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
-    pub version: u64,
-    pub root: ReferenceRoot,
-    pub value: CheckedValue,
+pub struct RevisionState {
+    pub id: RevisionId,
+    pub unit: UnitId,
+    pub artifact: SymbolKey,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub body: Value,
+    pub predecessor: Option<RevisionId>,
+    pub subject: Option<RevisionId>,
+    pub by: ActionKey,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Snapshot {
-    pub owner: InstanceId,
-    pub scope: ScopeKey,
-    #[serde(with = "crate::wire_numbers::unsigned")]
-    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
-    pub version: u64,
-    pub input: CheckedValue,
-    pub state: CheckedValue,
-    pub trigger: Trigger,
-    pub observations: Vec<VersionedValue>,
-    #[serde(with = "crate::wire_numbers::signed")]
-    #[schemars(schema_with = "crate::wire_numbers::signed::schema")]
-    pub timestamp_ms: i64,
-    #[serde(with = "crate::wire_numbers::unsigned")]
-    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
-    pub random_seed: u64,
+pub struct DecisionState {
+    pub id: DecisionId,
+    pub unit: UnitId,
+    pub review: SymbolKey,
+    pub decision: SymbolKey,
+    pub effect: DecisionEffect,
+    pub target: RevisionId,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub payload: Value,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Trigger {
-    pub id: TriggerId,
-    pub key: SymbolKey,
-    pub payload: CheckedValue,
+pub struct UnitState {
+    pub id: UnitId,
+    pub parent: Option<UnitId>,
+    pub declaration: SymbolKey,
+    pub stage: Option<SymbolKey>,
+    pub status: UnitStatus,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub input: Value,
+    pub after: Vec<UnitId>,
+    pub pool: Option<SymbolKey>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ReadVersion {
-    pub identity: String,
-    #[serde(with = "crate::wire_numbers::unsigned")]
-    #[schemars(schema_with = "crate::wire_numbers::unsigned::schema")]
-    pub version: u64,
+pub struct RunState {
+    pub id: String,
+    pub root: UnitId,
+    pub status: UnitStatus,
+    #[serde(with = "crate::wire_numbers::optional_json")]
+    #[schemars(with = "Option<Value>")]
+    pub input: Option<Value>,
+}
+
+/// A unit and its ancestors, plus the descendants and evidence needed to recompute them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedSnapshot {
+    pub run: RunState,
+    pub units: Vec<UnitState>,
+    pub attempts: Vec<AttemptState>,
+    pub revisions: Vec<RevisionState>,
+    pub decisions: Vec<DecisionState>,
+    pub retry_events: Vec<(UnitId, WorkerKey, EventId)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StepResult {
+    pub snapshot: ScopedSnapshot,
+    pub statuses: Vec<(UnitId, UnitStatus)>,
+    pub wanted: Vec<(UnitId, Vec<Action>)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StepError {
+    Rejected { reason: String },
+    Invalid { detail: String },
+}
+
+#[cfg(test)]
+mod v2_shape_tests {
+    use super::{Action, Event, ScopedSnapshot, UnitStatus};
+
+    #[test]
+    fn unit_and_action_contracts_have_no_failure_or_ask_variants() {
+        let unit = serde_json::to_string(&schemars::schema_for!(UnitStatus)).unwrap();
+        let action = serde_json::to_string(&schemars::schema_for!(Action)).unwrap();
+        let snapshot = serde_json::to_string(&schemars::schema_for!(ScopedSnapshot)).unwrap();
+        assert!(!unit.contains("\"failed\""));
+        assert!(!action.contains("\"fail\""));
+        assert!(!action.contains("\"ask\""));
+        assert!(!snapshot.contains("NeedsOperator"));
+    }
+
+    #[test]
+    fn event_contract_has_the_seven_kinds_swept_by_evaluator_invariants() {
+        let schema = serde_json::to_value(schemars::schema_for!(Event)).unwrap();
+        assert_eq!(schema["oneOf"].as_array().unwrap().len(), 7);
+    }
 }

@@ -25,16 +25,31 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); });
 
-// Real Chromium, the production React surface, and the installed Hono API.
-// The shared fixture supplies a deterministic database/core boundary.
+// Real Chromium and the production React surface. The shared fixture supplies
+// read projections; the command response is mocked until DBOS adopts v2 step.
 test("browser isolates drafts, submits observed result targets, and recovers a lost receipt after reload", async () => {
   const api = await harness({ operator_workspace: true });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+  const accepted = new Map<string, { kind: "accepted_pending"; request_id: string; transition_id: string; scope_version: number }>();
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    if (request.method === "POST" && url.pathname.endsWith("/scopes/scope-1/commands")) {
+      const command = await request.json() as ScopeCommandRequest;
+      let receipt = accepted.get(command.request_id);
+      if (!receipt) {
+        receipt = { kind: "accepted_pending", request_id: command.request_id, transition_id: "transition-1", scope_version: 5 };
+        accepted.set(command.request_id, receipt);
+      }
+      return Response.json(receipt, { status: 202 });
+    }
     if (url.pathname.startsWith("/oakridge/api/")) {
       url.pathname = url.pathname.slice("/oakridge/api".length);
-      return api.app.fetch(new Request(url, request));
+      const response = await api.app.fetch(new Request(url, request));
+      if (request.method === "GET" && url.pathname.endsWith("/scopes/scope-1") && accepted.size > 0) {
+        const scope = await response.json() as { cursor: { scope_version: number; transition_id: string | null } };
+        return Response.json({ ...scope, cursor: { scope_version: 5, transition_id: "transition-1" } });
+      }
+      return response;
     }
     return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
   } });
@@ -67,13 +82,13 @@ test("browser isolates drafts, submits observed result targets, and recovers a l
       .filter({ hasText: "Delivery is uncertain." }).waitFor();
     expect(requests[0]).toMatchObject({ command_key: "change", expected_scope_version: 4,
       targets: [{ identity: "exec-1", version: 6 }], payload: { text: "Change draft" } });
-    expect(api.evaluationCount()).toBe(1);
+    expect(accepted.size).toBe(1);
     await page.reload();
     await page.getByText("Receipt recovered for change.", { exact: true }).waitFor();
     expect(requests).toHaveLength(2);
     expect(requests[1]).toEqual(requests[0]);
     expect(receipts[1]).toEqual(receipts[0]);
-    expect(api.evaluationCount()).toBe(1);
+    expect(accepted.size).toBe(1);
     expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("oakridge:operator:pending:")))).toEqual([]);
     expect(pageErrors).toEqual([]);
   } finally { await context.close(); server.stop(true); }
