@@ -8,11 +8,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { Client } from "pg";
 import { sql } from "kysely";
 import { generate, PostgresDialect } from "kysely-codegen";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { openDatabase } from "../src/storage/database";
+import { createScratchDatabase } from "./scratch-database";
 
 const output = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const baseline = resolve(import.meta.dir, "../src/storage/migrations/0001_core.sql");
@@ -33,21 +33,9 @@ function jsonColumnTypes(sql: string): JsonColumnTypes {
   return { columns, imports };
 }
 
-function scratchUrl(server_url: string, database: string): string {
-  const url = new URL(server_url);
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
 async function withScratchDatabase<Value>(server_url: string, operation: (url: string) => Promise<Value>): Promise<Value> {
-  const database = `oakridge_records_${randomBytes(6).toString("hex")}`;
-  const admin = new Client({ connectionString: server_url });
-  await admin.connect();
-  try {
-    await admin.query(`CREATE DATABASE ${database}`);
-    try { return await operation(scratchUrl(server_url, database)); }
-    finally { await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`); }
-  } finally { await admin.end(); }
+  const scratch = await createScratchDatabase(server_url, `oakridge_records_${randomBytes(6).toString("hex")}`);
+  try { return await operation(scratch.url); } finally { await scratch.drop(); }
 }
 
 async function generateRecords(server_url: string): Promise<string> {

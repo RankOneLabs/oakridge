@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Client } from "pg";
+import { createScratchDatabase, type ScratchDatabase } from "../scripts/scratch-database";
 import { CoreClient, compileWorkflow } from "../src/core-client/client";
 import type { Event, Workflow, Writer } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
@@ -25,19 +25,8 @@ export function testServerUrl(): string {
 }
 
 /** An empty scratch database, dropped by the returned function. */
-export async function scratchDatabase(): Promise<{ readonly url: string; drop(): Promise<void> }> {
-  const server = testServerUrl();
-  const name = `oakridge_test_${crypto.randomUUID().replaceAll("-", "")}`;
-  const admin = new Client({ connectionString: server });
-  await admin.connect();
-  try { await admin.query(`CREATE DATABASE ${name}`); } finally { await admin.end(); }
-  const url = new URL(server);
-  url.pathname = `/${name}`;
-  return { url: url.href, async drop() {
-    const dropper = new Client({ connectionString: server });
-    await dropper.connect();
-    try { await dropper.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await dropper.end(); }
-  } };
+export function scratchDatabase(): Promise<ScratchDatabase> {
+  return createScratchDatabase(testServerUrl(), `oakridge_test_${crypto.randomUUID().replaceAll("-", "")}`);
 }
 
 export async function openAuthority(): Promise<Authority> {
