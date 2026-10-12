@@ -260,6 +260,20 @@ fn reference_schema(
             }
             target.clone()
         }
+        ReferenceRoot::UnitInput
+        | ReferenceRoot::EachMember
+        | ReferenceRoot::ValidationBody { .. }
+        | ReferenceRoot::Latest { .. }
+        | ReferenceRoot::Published { .. }
+        | ReferenceRoot::Approved { .. }
+        | ReferenceRoot::ChangesRequested { .. }
+        | ReferenceRoot::UnitOutcome { .. } => {
+            return Err(crate::error(
+                DomainErrorKind::UnknownConstruct,
+                owner.key.0.clone(),
+                "stage scope root outside a workflow stage",
+            ))
+        }
         ReferenceRoot::Item => context.item.clone().ok_or_else(|| {
             error(
                 DomainErrorKind::MissingBinding,

@@ -509,4 +509,7 @@ pub struct CheckedArtifactValidation {
 pub struct CheckedStageExpression {
     pub source: String,
     pub value_type: TypeExpression,
+    /// The resolved expression. Evaluation walks this; `source` is kept for
+    /// traces and error messages only.
+    pub expression: Expression,
 }

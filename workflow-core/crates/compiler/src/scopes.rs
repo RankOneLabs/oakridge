@@ -571,11 +571,19 @@ pub mod workflow_v2 {
     }
     /// A stage expression parsed once, so type-checking reads a shape with a
     /// typed payload per variant rather than re-scanning the source text.
+    #[derive(Clone, Copy, Debug)]
+    enum Comparison {
+        Greater,
+        GreaterOrEqual,
+        Less,
+        LessOrEqual,
+    }
     #[derive(Clone, Debug)]
     enum StageExpr {
-        /// All four integer comparisons share one typing rule, so the
-        /// operator itself does not survive parsing.
+        /// All four comparisons share one typing rule; the operator is carried
+        /// so the resolved expression keeps it.
         Compare {
+            operator: Comparison,
             left: Box<StageExpr>,
             right: Box<StageExpr>,
         },
@@ -599,9 +607,9 @@ pub mod workflow_v2 {
             unit: String,
             path: Vec<String>,
         },
-        Boolean,
-        Integer,
-        Text,
+        Boolean(bool),
+        Integer(i64),
+        Text(String),
     }
     /// The argument of `function(..)` and whatever trails its closing paren,
     /// matched at depth so a nested call does not end the argument early.
@@ -624,9 +632,9 @@ pub mod workflow_v2 {
         }
         None
     }
-    /// Operands either side of the first comparison operator at paren depth
-    /// zero and outside quotes.
-    fn split_comparison(text: &str) -> Option<(&str, &str)> {
+    /// Operands and operator at the first comparison at paren depth zero and
+    /// outside quotes.
+    fn split_comparison(text: &str) -> Option<(&str, Comparison, &str)> {
         let bytes = text.as_bytes();
         let mut depth = 0usize;
         let mut quoted = false;
@@ -635,13 +643,16 @@ pub mod workflow_v2 {
                 b'"' => quoted = !quoted,
                 b'(' | b'{' if !quoted => depth += 1,
                 b')' | b'}' if !quoted => depth = depth.saturating_sub(1),
-                b'>' | b'<' if !quoted && depth == 0 => {
-                    let width = if bytes.get(index + 1) == Some(&b'=') {
-                        2
-                    } else {
-                        1
+                symbol @ (b'>' | b'<') if !quoted && depth == 0 => {
+                    let padded = bytes.get(index + 1) == Some(&b'=');
+                    let operator = match (symbol, padded) {
+                        (b'>', true) => Comparison::GreaterOrEqual,
+                        (b'>', false) => Comparison::Greater,
+                        (_, true) => Comparison::LessOrEqual,
+                        (_, false) => Comparison::Less,
                     };
-                    return Some((text[..index].trim(), text[index + width..].trim()));
+                    let width = if padded { 2 } else { 1 };
+                    return Some((text[..index].trim(), operator, text[index + width..].trim()));
                 }
                 _ => {}
             }
@@ -657,8 +668,9 @@ pub mod workflow_v2 {
     }
     fn parse_expression(text: &str) -> Result<StageExpr, DomainError> {
         let text = text.trim();
-        if let Some((left, right)) = split_comparison(text) {
+        if let Some((left, operator, right)) = split_comparison(text) {
             return Ok(StageExpr::Compare {
+                operator,
                 left: Box::new(parse_expression(left)?),
                 right: Box::new(parse_expression(right)?),
             });
@@ -694,13 +706,15 @@ pub mod workflow_v2 {
             });
         }
         if text == "true" || text == "false" {
-            return Ok(StageExpr::Boolean);
+            return Ok(StageExpr::Boolean(text == "true"));
         }
-        if text.parse::<i64>().is_ok() {
-            return Ok(StageExpr::Integer);
+        if let Ok(value) = text.parse::<i64>() {
+            return Ok(StageExpr::Integer(value));
         }
         if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
-            return Ok(StageExpr::Text);
+            return serde_json::from_str::<String>(text)
+                .map(StageExpr::Text)
+                .map_err(|error| reject(1, format!("malformed text literal: {error}")));
         }
         if text.contains('(') || text.contains(')') {
             return Err(reject(1, format!("unknown expression {text}")));
@@ -765,7 +779,7 @@ pub mod workflow_v2 {
         let integer = || TypeExpression::Name("integer".into());
         let boolean = || TypeExpression::Name("boolean".into());
         match expression {
-            StageExpr::Compare { left, right } => {
+            StageExpr::Compare { left, right, .. } => {
                 if infer(left, scope)? != integer() || infer(right, scope)? != integer() {
                     return Err(reject(9, "integer comparison requires integer operands"));
                 }
@@ -861,15 +875,96 @@ pub mod workflow_v2 {
                 }
                 Err(reject(1, format!("unknown expression {head}")))
             }
-            StageExpr::Boolean => Ok(boolean()),
-            StageExpr::Integer => Ok(integer()),
-            StageExpr::Text => Ok(TypeExpression::Name("text".into())),
+            StageExpr::Boolean(_) => Ok(boolean()),
+            StageExpr::Integer(_) => Ok(integer()),
+            StageExpr::Text(_) => Ok(TypeExpression::Name("text".into())),
+        }
+    }
+    /// Resolve a parsed stage expression to the shared Expression tree, so the
+    /// evaluator walks a compiled form instead of re-parsing the source.
+    fn resolve(expression: &StageExpr) -> Expression {
+        fn reference(root: ReferenceRoot, path: &[String]) -> Expression {
+            Expression::Reference {
+                root,
+                path: path.to_vec(),
+            }
+        }
+        match expression {
+            StageExpr::Compare {
+                operator,
+                left,
+                right,
+            } => {
+                let left = Box::new(resolve(left));
+                let right = Box::new(resolve(right));
+                match operator {
+                    Comparison::Greater => Expression::GreaterThan { left, right },
+                    Comparison::GreaterOrEqual => Expression::GreaterOrEqual { left, right },
+                    Comparison::Less => Expression::LessThan { left, right },
+                    Comparison::LessOrEqual => Expression::LessOrEqual { left, right },
+                }
+            }
+            StageExpr::Len(inner) => Expression::Len {
+                value: Box::new(resolve(inner)),
+            },
+            StageExpr::Published(artifact) => reference(
+                ReferenceRoot::Published {
+                    artifact: SymbolKey::from(artifact.as_str()),
+                },
+                &[],
+            ),
+            StageExpr::Approved(artifact) => reference(
+                ReferenceRoot::Approved {
+                    artifact: SymbolKey::from(artifact.as_str()),
+                },
+                &[],
+            ),
+            StageExpr::ChangesRequested(artifact) => reference(
+                ReferenceRoot::ChangesRequested {
+                    artifact: SymbolKey::from(artifact.as_str()),
+                },
+                &[],
+            ),
+            StageExpr::Latest { artifact, path } => reference(
+                ReferenceRoot::Latest {
+                    artifact: SymbolKey::from(artifact.as_str()),
+                },
+                path,
+            ),
+            StageExpr::Input(path) => reference(ReferenceRoot::UnitInput, path),
+            StageExpr::Each(path) => reference(ReferenceRoot::EachMember, path),
+            StageExpr::Name { head, path } => reference(
+                ReferenceRoot::ValidationBody {
+                    artifact: SymbolKey::from(head.as_str()),
+                },
+                path,
+            ),
+            StageExpr::Outcome { unit, path } => reference(
+                ReferenceRoot::UnitOutcome {
+                    unit: SymbolKey::from(unit.as_str()),
+                },
+                path,
+            ),
+            StageExpr::Boolean(value) => Expression::Literal {
+                schema: SchemaId::from("boolean"),
+                value: serde_json::Value::Bool(*value),
+            },
+            StageExpr::Integer(value) => Expression::Literal {
+                schema: SchemaId::from("integer"),
+                value: serde_json::Value::from(*value),
+            },
+            StageExpr::Text(value) => Expression::Literal {
+                schema: SchemaId::from("text"),
+                value: serde_json::Value::String(value.clone()),
+            },
         }
     }
     fn checked(text: &str, scope: &Scope<'_>) -> Result<CheckedStageExpression, DomainError> {
+        let parsed = parse_expression(text)?;
         Ok(CheckedStageExpression {
             source: text.into(),
-            value_type: infer(&parse_expression(text)?, scope)?,
+            value_type: infer(&parsed, scope)?,
+            expression: resolve(&parsed),
         })
     }
     fn fields(
@@ -1105,6 +1200,7 @@ pub mod workflow_v2 {
         let done_when = CheckedStageExpression {
             source: done.into(),
             value_type: infer(&done_expression, &base)?,
+            expression: resolve(&done_expression),
         };
         if done_when.value_type != TypeExpression::Name("boolean".into()) {
             return Err(reject(9, format!("stage {key} done_when is not boolean")));
@@ -1238,6 +1334,10 @@ pub mod workflow_v2 {
                     _ => CheckedStageExpression {
                         source: "[]".into(),
                         value_type: TypeExpression::Name("list(ident)".into()),
+                        expression: Expression::List {
+                            schema: SchemaId::from("list(ident)"),
+                            items: vec![],
+                        },
                     },
                 };
                 Some(CheckedUnitCollection {
@@ -1326,12 +1426,29 @@ pub mod workflow_v2 {
                     )
                     .ok_or_else(|| reject(4, "map field absent"))?
                 };
+                let item_type = TypeExpression::Name(format!(
+                    "list({})",
+                    serde_json::to_string(&item).unwrap_or_default()
+                ));
                 CheckedStageExpression {
                     source: source.clone(),
-                    value_type: TypeExpression::Name(format!(
-                        "list({})",
-                        serde_json::to_string(&item).unwrap_or_default()
-                    )),
+                    expression: Expression::Map {
+                        source: Box::new(Expression::Reference {
+                            root: ReferenceRoot::UnitOutcome {
+                                unit: SymbolKey::from(collection),
+                            },
+                            path: vec![],
+                        }),
+                        schema: SchemaId::from("map"),
+                        value: Box::new(Expression::Reference {
+                            root: ReferenceRoot::Item,
+                            path: suffix
+                                .strip_prefix('.')
+                                .map(|rest| rest.split('.').map(str::to_owned).collect())
+                                .unwrap_or_default(),
+                        }),
+                    },
+                    value_type: item_type,
                 }
             } else {
                 checked(source, &scope)?

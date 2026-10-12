@@ -410,6 +410,28 @@ pub enum ReferenceRoot {
         schema: SchemaId,
     },
     Item, // lexically bound by finite list transforms
+    // The §2.2 stage scope. The compiler resolves stage expression text to
+    // these roots so nothing re-parses the source at evaluation time.
+    UnitInput,
+    EachMember,
+    ValidationBody {
+        artifact: SymbolKey,
+    },
+    Latest {
+        artifact: SymbolKey,
+    },
+    Published {
+        artifact: SymbolKey,
+    },
+    Approved {
+        artifact: SymbolKey,
+    },
+    ChangesRequested {
+        artifact: SymbolKey,
+    },
+    UnitOutcome {
+        unit: SymbolKey,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
