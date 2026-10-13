@@ -357,6 +357,20 @@ fn unify(
                         .is_some_and(|other| unify(ty, other, aliases, bindings))
                 })
         }
+        // A type variable may sit inside a constructor: `list($value)`.
+        (TypeExpression::Name(expected), TypeExpression::Name(found)) => ["list", "optional"]
+            .into_iter()
+            .find_map(|function| {
+                let inner = (
+                    inner_type(&expected, function)?,
+                    inner_type(&found, function)?,
+                );
+                Some(match (parse_type(inner.0), parse_type(inner.1)) {
+                    (Ok(expected), Ok(found)) => unify(&expected, &found, aliases, bindings),
+                    _ => false,
+                })
+            })
+            .unwrap_or(expected == found),
         (expected, found) => expected == found,
     }
 }

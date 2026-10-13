@@ -30,6 +30,16 @@ pub fn operations() -> Vec<CodeOperation> {
             error_codes: vec![],
         },
         CodeOperation {
+            key: SymbolKey::from("items.publish"),
+            version: 1,
+            input_schema: TypeExpression::Record(BTreeMap::from([(
+                "items".into(),
+                ty("list($value)"),
+            )])),
+            output_schema: ty("list($value)"),
+            error_codes: vec![],
+        },
+        CodeOperation {
             key: SymbolKey::from("pull.observe"),
             version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
@@ -339,4 +349,29 @@ fn an_alias_inside_a_list_is_the_type_it_names() {
         ("/run/units/plan/input/cohorts", json!("input.cohorts")),
     ]))
     .unwrap();
+}
+
+#[test]
+fn a_type_variable_inside_a_constructor_binds_to_its_item_type() {
+    let with_items = |schema: &str| {
+        fixture(&[
+            (
+                "/stages/cohort/artifacts/dependencies",
+                json!({ "schema": schema }),
+            ),
+            (
+                "/stages/cohort/workers/list_dependencies",
+                json!({ "kind": "code", "operation": "items.publish",
+                        "inputs": { "items": "input.brief.depends_on" }, "creates": ["dependencies"] }),
+            ),
+        ])
+    };
+    compile(&with_items("list(ident)")).unwrap();
+    assert_eq!(
+        compile(&with_items("list(text)"))
+            .unwrap_err()
+            .entity_id
+            .to_string(),
+        "check 12"
+    );
 }

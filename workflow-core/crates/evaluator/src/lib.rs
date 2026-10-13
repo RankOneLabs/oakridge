@@ -208,22 +208,37 @@ mod v2_step {
         {
             return false;
         }
-        // Kahn's algorithm: every key must become reachable from an empty prerequisite set.
-        let mut done = BTreeSet::new();
-        while done.len() < keys.len() {
-            let ready: Vec<_> = edges
-                .iter()
-                .filter(|(key, dependencies)| {
-                    !done.contains(*key) && dependencies.iter().all(|d| done.contains(d))
-                })
-                .map(|(key, _)| *key)
-                .collect();
-            if ready.is_empty() {
-                return false;
+        // Kahn's algorithm over a ready queue, O(keys + dependencies): every key
+        // must become reachable from an empty prerequisite set.
+        let mut waiting: BTreeMap<&str, usize> = edges
+            .iter()
+            .map(|(key, named)| (*key, named.len()))
+            .collect();
+        let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (key, named) in &edges {
+            for dependency in named {
+                dependents.entry(*dependency).or_default().push(*key);
             }
-            done.extend(ready);
         }
-        true
+        let mut ready: Vec<&str> = waiting
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(key, _)| *key)
+            .collect();
+        let mut reached = 0usize;
+        while let Some(key) = ready.pop() {
+            reached += 1;
+            for dependent in dependents.get(key).map(Vec::as_slice).unwrap_or_default() {
+                let count = waiting
+                    .get_mut(dependent)
+                    .expect("every dependent is a key");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(dependent);
+                }
+            }
+        }
+        reached == keys.len()
     }
     fn is_ident(text: &str) -> bool {
         !text.is_empty()
@@ -1461,6 +1476,26 @@ mod v2_step {
             let Some(target) = latest(state, &unit.id, target_artifact) else {
                 continue;
             };
+            // Wait for the target's creator to finish its attempt: a revise that
+            // has published the new target but not yet the rest of its output
+            // (a replacement PR) would otherwise be judged on what it replaces.
+            let is_creator_working = definition
+                .workers
+                .iter()
+                .filter(|(_, worker)| creates(worker).contains(target_artifact))
+                .any(|(key, _)| {
+                    attempt(state, &unit.id, &WorkerKey::from(key.as_str())).is_some_and(
+                        |current| {
+                            matches!(
+                                current.status,
+                                AttemptStatus::Pending | AttemptStatus::Running
+                            )
+                        },
+                    )
+                });
+            if is_creator_working {
+                continue;
+            }
             let is_decided = state.decisions.iter().any(|existing| {
                 existing.unit == unit.id
                     && existing.review == review.key
@@ -1734,6 +1769,23 @@ mod v2_step {
                 .into_iter()
                 .collect();
             workflow_compiler::compile_workflow(&source, &[], &prompts).unwrap()
+        }
+        #[test]
+        fn valid_graph_accepts_a_long_chain_and_refuses_it_closed_into_a_cycle() {
+            let chain = |is_closed: bool| -> Vec<Value> {
+                (0..10_000)
+                    .map(|index: usize| {
+                        let previous = match index {
+                            0 if is_closed => vec![format!("k{}", 9_999)],
+                            0 => vec![],
+                            _ => vec![format!("k{}", index - 1)],
+                        };
+                        serde_json::json!({ "id": format!("k{index}"), "after": previous })
+                    })
+                    .collect()
+            };
+            assert!(is_valid_graph(&chain(false), "id", "after"));
+            assert!(!is_valid_graph(&chain(true), "id", "after"));
         }
         fn snapshot() -> ScopedSnapshot {
             ScopedSnapshot {

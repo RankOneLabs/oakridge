@@ -622,3 +622,31 @@ fn a_revise_that_republishes_an_unchanged_artifact_still_publishes_it() {
         .count();
     assert_eq!(prs, 2);
 }
+
+#[test]
+fn an_engine_review_waits_for_the_revise_it_asked_for_to_publish_everything() {
+    let mut run = Run::through_build(false);
+    run.observe("closed_unmerged");
+    let pr_closed = |run: &Run| {
+        run.state
+            .decisions
+            .iter()
+            .filter(|d| d.review.0 == "pr_closed")
+            .count()
+    };
+    assert_eq!(pr_closed(&run), 1);
+    run.start(COHORT, "builder");
+    // The new build is published before the replacement PR; the old PR still reads closed.
+    run.publish(COHORT, "builder", "build", json!({ "summary": "rebuilt" }))
+        .unwrap();
+    assert_eq!(pr_closed(&run), 1);
+    run.publish(
+        COHORT,
+        "builder",
+        "pr",
+        json!({ "pr_url": "https://forge/pr/2", "branch": "cohort-a" }),
+    )
+    .unwrap();
+    run.end(COHORT, "builder");
+    assert_eq!(pr_closed(&run), 1);
+}
