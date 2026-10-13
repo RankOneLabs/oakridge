@@ -44,34 +44,46 @@ export interface RunRead {
   readonly wanted: readonly UnitWanted[];
 }
 
-/** A launched run; a run row whose launch was rejected has no root and is not a run to the operator. */
-async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
-  const found = await trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
-    .selectAll("run").select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
-    .where("run.id", "=", run_id).where("run.root_unit_id", "is not", null).executeTakeFirst();
-  if (!found) return null;
-  const { digest, bundle_version, source, ...run } = found;
+/**
+ * Launched runs, in the order asked; a run row whose launch was rejected has
+ * no root and is not a run to the operator. One query per table for every
+ * run asked, so a page of runs costs what one run does.
+ */
+async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): Promise<readonly RunRead[]> {
+  if (run_ids.length === 0) return [];
+  const ids = anyOf(run_ids);
   // Action ids are hashes: attempts, revisions and decisions read in the order commit wrote them.
-  const [units, dependencies, attempts, revisions, decisions, retries, wanted] = await Promise.all([
-    trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
-    trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
-    trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
-    trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.event").select(["id", "unit_id", "payload"]).where("run_id", "=", run_id)
+  const [runs, units, dependencies, attempts, revisions, decisions, retries, wanted] = await Promise.all([
+    trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
+      .selectAll("run").select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
+      .where("run.id", "=", ids).where("run.root_unit_id", "is not", null).execute(),
+    trx.selectFrom("authority.unit").selectAll().where("run_id", "=", ids).orderBy("id").execute(),
+    trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", ids).orderBy("unit_id").orderBy("depends_on_id").execute(),
+    trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
+    trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.event").select(["id", "run_id", "unit_id", "payload"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "retry_requested")).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
       join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
-      .distinctOn("wanted.unit_id").select(["wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", run_id)
-      .orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute(),
+      .distinctOn(["wanted.run_id", "wanted.unit_id"]).select(["wanted.run_id", "wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", ids)
+      .orderBy("wanted.run_id").orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute(),
   ]);
-  return { run: run as RunRecord, definition: { digest, version: bundle_version, workflow: source },
-    units: units as UnitRecord[], dependencies: dependencies as UnitDependencyRecord[], attempts: attempts as AttemptRecord[],
-    revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[],
-    retries: retries.flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null
-      ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, event_id: retry.id }] : []),
-    wanted };
+  const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
+  return run_ids.flatMap((run_id) => {
+    const found = runs.find((run) => run.id === run_id);
+    if (!found) return [];
+    const { digest, bundle_version, source, ...run } = found;
+    return [{ run: run as RunRecord, definition: { digest, version: bundle_version, workflow: source },
+      units: of(units, run_id) as UnitRecord[], dependencies: of(dependencies, run_id) as UnitDependencyRecord[],
+      attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as ArtifactRevisionRecord[],
+      decisions: of(decisions, run_id) as ReviewDecisionRecord[],
+      retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null
+        ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, event_id: retry.id }] : []),
+      wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })) }];
+  });
 }
+const runRead = async (trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> => (await runReads(trx, [run_id]))[0] ?? null;
 
 export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead | null> {
   return consistent(db, (trx) => runRead(trx, run_id));
@@ -88,11 +100,7 @@ export async function listRuns(db: Kysely<DB>, query: RunPageQuery): Promise<Run
     if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(new Date(after.created_at), after.id)));
     const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
-    const items: RunRead[] = [];
-    for (const row of selected) {
-      const read = await runRead(trx, row.id);
-      if (read) items.push(read);
-    }
+    const items = await runReads(trx, selected.map((row) => row.id));
     const last = selected.at(-1);
     return { items, next: rows.length > query.limit && last ? { created_at: last.created_at, id: last.id } : null };
   });
@@ -121,11 +129,7 @@ export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise
     if (query.after !== null) page = page.where("id", ">", query.after);
     const rows = await page.orderBy("id").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
-    const items: RunRead[] = [];
-    for (const row of selected) {
-      const read = await runRead(trx, row.id);
-      if (read) items.push(read);
-    }
+    const items = await runReads(trx, selected.map((row) => row.id));
     return { items, next: rows.length > query.limit ? selected.at(-1)?.id ?? null : null };
   });
 }

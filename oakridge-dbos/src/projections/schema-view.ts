@@ -7,6 +7,10 @@ import type { ReviewDecision, TypeExpression, Workflow } from "../core-client/co
  * `TypeExpression`s become these shapes.
  */
 export interface Schema { readonly key: string; readonly shape: SchemaShape }
+/**
+ * `required` is always true: the core requires every record field to be
+ * present, and an `optional(T)` field admits null, not absence.
+ */
 export interface SchemaField { readonly key: string; readonly required: boolean; readonly schema: string }
 export type SchemaShape =
   | { readonly kind: "boolean" }
@@ -102,7 +106,7 @@ function nodeSchemas(node: TypeNode): readonly Schema[] {
     case "list": return [{ key: schemaKey(node), shape: { kind: "list", item: schemaKey(node.item), max_items: WIRE_MAX } }, ...nodeSchemas(node.item)];
     case "optional": return [{ key: schemaKey(node), shape: { kind: "optional", item: schemaKey(node.item) } }, ...nodeSchemas(node.item)];
     case "record": return [{ key: schemaKey(node), shape: { kind: "record", fields: node.fields.map(([key, field]) =>
-      ({ key, required: field.kind !== "optional", schema: schemaKey(field) })) } }, ...node.fields.flatMap(([, field]) => nodeSchemas(field))];
+      ({ key, required: true, schema: schemaKey(field) })) } }, ...node.fields.flatMap(([, field]) => nodeSchemas(field))];
   }
 }
 type Aliases = { readonly [name: string]: TypeExpression };

@@ -186,3 +186,25 @@ test("a definition graph lists each declared unit with its dependencies as edges
     nodes: [["prepare", "prepare", []], ["work", "work", ["prepare"]], ["work/item", "item", []]],
     edges: [{ from: "prepare", to: "work" }] });
 });
+
+test("a page of runs reads in one batch, each run holding only its own rows", async () => {
+  const first = await stalledRun();
+  const second = await launched();
+  const page = await listRuns(authority.db, { after: null, limit: 100, is_archived: false });
+  const of = (run_id: RunId) => page.items.find((item) => item.run.id === run_id);
+  const foreign = page.items.flatMap((item) => [...item.units, ...item.attempts, ...item.revisions, ...item.decisions, ...item.dependencies]
+    .filter((row) => row.run_id !== item.run.id));
+  expect({ order: page.items.map((item) => item.run.id).indexOf(second) < page.items.map((item) => item.run.id).indexOf(first),
+    first_retries: of(first)?.retries.length, second_retries: of(second)?.retries.length, foreign: foreign.length,
+    wanted: of(second)?.wanted.every((item) => item.unit_id.startsWith(second)) })
+    .toEqual({ order: true, first_retries: 1, second_retries: 0, foreign: 0, wanted: true });
+});
+
+async function stalledRun(): Promise<RunId> {
+  const run_id = await launched();
+  const action = await writerAction(run_id);
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "failed" } }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
+  return run_id;
+}

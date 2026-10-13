@@ -33,10 +33,10 @@ test("an alias keeps its name; an alias of an alias takes the shape it resolves 
     plan_body: { kind: "record", fields: [{ key: "summary", required: true, schema: "text" }] } });
 });
 
-test("an optional field is not required, and nested lists and optionals get their own schemas", () => {
+test("an optional field is still required (it admits null, not absence), and nested lists and optionals get their own schemas", () => {
   expect({ repository: shape("repository"), list: shape("list(repository)"), optional: shape("optional(repo_path)"), path: shape("repo_path") }).toEqual({
     repository: { kind: "record", fields: [{ key: "name", required: true, schema: "ident" }, { key: "owner", required: true, schema: "ident" },
-      { key: "path", required: false, schema: "optional(repo_path)" }] },
+      { key: "path", required: true, schema: "optional(repo_path)" }] },
     list: { kind: "list", item: "repository", max_items: Number.MAX_SAFE_INTEGER },
     optional: { kind: "optional", item: "repo_path" },
     path: { kind: "string", min_length: 0, max_length: Number.MAX_SAFE_INTEGER } });
