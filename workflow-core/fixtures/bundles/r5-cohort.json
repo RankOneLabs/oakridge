@@ -1,0 +1,88 @@
+{
+  "workflow": "r5_cohort",
+  "input": { "brief": "brief_body", "admission": "boolean", "verdict": "enum(pass, fail)" },
+  "schemas": {
+    "brief_body": { "title": "text", "depends_on": "list(ident)", "repository_key": "ident" },
+    "pr_body": { "pr_url": "text", "branch": "text" },
+    "observations": { "observations": "list({url: text, state: text})" },
+    "plan_body": { "cohorts": "list({id: ident, depends_on: list(ident), repository_key: ident})" }
+  },
+  "run": {
+    "units": {
+      "plan": { "stage": "plan", "input": { "repositories": "{key: input.brief.repository_key}" } },
+      "cohort": { "stage": "cohort", "after": ["plan"], "input": { "brief": "input.brief", "admission": "input.admission" } }
+    },
+    "outcome": { "pr": "cohort.outcome.pr" }
+  },
+  "stages": {
+    "plan": {
+      "input": { "repositories": { "key": "ident" } },
+      "artifacts": {
+        "plan": {
+          "schema": "plan_body",
+          "validate": [
+            { "check": "len(plan.cohorts) > 0", "message": "the plan names no cohort" },
+            { "check": "valid_graph(plan.cohorts, id, depends_on)", "message": "cohort ids or dependencies are invalid" },
+            { "check": "every(plan.cohorts, item.repository_key == input.repositories.key)", "message": "a cohort names an unknown repository" }
+          ]
+        }
+      },
+      "workers": {
+        "planner": { "kind": "agent", "prompts": { "initial": "plan.md", "revise": "plan.md" }, "inputs": {}, "creates": ["plan"] }
+      },
+      "reviews": {
+        "plan_review": {
+          "of": "plan", "by": "operator", "prompt": "review.md", "inputs": {},
+          "decisions": { "accept": { "effect": "approve", "label": "Accept" } }
+        }
+      },
+      "done_when": "approved(plan)",
+      "outcome": { "cohorts": "map(latest(plan).cohorts, item.id)" }
+    },
+    "cohort": {
+      "input": { "brief": "brief_body", "admission": "boolean" },
+      "artifacts": {
+        "brief": { "schema": "brief_body" },
+        "build": { "schema": { "summary": "text" } },
+        "pr": { "schema": "pr_body" },
+        "assessment": { "schema": { "verdict": "enum(pass, fail)" } },
+        "pr_state": { "schema": "observations" }
+      },
+      "workers": {
+        "admit": { "kind": "code", "operation": "value.publish", "inputs": { "value": "input.brief" }, "creates": ["brief"] },
+        "builder": {
+          "kind": "agent", "prompts": { "initial": "build.md", "revise": "build.md" },
+          "when": "approved(brief) or not input.admission",
+          "inputs": { "brief": "input.brief" }, "creates": ["build", "pr"]
+        },
+        "assessor": { "kind": "agent", "prompts": { "review": "assess.md" }, "inputs": {}, "reviews": "build", "creates": ["assessment"] },
+        "pr_watch": {
+          "kind": "code", "operation": "pull.observe", "every": "1m",
+          "when": "published(pr)", "inputs": { "url": "latest(pr).pr_url" }, "creates": ["pr_state"]
+        }
+      },
+      "reviews": {
+        "admission": {
+          "of": "brief", "by": "operator", "when": "input.admission", "prompt": "review.md", "inputs": {},
+          "decisions": { "admit": { "effect": "approve", "label": "Admit" } }
+        },
+        "assessment_review": {
+          "of": "assessment", "by": "operator", "prompt": "review.md", "inputs": {},
+          "decisions": {
+            "accept": { "effect": "approve", "label": "Accept" },
+            "request_build_changes": { "effect": "request_changes", "on": "build", "label": "Request build changes",
+                                       "fields": { "feedback": "What must the builder change?" } }
+          }
+        },
+        "pr_closed": {
+          "of": "build", "by": "engine",
+          "when": "published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"closed_unmerged\"",
+          "decisions": { "replace": { "effect": "request_changes", "label": "Replace the PR",
+                                      "feedback": "The PR was closed without merging. Open a new one." } }
+        }
+      },
+      "done_when": "approved(assessment) and published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"merged\"",
+      "outcome": { "pr": "latest(pr)" }
+    }
+  }
+}

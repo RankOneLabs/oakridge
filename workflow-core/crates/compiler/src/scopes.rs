@@ -1,17 +1,18 @@
 //! The section 2.1-2.3 workflow compiler: source validation, stage scope
 //! type-checking, and group and collection resolution.
+use crate::expressions::{checked, checked_guard, enum_variants, split_call, Scope};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
-fn reject(class: u8, detail: impl Into<String>) -> DomainError {
+pub(crate) fn reject(class: u8, detail: impl Into<String>) -> DomainError {
     DomainError::new(
         DomainErrorKind::InvalidAssignment,
         format!("check {class}"),
         detail.into(),
     )
 }
-fn parse_type(text: &str) -> Result<TypeExpression, DomainError> {
+pub(crate) fn parse_type(text: &str) -> Result<TypeExpression, DomainError> {
     let text = text.trim();
     if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
         let mut fields = BTreeMap::new();
@@ -73,6 +74,19 @@ fn validate_type(
         }
         TypeExpression::Name(name)
             if ["text", "ident", "repo_path", "integer", "boolean"].contains(&name.as_str()) => {}
+        TypeExpression::Name(_) if enum_variants(ty).is_some() => {
+            let variants = enum_variants(ty).unwrap_or_default();
+            let unique: BTreeSet<_> = variants.iter().collect();
+            let is_legal = |variant: &String| {
+                !variant.is_empty()
+                    && variant
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+            };
+            if !variants.iter().all(is_legal) || unique.len() != variants.len() {
+                return Err(reject(11, format!("malformed enum {}", render_type(ty))));
+            }
+        }
         TypeExpression::Name(name)
             if inner_type(name, "list").is_some() || inner_type(name, "optional").is_some() =>
         {
@@ -92,7 +106,10 @@ fn validate_type(
     }
     Ok(())
 }
-fn resolve_type(ty: &TypeExpression, aliases: &BTreeMap<String, TypeExpression>) -> TypeExpression {
+pub(crate) fn resolve_type(
+    ty: &TypeExpression,
+    aliases: &BTreeMap<String, TypeExpression>,
+) -> TypeExpression {
     match ty {
         TypeExpression::Name(name) if aliases.contains_key(name) => {
             resolve_type(&aliases[name], aliases)
@@ -106,13 +123,13 @@ fn resolve_type(ty: &TypeExpression, aliases: &BTreeMap<String, TypeExpression>)
         _ => ty.clone(),
     }
 }
-fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
+pub(crate) fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
     let TypeExpression::Name(name) = ty else {
         return None;
     };
     parse_type(inner_type(name, "list")?).ok()
 }
-fn field_type(
+pub(crate) fn field_type(
     ty: &TypeExpression,
     path: &[&str],
     aliases: &BTreeMap<String, TypeExpression>,
@@ -135,185 +152,9 @@ fn field_type(
     }
     Some(current)
 }
-/// A stage expression parsed once, so type-checking reads a shape with a
-/// typed payload per variant rather than re-scanning the source text.
-#[derive(Clone, Copy, Debug)]
-enum Comparison {
-    Greater,
-    GreaterOrEqual,
-    Less,
-    LessOrEqual,
-}
-#[derive(Clone, Debug)]
-enum StageExpr {
-    /// All four comparisons share one typing rule; the operator is carried
-    /// so the resolved expression keeps it.
-    Compare {
-        operator: Comparison,
-        left: Box<StageExpr>,
-        right: Box<StageExpr>,
-    },
-    Len(Box<StageExpr>),
-    Published(String),
-    Approved(String),
-    ChangesRequested(String),
-    Latest {
-        artifact: String,
-        path: Vec<String>,
-    },
-    Input(Vec<String>),
-    Each(Vec<String>),
-    /// A bare name and field path: the validate-check binding when the name
-    /// matches the artifact under validation, and otherwise unresolvable.
-    Name {
-        head: String,
-        path: Vec<String>,
-    },
-    Outcome {
-        unit: String,
-        path: Vec<String>,
-    },
-    Boolean(bool),
-    Integer(i64),
-    Text(String),
-}
-/// The argument of `function(..)` and whatever trails its closing paren,
-/// matched at depth so a nested call does not end the argument early.
-fn split_call<'a>(text: &'a str, function: &str) -> Option<(&'a str, &'a str)> {
-    let inner = text.strip_prefix(function)?.strip_prefix('(')?;
-    let mut depth = 1usize;
-    let mut quoted = false;
-    for (index, ch) in inner.char_indices() {
-        match ch {
-            '"' => quoted = !quoted,
-            '(' if !quoted => depth += 1,
-            ')' if !quoted => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some((inner[..index].trim(), inner[index + 1..].trim()));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-/// Operands and operator at the first comparison at paren depth zero and
-/// outside quotes.
-fn split_comparison(text: &str) -> Option<(&str, Comparison, &str)> {
-    let bytes = text.as_bytes();
-    let mut depth = 0usize;
-    let mut quoted = false;
-    for index in 0..bytes.len() {
-        match bytes[index] {
-            b'"' => quoted = !quoted,
-            b'(' | b'{' if !quoted => depth += 1,
-            b')' | b'}' if !quoted => depth = depth.saturating_sub(1),
-            symbol @ (b'>' | b'<') if !quoted && depth == 0 => {
-                let padded = bytes.get(index + 1) == Some(&b'=');
-                let operator = match (symbol, padded) {
-                    (b'>', true) => Comparison::GreaterOrEqual,
-                    (b'>', false) => Comparison::Greater,
-                    (_, true) => Comparison::LessOrEqual,
-                    (_, false) => Comparison::Less,
-                };
-                let width = if padded { 2 } else { 1 };
-                return Some((text[..index].trim(), operator, text[index + width..].trim()));
-            }
-            _ => {}
-        }
-    }
-    None
-}
-fn path_of(text: &str) -> Vec<String> {
-    if text.is_empty() {
-        Vec::new()
-    } else {
-        text.split('.').map(|part| part.trim().to_owned()).collect()
-    }
-}
-fn parse_expression(text: &str) -> Result<StageExpr, DomainError> {
-    let text = text.trim();
-    if let Some((left, operator, right)) = split_comparison(text) {
-        return Ok(StageExpr::Compare {
-            operator,
-            left: Box::new(parse_expression(left)?),
-            right: Box::new(parse_expression(right)?),
-        });
-    }
-    if let Some((argument, trailing)) = split_call(text, "len") {
-        if !trailing.is_empty() {
-            return Err(reject(1, format!("unexpected {trailing} after len")));
-        }
-        return Ok(StageExpr::Len(Box::new(parse_expression(argument)?)));
-    }
-    for function in ["published", "approved", "changes_requested"] {
-        if let Some((artifact, trailing)) = split_call(text, function) {
-            if !trailing.is_empty() {
-                return Err(reject(1, format!("unexpected {trailing} after {function}")));
-            }
-            let artifact = artifact.to_owned();
-            return Ok(match function {
-                "published" => StageExpr::Published(artifact),
-                "approved" => StageExpr::Approved(artifact),
-                _ => StageExpr::ChangesRequested(artifact),
-            });
-        }
-    }
-    if let Some((artifact, trailing)) = split_call(text, "latest") {
-        let path = match trailing.strip_prefix('.') {
-            Some(path) if !path.is_empty() => path_of(path),
-            None if trailing.is_empty() => Vec::new(),
-            _ => return Err(reject(1, "latest path malformed")),
-        };
-        return Ok(StageExpr::Latest {
-            artifact: artifact.to_owned(),
-            path,
-        });
-    }
-    if text == "true" || text == "false" {
-        return Ok(StageExpr::Boolean(text == "true"));
-    }
-    if let Ok(value) = text.parse::<i64>() {
-        return Ok(StageExpr::Integer(value));
-    }
-    if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
-        return serde_json::from_str::<String>(text)
-            .map(StageExpr::Text)
-            .map_err(|error| reject(1, format!("malformed text literal: {error}")));
-    }
-    if text.contains('(') || text.contains(')') {
-        return Err(reject(1, format!("unknown expression {text}")));
-    }
-    let (head, trailing) = text.split_once('.').unwrap_or((text, ""));
-    let path = path_of(trailing);
-    match head {
-        "input" => Ok(StageExpr::Input(path)),
-        "each" => Ok(StageExpr::Each(path)),
-        _ if path.first().is_some_and(|segment| segment == "outcome") => Ok(StageExpr::Outcome {
-            unit: head.to_owned(),
-            path: path[1..].to_vec(),
-        }),
-        _ => Ok(StageExpr::Name {
-            head: head.to_owned(),
-            path,
-        }),
-    }
-}
-/// Artifacts a done_when expression proves already have a revision. The
-/// language has no conjunction, so only a bare publication or approval
-/// guard qualifies; a comparison or a length proves nothing about one.
-fn guaranteed_artifacts(expression: &StageExpr) -> BTreeSet<String> {
-    match expression {
-        StageExpr::Published(artifact) | StageExpr::Approved(artifact) => {
-            BTreeSet::from([artifact.clone()])
-        }
-        _ => BTreeSet::new(),
-    }
-}
 /// Render a type back into the syntax `parse_type` accepts, so a nullable
 /// latest reads as `optional(text)` and not as an embedded JSON encoding.
-fn render_type(ty: &TypeExpression) -> String {
+pub(crate) fn render_type(ty: &TypeExpression) -> String {
     match ty {
         TypeExpression::Name(name) => name.clone(),
         TypeExpression::Record(fields) => format!(
@@ -325,211 +166,6 @@ fn render_type(ty: &TypeExpression) -> String {
                 .join(", ")
         ),
     }
-}
-fn segments(path: &[String]) -> Vec<&str> {
-    path.iter().map(String::as_str).collect()
-}
-#[derive(Clone)]
-struct Scope<'a> {
-    input: &'a TypeExpression,
-    artifacts: &'a BTreeMap<String, Artifact>,
-    outcomes: &'a BTreeMap<String, TypeExpression>,
-    each: Option<TypeExpression>,
-    aliases: &'a BTreeMap<String, TypeExpression>,
-    body: Option<(&'a str, &'a TypeExpression)>,
-    guaranteed: BTreeSet<String>,
-}
-fn infer(expression: &StageExpr, scope: &Scope<'_>) -> Result<TypeExpression, DomainError> {
-    let integer = || TypeExpression::Name("integer".into());
-    let boolean = || TypeExpression::Name("boolean".into());
-    match expression {
-        StageExpr::Compare { left, right, .. } => {
-            if infer(left, scope)? != integer() || infer(right, scope)? != integer() {
-                return Err(reject(9, "integer comparison requires integer operands"));
-            }
-            Ok(boolean())
-        }
-        StageExpr::Len(inner) => {
-            let ty = infer(inner, scope)?;
-            if ty != TypeExpression::Name("text".into()) && item_type(&ty).is_none() {
-                return Err(reject(9, "len requires text or list"));
-            }
-            Ok(integer())
-        }
-        StageExpr::Published(artifact)
-        | StageExpr::Approved(artifact)
-        | StageExpr::ChangesRequested(artifact) => {
-            if !scope.artifacts.contains_key(artifact) {
-                return Err(reject(1, format!("artifact {artifact} absent")));
-            }
-            Ok(boolean())
-        }
-        StageExpr::Latest { artifact, path } => {
-            let schema = &scope
-                .artifacts
-                .get(artifact)
-                .ok_or_else(|| reject(1, format!("artifact {artifact} absent")))?
-                .schema;
-            // A guard names the artifact it proves. Treating any publication
-            // guard as proof for every artifact let an unguarded field read
-            // of a sibling artifact past check 9.
-            if !scope.guaranteed.contains(artifact) {
-                if !path.is_empty() {
-                    return Err(reject(9, "nullable latest must be guarded"));
-                }
-                return Ok(TypeExpression::Name(format!(
-                    "optional({})",
-                    render_type(schema)
-                )));
-            }
-            if path.is_empty() {
-                return Ok(schema.clone());
-            }
-            field_type(schema, &segments(path), scope.aliases)
-                .ok_or_else(|| reject(1, "artifact field absent"))
-        }
-        StageExpr::Input(path) => {
-            if path.is_empty() {
-                return Ok(scope.input.clone());
-            }
-            field_type(scope.input, &segments(path), scope.aliases)
-                .ok_or_else(|| reject(1, format!("input field {} absent", path.join("."))))
-        }
-        StageExpr::Each(path) => {
-            let each = scope
-                .each
-                .as_ref()
-                .ok_or_else(|| reject(3, "each outside collection"))?;
-            if path.is_empty() {
-                return Ok(each.clone());
-            }
-            field_type(each, &segments(path), scope.aliases)
-                .ok_or_else(|| reject(1, "each field absent"))
-        }
-        StageExpr::Outcome { unit, path } => {
-            let ty = scope.outcomes.get(unit).ok_or_else(|| {
-                reject(
-                    1,
-                    format!("unit outcome {unit} absent or outside read scope"),
-                )
-            })?;
-            if path.is_empty() {
-                return Ok(ty.clone());
-            }
-            field_type(ty, &segments(path), scope.aliases)
-                .ok_or_else(|| reject(4, "unit outcome field absent"))
-        }
-        StageExpr::Name { head, path } => {
-            if let Some((bound, ty)) = scope.body {
-                if head == bound {
-                    if path.is_empty() {
-                        return Ok(ty.clone());
-                    }
-                    return field_type(ty, &segments(path), scope.aliases)
-                        .ok_or_else(|| reject(1, "validation body field absent"));
-                }
-            }
-            // Whole segments, so a unit outcome field named `input` reads as
-            // one rather than tripping this class on a substring match.
-            if path
-                .iter()
-                .any(|segment| ["input", "artifact", "state"].contains(&segment.as_str()))
-            {
-                return Err(reject(4, "expression reads inside another unit"));
-            }
-            Err(reject(1, format!("unknown expression {head}")))
-        }
-        StageExpr::Boolean(_) => Ok(boolean()),
-        StageExpr::Integer(_) => Ok(integer()),
-        StageExpr::Text(_) => Ok(TypeExpression::Name("text".into())),
-    }
-}
-/// Resolve a parsed stage expression to the shared Expression tree, so the
-/// evaluator walks a compiled form instead of re-parsing the source.
-fn resolve(expression: &StageExpr) -> Expression {
-    fn reference(root: ReferenceRoot, path: &[String]) -> Expression {
-        Expression::Reference {
-            root,
-            path: path.to_vec(),
-        }
-    }
-    match expression {
-        StageExpr::Compare {
-            operator,
-            left,
-            right,
-        } => {
-            let left = Box::new(resolve(left));
-            let right = Box::new(resolve(right));
-            match operator {
-                Comparison::Greater => Expression::GreaterThan { left, right },
-                Comparison::GreaterOrEqual => Expression::GreaterOrEqual { left, right },
-                Comparison::Less => Expression::LessThan { left, right },
-                Comparison::LessOrEqual => Expression::LessOrEqual { left, right },
-            }
-        }
-        StageExpr::Len(inner) => Expression::Len {
-            value: Box::new(resolve(inner)),
-        },
-        StageExpr::Published(artifact) => reference(
-            ReferenceRoot::Published {
-                artifact: SymbolKey::from(artifact.as_str()),
-            },
-            &[],
-        ),
-        StageExpr::Approved(artifact) => reference(
-            ReferenceRoot::Approved {
-                artifact: SymbolKey::from(artifact.as_str()),
-            },
-            &[],
-        ),
-        StageExpr::ChangesRequested(artifact) => reference(
-            ReferenceRoot::ChangesRequested {
-                artifact: SymbolKey::from(artifact.as_str()),
-            },
-            &[],
-        ),
-        StageExpr::Latest { artifact, path } => reference(
-            ReferenceRoot::Latest {
-                artifact: SymbolKey::from(artifact.as_str()),
-            },
-            path,
-        ),
-        StageExpr::Input(path) => reference(ReferenceRoot::UnitInput, path),
-        StageExpr::Each(path) => reference(ReferenceRoot::EachMember, path),
-        StageExpr::Name { head, path } => reference(
-            ReferenceRoot::ValidationBody {
-                artifact: SymbolKey::from(head.as_str()),
-            },
-            path,
-        ),
-        StageExpr::Outcome { unit, path } => reference(
-            ReferenceRoot::UnitOutcome {
-                unit: SymbolKey::from(unit.as_str()),
-            },
-            path,
-        ),
-        StageExpr::Boolean(value) => Expression::Literal {
-            schema: SchemaId::from("boolean"),
-            value: serde_json::Value::Bool(*value),
-        },
-        StageExpr::Integer(value) => Expression::Literal {
-            schema: SchemaId::from("integer"),
-            value: serde_json::Value::from(*value),
-        },
-        StageExpr::Text(value) => Expression::Literal {
-            schema: SchemaId::from("text"),
-            value: serde_json::Value::String(value.clone()),
-        },
-    }
-}
-fn checked(text: &str, scope: &Scope<'_>) -> Result<CheckedStageExpression, DomainError> {
-    let parsed = parse_expression(text)?;
-    Ok(CheckedStageExpression {
-        source: text.into(),
-        value_type: infer(&parsed, scope)?,
-        expression: resolve(&parsed),
-    })
 }
 fn fields(
     values: &BTreeMap<String, String>,
@@ -609,6 +245,105 @@ fn prompt(
     }
     Ok(())
 }
+/// An operator review is rendered for a person: it needs a prompt, and its
+/// decisions take their feedback from the form, not from config.
+fn check_operator_review(
+    key: &str,
+    review: &Review,
+    prompts: &BTreeMap<String, String>,
+) -> Result<(), DomainError> {
+    let review_prompt = review
+        .prompt
+        .as_deref()
+        .ok_or_else(|| reject(7, format!("review {key} lacks prompt")))?;
+    if review_prompt.trim().is_empty() {
+        return Err(reject(7, format!("review {key} lacks prompt")));
+    }
+    prompt(review_prompt, &review.inputs, prompts, MODE_ENGINE_INPUTS)?;
+    if review
+        .decisions
+        .values()
+        .any(|decision| decision.feedback.is_some())
+    {
+        return Err(reject(
+            8,
+            format!("operator review {key} sets fixed feedback"),
+        ));
+    }
+    Ok(())
+}
+/// An engine review decides by itself: a `when`, and exactly one
+/// request_changes decision carrying fixed, non-empty feedback.
+fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(), DomainError> {
+    if !has_when {
+        return Err(reject(8, format!("engine review {key} lacks when")));
+    }
+    if review.prompt.is_some() || !review.inputs.is_empty() {
+        return Err(reject(
+            8,
+            format!("engine review {key} has a prompt or inputs"),
+        ));
+    }
+    let [decision] = review.decisions.values().collect::<Vec<_>>()[..] else {
+        return Err(reject(
+            8,
+            format!("engine review {key} needs exactly one decision"),
+        ));
+    };
+    let has_feedback = decision
+        .feedback
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty());
+    if decision.effect != DecisionEffect::RequestChanges
+        || !has_feedback
+        || decision.payload.is_some()
+        || !decision.fields.is_empty()
+    {
+        return Err(reject(
+            8,
+            format!("engine review {key} decides request_changes with fixed feedback only"),
+        ));
+    }
+    Ok(())
+}
+/// The name an operation schema uses for a type the workflow chooses: a
+/// generic operation's input and output (`value.publish`) share it.
+const TYPE_VARIABLE: &str = "$value";
+/// Match an operation contract against a workflow type, binding the type
+/// variable to the first type it meets and requiring every later use to agree.
+fn unify(
+    contract: &TypeExpression,
+    actual: &TypeExpression,
+    aliases: &BTreeMap<String, TypeExpression>,
+    bindings: &mut BTreeMap<String, TypeExpression>,
+) -> bool {
+    if let TypeExpression::Name(name) = contract {
+        if name == TYPE_VARIABLE {
+            let actual = resolve_type(actual, aliases);
+            return match bindings.get(name) {
+                Some(bound) => *bound == actual,
+                None => {
+                    bindings.insert(name.clone(), actual);
+                    true
+                }
+            };
+        }
+    }
+    match (
+        resolve_type(contract, aliases),
+        resolve_type(actual, aliases),
+    ) {
+        (TypeExpression::Record(expected), TypeExpression::Record(found)) => {
+            expected.len() == found.len()
+                && expected.iter().all(|(key, ty)| {
+                    found
+                        .get(key)
+                        .is_some_and(|other| unify(ty, other, aliases, bindings))
+                })
+        }
+        (expected, found) => expected == found,
+    }
+}
 fn compile_stage(
     key: &str,
     stage: &Stage,
@@ -622,6 +357,7 @@ fn compile_stage(
         artifacts: &stage.artifacts,
         outcomes: &empty,
         each: None,
+        item: None,
         aliases: &workflow.schemas,
         body: None,
         guaranteed: BTreeSet::new(),
@@ -649,6 +385,21 @@ fn compile_stage(
                 ));
             }
         }
+        let guard = match worker {
+            Worker::Agent { when, .. } | Worker::Code { when, .. } => when.as_deref(),
+        };
+        let when = guard
+            .map(|text| checked_guard(text, &base, 9, &format!("worker {worker_key} when")))
+            .transpose()?;
+        // A worker runs only while its guard holds, so what the guard proves
+        // published types the worker's inputs and workspace.
+        let worker_scope = Scope {
+            guaranteed: when
+                .as_ref()
+                .map(|(_, proven)| proven.clone())
+                .unwrap_or_default(),
+            ..base.clone()
+        };
         let (inputs, workspace) = match worker {
             Worker::Agent {
                 prompts: modes,
@@ -659,8 +410,8 @@ fn compile_stage(
                 session,
                 ..
             } => {
-                let input_fields = fields(inputs, &base)?;
-                let workspace = workspace_expression(workspace.as_deref(), &base)?;
+                let input_fields = fields(inputs, &worker_scope)?;
+                let workspace = workspace_expression(workspace.as_deref(), &worker_scope)?;
                 if reviews.is_some() && !modes.contains_key("review") {
                     return Err(reject(
                         7,
@@ -678,19 +429,20 @@ fn compile_stage(
                         return Err(reject(8, format!("reviewed artifact {of} absent")));
                     }
                 }
+                // A request_changes targets its `on`, defaulting to the reviewed artifact.
                 let needs_revise = creates.iter().any(|artifact| {
                     !stage.artifacts[&artifact.0].validate.is_empty()
                         || stage
                             .reviews
                             .values()
                             .flat_map(|review| {
-                                review
-                                    .decisions
-                                    .values()
-                                    .map(move |decision| (&review.of, decision))
+                                review.decisions.values().map(move |decision| {
+                                    (decision.on.as_ref().unwrap_or(&review.of), decision)
+                                })
                             })
-                            .any(|(of, decision)| {
-                                of == artifact && decision.effect == DecisionEffect::RequestChanges
+                            .any(|(target, decision)| {
+                                target == artifact
+                                    && decision.effect == DecisionEffect::RequestChanges
                             })
                 });
                 if needs_revise && !modes.contains_key("revise") {
@@ -721,6 +473,7 @@ fn compile_stage(
                 inputs,
                 creates,
                 every,
+                ..
             } => {
                 if let Some(interval) = every {
                     if !is_duration(interval) {
@@ -740,15 +493,22 @@ fn compile_stage(
                     .iter()
                     .find(|o| o.key == *operation)
                     .ok_or_else(|| reject(12, format!("operation {operation} absent")))?;
-                let input_fields = fields(inputs, &base)?;
-                if resolve_type(&checked_record(&input_fields), &workflow.schemas)
-                    != resolve_type(&contract.input_schema, &workflow.schemas)
-                {
+                let input_fields = fields(inputs, &worker_scope)?;
+                let mut bindings = BTreeMap::new();
+                if !unify(
+                    &contract.input_schema,
+                    &checked_record(&input_fields),
+                    &workflow.schemas,
+                    &mut bindings,
+                ) {
                     return Err(reject(12, format!("operation {operation} input mismatch")));
                 }
-                if resolve_type(&stage.artifacts[&creates[0].0].schema, &workflow.schemas)
-                    != resolve_type(&contract.output_schema, &workflow.schemas)
-                {
+                if !unify(
+                    &contract.output_schema,
+                    &stage.artifacts[&creates[0].0].schema,
+                    &workflow.schemas,
+                    &mut bindings,
+                ) {
                     return Err(reject(12, format!("operation {operation} output mismatch")));
                 }
                 (input_fields, None)
@@ -758,6 +518,7 @@ fn compile_stage(
             key: WorkerKey::from(worker_key.as_str()),
             inputs,
             workspace,
+            when: when.map(|(expression, _)| expression),
         });
     }
     for artifact in stage.artifacts.keys() {
@@ -792,6 +553,16 @@ fn compile_stage(
         if !stage.artifacts.contains_key(&review.of.0) {
             return Err(reject(8, format!("review {review_key} artifact absent")));
         }
+        let when = review
+            .when
+            .as_deref()
+            .map(|text| checked_guard(text, &base, 9, &format!("review {review_key} when")))
+            .transpose()?
+            .map(|(expression, _)| expression);
+        match review.by {
+            ReviewBy::Operator => check_operator_review(review_key, review, prompts)?,
+            ReviewBy::Engine => check_engine_review(review_key, review, when.is_some())?,
+        }
         let review_inputs = fields(&review.inputs, &base).map_err(|mut error| {
             error.entity_id = "check 8".into();
             error
@@ -800,21 +571,18 @@ fn compile_stage(
             key: SymbolKey::from(review_key.as_str()),
             of: review.of.clone(),
             inputs: review_inputs,
+            when,
         });
-        let review_prompt = review
-            .prompt
-            .as_deref()
-            .ok_or_else(|| reject(7, format!("review {review_key} lacks prompt")))?;
-        if review_prompt.trim().is_empty() {
-            return Err(reject(7, format!("review {review_key} lacks prompt")));
-        }
-        prompt(review_prompt, &review.inputs, prompts, MODE_ENGINE_INPUTS)?;
         for decision in review.decisions.values() {
             let target = decision.on.as_ref().unwrap_or(&review.of);
             let Some(owner) = owners.get(&target.0) else {
                 return Err(reject(8, format!("decision target {target} absent")));
             };
-            if !matches!(stage.workers[owner], Worker::Agent { reviews: None, .. }) {
+            // Only a request for changes needs a worker that can revise; an
+            // approval may be of any artifact (a reviewer's, a code worker's).
+            if decision.effect == DecisionEffect::RequestChanges
+                && !matches!(stage.workers[owner], Worker::Agent { reviews: None, .. })
+            {
                 return Err(reject(
                     8,
                     format!("decision target {target} is not agent-created"),
@@ -826,17 +594,9 @@ fn compile_stage(
         .done_when
         .as_deref()
         .ok_or_else(|| reject(9, format!("stage {key} lacks done_when")))?;
-    let done_expression = parse_expression(done)?;
-    let done_when = CheckedStageExpression {
-        source: done.into(),
-        value_type: infer(&done_expression, &base)?,
-        expression: resolve(&done_expression),
-    };
-    if done_when.value_type != TypeExpression::Name("boolean".into()) {
-        return Err(reject(9, format!("stage {key} done_when is not boolean")));
-    }
+    let (done_when, proven) = checked_guard(done, &base, 9, &format!("stage {key} done_when"))?;
     let outcome_scope = Scope {
-        guaranteed: guaranteed_artifacts(&done_expression),
+        guaranteed: proven,
         ..base
     };
     let outcome = fields(&stage.outcome, &outcome_scope)?;
@@ -945,6 +705,7 @@ fn compile_group(
             artifacts: &empty,
             outcomes: &allowed,
             each: None,
+            item: None,
             aliases: &workflow.schemas,
             body: None,
             guaranteed: BTreeSet::new(),
@@ -1033,6 +794,7 @@ fn compile_group(
         artifacts: &empty,
         outcomes: &outcomes,
         each: None,
+        item: None,
         aliases: &workflow.schemas,
         body: None,
         guaranteed: BTreeSet::new(),

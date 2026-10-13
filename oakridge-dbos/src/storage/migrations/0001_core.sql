@@ -116,7 +116,8 @@ CREATE TABLE authority.artifact_revision (
   unit_id text NOT NULL,
   artifact text NOT NULL,
   body jsonb NOT NULL,
-  by_id text NOT NULL,
+  -- The attempt that published it; null for an operator's edit (part 1 §12, D2).
+  by_id text,
   predecessor_id text,
   subject text,
   -- Stamped at insert, under the run row lock, so revisions and attempts of a

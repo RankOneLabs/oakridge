@@ -41,8 +41,8 @@ export interface ArtifactRevisionView {
   readonly id: string;
   readonly run_id: RunId;
   readonly unit_id: UnitId;
-  /** The action whose attempt published it. */
-  readonly attempt_id: string;
+  /** The action whose attempt published it; null for an operator's edit (D2). */
+  readonly attempt_id: string | null;
   readonly artifact_key: string;
   /** Every v2 artifact is single per unit: always "". */
   readonly collection_key: string;
@@ -154,8 +154,9 @@ export const selectArtifactSchema = (stage: Stage, artifact: string): string => 
   const declared = stage.artifacts[artifact];
   return declared ? typeSchemaKey(declared.schema) : "";
 };
+/** An operator review has `of` this artifact; an engine review decides by itself and asks no one. */
 export const isReviewable = (stage: Stage, artifact: string): boolean =>
-  Object.values(stage.reviews ?? {}).some((review) => review.of === artifact);
+  Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
   const stage = unit.stage === null ? undefined : read.definition.workflow.stages[unit.stage];
