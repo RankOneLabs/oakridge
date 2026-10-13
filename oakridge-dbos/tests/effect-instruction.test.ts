@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_DEADLINE_MS, selectEffectInstruction, selectEverySeconds,
-  selectReferencedSchemas, selectResolvedSchema, selectSessionKey, selectSessionKeyParts, type RunWorkerAction } from "../src/domain/effect-instruction";
+  selectReferencedSchemas, selectResolvedSchema, selectSessionKey, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
 
@@ -59,12 +59,10 @@ test("a session key is one path segment: resume per unit and worker, fresh per a
     .toEqual({ has_slash: false, differs: true, same_for_revise: true });
 });
 
-test("a session key round-trips to the unit and worker, or the action, it names", () => {
-  const nested: RunWorkerAction = { ...action, unit: "run-1/work/a" };
-  expect([selectSessionKeyParts(selectSessionKey(nested, "run-1/work/a:worker:Initial:Missing", "resume")),
-    selectSessionKeyParts(selectSessionKey(nested, "run-1/work/a:worker:Initial:Missing", "fresh")), selectSessionKeyParts("a/b")])
-    .toEqual([{ session: "resume", unit: "run-1/work/a", worker: "writer" },
-      { session: "fresh", action_id: "run-1/work/a:worker:Initial:Missing" }, null]);
+test("a session key is fixed-length and slash-free however long the unit's path", () => {
+  const long: RunWorkerAction = { ...action, unit: `run-1/work/${"k".repeat(400)}` };
+  const keys = [selectSessionKey(long, `${long.unit}:writer:Initial:Missing`, "resume"), selectSessionKey(long, `${long.unit}:writer:Initial:Missing`, "fresh")];
+  expect(keys.map((key) => [key.length <= 300, /^[a-z]+-[0-9a-f]{64}$/.test(key)])).toEqual([[true, true], [true, true]]);
 });
 
 test("an unpinned prompt or an undeclared worker refuses the instruction", () => {

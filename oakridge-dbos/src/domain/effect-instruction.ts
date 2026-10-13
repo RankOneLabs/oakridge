@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow, WorkerRuntime } from "../core-client/core-types";
 import type { Result } from "./primitives";
 
@@ -56,23 +57,16 @@ export function selectEverySeconds(every: string): number | null {
   return Number(match[1]) * unit_seconds[match[2] as keyof typeof unit_seconds];
 }
 
-/** One kbbl path segment: base64url never contains `/` or `.`. */
-const segment = (text: string): string => Buffer.from(text).toString("base64url");
-/** `session: resume` keeps one session per unit and worker; `fresh` gives each action its own (part 1 §7.2). */
+/**
+ * The kbbl session key (part 1 §7.2). `session: resume` keeps one session per
+ * unit and worker; `fresh` gives each action its own. It is a sha256 hex, so it
+ * is one path segment and 70 characters however long the unit's path: kbbl
+ * caps keys at 300, and unit ids and action ids grow with collection keys. kbbl
+ * learns the unit and worker from the ensure's `workflow` block, not the key.
+ */
 export function selectSessionKey(action: RunWorkerAction, action_id: string, session: SessionMode): string {
-  return session === "resume" ? `${segment(action.unit)}.${segment(action.worker)}` : segment(action_id);
-}
-/** What a session key names, read back: the unit and worker of a resumed session, or the action of a fresh one. */
-export type SessionKeyParts =
-  | { readonly session: "resume"; readonly unit: string; readonly worker: string }
-  | { readonly session: "fresh"; readonly action_id: string };
-const SEGMENT = /^[A-Za-z0-9_-]+$/;
-const unsegment = (text: string): string => Buffer.from(text, "base64url").toString();
-export function selectSessionKeyParts(key: string): SessionKeyParts | null {
-  const parts = key.split(".");
-  if (!parts.every((part) => SEGMENT.test(part))) return null;
-  if (parts.length === 2) return { session: "resume", unit: unsegment(parts[0]!), worker: unsegment(parts[1]!) };
-  return parts.length === 1 ? { session: "fresh", action_id: unsegment(parts[0]!) } : null;
+  const named = session === "resume" ? `resume\0${action.unit}\0${action.worker}` : `fresh\0${action_id}`;
+  return `${session}-${createHash("sha256").update(named).digest("hex")}`;
 }
 
 export interface InstructionSource {
