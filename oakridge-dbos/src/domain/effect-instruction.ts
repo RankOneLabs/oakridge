@@ -208,7 +208,7 @@ function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && "feedback" in value && isNullableRevision(value.subject);
 }
 
-/** The executor's only way in: an `effect_intent.payload` that is not a v1 instruction is refused. */
+/** The executor's only way in: an `effect_intent.payload` that is not a version-1 instruction is refused. */
 export function decodeEffectInstruction(value: unknown): Result<EffectInstruction, InstructionError> {
   const refuse = (detail: string): Result<never, InstructionError> =>
     ({ ok: false, error: { operation: "decode_effect_instruction", entity_id: isFields(value) && isFields(value.attempt) && isString(value.attempt.action_id) ? value.attempt.action_id : "unknown", detail } });

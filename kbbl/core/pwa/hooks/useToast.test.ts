@@ -8,7 +8,6 @@ const snapshot = (pendingPermissionCount: number): SessionSnapshot => ({
   name: "Build session",
   agentProfile: "codex",
   status: "idle",
-  source: "acp",
   lastActivityTs: "2026-09-27T10:00:00Z",
   createdAt: "2026-09-27T10:00:00Z",
   artifactId: null,

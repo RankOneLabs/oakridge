@@ -147,6 +147,17 @@ export interface OperatorRunEvent {
   readonly occurred_at: string;
 }
 
+export interface OperatorSessionHold {
+  readonly session_id: string;
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly worker: string;
+  /** The attempt's action id: the identity its own close carries. */
+  readonly action_id: string;
+}
+
+export interface OperatorSessionHoldResponse { readonly hold: OperatorSessionHold | null }
+
 export interface OperatorIngressRequest { readonly request_id: string }
 
 export interface OperatorLaunchRequest extends OperatorIngressRequest { readonly digest: string; readonly input: unknown; readonly project_id?: string | null }

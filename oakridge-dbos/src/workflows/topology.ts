@@ -5,7 +5,7 @@ import { decodeEffectInstruction, selectEverySeconds, type EffectInstruction } f
 import type { RunId } from "../domain/primitives";
 import { bounded, resolveObserve, resolveStart, resolveStop, type WorkerFailure } from "../effects/outcomes";
 import type { EffectProvider, ExternalHandle, ProviderResult, SessionMaterial } from "../effects/provider";
-import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
+import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import { renderSessionTask, selectSessionTaskContext } from "../effects/session-prompt";
 import type { OperationOutcome } from "../operations/outcome";
 import type { OperationRunner } from "../operations/runner";
@@ -147,7 +147,7 @@ const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<Load
   const session_id = await readAttemptSession(db, decoded.value.attempt);
   return { kind: "carried", intent: { id: intent.id, run_id: intent.run_id, status: intent.status, tries: intent.tries,
     last_error: intent.last_error, instruction: decoded.value,
-    handle: session_id === null ? null : { kind: INPUT_CONTRACTS.session, session_id } } };
+    handle: session_id === null ? null : { kind: HANDLE_KINDS.session, session_id } } };
 }, { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
 async function callProvider<Value>(deadline_ms: number, operation: (signal: AbortSignal) => Promise<ProviderResult<Value>>): Promise<ProviderResult<Value>> {

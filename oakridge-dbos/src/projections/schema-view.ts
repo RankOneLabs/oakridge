@@ -3,7 +3,7 @@ import type { ReviewDecision, TypeExpression, Workflow } from "../core-client/co
 /**
  * The PWA's schema contract: every type a workflow declares,
  * flattened into named shapes that reference each other by key. The PWA never
- * parses a type expression (rescue spec §2.4); this module is where v2
+ * parses a type expression (rescue spec §2.4); this module is where the core's
  * `TypeExpression`s become these shapes.
  */
 export interface Schema { readonly key: string; readonly shape: SchemaShape }

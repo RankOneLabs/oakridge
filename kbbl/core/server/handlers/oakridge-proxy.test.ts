@@ -97,19 +97,19 @@ describe("oakridge proxy", () => {
     expect(() => parseFallbackRefreshMs(raw)).toThrow(/OAKRIDGE_FALLBACK_REFRESH_MS/);
   });
 
-  test("preserves a durable ingress receipt and the upstream acceptance status", async () => {
+  test("preserves a durable ingress receipt and the upstream status", async () => {
     let target = "";
     globalThis.fetch = (async (input, init) => {
       target = String(input);
       expect(init?.method).toBe("POST");
-      return Response.json({ kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 5 }, { status: 202 });
+      return Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 202 });
     }) as typeof fetch;
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
-    const response = await app.request("/oakridge/api/runs/run-1/scopes/scope-1/commands", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const response = await app.request("/oakridge/api/runs/run-1/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect({ target, status: response.status, body: await response.json() }).toEqual({
-      target: "http://oakridge.test/runs/run-1/scopes/scope-1/commands", status: 202,
-      body: { kind: "accepted_pending", request_id: "request-1", transition_id: "transition-1", scope_version: 5 },
+      target: "http://oakridge.test/runs/run-1/cancel", status: 202,
+      body: { kind: "committed", run_id: "run-1", event_id: "event-1" },
     });
   });
 

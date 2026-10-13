@@ -228,7 +228,7 @@ pub struct RunState {
 /// A unit and its ancestors, plus the descendants and evidence needed to recompute them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ScopedSnapshot {
+pub struct StepSnapshot {
     pub run: RunState,
     pub units: Vec<UnitState>,
     pub attempts: Vec<AttemptState>,
@@ -240,7 +240,7 @@ pub struct ScopedSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
-    pub snapshot: ScopedSnapshot,
+    pub snapshot: StepSnapshot,
     pub statuses: Vec<(UnitId, UnitStatus)>,
     pub wanted: Vec<(UnitId, Vec<Action>)>,
     /// What each wanted `RunWorker` runs with, evaluated against the stepped
@@ -296,13 +296,13 @@ pub enum StepError {
 
 #[cfg(test)]
 mod v2_shape_tests {
-    use super::{Action, Event, ScopedSnapshot, UnitStatus};
+    use super::{Action, Event, StepSnapshot, UnitStatus};
 
     #[test]
     fn unit_and_action_contracts_have_no_failure_or_ask_variants() {
         let unit = serde_json::to_string(&schemars::schema_for!(UnitStatus)).unwrap();
         let action = serde_json::to_string(&schemars::schema_for!(Action)).unwrap();
-        let snapshot = serde_json::to_string(&schemars::schema_for!(ScopedSnapshot)).unwrap();
+        let snapshot = serde_json::to_string(&schemars::schema_for!(StepSnapshot)).unwrap();
         assert!(!unit.contains("\"failed\""));
         assert!(!action.contains("\"fail\""));
         assert!(!action.contains("\"ask\""));

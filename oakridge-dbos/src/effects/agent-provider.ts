@@ -4,7 +4,7 @@ import { DEFAULT_MAX_SILENT_MS } from "../adapters/kbbl";
 import type { EffectInstruction } from "../domain/effect-instruction";
 import type { ResumableEnsureRequest } from "../../../kbbl/core/acp/resumable-wire";
 import type { EffectProvider, ProviderResult, TerminalObservation } from "./provider";
-import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "./provider-catalog";
+import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "./provider-catalog";
 import { renderSessionPreamble } from "./session-prompt";
 
 /**
@@ -72,8 +72,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.runtime ? { runtime: worker.runtime.harness, model: worker.runtime.model } : {}),
     ...(workspace ? { worktree: { branch_name: `oakridge/${shortDigest(worker.session_key)}`, worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
-    workflow: { workflow_run_id: instruction.run_id, stage_instance_id: instruction.action.unit, unit_id: instruction.action.unit,
-      operator_role: instruction.action.worker },
+    workflow: { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker },
   };
 }
 
@@ -128,7 +127,7 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
       // With the revive header an ended session comes back live; one still ended was fenced and cannot resume.
       if (ensured.value.session.status === "ended") return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.session_closed,
         detail: `kbbl session ${ensured.value.session.sid} under this key has ended and cannot be revived` };
-      return { kind: "acknowledged", value: { handle: { kind: INPUT_CONTRACTS.session, session_id: ensured.value.session.sid },
+      return { kind: "acknowledged", value: { handle: { kind: HANDLE_KINDS.session, session_id: ensured.value.session.sid },
         publication_secret_hash: publicationSecretHash(secret) } };
     },
 
@@ -160,7 +159,7 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
         session_id = started.ensured.value.session.sid;
       }
       // A fresh session belongs to this attempt alone and is fenced; a resumed one is closed, so a later attempt can revive it.
-      return kbbl.close(session_id, instruction.worker.session === "fresh" ? instruction.attempt.action_id : null, options.signal);
+      return kbbl.close(session_id, { action_id: instruction.attempt.action_id, is_fence: instruction.worker.session === "fresh" }, options.signal);
     },
   };
 }

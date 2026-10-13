@@ -33,7 +33,7 @@ export interface AcpSessionStream {
 // Replay batching: EventSource dispatches a replay as one message task per
 // event; appending each separately would rebuild an increasingly large
 // transcript hundreds of times. Events buffer per animation frame instead.
-export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
+export function useAcpSession(sid: string): AcpSessionStream {
   const [events, setEvents] = useState<AcpUiEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
   const [expired, setExpired] = useState(false);
@@ -51,10 +51,6 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
     setStreamError(null);
     setOpenTurns([]);
     setHistoryLoaded(false);
-    if (!enabled) {
-      setStreamStatus("disconnected");
-      return;
-    }
 
     let current: LiveSubscription | null = null;
     let stopped = false;
@@ -179,7 +175,7 @@ export function useAcpSession(sid: string, enabled = true): AcpSessionStream {
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
       current?.close();
     };
-  }, [sid, enabled]);
+  }, [sid]);
 
   return {
     events,

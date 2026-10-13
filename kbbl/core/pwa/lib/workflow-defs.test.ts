@@ -9,13 +9,13 @@ import {
 describe("workflow definition selectors", () => {
   it("selects the newest definition by immutable version", () => {
     const definitions: WorkflowDefDescriptor[] = [
-      { id: "v1", name: "dev-flow", version: 1 },
-      { id: "v2", name: "dev-flow", version: 2 },
+      { id: "def-a", name: "development", version: 1 },
+      { id: "def-b", name: "development", version: 2 },
     ];
 
     const sorted = sortWorkflowDefinitions(definitions);
 
-    expect(sorted.map((definition) => definition.id)).toEqual(["v2", "v1"]);
-    expect(defaultWorkflowDefinitionId(sorted)).toBe("v2");
+    expect(sorted.map((definition) => definition.id)).toEqual(["def-b", "def-a"]);
+    expect(defaultWorkflowDefinitionId(sorted)).toBe("def-b");
   });
 });

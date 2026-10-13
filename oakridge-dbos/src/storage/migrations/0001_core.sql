@@ -1,4 +1,4 @@
--- Oakridge v2 authority baseline. Apply only to an empty PostgreSQL 15+ database.
+-- Oakridge authority baseline. Apply only to an empty PostgreSQL 15+ database.
 CREATE SCHEMA authority;
 
 CREATE TYPE authority.effect_status AS ENUM

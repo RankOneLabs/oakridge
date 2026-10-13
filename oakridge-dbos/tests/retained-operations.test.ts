@@ -13,20 +13,6 @@ import { silentDurationMs } from "../src/adapters/kbbl";
 import type { Workflow } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
-const deletedPaths = [
-  "oakridge-dbos/src/compiler/compile-v15.ts",
-  "oakridge-dbos/src/decision",
-  "oakridge-dbos/src/validation",
-  "oakridge-dbos/src/runtime/run-launch-dispatch.ts",
-  "oakridge-dbos/src/seed",
-  "oakridge-dbos/src/adapters/dev-flow.ts",
-  "oakridge-dbos/src/migrate.ts",
-  "docs/v15-contracts",
-  "docs/v15-storage-baseline-inventory.md",
-  "docs/oakridge-v2-runbook.md",
-  "oakridge-dbos/docs/v15-cutover.md",
-  "docs/replacement",
-];
 const retainedPaths = [
   "oakridge-dbos/src/storage/migrate.ts",
   "oakridge-dbos/src/storage/migrations",
@@ -45,15 +31,11 @@ const retainedPaths = [
   "oakridge-dbos/src/adapters/kbbl.ts",
 ];
 
-test("old interpreter paths are absent", () => {
-  expect(deletedPaths.filter((path) => existsSync(resolve(root, path)))).toEqual([]);
-});
-
 test("every named leaf operation remains present", () => {
   expect(retainedPaths.filter((path) => !existsSync(resolve(root, path)))).toEqual([]);
 });
 
-test("only leaf support types remain in the former domain directory", () => {
+test("the domain directory holds only leaf support types", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
     "delegated-session.ts", "effect-instruction.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
     "pull-request.ts", "repository-provisioning.ts", "workflow.ts",
@@ -72,12 +54,11 @@ test("retained operations import and execute", async () => {
   expect(silentDurationMs({}, Date.now())).toBeNull();
 });
 
-test("v2 sample workers declare their kind without v1 provider routing", () => {
+test("sample workers declare their kind", () => {
   const bundle = JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles/fan-out.json"), "utf8")) as Workflow;
   const workers = Object.values(bundle.stages).flatMap((stage) => Object.values(stage.workers));
   expect(workers.length).toBeGreaterThan(0);
   expect(workers.every((worker) => worker.kind === "agent" || worker.kind === "code")).toBe(true);
-  expect(JSON.stringify(bundle)).not.toMatch(/"provider_kind"|"input_contract"/);
 });
 
 // Provider literal ownership is enforced by provider-literal-lint.test.ts,

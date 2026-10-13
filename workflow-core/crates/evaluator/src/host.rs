@@ -60,7 +60,7 @@ fn transport(id: String, kind: TransportErrorKind, detail: impl Into<String>) ->
 fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
     let raw = match workflow_compiler::decode_unique_json(bytes) {
         Ok(value) => value,
-        Err(error) if error.kind == DomainErrorKind::DuplicateSymbol => {
+        Err(error) if error.kind == DomainErrorKind::DuplicateKey => {
             return Response {
                 version: PROTOCOL_VERSION,
                 request_id: String::new(),
@@ -165,7 +165,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                 super::step_with_limits(program, &snapshot, &incoming, &limits).map_err(|error| {
                     match error {
                         StepError::Rejected { reason } => {
-                            DomainError::new(DomainErrorKind::InvalidAssignment, "step", reason)
+                            DomainError::new(DomainErrorKind::RejectedEvent, "step", reason)
                         }
                         StepError::Invalid { detail } => {
                             DomainError::new(DomainErrorKind::InvalidSnapshot, "step", detail)

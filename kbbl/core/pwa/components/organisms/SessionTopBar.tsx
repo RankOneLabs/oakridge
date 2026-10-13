@@ -36,7 +36,6 @@ export function SessionTopBar({
 }) {
   const isOpen =
     snapshot !== null &&
-    snapshot.source === "acp" &&
     snapshot.status !== "ended" &&
     snapshot.status !== "fenced" &&
     snapshot.status !== "failed";

@@ -7,7 +7,7 @@ use workflow_model::*;
 
 pub(crate) fn reject(class: u8, detail: impl Into<String>) -> DomainError {
     DomainError::new(
-        DomainErrorKind::InvalidAssignment,
+        DomainErrorKind::InvalidWorkflow,
         format!("check {class}"),
         detail.into(),
     )

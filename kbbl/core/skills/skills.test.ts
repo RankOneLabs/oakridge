@@ -107,9 +107,9 @@ describe("formatSkillInvocation", () => {
     backend: "claude-code",
     scope: "user",
     args: [
-      { key: "1", required: false, hint: "" },
-      { key: "2", required: false, hint: "" },
-      { key: "flag", required: false, hint: "" },
+      { key: "1", required: false, hint: "", kind: "string" },
+      { key: "2", required: false, hint: "", kind: "string" },
+      { key: "flag", required: false, hint: "", kind: "string" },
     ],
     user_invocable: true,
     model_invocable: false,

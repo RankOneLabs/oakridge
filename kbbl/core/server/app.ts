@@ -1,10 +1,7 @@
-import { writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import type { Database } from "bun:sqlite";
 
 import type { KbblConfig } from "../config";
-import type { SessionManager } from "../session/session-manager";
 import type { AcpSessionService } from "../acp/session-service";
 import {
   makeControlAuthMiddleware,
@@ -12,12 +9,9 @@ import {
   type AuthPolicy,
 } from "./auth";
 import { acpInboxHandler } from "./handlers/acp-inbox";
-import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountAcpPerSidRoutes } from "./handlers/acp-per-sid";
-import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountDirectoriesRoutes } from "./handlers/directories";
-import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
@@ -28,17 +22,10 @@ import {
 } from "../runtime";
 
 export interface CreateAppDeps {
-  /**
-   * Read-only legacy manager: archived JSONL listing/serving and legacy
-   * purge only. All session creation and runtime work goes through `acp`.
-   */
-  manager: SessionManager;
   /** ACP session service — the production session backend. */
   acp: AcpSessionService;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
-  /** Path to the on-disk handoffs directory (`<dataDir>/handoffs`). */
-  handoffsDir: string;
   /** Path to the built PWA dist directory served as static files. */
   pwaDistDir: string;
   /**
@@ -48,21 +35,11 @@ export interface CreateAppDeps {
    * this call.
    */
   getBunServer: () => import("bun").Server<unknown> | null;
-  /**
-   * Shared mutable config. PATCH /config mutates config.compact.soft_threshold_tokens
-   * in-place so all compactor instances pick up the new value immediately (they
-   * hold a reference to config.compact and read soft_threshold_tokens on each
-   * observeAssistantTurn call).
-   */
+  /** The server's validated config. */
   config: KbblConfig;
-  /** Absolute path to config.json on disk for PATCH /config to persist changes. */
-  configPath: string;
-  /** Open SQLite database instance shared across all DB-backed handlers. */
-  db: Database;
   /**
    * Startup auth policy resolved from host + OAKRIDGE_CONTROL_TOKEN +
-   * ALLOW_INSECURE_NON_LOOPBACK_CONTROL. Defaults to loopback when absent
-   * (keeps the test helper buildApp() signature backward-compatible).
+   * ALLOW_INSECURE_NON_LOOPBACK_CONTROL. Defaults to loopback when absent.
    */
   authPolicy?: AuthPolicy;
   /**
@@ -81,14 +58,10 @@ export interface CreateAppDeps {
  */
 export function createApp(deps: CreateAppDeps): Hono {
   const {
-    manager,
     acp,
     defaultWorkdir,
-    handoffsDir,
     pwaDistDir,
     config,
-    configPath,
-    db,
     authPolicy = { mode: "loopback" },
     coreControlToken,
   } = deps;
@@ -117,26 +90,15 @@ export function createApp(deps: CreateAppDeps): Hono {
   // agent slash commands reach the PWA via `commands` UI events) ----
   mountSkillsRoutes(app, { acp, config });
 
-  // ---- per-sid handoff ----
-  //
-  // GET /:sid/handoff serves the compaction handoff markdown the PWA's
-  // CompactedBanner renders for compacted predecessors. Mounted alongside
-  // the other per-sid routes so it shares the UUID-v4 sid validator and
-  // stays grouped with the per-session surfaces.
-  mountHandoffRoutes(app, { handoffsDir });
-
   // ---- server config ----
   //
   // Exposes the operator-configured defaults the PWA needs to render forms.
-  // PATCH /config allows runtime mutation of soft_threshold_tokens, persisted
-  // back to configPath so the value survives a server restart.
   app.get("/config", (c) => {
     // A launch form exists before an ACP session can report config options,
     // so built-in profiles need a launch catalog. After session creation the
     // agent-reported ACP config options remain authoritative.
     return c.json({
       defaultWorkdir,
-      softThresholdTokens: config.compact.soft_threshold_tokens,
       defaultRuntimeId: acp.defaultAgent,
       runtimes: acp
         .listProfiles()
@@ -148,7 +110,6 @@ export function createApp(deps: CreateAppDeps): Hono {
               label: profile.label,
               models: [],
               efforts: [],
-              supportsCompaction: false,
             };
           }
           return {
@@ -156,87 +117,27 @@ export function createApp(deps: CreateAppDeps): Hono {
             label: profile.label,
             models: RUNTIME_MODELS[profile.id],
             efforts: RUNTIME_EFFORTS[profile.id],
-            supportsCompaction: false,
           };
         }),
     });
   });
 
-  app.patch("/config", async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid json" }, 400);
-    }
-    if (typeof body !== "object" || body === null) {
-      return c.json({ error: "body must be an object" }, 400);
-    }
-    const b = body as { softThresholdTokens?: unknown };
-    if (!("softThresholdTokens" in b)) {
-      return c.json({ error: "no settable fields in body" }, 400);
-    }
-    const { softThresholdTokens } = b;
-    if (
-      typeof softThresholdTokens !== "number" ||
-      !Number.isInteger(softThresholdTokens) ||
-      softThresholdTokens <= 0
-    ) {
-      return c.json(
-        { error: "softThresholdTokens must be a positive integer" },
-        400,
-      );
-    }
-    if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
-      return c.json(
-        {
-          error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
-        },
-        400,
-      );
-    }
-    try {
-      await writeFile(
-        configPath,
-        JSON.stringify({
-          ...config,
-          compact: { ...config.compact, soft_threshold_tokens: softThresholdTokens },
-        }, null, 2),
-        "utf8",
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return c.json({ error: `failed to persist config: ${msg}` }, 500);
-    }
-    config.compact.soft_threshold_tokens = softThresholdTokens;
-    return c.json({
-      defaultWorkdir,
-      softThresholdTokens: config.compact.soft_threshold_tokens,
-    });
-  });
+
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { acp, manager, defaultWorkdir, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
+  mountSessionsRoutes(app, { acp, defaultWorkdir, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });
 
-  // ---- workspace-layer event ingest ----
-  //
-  // Legacy project events have no durable ingress identity and are rejected
-  // explicitly by the handler.
-  mountWorkspaceEventsRoutes(app);
-
-  // ---- projects CRUD ----
-  mountProjectsRoutes(app, { db });
 
   // ---- Oakridge backend proxy ----
   //
   // GET /oakridge/config → { available, core_url, fallback_refresh_ms? } (PWA availability check)
   // ALL /oakridge/api/* → proxied to OAKRIDGE_CORE_BASE_URL (same-origin CORS avoidance)
   // Write requests are validated against kbbl auth (via the global middleware
-  // above) before reaching this handler; the handler then injects the retained
-  // core control token for backend compatibility.
+  // above) before reaching this handler; the handler then injects the core
+  // control token the Oakridge backend's operator routes require.
   mountOakridgeProxyRoutes(app, {
     baseUrl: process.env.OAKRIDGE_CORE_BASE_URL,
     coreControlToken,

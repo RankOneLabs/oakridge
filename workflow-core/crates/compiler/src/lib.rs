@@ -1,8 +1,8 @@
 //! The workflow compiler: decode strict JSON, then type-check the section
 //! 2.1-2.3 model into a CheckedWorkflow.
 mod expressions;
-mod scopes;
-pub use scopes::{compile_workflow, compile_workflow_with_limits, decode_workflow};
+mod workflow;
+pub use workflow::{compile_workflow, compile_workflow_with_limits, decode_workflow};
 use workflow_model::*;
 
 pub(crate) fn error(
@@ -71,7 +71,7 @@ pub fn decode_unique_json(bytes: &[u8]) -> CoreResult<serde_json::Value> {
     let result = Unique::deserialize(&mut decoder).map_err(|e| {
         error(
             if e.to_string().contains("duplicate key:") {
-                DomainErrorKind::DuplicateSymbol
+                DomainErrorKind::DuplicateKey
             } else {
                 DomainErrorKind::UnknownConstruct
             },

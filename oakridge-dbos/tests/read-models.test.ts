@@ -5,6 +5,7 @@ import { installDefinitionApi } from "../src/http/app";
 import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInspectView, RunPage, RunView,
   UnitDiagnostics, UnitHistory, UnitView } from "../src/http/operator-api";
 import type { RunEvent } from "../src/projections/run-event";
+import type { SessionHoldResponse } from "../src/projections/session-hold";
 import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 /**
@@ -329,6 +330,19 @@ describe("derived fields", () => {
       events: inspect.events.map((event) => [event.kind, event.writer.kind]) })
       .toEqual({ attention: [["stalled_worker", "writer", "it broke", [{ kind: "retry", worker: "writer" }]]],
         events: [["worker_ended", "executor"], ["launched", "operator"]] });
+  });
+
+  test("a kbbl session is held by the running attempt using it, and by nothing once that attempt ends", async () => {
+    const run_id = await launched(review_loop, { topic: "Oakridge" });
+    const unit = unitOf(run_id, "document");
+    const writer = await actionOf(authority, run_id, "writer");
+    const session = `sid-${crypto.randomUUID()}`;
+    const submit = submitter(authority);
+    await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: session }, writer: executor(writer) });
+    const held = await get<SessionHoldResponse>(`/session_holds/${session}`);
+    await submit({ run_id, event: { kind: "worker_ended", action: writer, result: { kind: "failed", code: "boom", detail: "it broke" } }, writer: executor(writer) });
+    const reads: unknown = { held, free: await get<SessionHoldResponse>(`/session_holds/${session}`), unknown: await get<SessionHoldResponse>("/session_holds/sid-unknown") };
+    expect(reads).toEqual({ held: { hold: { session_id: session, run_id, unit_id: unit, worker: "writer", action_id: writer } }, free: { hold: null }, unknown: { hold: null } });
   });
 
   test("a missing unit, artifact or run reads as 404", async () => {

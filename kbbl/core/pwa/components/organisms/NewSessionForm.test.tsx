@@ -27,14 +27,12 @@ const runtimes: RuntimeDescriptor[] = [
   {
     id: "claude-code",
     label: "Claude Code",
-    supportsCompaction: true,
     models: [...RUNTIME_MODELS["claude-code"]],
     efforts: [...RUNTIME_EFFORTS["claude-code"]],
   },
   {
     id: "codex",
     label: "Codex",
-    supportsCompaction: false,
     models: [...RUNTIME_MODELS.codex],
     efforts: [...RUNTIME_EFFORTS.codex],
   },

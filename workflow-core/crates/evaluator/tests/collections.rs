@@ -40,8 +40,8 @@ fn program() -> CheckedWorkflow {
     compile_workflow(&source, &[], &prompts).unwrap()
 }
 
-fn snapshot() -> ScopedSnapshot {
-    ScopedSnapshot {
+fn snapshot() -> StepSnapshot {
+    StepSnapshot {
         run: RunState {
             id: "run".into(),
             root: UnitId::from("run"),

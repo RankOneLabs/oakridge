@@ -13,4 +13,5 @@ export type { UnitHistory, UnitDiagnostics } from "../projections/history-view";
 export type { CollaborationThreadView } from "../projections/collaboration-view";
 export type { ProjectDraft, ProjectList, ProjectView } from "./projects";
 export type { RunEvent } from "../projections/run-event";
+export type { SessionHold, SessionHoldResponse } from "../projections/session-hold";
 export type { IngressRequest, LaunchRequest, DecideRequest, PublishRequest, IngressResponse, IngressCommitted } from "./ingress";

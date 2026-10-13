@@ -55,7 +55,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: Database }): v
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const created = await createProject(deps.db, crypto.randomUUID() as ProjectId, draft.value);
+      const created = await createProject(deps.db, draft.value);
       return created.ok ? Response.json(created.value, { status: 201 }) : writeFailure(created.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });

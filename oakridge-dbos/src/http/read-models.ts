@@ -6,8 +6,9 @@ import { selectUnitDiagnostics, selectUnitHistory } from "../projections/history
 import { selectInboxPage } from "../projections/inbox";
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
-import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readUnitDiagnostics,
-  type HistoryCursor } from "../storage/read-store";
+import type { SessionHoldResponse } from "../projections/session-hold";
+import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold,
+  readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
@@ -121,6 +122,10 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
     const page = await listDefinitions(db, { after, limit, is_archived });
     return c.json({ items: page.items.map(selectDefinitionSummary), next_cursor: page.next === null ? null : encodeCursor(page.next) });
+  } catch (cause) { return fault(cause); } });
+
+  app.get("/session_holds/:session_id", async (c) => { try {
+    return c.json({ hold: await readSessionHold(db, c.req.param("session_id")) } satisfies SessionHoldResponse);
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/definitions/:bundle_id", async (c) => { try {

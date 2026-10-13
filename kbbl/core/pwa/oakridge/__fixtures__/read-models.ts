@@ -171,7 +171,7 @@ export function makeBriefNotesFile(name: string, size: number, text?: string | (
 }
 
 export function makeSessionSnapshot(sid: string, overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
-  return { sid, name: `session ${sid}`, agentProfile: "codex", status: "idle", source: "acp",
+  return { sid, name: `session ${sid}`, agentProfile: "codex", status: "idle",
     lastActivityTs: "2026-09-01T09:10:00Z", createdAt: "2026-09-01T09:00:00Z",
     artifactId: null, projectWorkdir: "/code/oakridge", worktreePath: "/code/oakridge",
     worktreeBranch: null, worktreeBaseRef: null, requestedModel: null,

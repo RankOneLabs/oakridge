@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted } from "../core-client/client";
-import type { Event, Incoming, ResolvedRunWorker, ScopedSnapshot, StepResult, Writer } from "../core-client/core-types";
+import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
@@ -9,7 +9,7 @@ import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompts } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
-import { readScopedSnapshot } from "./snapshot-store";
+import { readStepSnapshot } from "./snapshot-store";
 
 /** An event as ingress hands it over: the writer is resolved from the credential, never the body. */
 export interface CommitRequest {
@@ -63,7 +63,7 @@ export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | 
 /**
  * The single writer of workflow state (part 1 §6.2). Under the run row lock it
  * answers a replayed ingress id from its receipt, steps the core over the
- * scoped snapshot, and writes the event with its writer, the state delta, the
+ * step snapshot, and writes the event with its writer, the state delta, the
  * effect instructions for newly wanted workers, the wanted log, the receipt
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
@@ -117,7 +117,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "prompts"])
     .where("id", "=", run.definition_bundle_id).executeTakeFirst();
   if (!definition) throw fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`);
-  const snapshot = await readScopedSnapshot(trx, run_id, unit_id.value);
+  const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`);
   const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
@@ -165,7 +165,7 @@ async function affectedUnit(trx: DatabaseTransaction, run_id: string, event: Eve
 interface StepInput {
   readonly run_id: string;
   readonly definition: { readonly digest: string; readonly source: import("../core-client/core-types").Workflow; readonly prompts: { readonly [path: string]: string } };
-  readonly snapshot: ScopedSnapshot;
+  readonly snapshot: StepSnapshot;
   readonly incoming: Incoming;
 }
 type Stepped = { readonly kind: "stepped"; readonly step: StepResult } | { readonly kind: "rejected"; readonly reason: string };
@@ -185,7 +185,7 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
     response = await step();
   }
   if (!response.ok) {
-    if (response.error.kind === "domain" && response.error.detail.kind === "invalid_assignment")
+    if (response.error.kind === "domain" && response.error.detail.kind === "rejected_event")
       return { kind: "rejected", reason: response.error.detail.detail };
     throw fault(input.run_id, `core step failed: ${JSON.stringify(response.error)}`);
   }
@@ -194,14 +194,14 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
 }
 
 /** A collection member's key is its id below its parent; a fixed unit has none. */
-function collectionKey(unit: ScopedSnapshot["units"][number]): string | null {
+function collectionKey(unit: StepSnapshot["units"][number]): string | null {
   if (unit.parent == null) return null;
   const member = unit.id.slice(unit.parent.length + 1);
   return member === unit.declaration ? null : member;
 }
 
 /** Write what step changed: run, new units and edges, unit statuses, attempts, revisions and decisions. */
-async function writeDelta(trx: DatabaseTransaction, run_id: string, before: ScopedSnapshot, after: ScopedSnapshot): Promise<void> {
+async function writeDelta(trx: DatabaseTransaction, run_id: string, before: StepSnapshot, after: StepSnapshot): Promise<void> {
   await trx.updateTable("authority.run").set((eb) => ({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
     status: jsonText(after.run.status), version: eb("version", "+", 1) })).where("id", "=", run_id).execute();
   const known = new Map(before.units.map((unit) => [unit.id, unit]));
@@ -238,11 +238,11 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, before: Scop
       decision: decision.decision, effect: decision.effect, target_revision_id: decision.target, payload: jsonText(decision.payload) }).execute();
 }
 
-interface PublicationSecret { readonly run_id: string; readonly action_id: string; readonly hash: string; readonly after: ScopedSnapshot }
+interface PublicationSecret { readonly run_id: string; readonly action_id: string; readonly hash: string; readonly after: StepSnapshot }
 /** The started attempt is the action's latest; a periodic worker's start may have opened a new seq. */
 async function storePublicationSecret(trx: DatabaseTransaction, input: PublicationSecret): Promise<void> {
   const started = input.after.attempts.filter((attempt) => attempt.action_id === input.action_id)
-    .reduce<ScopedSnapshot["attempts"][number] | null>((latest, attempt) => latest && latest.seq > attempt.seq ? latest : attempt, null);
+    .reduce<StepSnapshot["attempts"][number] | null>((latest, attempt) => latest && latest.seq > attempt.seq ? latest : attempt, null);
   if (!started) throw fault(input.run_id, `started action ${input.action_id} has no attempt`);
   await trx.updateTable("authority.attempt").set({ publication_secret_hash: input.hash })
     .where("run_id", "=", input.run_id).where("action_id", "=", started.action_id).where("seq", "=", started.seq).execute();

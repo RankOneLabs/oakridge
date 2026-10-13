@@ -1,5 +1,4 @@
-// Application service used by HTTP handlers (§8.6) — the replacement for
-// the generic half of the legacy SessionManager. Routes never reach into
+// Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
 // prompt per session, ledger as the only deferral" holds by construction.

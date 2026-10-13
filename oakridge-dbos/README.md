@@ -8,7 +8,7 @@ launches DBOS, and resumes runs that still need work. Only after this succeeds
 does `main.ts` bind HTTP; a failed stage closes the resources it started.
 
 `src/storage/commit.ts` is the single writer of workflow state: under the run
-row lock it steps the core over a scoped snapshot and writes the event with its
+row lock it steps the core over a step snapshot and writes the event with its
 writer, the state delta, an effect instruction for each newly wanted worker, the
 wanted log, the ingress receipt and the operator event, in one transaction. DBOS
 carries effect instructions to providers, and projections read committed state.

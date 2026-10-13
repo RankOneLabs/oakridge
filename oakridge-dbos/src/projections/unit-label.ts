@@ -3,7 +3,7 @@ import type { Workflow } from "../core-client/core-types";
 /** The core's declaration of a run's root unit; its unit key. */
 export const ROOT_UNIT_KEY = "$root";
 
-/** `spec_analysis` -> `Spec Analysis`, as v1 STAGE_LABELS read. */
+/** `spec_analysis` -> `Spec Analysis`. */
 export const titleCase = (key: string): string =>
   key.split(/[_\-\s]+/).filter((word) => word.length > 0).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 
