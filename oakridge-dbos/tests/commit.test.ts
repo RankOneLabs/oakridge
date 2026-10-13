@@ -150,7 +150,7 @@ test("a code worker compiles against the declared operations and its launch writ
     input: { repository: { repository_path: "/srv/repo", expected_head: null }, items: [] } });
   const instructions = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload));
   expect(instructions.map((decoded) => decoded.ok && [decoded.value.worker, decoded.value.inputs]))
-    .toEqual([[{ kind: "code", operation: "repository.prepare", every: null }, { repository_path: "/srv/repo", expected_head: null }]]);
+    .toEqual([[{ kind: "code", operation: "repository.prepare", every: null, artifact: "workspace" }, { repository_path: "/srv/repo", expected_head: null }]]);
 });
 
 const PERIODIC: Workflow = {
@@ -176,7 +176,7 @@ test("a periodic worker keeps one intent across its attempts, which carries the 
     authority.db.selectFrom("authority.attempt").select("seq").where("run_id", "=", run_id).orderBy("seq").execute()]);
   const instruction = decodeEffectInstruction(rows[0]?.payload);
   expect({ intents: rows.map((row) => row.seq), attempts: attempts.map((attempt) => attempt.seq), every: instruction.ok && instruction.value.worker })
-    .toEqual({ intents: [1], attempts: [1, 2], every: { kind: "code", operation: "repository.prepare", every: "1s" } });
+    .toEqual({ intents: [1], attempts: [1, 2], every: { kind: "code", operation: "repository.prepare", every: "1s", artifact: "workspace" } });
 });
 
 test("a request digest ignores key order and changes with the event or the writer", () => {
@@ -186,4 +186,27 @@ test("a request digest ignores key order and changes with the event or the write
     other_event: requestDigest({ event: { kind: "launched", input: { a: 1, b: 3 } }, writer }) === digest,
     other_writer: requestDigest({ event: { kind: "launched", input: { a: 1, b: 2 } }, writer: { kind: "operator", subject: "credential:b" } }) === digest })
     .toEqual({ reordered: true, other_event: false, other_writer: false });
+});
+
+test("an awaiting operator review's prompt is rendered with its resolved inputs, re-rendered as they change, and dropped once decided", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  const writer = writerAction(run_id);
+  const prompts = async () => (await authority.db.selectFrom("authority.unit").select("review_prompts").where("run_id", "=", run_id)
+    .where("id", "=", unit).executeTakeFirstOrThrow()).review_prompts;
+  await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-w" }, writer: executor(writer) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "A long draft" }, predecessor: null, subject: null, by: writer },
+    writer: { kind: "session", session: "sid-w", attempt: writer } });
+  const drafted = await prompts();
+  const critic = (await authority.db.selectFrom("authority.attempt").select("action_id").where("run_id", "=", run_id).where("worker", "=", "critic")
+    .executeTakeFirstOrThrow()).action_id;
+  await submit({ run_id, event: { kind: "worker_started", action: critic, kbbl_session_id: "sid-c" }, writer: executor(critic) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "critique", body: { notes: ["tighten the opening"] }, predecessor: null,
+    subject: `${unit}:draft:1`, by: critic }, writer: { kind: "session", session: "sid-c", attempt: critic } });
+  const critiqued = await prompts();
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "approve", target: `${unit}:draft:1`, payload: {} } });
+  expect({ target: drafted.editor?.target, topic: drafted.editor?.prompt.includes("topic Oakridge"), draft: drafted.editor?.prompt.includes("A long draft"),
+    no_critique_yet: drafted.editor?.prompt.includes("critique none"), critique: critiqued.editor?.prompt.includes("tighten the opening"), decided: await prompts() })
+    .toEqual({ target: `${unit}:draft:1`, topic: true, draft: true, no_critique_yet: true, critique: true, decided: {} });
 });

@@ -243,6 +243,23 @@ pub struct StepResult {
     /// What each wanted `RunWorker` runs with, evaluated against the stepped
     /// state, so the run layer can pin it without evaluating expressions.
     pub resolved: Vec<ResolvedRunWorker>,
+    /// Each operator review awaiting a decision, with its `inputs` evaluated
+    /// against the stepped state, so the run layer can render its prompt.
+    pub reviews: Vec<ResolvedReview>,
+}
+
+/// An operator review a decision is legal on now (part 1 §5.2: the latest
+/// revision of its artifact has no decision of this review), and its inputs,
+/// an unresolved read as null. `target` is that latest revision.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedReview {
+    pub unit: UnitId,
+    pub review: SymbolKey,
+    pub target: RevisionId,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub inputs: Value,
 }
 
 /// The inputs of one wanted `RunWorker` (part 1 §2.5). `inputs` holds the

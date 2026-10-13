@@ -1,450 +1,213 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { KbblClient, REVIVE_HEADER, silentDurationMs } from "../src/adapters/kbbl";
+import type { ResolvedRunWorker } from "../src/core-client/core-types";
+import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
+import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
+import type { ExternalHandle } from "../src/effects/provider";
+import { sampleWorkflow } from "./authority-fixture";
 
-import { KbblExecutorAdapter, selectPromptExpectedArtifacts, selectRemoteWorktreeBase, silentDurationMs } from "../src/adapters/kbbl";
-import type { ExecutionRequest } from "../src/domain/execution";
-import type { ExecutionId, ExecutorOperationId, StageInstanceId, UnitId } from "../src/domain/primitives";
-import type { InvocationId } from "../src/effects/provider";
-
-const attempt = (id: string) => id as ExecutorOperationId;
-const invocation = (id: string) => id as InvocationId;
-
-/** A representative resolved session_identity — the shape every v2 delegated session's resolved_config now carries. */
-const SESSION_IDENTITY = {
-  run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
-  operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter",
-};
-
-test("kbbl adapter derives a stable session key from the attempt and function identity", async () => {
-  const calls: Array<{ url: string; body: unknown }> = [];
-  const adapter = new KbblExecutorAdapter({
-    base_url: "http://kbbl.test",
-    executor_function_identity: "executor-step-v1",
-    fetch: async (input, init) => {
-      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
-      return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null, worktreeBaseRef: "a".repeat(40) } }, { status: 201 });
-    },
-  });
-  const request: ExecutionRequest = {
-    execution_id: "execution-1" as ExecutionId,
-    stage_instance_id: "stage-1" as StageInstanceId,
-    unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session",
-    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null,
-      worktree: { branchName: "cohort/stage-1/unit-1", worktreeSubdir: "stage-1/unit-1", baseRef: "epic/test" }, session_identity: SESSION_IDENTITY },
-    inputs: [],
-    declared_outputs: [], expected_artifacts: [],
+interface Call { readonly method: string; readonly url: string; readonly headers: Headers; readonly body: unknown }
+/** A fetch that records each call and answers from `respond`. */
+function recording(respond: (call: Call) => Response | Promise<Response>) {
+  const calls: Call[] = [];
+  const fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+    const call = { method: init.method ?? "GET", url: String(input), headers: new Headers(init.headers),
+      body: typeof init.body === "string" ? JSON.parse(init.body) : null };
+    calls.push(call);
+    return respond(call);
   };
-  expect(await adapter.start_or_attach(request, attempt("run:1:stage:build:unit:web"))).toEqual({ kind: "kbbl_session", session_id: "session-1", worktree_base_sha: "a".repeat(40) });
-  expect(calls[0]?.url).toEndWith("/sessions/resumable/run%3A1%3Astage%3Abuild%3Aunit%3Aweb%3Aexecutor-step-v1");
-  expect(calls[0]?.body).toEqual({ initial_prompt: "Build", workdir: "/repo", name: "builder", runtime: "claude-code",
-    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "origin/epic/test" },
-    workflow: { workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
-      operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter" } });
+  return { calls, fetch };
+}
+const snapshot = (status = "live", extra: object = {}) => ({ sid: "sid-1", status, lastActivityTs: "2026-10-12T12:00:00.000Z", ...extra });
+
+const run_id = "run-1";
+const unit = "run-1/document";
+const writer: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
+function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean } = {}): EffectInstruction {
+  const workflow = sampleWorkflow("review-loop");
+  const declared = workflow.stages.document!.workers.writer!;
+  const fresh = overrides.fresh && declared.kind === "agent"
+    ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...declared, session: "fresh" as const } } } } }
+    : workflow;
+  const action = overrides.action ?? writer;
+  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", action, seq: 0,
+    prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
+    resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, ...overrides.resolved } });
+  if (!selected.ok) throw new Error(selected.error.detail);
+  return selected.value;
+}
+const config = (fetch: ReturnType<typeof recording>["fetch"], overrides: Partial<AgentProviderConfig> = {}): AgentProviderConfig => ({
+  kbbl: new KbblClient({ base_url: "http://kbbl.test/", fetch }), publication_key: "key", publish_base_url: "http://oakridge.test",
+  default_workdir: "/srv/agents", ...overrides });
+const session: ExternalHandle = { kind: "kbbl_session", session_id: "sid-1" };
+function sessionKeyOf(instruction: EffectInstruction): string {
+  if (instruction.worker.kind !== "agent") throw new Error("not an agent instruction");
+  return instruction.worker.session_key;
+}
+
+// ------------------------------------------------------------- client -------
+
+test("ensure asks kbbl to revive an ended session under the key", async () => {
+  const { calls, fetch } = recording(() => Response.json({ kind: "attached", session: snapshot() }));
+  const ensured = await new KbblClient({ base_url: "http://kbbl.test", fetch }).ensure("a.b", { initial_prompt: "p", workdir: "/w" });
+  expect({ ensured, url: calls[0]!.url, revive: calls[0]!.headers.get(REVIVE_HEADER) }).toEqual({
+    ensured: { kind: "acknowledged", value: { kind: "attached", session: { sid: "sid-1", status: "live", last_activity_ts: "2026-10-12T12:00:00.000Z" } } },
+    url: "http://kbbl.test/sessions/resumable/a.b", revive: "true" });
 });
 
-/**
- * Step 1 (kbbl) validates against exactly these member names; this pins
- * the adapter as the sender that must never drift from that contract.
- */
-test("start_or_attach sends the workflow object using the exact member names kbbl validates", async () => {
-  let body: { workflow?: unknown } = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
+test("a 5xx answer is transient, a 4xx refusal permanent, and a lost connection uncertain", async () => {
+  const answers = [new Response("busy", { status: 503 }), new Response("bad", { status: 400 })];
+  const client = new KbblClient({ base_url: "http://kbbl.test", fetch: async () => {
+    const answer = answers.shift();
+    if (!answer) throw new Error("connection reset");
+    return answer;
   } });
-  await adapter.start_or_attach({
-    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo",
-      session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [], expected_artifacts: [],
-  }, attempt("run:1:stage:build:unit:web"));
-  expect(body.workflow).toEqual({
-    workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
-    operator_role: "build", cohort_title: "Targets spec contract", repository_key: "pipefitter",
-  });
+  const kinds = [];
+  for (let call = 0; call < 3; call++) kinds.push((await client.ensure("key", { initial_prompt: "p", workdir: "/w" })).kind);
+  expect(kinds).toEqual(["transiently_unavailable", "permanently_rejected", "uncertain"]);
 });
 
-test("null session_identity members are omitted from the workflow object rather than sent as null", async () => {
-  let body: { workflow?: unknown } = {};
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "0" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo",
-      session_name: "assessor", model: null, effort: null,
-      session_identity: { run_id: "run-1", stage_instance_id: "stage-2", unit_id: "0", operator_role: "assessment", cohort_title: null, repository_key: null } },
-    inputs: [], declared_outputs: [], expected_artifacts: [],
-  }, attempt("run:1:stage:assess:unit:0"));
-  expect(body.workflow).toEqual({ workflow_run_id: "run-1", stage_instance_id: "stage-2", unit_id: "0", operator_role: "assessment" });
+test("a delivered input's receipt reports its turn", async () => {
+  const { calls, fetch } = recording(() => Response.json({ accepted: true, delivery_key: "k", status: "prompting" }));
+  const receipt = await new KbblClient({ base_url: "http://kbbl.test", fetch }).deliver("sid-1", "action-1", "do it");
+  expect({ receipt, url: calls[0]!.url, body: calls[0]!.body }).toEqual({ receipt: { kind: "acknowledged", value: { status: "prompting" } },
+    url: "http://kbbl.test/sessions/resumable/sid-1/input/action-1", body: { text: "do it" } });
 });
 
-test("a resolved config with no session_identity is a hard parse error, not a silently omitted workflow member", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
-  await expect(adapter.start_or_attach({
-    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null },
-    inputs: [], declared_outputs: [], expected_artifacts: [],
-  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
-});
-
-/**
- * `session_identity` normally arrives freshly typed from
- * `resolveDelegatedExecution`, but `resolved_config` is a `JsonValue` that
- * round-trips through storage for a retry/replay — a blank required id
- * there should fail here, not one layer later as kbbl's own 400.
- */
-test("a blank required identifier in session_identity is rejected rather than forwarded", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async () => new Response(null) });
-  await expect(adapter.start_or_attach({
-    execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null,
-      session_identity: { ...SESSION_IDENTITY, run_id: "" } },
-    inputs: [], declared_outputs: [], expected_artifacts: [],
-  }, attempt("run:1:stage:build:unit:web"))).rejects.toThrow("session_identity");
-});
-
-test("worktree branch bases select the remote-tracking ref while immutable SHAs stay unchanged", () => {
-  expect(selectRemoteWorktreeBase("epic/test")).toBe("origin/epic/test");
-  expect(selectRemoteWorktreeBase("origin/epic/test")).toBe("origin/epic/test");
-  expect(selectRemoteWorktreeBase("a".repeat(40))).toBe("a".repeat(40));
-});
-
-test("the generated contract wins over an Authorized outputs line in user content", () => {
-  const expected = [
-    { unit_id: "web" as UnitId, output_name: "pr_summary", artifact_type: "dev.pr_summary" as never },
-    { unit_id: "web" as UnitId, output_name: "build_result", artifact_type: "dev.build_result" as never },
+test("a session reading names how it ended: closed, failed with kbbl's code, or succeeded", async () => {
+  const bodies = [
+    Response.json({ session: { ...snapshot("ended"), endReason: "user_closed" }, exit_code: 1 }),
+    Response.json({ session: { ...snapshot("ended"), endReason: "subprocess_exited" }, exit_code: 1, failure: { code: "requested_model_unsupported", detail: "no such model" } }),
+    Response.json({ session: snapshot(), exit_code: 0 }),
+    Response.json({ pending: true, session: snapshot() }, { status: 202 }),
   ];
-  expect(selectPromptExpectedArtifacts(
-    { rendered_prompt: "User brief\nAuthorized outputs: pr_summary\n\n## Generated session contract\nAuthorized outputs: pr_summary, build_result" },
-    { unit_id: "web" as UnitId, inputs: [], declared_outputs: [], expected_artifacts: expected },
-  )).toEqual(expected);
+  const client = new KbblClient({ base_url: "http://kbbl.test", fetch: async () => bodies.shift()! });
+  const ends = [];
+  for (let call = 0; call < 4; call++) {
+    const reading = await client.read("sid-1");
+    ends.push(reading.kind === "acknowledged" ? reading.value.kind === "ended" ? reading.value.end : "pending" : reading.kind);
+  }
+  expect(ends).toEqual([{ kind: "closed" }, { kind: "failed", code: "requested_model_unsupported", detail: "no such model" }, { kind: "succeeded" }, "pending"]);
 });
 
-test("a materialized collection retry keeps only its rejected member", () => {
-  const retry = [{ unit_id: "rollout" as UnitId, output_name: "brief", artifact_type: "dev.brief" as never }];
-  expect(selectPromptExpectedArtifacts(
-    { rendered_prompt: "## Generated session contract\nAuthorized outputs: brief" },
-    {
-      unit_id: "0" as UnitId,
-      inputs: [{ artifact_type: "dev.plan", body: { cohorts: [{ id: "rollout" }, { id: "versioning" }] } } as never],
-      declared_outputs: [{ name: "brief", artifact_type: "dev.brief" as never, required: true }],
-      expected_artifacts: retry,
-    },
-  )).toEqual(retry);
+test("a close fences only when asked, and an unknown session is already stopped", async () => {
+  const { calls, fetch } = recording((call) => new Response(null, { status: call.url.includes("gone") ? 404 : 200 }));
+  const client = new KbblClient({ base_url: "http://kbbl.test", fetch });
+  const results = [await client.close("sid-1", "action-1"), await client.close("sid-1", null), await client.close("gone", null)];
+  expect({ kinds: results.map((result) => result.kind), urls: calls.map((call) => call.url) }).toEqual({
+    kinds: ["acknowledged", "acknowledged", "acknowledged"],
+    urls: ["http://kbbl.test/sessions/sid-1?fenced_by=action-1", "http://kbbl.test/sessions/sid-1", "http://kbbl.test/sessions/gone"] });
 });
 
-test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {
-  const adapter = new KbblExecutorAdapter({
-    base_url: "http://kbbl.test",
-    executor_function_identity: "executor-step-v1",
-    fetch: async (input) => String(input).includes("/terminal")
-      ? Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 0 })
-      : Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } }),
-  });
-  const executionId = "execution-2" as ExecutionId;
-  await adapter.start_or_attach({
-    execution_id: executionId,
-    stage_instance_id: "stage-1" as StageInstanceId,
-    unit_id: "unit-1" as UnitId,
-    executor_type: "delegated_session",
-    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null, session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [], expected_artifacts: [],
-  }, attempt("run:1:stage:build:unit:web"));
-  expect(await adapter.observe_terminal(executionId, { kind: "kbbl_session", session_id: "session-1" })).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } } });
+test("silence is measured from kbbl's last activity, and absent activity is not silence", () => {
+  const now = Date.parse("2026-10-12T12:01:00.000Z");
+  expect([silentDurationMs({ session: { lastActivityTs: "2026-10-12T12:00:00.000Z" } }, now), silentDurationMs({ pending: true }, now)])
+    .toEqual([60_000, null]);
 });
 
-test("kbbl adapter reports a still-running session as pending rather than terminal", async () => {
-  const urls: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", observe_wait_ms: 25_000, fetch: async (input) => {
-    urls.push(String(input));
-    return Response.json({ pending: true }, { status: 202 });
-  } });
-  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" })).toEqual({ kind: "pending" });
-  expect(urls).toEqual(["http://kbbl/sessions/resumable/session-1/terminal?wait_ms=25000"]);
+// ---------------------------------------------------------- provider -------
+
+test("an agent attempt without kbbl configured is refused with a typed code", async () => {
+  const started = await createAgentProvider({ kbbl: null, publication_key: null, publish_base_url: "", default_workdir: "/" }).start(instructionFor());
+  expect(started.kind === "permanently_rejected" ? started.code : started.kind).toBe("kbbl_unconfigured");
 });
 
-test("kbbl adapter fails an ended session whose exit code kbbl cannot report", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
-    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: null }) });
-  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "exit_unknown", detail: "kbbl session session-1 ended without a recorded exit code" } });
+test("every ensure of a session sends the same spec, carrying the session's secret and its hash on the attempt", async () => {
+  const { calls, fetch } = recording(() => Response.json({ kind: "started", session: snapshot("starting") }, { status: 201 }));
+  const provider = createAgentProvider(config(fetch));
+  const first = await provider.start(instructionFor());
+  const revise = await provider.start(instructionFor({ action: { ...writer, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" } } }));
+  const secret = derivePublicationSecret("key", sessionKeyOf(instructionFor()));
+  expect({ same_key: calls[0]!.url === calls[1]!.url, same_spec: JSON.stringify(calls[0]!.body) === JSON.stringify(calls[1]!.body),
+    hashes: [first, revise].map((result) => result.kind === "acknowledged" ? result.value.publication_secret_hash : null),
+    carries_secret: (calls[0]!.body as { initial_prompt: string }).initial_prompt.includes(secret) })
+    .toEqual({ same_key: true, same_spec: true, hashes: [publicationSecretHash(secret), publicationSecretHash(secret)], carries_secret: true });
+  expect(publicationSecretHash(secret)).toBe(createHash("sha256").update(secret).digest("hex"));
 });
 
-test("kbbl adapter fails a session that exited non-zero", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
-    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 1 }) });
-  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
+test("a repository workspace runs in a worktree branched from the prepared head; none runs in the agent workdir", () => {
+  const plain = selectSessionStart(instructionFor(), { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  const repo = selectSessionStart(instructionFor({ resolved: { workspace: { repository_path: "/srv/repo", push_remote_owner: "o", head: "abc123" } } }),
+    { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  expect({ plain: [plain.workdir, plain.worktree ?? null], repo: [repo.workdir, repo.worktree?.base_ref, repo.worktree?.branch_name.startsWith("oakridge/")] })
+    .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "abc123", true] });
 });
 
-test("kbbl adapter reports kbbl's own failure code when the terminal body carries one", async () => {
-  // Every kbbl failure exits 1. A spec-analyzer launched on a model its agent
-  // does not offer died before its first turn and the run record said only
-  // "exited with code 1"; the reason kbbl had already named was dropped here.
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
-    Response.json({
-      session: { sid: "session-1", status: "failed", endReason: "subprocess_exited" },
-      exit_code: 1,
-      failure: { code: "requested_model_unsupported", detail: 'no option matching "gpt-6-astra" in config option "model"' },
-    }) });
-  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "requested_model_unsupported",
-      detail: 'kbbl session session-1 failed: no option matching "gpt-6-astra" in config option "model"' } });
+test("observing delivers the task under the action's key and reads its turn", async () => {
+  const statuses = ["accepted", "succeeded", "failed"];
+  const { calls, fetch } = recording((call) => call.method === "GET"
+    ? Response.json({ session: snapshot(), exit_code: 0 })
+    : Response.json({ accepted: true, status: statuses.shift() }));
+  const provider = createAgentProvider(config(fetch, { now: () => Date.parse("2026-10-12T12:00:01.000Z") }));
+  const results = [];
+  for (let poll = 0; poll < 3; poll++) results.push(await provider.observe(instructionFor(), { task: "write it" }, session));
+  expect({ results: results.map((result) => result.kind === "acknowledged" ? result.value : result.kind),
+    delivered: calls.filter((call) => call.method === "PUT").map((call) => [call.url, call.body]) }).toEqual({
+    results: [{ kind: "running" }, { kind: "terminal", result: { kind: "succeeded" } },
+      { kind: "terminal", result: { kind: "failed", code: "session_failed", detail: "the task's turn in kbbl session sid-1 ended failed" } }],
+    delivered: Array.from({ length: 3 }, () => ["http://kbbl.test/sessions/resumable/sid-1/input/action-initial", { text: "write it" }]) });
 });
 
-test("kbbl adapter falls back to the exit code when the failure sidecar is malformed", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
-    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 1, failure: { detail: "no code here" } }) });
-  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
+test("a session closed under a running task fails the attempt as closed", async () => {
+  const { fetch } = recording((call) => call.method === "GET"
+    ? Response.json({ session: { ...snapshot("ended"), endReason: "user_closed" }, exit_code: 1 })
+    : Response.json({ error: "session is ended", code: "session_not_found" }, { status: 404 }));
+  const observed = await createAgentProvider(config(fetch)).observe(instructionFor(), { task: "t" }, session);
+  expect(observed.kind === "acknowledged" && observed.value.kind === "terminal" && observed.value.result.kind === "failed" ? observed.value.result.code : null)
+    .toBe("session_closed");
 });
 
-test("kbbl adapter starts another role without a cross-stage worktree field", async () => {
-  let body: unknown = null;
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return Response.json({ kind: "started", session: { sid: "assessment-session", status: "live", endReason: null } }, { status: 201 });
-  } });
-  await adapter.start_or_attach({
-    execution_id: "assessment-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null,
-      session_identity: { run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", cohort_title: null, repository_key: "pipefitter" } },
-    inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
-      external_reference: { kind: "kbbl_session", session_id: "build-session" } },
-  }, attempt("run:1:stage:assess:unit:web"));
-  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code",
-    workflow: { workflow_run_id: "run-1", stage_instance_id: "assessment-stage", unit_id: "web", operator_role: "assessment", repository_key: "pipefitter" } });
+test("a task silent past the bound fails as executor_silent_timeout", async () => {
+  const { fetch } = recording((call) => call.method === "GET"
+    ? Response.json({ pending: true, session: snapshot() }, { status: 202 })
+    : Response.json({ accepted: true, status: "prompting" }));
+  const provider = createAgentProvider(config(fetch, { max_silent_ms: 60_000, now: () => Date.parse("2026-10-12T12:05:00.000Z") }));
+  const observed = await provider.observe(instructionFor(), { task: "t" }, session);
+  expect(observed.kind === "acknowledged" && observed.value.kind === "terminal" && observed.value.result.kind === "failed" ? observed.value.result.code : null)
+    .toBe("executor_silent_timeout");
 });
 
-test("kbbl adapter uses the role's committed worktree selection", async () => {
-  let called = false;
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async () => {
-    called = true;
-    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
-  } });
-  const request: ExecutionRequest = {
-    execution_id: "conflicted-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
-    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null,
-      worktree: { branchName: "cohort/web", worktreeSubdir: "web" }, session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [], expected_artifacts: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
-      external_reference: { kind: "kbbl_session", session_id: "build-session" } },
-  };
-  await adapter.start_or_attach(request, attempt("run:1:stage:assess:unit:web"));
-  expect(called).toBe(true);
+test("a stop fences a fresh session, closes a resumed one revivably, and finds a lost start by its ensure", async () => {
+  const { calls, fetch } = recording((call) => call.method === "PUT"
+    ? Response.json({ kind: "attached", session: snapshot() }) : new Response(null, { status: 200 }));
+  const provider = createAgentProvider(config(fetch));
+  await provider.stop(instructionFor({ fresh: true }), session);
+  await provider.stop(instructionFor(), session);
+  await provider.stop(instructionFor(), null);
+  expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+    "DELETE http://kbbl.test/sessions/sid-1?fenced_by=action-initial",
+    "DELETE http://kbbl.test/sessions/sid-1",
+    `PUT http://kbbl.test/sessions/resumable/${sessionKeyOf(instructionFor())}`,
+    "DELETE http://kbbl.test/sessions/sid-1",
+  ]);
 });
 
-test("kbbl adapter delivers workflow input through a persisted session", async () => {
-  const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input, init) => {
-    calls.push({ url: String(input), body: init?.body });
-    return new Response("{}", { status: 200 });
-  } });
-  await adapter.deliver_input("execution-1" as ExecutionId, "revision-1", "Please address the assessment.", { kind: "kbbl_session", session_id: "session-1" });
-  expect(calls).toEqual([{ url: "http://kbbl/sessions/resumable/session-1/input/revision-1", body: JSON.stringify({ text: "Please address the assessment." }) }]);
-});
+/** The routes kbbl registers, from its handlers, as method and path patterns. */
+function kbblRoutes(): readonly { readonly method: string; readonly pattern: RegExp }[] {
+  const root = resolve(import.meta.dir, "../../kbbl/core/server/handlers");
+  return ["sessions.ts", "acp-per-sid.ts"].flatMap((file) => [...readFileSync(resolve(root, file), "utf8")
+    .matchAll(/app\.(get|put|post|delete)\("([^"]+)"/g)]
+    .map(([, method, path]) => ({ method: method!.toUpperCase(), pattern: new RegExp(`^${path!.replace(/:[A-Za-z]+/g, "[^/]+")}$`) })));
+}
 
-test("kbbl adapter reports generalized input delivery failures", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () => new Response("unavailable", { status: 503 }) });
-  await expect(adapter.deliver_input("execution-1" as ExecutionId, "input-1", "Please respond.", { kind: "kbbl_session", session_id: "session-1" }))
-    .rejects.toThrow("kbbl input delivery failed (503): unavailable");
-});
-
-test("collaboration input classifies transport uncertainty without losing the delivery key", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build",
-    fetch: async () => { throw new Error("socket closed"); } });
-  const result = await adapter.deliver_collaboration_input("execution-1" as ExecutionId, "review-1", "Please respond.",
-    { kind: "kbbl_session", session_id: "session-1" });
-  expect(result).toMatchObject({ kind: "uncertain", detail: expect.stringContaining("socket closed") });
-});
-
-const recordingAdapter = (urls: string[], status = 204) =>
-  new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input) => {
-    urls.push(String(input));
-    return new Response(status === 204 ? null : "held", { status });
-  } });
-
-test("kbbl cancellation fences a persisted session reference after process recovery", async () => {
-  const urls: string[] = [];
-  await recordingAdapter(urls).cancel_or_fence("execution-after-restart" as ExecutionId, { kind: "kbbl_session", session_id: "session-persisted" });
-  expect(urls).toEqual(["http://kbbl/sessions/session-persisted?fenced_by=execution-after-restart"]);
-});
-
-/**
- * kbbl refuses a close that would abandon a live unit, and a cancelled run
- * stops its agent through exactly this call. Unless the fence names the
- * execution that holds the session, that guard fires on the owner's own
- * teardown and the run deadlocks against itself: it cannot be cancelled while
- * it is active, and it stays active because its session will not close.
- */
-test("the fence names the execution holding the session so the hold guard lets it through", async () => {
-  const urls: string[] = [];
-  await recordingAdapter(urls).cancel_or_fence("012c6027:0" as ExecutionId, { kind: "kbbl_session", session_id: "db26174d" });
-  expect(urls[0]).toContain("fenced_by=012c6027%3A0");
-});
-
-test("ids are escaped rather than spliced into the query string raw", async () => {
-  const urls: string[] = [];
-  await recordingAdapter(urls).cancel_or_fence("a b&c:0" as ExecutionId, { kind: "kbbl_session", session_id: "s/1" });
-  expect(urls[0]).toBe("http://kbbl/sessions/s%2F1?fenced_by=a%20b%26c%3A0");
-});
-
-/** An already-gone session is the outcome the fence wanted. */
-test("an unknown session is treated as already fenced", async () => {
-  const urls: string[] = [];
-  await recordingAdapter(urls, 404).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" });
-  expect(urls).toHaveLength(1);
-});
-
-test("a refused fence returns an unavailable value for durable retry", async () => {
-  expect(await recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "kbbl cancellation failed (409)" });
-});
-
-const unavailableAdapter = (): KbblExecutorAdapter => new KbblExecutorAdapter({
-  base_url: "http://kbbl", executor_function_identity: "v15",
-  fetch: async () => { throw new Error("connection refused"); },
-});
-
-test("start_or_attach returns ExecutorUnavailable when fetch rejects", async () => {
-  expect(await unavailableAdapter().start_or_attach(buildRequest, attempt("attempt-1")))
-    .toEqual({ kind: "executor_unavailable", operation: "start_or_attach", detail: "Error: connection refused" });
-});
-
-test("observe_terminal returns ExecutorUnavailable when fetch rejects", async () => {
-  expect(await unavailableAdapter().observe_terminal("execution-1" as ExecutionId,
-    { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "executor_unavailable", operation: "observe_terminal", detail: "Error: connection refused" });
-});
-
-test("cancel_or_fence returns ExecutorUnavailable when fetch rejects", async () => {
-  expect(await unavailableAdapter().cancel_or_fence("execution-1" as ExecutionId,
-    { kind: "kbbl_session", session_id: "session-1" }))
-    .toEqual({ kind: "executor_unavailable", operation: "cancel_or_fence", detail: "Error: connection refused" });
-});
-
-const buildRequest: ExecutionRequest = {
-  execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId, unit_id: "web" as UnitId,
-  executor_type: "delegated_session",
-  resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
-  inputs: [], declared_outputs: [], expected_artifacts: [],
-};
-
-test("a rerun of the same execution claims a new session instead of the one that already died", async () => {
-  const keys: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input) => {
-    keys.push(String(input));
-    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
-  } });
-  // The execution id is shared by every attempt; the workflow running it is not.
-  await adapter.start_or_attach(buildRequest, attempt("run:1:stage:build:unit:web"));
-  await adapter.start_or_attach(buildRequest, attempt("oakridge-unit-rerun:stage-1:web:rerun-1"));
-  expect(new Set(keys).size).toBe(2);
-});
-
-test("retrying the same attempt resolves to the one session it already owns", async () => {
-  const keys: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input) => {
-    keys.push(String(input));
-    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
-  } });
-  await adapter.start_or_attach(buildRequest, attempt("run:1:stage:build:unit:web"));
-  await adapter.start_or_attach(buildRequest, attempt("run:1:stage:build:unit:web"));
-  expect(new Set(keys).size).toBe(1);
-});
-
-test("recovering one v2 work order reuses its external operation for free", async () => {
-  const keys: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v2-build", fetch: async (input) => {
-    keys.push(String(input));
-    return Response.json({ kind: keys.length === 1 ? "started" : "attached", session: { sid: "session-work-1", status: "live", endReason: null } });
-  } });
-  const workOrderId = attempt("11111111-1111-4111-8111-111111111111");
-  await adapter.start_or_attach(buildRequest, workOrderId);
-  // This is the call DBOS repeats after a worker/process failure. No domain
-  // attempt is replaced; the external idempotency identity is unchanged.
-  await adapter.start_or_attach(buildRequest, workOrderId);
-  expect(new Set(keys).size).toBe(1);
-});
-
-test("fencing an execution that never reached an executor is a no-op, not a lost session", async () => {
-  let called = false;
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async () => { called = true; return new Response(null, { status: 204 }); } });
-  await adapter.cancel_or_fence("execution-1" as ExecutionId, { kind: "none" });
-  expect(called).toBe(false);
-});
-
-test("an operation handed a reference for another executor fails loudly rather than silently", async () => {
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async () => new Response(null, { status: 204 }) });
-  await expect(adapter.cancel_or_fence("execution-1" as ExecutionId, { kind: "headless_run", run_ref: "elsewhere" }))
-    .rejects.toThrow("has no kbbl session reference");
-});
-
-const NOW = Date.parse("2026-08-19T12:00:00.000Z");
-const pendingSince = (lastActivityTs: string) =>
-  Response.json({ pending: true, session: { sid: "session-1", status: "live", lastActivityTs } }, { status: 202 });
-
-const silenceAdapter = (body: () => Response, maxSilentMs: number) => new KbblExecutorAdapter({
-  base_url: "http://kbbl", executor_function_identity: "v1", max_silent_ms: maxSilentMs, now: () => NOW, fetch: async () => body(),
-});
-const observe = (adapter: KbblExecutorAdapter) =>
-  adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" });
-
-test("silent duration is measured from the activity kbbl last reported", () => {
-  expect(silentDurationMs({ session: { lastActivityTs: "2026-08-19T11:59:00.000Z" } }, NOW)).toBe(60_000);
-});
-
-test("silent duration is unknown, not zero, when kbbl reports no activity", () => {
-  // Distinct from a session that has genuinely been silent for 0ms: an older
-  // kbbl omits the field, and reading that as "silent forever" would fail every
-  // one of its sessions on the first poll.
-  expect(silentDurationMs({ pending: true }, NOW)).toBeNull();
-  expect(silentDurationMs({ session: { lastActivityTs: "not a date" } }, NOW)).toBeNull();
-});
-
-test("a session still doing work keeps being polled", async () => {
-  const attempt = await observe(silenceAdapter(() => pendingSince("2026-08-19T11:59:00.000Z"), 5 * 60_000));
-  expect(attempt.kind).toBe("pending");
-});
-
-test("a session silent past the bound fails instead of being polled forever", async () => {
-  // The stall this exists for: kbbl answers "not terminal" truthfully and
-  // indefinitely for a session that never took its first turn.
-  const attempt = await observe(silenceAdapter(() => pendingSince("2026-08-19T11:00:00.000Z"), 5 * 60_000));
-  expect(attempt).toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_silent_timeout",
-    detail: "kbbl session session-1 reported no activity for 3600s (limit 300s)" } });
-});
-
-test("a kbbl that reports no activity at all is polled, not failed", async () => {
-  const attempt = await observe(silenceAdapter(() => Response.json({ pending: true }, { status: 202 }), 5 * 60_000));
-  expect(attempt.kind).toBe("pending");
-});
-
-test("uncertain selected start reconciles by the same identity before cancellation", async () => {
-  const urls: string[] = [];
-  let first = true;
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "v1", fetch: async (input, init) => {
-    urls.push(String(input));
-    if (init?.method === "DELETE") return new Response(null, { status: 204 });
-    if (first) { first = false; throw new Error("response lost"); }
-    return Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } });
-  } });
-  expect((await adapter.start_selected(buildRequest, invocation("selected-1"))).kind).toBe("uncertain");
-  expect(await adapter.stop_selected(buildRequest, invocation("selected-1"), null)).toEqual({ kind: "acknowledged", value: { stopped: true } });
-  expect(urls[0]).toBe(urls[1]);
-  expect(urls[2]).toContain("/sessions/session-1?");
-});
-
-test("a rejected reconciliation start cannot confirm cleanup of an uncertain execution", async () => {
-  const calls: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "v2", fetch: async (_input, init) => {
-    calls.push(init?.method ?? "GET");
-    return new Response("start refused", { status: 403 });
-  } });
-  const request: ExecutionRequest = { execution_id: "execution-1" as ExecutionId, stage_instance_id: "stage-1" as StageInstanceId,
-    unit_id: "unit-1" as UnitId, executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, session_identity: SESSION_IDENTITY },
-    inputs: [], declared_outputs: [], expected_artifacts: [] };
-  expect(await adapter.stop_selected(request, invocation("uncertain-start"), null)).toMatchObject({ kind: "uncertain" });
-  expect(calls).toEqual(["PUT"]);
+test("an agent's start, revise, observation and stops call only routes kbbl registers", async () => {
+  const { calls, fetch } = recording((call) => call.method === "PUT" && !call.url.includes("/input/")
+    ? Response.json({ kind: "attached", session: snapshot() })
+    : call.method === "GET" ? Response.json({ pending: true, session: snapshot() }, { status: 202 })
+    : call.method === "DELETE" ? new Response(null, { status: 200 }) : Response.json({ accepted: true, status: "prompting" }));
+  const provider = createAgentProvider(config(fetch, { now: () => Date.parse("2026-10-12T12:00:01.000Z") }));
+  const revise = instructionFor({ action: { ...writer, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" } } });
+  await provider.start(instructionFor());
+  await provider.observe(instructionFor(), { task: "write" }, session);
+  await provider.start(revise);
+  await provider.observe(revise, { task: "revise" }, session);
+  await provider.stop(revise, session);
+  await provider.stop(instructionFor({ fresh: true }), null);
+  const routes = kbblRoutes();
+  const unregistered = calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)
+    .filter((call) => !routes.some((route) => call.startsWith(`${route.method} `) && route.pattern.test(call.slice(call.indexOf(" ") + 1))));
+  expect({ calls: calls.length > 6, unregistered }).toEqual({ calls: true, unregistered: [] });
 });

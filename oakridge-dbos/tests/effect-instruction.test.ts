@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
-import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_DEADLINE_MS, selectEffectInstruction, selectSessionKey,
-  type RunWorkerAction } from "../src/domain/effect-instruction";
+import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_DEADLINE_MS, selectEffectInstruction, selectEverySeconds,
+  selectResolvedSchema, selectSessionKey, selectSessionKeyParts, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
 
@@ -10,15 +10,39 @@ const action: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mo
 const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null } };
 const prompts = { "review-loop/write.md": "a".repeat(64) };
 const select = (overrides: Partial<Parameters<typeof selectEffectInstruction>[0]> = {}) =>
-  selectEffectInstruction({ workflow: sampleWorkflow("review-loop"), prompts, stage: "document", action, seq: 1, resolved, ...overrides });
+  selectEffectInstruction({ run_id: "run-1", workflow: sampleWorkflow("review-loop"), prompts, stage: "document", action, seq: 1, resolved, ...overrides });
 
 test("an agent instruction carries its pinned prompt, session key, inputs and default budgets", () => {
   const instruction = select();
-  expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, action, attempt: { action_id: resolved.action_id, seq: 1 },
+  expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1", action, attempt: { action_id: resolved.action_id, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
-      prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, runtime: null },
+      prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, runtime: null,
+      creates: [{ key: "draft", schema: { title: "text", body: "text" } }] },
     inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: null, subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
+});
+
+test("a fresh worker pins its handoff template; a resume worker never does", () => {
+  const workflow = sampleWorkflow("review-loop");
+  const writer = workflow.stages.document!.workers.writer!;
+  if (writer.kind !== "agent") throw new Error("writer is an agent");
+  const fresh = { ...workflow, stages: { document: { ...workflow.stages.document!,
+    workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "fresh" as const, prompts: { ...writer.prompts, handoff: "review-loop/handoff.md" } } } } } };
+  const pinned = { ...prompts, "review-loop/handoff.md": "b".repeat(64) };
+  const selected = select({ workflow: fresh, prompts: pinned });
+  const resumed = select({ prompts: pinned });
+  expect([selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.handoff : "refused",
+    resumed.ok && resumed.value.worker.kind === "agent" ? resumed.value.worker.handoff : "refused"])
+    .toEqual([{ path: "review-loop/handoff.md", digest: "b".repeat(64) }, null]);
+});
+
+test("a created artifact's schema resolves the named schemas it references", () => {
+  expect(selectResolvedSchema({ plan: "plan_body", note: "list(text)" }, { plan_body: { title: "text", steps: "step_list" }, step_list: "list(text)" }))
+    .toEqual({ plan: { title: "text", steps: "list(text)" }, note: "list(text)" });
+});
+
+test("every is whole seconds, minutes or hours, and nothing else", () => {
+  expect(["30s", "5m", "2h", "0s", "5", "1.5m", "10d"].map(selectEverySeconds)).toEqual([30, 300, 7200, null, null, null, null]);
 });
 
 test("a session key is one path segment: resume per unit and worker, fresh per action", () => {
@@ -27,6 +51,14 @@ test("a session key is one path segment: resume per unit and worker, fresh per a
   expect({ has_slash: [resume, fresh].some((key) => key.includes("/")), differs: resume !== fresh,
     same_for_revise: selectSessionKey({ ...action, mode: { kind: "revise" } }, "other", "resume") === resume })
     .toEqual({ has_slash: false, differs: true, same_for_revise: true });
+});
+
+test("a session key round-trips to the unit and worker, or the action, it names", () => {
+  const nested: RunWorkerAction = { ...action, unit: "run-1/work/a" };
+  expect([selectSessionKeyParts(selectSessionKey(nested, "run-1/work/a:worker:Initial:Missing", "resume")),
+    selectSessionKeyParts(selectSessionKey(nested, "run-1/work/a:worker:Initial:Missing", "fresh")), selectSessionKeyParts("a/b")])
+    .toEqual([{ session: "resume", unit: "run-1/work/a", worker: "writer" },
+      { session: "fresh", action_id: "run-1/work/a:worker:Initial:Missing" }, null]);
 });
 
 test("an unpinned prompt or an undeclared worker refuses the instruction", () => {
@@ -48,14 +80,14 @@ test("the decoder accepts what commit writes and refuses anything else", () => {
 
 test("a start resolves to started, refused with its code, or retry", () => {
   expect([
-    resolveStart({ kind: "acknowledged", value: { kind: "kbbl_session", session_id: "sid" } }),
-    resolveStart({ kind: "acknowledged", value: { kind: "kbbl_session" } }),
-    resolveStart({ kind: "permanently_rejected", code: "provider_not_ported", detail: "later" }),
+    resolveStart({ kind: "acknowledged", value: { handle: { kind: "kbbl_session", session_id: "sid" }, publication_secret_hash: "h" } }),
+    resolveStart({ kind: "acknowledged", value: { handle: { kind: "kbbl_session" }, publication_secret_hash: "h" } }),
+    resolveStart({ kind: "permanently_rejected", code: "start_rejected", detail: "later" }),
     resolveStart({ kind: "uncertain", detail: "timeout" }),
   ]).toEqual([
-    { kind: "started", handle: { kind: "kbbl_session", session_id: "sid" } },
+    { kind: "started", started: { handle: { kind: "kbbl_session", session_id: "sid" }, publication_secret_hash: "h" } },
     { kind: "retry", detail: "provider acknowledged a start without a valid handle" },
-    { kind: "refused", failure: { kind: "failed", code: "provider_not_ported", detail: "later" } },
+    { kind: "refused", failure: { kind: "failed", code: "start_rejected", detail: "later" } },
     { kind: "retry", detail: "timeout" },
   ]);
 });

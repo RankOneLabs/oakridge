@@ -24,6 +24,10 @@ export type RuntimeValue = unknown;
 export type CoreEvent = Event;
 export type DefinitionBundleSource = Workflow;
 export type WantedActions = readonly Action[];
+/** An operator review awaiting a decision: the revision it decides on, and its prompt rendered with its resolved inputs. */
+export interface ReviewPrompt { readonly target: string; readonly prompt: string }
+/** Review key -> its awaiting prompt, on the unit. */
+export type ReviewPrompts = { readonly [review: string]: ReviewPrompt };
 /** Prompt path -> content digest, pinned when the definition is compiled (D9). */
 export type PinnedPrompts = { readonly [path: string]: string };
 /** What an ingress id resolved to. A rejection is stored so a replay returns it again. */

@@ -145,6 +145,53 @@ export async function listRunAttempts(db: Kysely<DB>, run_id: string): Promise<r
   });
 }
 
+/** An agent attempt whose task is about to be rendered, and what it reads beside its instruction. */
+export interface SessionHistoryQuery {
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly worker: string;
+  readonly attempt: { readonly action_id: string; readonly seq: number };
+  /** The artifacts the worker creates. */
+  readonly artifacts: readonly string[];
+}
+/**
+ * The state an agent's task is rendered from beside its instruction, as it
+ * stood when commit opened the attempt: only rows written by then are read,
+ * so a task rendered again after a crash is the same text.
+ */
+export interface SessionHistory {
+  /** The worker's attempts on this unit opened before this one, oldest first. */
+  readonly earlier_attempts: readonly AttemptRecord[];
+  /** The latest revision of each created artifact, as of the attempt opening. */
+  readonly latest: readonly ArtifactRevisionRecord[];
+}
+export async function readSessionHistory(db: Kysely<DB>, query: SessionHistoryQuery): Promise<SessionHistory | null> {
+  return consistent(db, async (trx) => {
+    const current = await trx.selectFrom("authority.attempt").select("created_at").where("run_id", "=", query.run_id)
+      .where("action_id", "=", query.attempt.action_id).where("seq", "=", query.attempt.seq).executeTakeFirst();
+    if (!current) return null;
+    const opened_at = current.created_at;
+    const [earlier_attempts, latest] = await Promise.all([
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id)
+        .where("worker", "=", query.worker).where("created_at", "<=", opened_at)
+        .where((eb) => eb.not(eb.and([eb("action_id", "=", query.attempt.action_id), eb("seq", "=", query.attempt.seq)])))
+        .orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
+      query.artifacts.length === 0 ? [] : trx.selectFrom("authority.artifact_revision").selectAll().distinctOn("artifact")
+        .where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id).where("artifact", "=", anyOf(query.artifacts))
+        .where("created_at", "<=", opened_at).orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
+    ]);
+    return { earlier_attempts: earlier_attempts as AttemptRecord[], latest: latest as ArtifactRevisionRecord[] };
+  });
+}
+
+/** The latest revision of one artifact, which a code worker's output names as its predecessor; null before the first. */
+export async function readLatestRevisionId(db: Reader, input: UnitLocation & { readonly artifact: string }): Promise<string | null> {
+  const latest = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", input.run_id)
+    .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact)
+    .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+  return latest?.id ?? null;
+}
+
 /** The running attempt a publication secret speaks for, and the kbbl session it was minted for. */
 export interface SessionAttempt { readonly action_id: string; readonly seq: number; readonly unit_id: string; readonly kbbl_session_id: string }
 /**

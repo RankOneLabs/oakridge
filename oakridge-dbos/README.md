@@ -23,15 +23,57 @@ that carry every run without knowing its stages:
   wake re-reads the run's owed intents and starts a carrier for each; exits when
   the run is done or cancelled and nothing is owed. Every committed event wakes it.
 - `oakridgeEffectWorkflow` (id = `<intent id>@<application version>`) — carries
-  one effect instruction: claims a start try, calls the provider, reports
-  `WorkerStarted` and `WorkerEnded` to commit with the executor as writer, and
-  settles the intent `stopped` or `failed`.
-- `oakridgeCleanupWorkflow` (id = `<intent id>@<application version>`) — carries
-  one requested stop until the provider positively acknowledges it.
+  one effect instruction, reports what happened to commit with the executor as
+  writer, and settles the intent `stopped` or `failed`:
+  - an **agent** worker runs in a kbbl resumable session. The carrier renders
+    the attempt's task once, in a checkpointed step, claims a start try,
+    ensures the session (`PUT /sessions/resumable/:key`, with the revive header
+    so an ended session comes back), reports `WorkerStarted` with the session
+    and the hash of its publication secret, then delivers the task as the
+    session's input keyed by the action id. Re-sending that input returns its
+    receipt, which is how the turn is observed; its end is `WorkerEnded`.
+  - a **code** worker runs a registered operation (`src/operations/`): the
+    carrier reports `WorkerStarted`, runs it (transient failures retried within
+    the start budget), publishes its value as `RevisionPublished` by the action,
+    and reports `WorkerEnded`. With `every` it repeats while the intent is live,
+    each run a later attempt of the same action.
+- `oakridgeCleanupWorkflow` (id = `<intent id>:stop@<application version>`) —
+  carries one requested stop until kbbl confirms it (`DELETE /sessions/:sid`).
+  A fresh session is fenced; a resumed one is closed, so a later attempt can
+  revive it. A stop commit requested ends the attempt as `attempt_stopped`.
 
-The production provider refuses every start with `provider_not_ported` until
-the executor's agent and code worker paths land (rescue spec R3), so an attempt
-fails visibly and its worker shows as stalled in the inspect view.
+An operator review awaiting a decision has its prompt rendered by commit,
+from the inputs `step` resolved for it, and kept on its unit
+(`unit.review_prompts`), so the inbox reads it without calling the core.
+
+### Agent sessions
+
+`session: resume` (the default) keys the kbbl session on unit and worker, so a
+revise continues the conversation; `session: fresh` keys it on the action, and
+a fresh attempt with history starts with a handoff block (the latest revision
+of each artifact it creates, the review form's feedback that caused it, how
+the previous attempt ended), worded by `prompts.handoff` when the worker
+declares one. Discussion threads are for people and never reach an agent. A session starts with a preamble that carries its publication
+block: each created artifact's endpoint and schema, and the session's secret.
+Everything in the preamble is fixed for the session, so every attempt's ensure
+sends the same spec. The secret is an HMAC of the session key under
+`OAKRIDGE_PUBLICATION_KEY`; only its hash is stored, on the attempt.
+
+Configuration (read by `src/main.ts`):
+
+- `KBBL_BASE_URL` — the kbbl agents run in. Unset, every agent attempt fails
+  with `kbbl_unconfigured`.
+- `OAKRIDGE_PUBLICATION_KEY` — required with `KBBL_BASE_URL`. Changing it
+  invalidates the secrets of sessions already started.
+- `OAKRIDGE_PUBLIC_URL` — this backend as agents reach it (default
+  `http://<host>:<port>`). Agents publish to it directly: the kbbl proxy does
+  not forward their secret.
+- `OAKRIDGE_AGENT_WORKDIR` — where a `workspace: none` session runs (default
+  `<tmpdir>/oakridge-agent-workdir`). kbbl cuts every session a worktree, so
+  boot makes it an empty repository with one commit. A `repository(...)` workspace runs in a
+  worktree of the prepared repository, branched from its prepared head.
+- `OAKRIDGE_GITHUB_TOKEN` — the reader `pull_request.observe` uses. Unset, it
+  fails with `discovery_unsupported`.
 
 Steps are IO boundaries (one DB write, one core call, one provider call). A
 crash mid-step resumes at that step on the next process of the same application
@@ -100,6 +142,12 @@ bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
 bun run --filter oakridge-dbos test:unit
 bun run --filter oakridge-dbos test:integration
 ```
+
+`tests/executor-e2e.test.ts` and `tests/executor-restart.test.ts` drive the
+samples end to end against a stub kbbl (`tests/stub-kbbl.ts`). Sample A against
+a real kbbl and agent is opt-in, since it spends agent turns: start a kbbl of
+your own on another port and data directory, then run
+`OAKRIDGE_REAL_KBBL_URL=http://127.0.0.1:<port> bun test --timeout=1500000 tests/real-agent.smoke.test.ts`.
 
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
 with create/drop database permission; each test file creates and drops its own

@@ -62,6 +62,11 @@ CREATE TABLE authority.unit (
   pool text,
   input jsonb NOT NULL,
   status jsonb NOT NULL,
+  -- Each operator review awaiting a decision, by review key: the revision it
+  -- decides on and its prompt rendered with its resolved inputs. Commit
+  -- rewrites it on every event that steps the unit; nothing is asked or stored
+  -- beyond what state already derives.
+  review_prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   PRIMARY KEY (run_id, id),
   -- run_id is load-bearing: roots in different runs both have a NULL parent
@@ -95,6 +100,9 @@ CREATE TABLE authority.attempt (
   ended_at bigint,
   kbbl_session_id text,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
+  -- When commit opened the attempt; the handoff a fresh session starts with
+  -- reads only discussion written before it, so a re-rendered handoff is the same text.
+  created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (action_id, seq),
   UNIQUE (run_id, action_id, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
@@ -265,6 +273,7 @@ COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.run.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';
+COMMENT ON COLUMN authority.unit.review_prompts IS '@type {ReviewPrompts}';
 COMMENT ON COLUMN authority.attempt.mode IS '@type {Mode}';
 COMMENT ON COLUMN authority.attempt.cause IS '@type {Cause}';
 COMMENT ON COLUMN authority.attempt.status IS '@type {AttemptStatus}';

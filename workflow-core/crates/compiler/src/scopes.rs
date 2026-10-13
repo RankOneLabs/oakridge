@@ -573,10 +573,24 @@ fn checked_record(fields: &[CheckedNamedExpression]) -> TypeExpression {
             .collect(),
     )
 }
+/// A periodic code worker's interval: a positive whole number of seconds, minutes or hours (`30s`, `5m`, `1h`).
+fn is_duration(text: &str) -> bool {
+    let Some(count) = text.strip_suffix(['s', 'm', 'h']) else {
+        return false;
+    };
+    !count.is_empty() && !count.starts_with('0') && count.bytes().all(|byte| byte.is_ascii_digit())
+}
+/// The engine inputs a mode prompt may read beside the declared inputs.
+const MODE_ENGINE_INPUTS: &[&str] = &["previous", "feedback", "subject"];
+/// The prompt key whose template words the handoff a `session: fresh` attempt
+/// starts with, and the engine-built fields it may read beside the declared inputs.
+const HANDOFF_PROMPT: &str = "handoff";
+const HANDOFF_ENGINE_INPUTS: &[&str] = &["artifacts", "feedback", "previous_attempt"];
 fn prompt(
     path: &str,
     inputs: &BTreeMap<String, String>,
     prompts: &BTreeMap<String, String>,
+    engine_inputs: &[&str],
 ) -> Result<(), DomainError> {
     if path.trim().is_empty() {
         return Err(reject(7, "review or agent prompt missing"));
@@ -586,7 +600,7 @@ fn prompt(
         .ok_or_else(|| reject(10, format!("prompt file {path} missing")))?;
     for part in body.split("{{").skip(1) {
         let key = part.split("}}").next().unwrap_or("").trim();
-        if !inputs.contains_key(key) && !["previous", "feedback", "subject"].contains(&key) {
+        if !inputs.contains_key(key) && !engine_inputs.contains(&key) {
             return Err(reject(
                 10,
                 format!("prompt {path} names undeclared input {key}"),
@@ -642,6 +656,7 @@ fn compile_stage(
                 creates,
                 reviews,
                 workspace,
+                session,
                 ..
             } => {
                 let input_fields = fields(inputs, &base)?;
@@ -681,8 +696,23 @@ fn compile_stage(
                 if needs_revise && !modes.contains_key("revise") {
                     return Err(reject(7, format!("agent {worker_key} lacks revise prompt")));
                 }
-                for path in modes.values() {
-                    prompt(path, inputs, prompts)?;
+                if modes.contains_key(HANDOFF_PROMPT)
+                    && !matches!(session, Some(SessionMode::Fresh))
+                {
+                    return Err(reject(
+                        7,
+                        format!(
+                            "agent {worker_key} has a handoff prompt but its session is not fresh"
+                        ),
+                    ));
+                }
+                for (mode, path) in modes {
+                    let engine_inputs = if mode == HANDOFF_PROMPT {
+                        HANDOFF_ENGINE_INPUTS
+                    } else {
+                        MODE_ENGINE_INPUTS
+                    };
+                    prompt(path, inputs, prompts, engine_inputs)?;
                 }
                 (input_fields, workspace)
             }
@@ -690,8 +720,16 @@ fn compile_stage(
                 operation,
                 inputs,
                 creates,
-                ..
+                every,
             } => {
+                if let Some(interval) = every {
+                    if !is_duration(interval) {
+                        return Err(reject(
+                            12,
+                            format!("code worker {worker_key} every {interval} is not a duration"),
+                        ));
+                    }
+                }
                 if creates.len() != 1 {
                     return Err(reject(
                         12,
@@ -749,14 +787,20 @@ fn compile_stage(
             checks,
         });
     }
+    let mut reviews = Vec::new();
     for (review_key, review) in &stage.reviews {
         if !stage.artifacts.contains_key(&review.of.0) {
             return Err(reject(8, format!("review {review_key} artifact absent")));
         }
-        let _ = fields(&review.inputs, &base).map_err(|mut error| {
+        let review_inputs = fields(&review.inputs, &base).map_err(|mut error| {
             error.entity_id = "check 8".into();
             error
         })?;
+        reviews.push(CheckedReview {
+            key: SymbolKey::from(review_key.as_str()),
+            of: review.of.clone(),
+            inputs: review_inputs,
+        });
         let review_prompt = review
             .prompt
             .as_deref()
@@ -764,7 +808,7 @@ fn compile_stage(
         if review_prompt.trim().is_empty() {
             return Err(reject(7, format!("review {review_key} lacks prompt")));
         }
-        prompt(review_prompt, &review.inputs, prompts)?;
+        prompt(review_prompt, &review.inputs, prompts, MODE_ENGINE_INPUTS)?;
         for decision in review.decisions.values() {
             let target = decision.on.as_ref().unwrap_or(&review.of);
             let Some(owner) = owners.get(&target.0) else {
@@ -804,6 +848,7 @@ fn compile_stage(
             done_when,
             outcome,
             validations,
+            reviews,
         },
         outcome_type,
     ))

@@ -37,7 +37,7 @@ test("an empty database migrates, boots, pins, launches and carries the first wo
       attention: inspect?.attention.map((item) => [item.worker, item.detail]), writers: writers.map((row) => row.writer.kind) })
       .toEqual({ empty: { definitions: { items: [], next_cursor: null }, runs: { items: [], next_cursor: null } }, pinned: 201, launched: 201,
         replay: [200, true], conflict: 409, invalid: [400, 400, 400, 400], runs: [created.run_id],
-        attention: [["writer", "the executor's agent and code worker paths are not ported to effect instructions yet"]], writers: ["operator", "executor"] });
+        attention: [["writer", "agent workers need KBBL_BASE_URL and OAKRIDGE_PUBLICATION_KEY"]], writers: ["operator", "executor"] });
   } finally {
     if (composition) await composition.close();
     await db.destroy();

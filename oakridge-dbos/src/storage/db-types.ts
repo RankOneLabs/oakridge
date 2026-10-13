@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, Cause, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, RuntimeValue, SessionPolicy, UnitStatus, WantedActions, Writer } from "./json-column-types";
+import type { AttemptStatus, Cause, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RuntimeValue, SessionPolicy, UnitStatus, WantedActions, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "stop_requested" | "stopped";
@@ -33,6 +33,7 @@ export interface AuthorityAttempt {
    * @type {Cause}
    */
   cause: JsonColumn<Cause>;
+  created_at: Generated<Timestamp>;
   ended_at: number | null;
   kbbl_session_id: string | null;
   /**
@@ -241,6 +242,10 @@ export interface AuthorityUnit {
   input: JsonColumn<RuntimeValue>;
   parent_id: string | null;
   pool: string | null;
+  /**
+   * @type {ReviewPrompts}
+   */
+  review_prompts: Generated<JsonColumn<ReviewPrompts>>;
   run_id: string;
   stage: string | null;
   /**

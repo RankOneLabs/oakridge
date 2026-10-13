@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { INPUT_CONTRACTS, PROVIDER_CATALOG, PROVIDER_ERROR_CODES, PROVIDER_KINDS } from "../src/effects/provider-catalog";
+import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
+import { OPERATION_REGISTRY } from "../src/operations/registry";
 
 interface LiteralViolation { readonly file: string; readonly line: number; readonly value: string }
-const CATALOG_EXEMPTION = "provider-catalog.ts";
+/** The two declaration modules: the provider catalog and the operation registry. */
+const DECLARATIONS = new Set(["effects/provider-catalog.ts", "operations/registry.ts"]);
+/** The executor's own code; an operation's module may name its reader's error kinds (`auth`), which are not attempt codes. */
+const SCANNED = ["effects", "workflows", "adapters"];
 const restricted = new Set<string>([
-  ...Object.values(PROVIDER_KINDS), ...Object.values(INPUT_CONTRACTS), ...Object.values(PROVIDER_ERROR_CODES),
-  ...PROVIDER_CATALOG.operations.map((operation) => operation.key),
+  ...Object.values(INPUT_CONTRACTS), ...Object.values(PROVIDER_ERROR_CODES), ...OPERATION_REGISTRY.map((operation) => operation.key),
 ]);
 
 function literalViolations(file: string, source: string): LiteralViolation[] {
@@ -23,19 +26,17 @@ function literalViolations(file: string, source: string): LiteralViolation[] {
   return violations;
 }
 
-test("provider, operation and error literals live only in the named catalog module", async () => {
-  const root = resolve(import.meta.dir, "../src/effects");
+test("handle, operation and failure-code literals live only in their declaration modules", async () => {
+  const root = resolve(import.meta.dir, "../src");
   const violations: LiteralViolation[] = [];
-  for await (const file of new Bun.Glob("**/*.ts").scan({ cwd: root })) {
-    if (file === CATALOG_EXEMPTION) continue;
+  for (const directory of SCANNED) for await (const file of new Bun.Glob(`${directory}/**/*.ts`).scan({ cwd: root })) {
+    if (DECLARATIONS.has(file)) continue;
     violations.push(...literalViolations(file, await Bun.file(resolve(root, file)).text()));
   }
   expect(violations).toEqual([]);
 });
 
-test("the lint detects each forbidden literal class and leaves ProviderRequest discriminants typed", async () => {
-  const examples = [PROVIDER_KINDS.repository, INPUT_CONTRACTS.session, PROVIDER_CATALOG.operations[0]!.key, PROVIDER_ERROR_CODES.head_changed];
-  expect(examples.map((value) => literalViolations("other.ts", `const value = ${JSON.stringify(value)};`).length)).toEqual([1, 1, 1, 1]);
-  const provider = await Bun.file(resolve(import.meta.dir, "../src/effects/provider.ts")).text();
-  expect(literalViolations("provider.ts", provider)).toEqual([]);
+test("the lint detects each forbidden literal class", () => {
+  const examples = [INPUT_CONTRACTS.session, OPERATION_REGISTRY[0].key, PROVIDER_ERROR_CODES.head_changed];
+  expect(examples.map((value) => literalViolations("other.ts", `const value = ${JSON.stringify(value)};`).length)).toEqual([1, 1, 1]);
 });
