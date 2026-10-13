@@ -116,3 +116,42 @@ fn host_depth_limit_rejects_workflow_before_compilation() {
     assert_eq!(error.kind, DomainErrorKind::ResourceLimit);
     assert_eq!(&*error.detail, "max_depth exceeded");
 }
+
+/// The development workflow (rescue spec R5) compiles as derived from
+/// `workflow-config/development.yaml`, with the prompts it names and the
+/// operation registry the run layer exports.
+#[test]
+fn the_development_workflow_compiles_against_its_prompts_and_the_registry() {
+    let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../workflow-config");
+    let read = |path: std::path::PathBuf| std::fs::read_to_string(&path).expect("readable");
+    let operations: Vec<CodeOperation> =
+        serde_json::from_str(&read(config.join("operation-registry.json"))).unwrap();
+    let prompts: BTreeMap<String, String> = std::fs::read_dir(config.join("prompts/development"))
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (format!("development/{name}"), read(path))
+        })
+        .collect();
+    let source =
+        decode_workflow(include_str!("../../../fixtures/bundles/development.json").as_bytes())
+            .unwrap();
+    let program = compile_workflow(&source, &operations, &prompts).unwrap();
+    let stages: Vec<_> = program
+        .stages
+        .iter()
+        .map(|stage| stage.key.0.as_str())
+        .collect();
+    assert_eq!(
+        stages,
+        [
+            "analysis",
+            "brief",
+            "cohort",
+            "integration",
+            "planning",
+            "prepare"
+        ]
+    );
+}
