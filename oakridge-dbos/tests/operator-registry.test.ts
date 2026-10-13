@@ -27,9 +27,8 @@ function inlineReadModel(node: ts.ObjectLiteralExpression): string | null {
   return readModelFields.find(([, required]) => required.every((field) => fields.has(field)))?.[0] ?? null;
 }
 
-// The operator contract now carries the v2 run, definition and collaboration
-// views; R4 rebuilds these seven read models in the v1 shape (rescue spec §2.3).
-test.skip("all seven operator read models are reachable in generated PWA contracts", () => {
+// R4 rebuilt these seven read models in the v1 shape, renamed per rescue spec §2.3.
+test("all seven operator read models are reachable in generated PWA contracts", () => {
   const contracts = readFileSync(resolve(import.meta.dir, "../../kbbl/core/pwa/oakridge/operator-contracts.ts"), "utf8");
   for (const name of ["RunSummary", "RunDetail", "RunSessionAttempt", "SessionLocation", "ArtifactDetail", "Decision", "ReviewInbox"])
     expect(contracts).toMatch(new RegExp(`export (?:interface|type) Operator${name}\\b`));

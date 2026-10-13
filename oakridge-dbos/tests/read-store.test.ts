@@ -2,9 +2,9 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { openDatabase } from "../src/storage/database";
-import { listDefinitions, listReviewCandidates, listRunAttempts, listRuns, listRunsNeedingWork, readArtifactHistory, readDefinition,
-  readEventStreamBoundary, readHistory, readOperatorEventsAfter, readPinnedDefinition, readRunInspect, readRunStanding, readRunView, readUnit,
-  readUnitDiagnostics, selectDefinitionGraph } from "../src/storage/read-store";
+import { selectDefinitionGraph } from "../src/projections/definition-view";
+import { listDefinitions, listLiveRuns, listRuns, listRunsNeedingWork, readDefinition, readEventStreamBoundary, readHistory, readOperatorEventsAfter,
+  readPinnedDefinition, readRun, readRunInspect, readRunStanding, readUnitDiagnostics } from "../src/storage/read-store";
 import { setRunArchived } from "../src/storage/registry-store";
 import { readScopedSnapshot } from "../src/storage/snapshot-store";
 import { actionOf, executor, launch, openAuthority, pinSample, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
@@ -44,24 +44,25 @@ test("a scoped snapshot carries retry events for the units it holds", async () =
   expect(snapshot?.retry_events.map(([unit, worker]) => [unit, worker])).toEqual([[unitOf(run_id, "document"), "writer"]]);
 });
 
-test("the run view lists the run's units; listings page newest first and split archived runs", async () => {
+test("a run reads with its units and pinned definition; listings page newest first and split archived runs", async () => {
   const older = await launched();
   const newer = await launched();
   await setRunArchived(authority.db, older, true);
-  const view = await readRunView(authority.db, newer);
+  const read = await readRun(authority.db, newer);
   const active = await listRuns(authority.db, { after: null, limit: 1, is_archived: false });
   const archived = await listRuns(authority.db, { after: null, limit: 100, is_archived: true });
-  expect({ units: view?.units.map((unit) => unit.unit_key), digest: view?.definition_digest, first: active.items[0]?.run_id,
-    has_next: active.next_cursor !== null, archived: archived.items.map((run) => run.run_id) })
+  expect({ units: read?.units.map((unit) => unit.unit_key), digest: read?.definition.digest, first: active.items[0]?.run.id,
+    has_next: active.next !== null, archived: archived.items.map((item) => item.run.id) })
     .toEqual({ units: ["$root", "document"], digest, first: newer, has_next: true, archived: [older] });
 });
 
-test("inspect names a worker stalled on a failed attempt", async () => {
+test("the inspect read holds the run and its events newest first; a missing run reads as null", async () => {
   const run_id = await launched();
   const action = await writerAction(run_id);
   await submitter(authority)({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "it broke" } }, writer: executor(action) });
   const inspect = await readRunInspect(authority.db, run_id);
-  expect(inspect?.attention.map((item) => [item.worker, item.detail])).toEqual([["writer", "it broke"]]);
+  expect({ run: inspect?.run.run.id, events: inspect?.events.map((event) => [event.payload.kind, event.writer.kind]), missing: await readRunInspect(authority.db, "run-missing") })
+    .toEqual({ run: run_id, events: [["worker_ended", "executor"], ["launched", "operator"]], missing: null });
 });
 
 test("run standing and needs-work follow status and owed intents", async () => {
@@ -76,13 +77,13 @@ test("run standing and needs-work follow status and owed intents", async () => {
     standing: standing?.status.kind }).toEqual({ before: [true, true], after: [true, false], standing: "cancelled" });
 });
 
-test("definitions list, read with their graph, and resolve from a run", async () => {
+test("definitions list, read, and resolve from a run with their checked program", async () => {
   const run_id = await launched();
   const page = await listDefinitions(authority.db, { after: null, limit: 10, is_archived: false });
   const detail = await readDefinition(authority.db, bundle_id);
   const pinned = await readPinnedDefinition(authority.db, run_id);
-  expect({ listed: page.items.map((item) => item.bundle_id), graph: detail?.graph.nodes.map((node) => node.key), pinned: pinned?.digest })
-    .toEqual({ listed: [bundle_id], graph: ["document"], pinned: digest });
+  expect({ listed: page.items.map((item) => item.bundle_id), detail: detail?.source.workflow, pinned: [pinned?.digest, pinned?.checked_program.digest] })
+    .toEqual({ listed: [bundle_id], detail: "review_loop", pinned: [digest, digest] });
 });
 
 test("the operator stream returns events after a cursor and holds back transactions still open", async () => {
@@ -116,40 +117,35 @@ async function reviewedRun(): Promise<{ readonly run_id: RunId; readonly unit: s
   return { run_id, unit, action };
 }
 
-test("a unit reads with its dependencies, attempts, revisions, decisions and intents; a missing unit reads as null", async () => {
-  const { run_id, unit } = await reviewedRun();
-  const read = await readUnit(authority.db, { run_id, unit_id: unit });
-  expect({ unit: String(read?.unit.id), depends_on: read?.depends_on, attempts: read?.attempts.map((attempt) => [attempt.worker, attempt.mode.kind, attempt.status.kind]),
-    revisions: read?.revisions.map((revision) => String(revision.id)), decisions: read?.decisions.map((decision) => decision.decision),
-    intents: read?.intents.map((intent) => intent.status), missing: await readUnit(authority.db, { run_id, unit_id: `${run_id}/missing` }) })
-    .toEqual({ unit, depends_on: [], attempts: [["writer", "initial", "succeeded"], ["critic", "review", "pending"], ["writer", "revise", "pending"]],
-      revisions: [`${unit}:draft:1`], decisions: ["request_changes"], intents: ["pending", "pending", "pending"], missing: null });
-});
-
-test("a run's attempts read with the standing of the intent that carries each", async () => {
-  const { run_id, action } = await reviewedRun();
-  const attempts = await listRunAttempts(authority.db, run_id);
-  const writer = attempts.find((item) => item.attempt.action_id === action);
-  expect({ count: attempts.length, every_carried: attempts.every((item) => item.intent !== null), writer: writer?.intent?.status })
-    .toEqual({ count: 3, every_carried: true, writer: "pending" });
-});
-
-test("an artifact's history holds its revisions oldest first and the decisions on them", async () => {
+test("a run reads everything recorded against it, in the order commit wrote it", async () => {
   const { run_id, unit, action } = await reviewedRun();
-  await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "second" },
-    by: `${unit}:writer:Revise:ChangesRequested`, predecessor: `${unit}:draft:1` }, writer: executor(action) });
-  const history = await readArtifactHistory(authority.db, { run_id, unit_id: unit, artifact: "draft" });
-  const none = await readArtifactHistory(authority.db, { run_id, unit_id: unit, artifact: "critique" });
-  expect({ revisions: history?.revisions.map((revision) => revision.body), decisions: history?.decisions.map((decision) => String(decision.target_revision_id)),
-    none, missing: await readArtifactHistory(authority.db, { run_id, unit_id: `${run_id}/missing`, artifact: "draft" }) })
-    .toEqual({ revisions: [{ title: "T", body: "first" }], decisions: [`${unit}:draft:1`], none: { revisions: [], decisions: [] }, missing: null });
+  const read = await readRun(authority.db, run_id);
+  expect({ units: read?.units.map((item) => [item.unit_key, item.review_prompts]), dependencies: read?.dependencies,
+    attempts: read?.attempts.map((attempt) => [attempt.worker, attempt.mode.kind, attempt.status.kind]),
+    revisions: read?.revisions.map((revision) => String(revision.id)), decisions: read?.decisions.map((decision) => decision.decision),
+    wanted: read?.wanted.map((item) => [item.unit_id, item.actions.map((wanted) => wanted.kind === "run_worker" ? wanted.worker : wanted.kind)]),
+    writer: read?.attempts[0]?.action_id === action, missing: await readRun(authority.db, "run-missing") })
+    .toEqual({ units: [["$root", {}], ["document", {}]], dependencies: [],
+      attempts: [["writer", "initial", "succeeded"], ["critic", "review", "pending"], ["writer", "revise", "pending"]],
+      revisions: [`${unit}:draft:1`], decisions: ["request_changes"], wanted: [[unit, ["writer"]]], writer: true, missing: null });
+});
+
+test("a run reads the retries the operator requested", async () => {
+  const run_id = await launched();
+  const action = await writerAction(run_id);
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "failed" } }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
+  const read = await readRun(authority.db, run_id);
+  expect(read?.retries.map((retry) => [retry.unit_id, retry.worker])).toEqual([[unitOf(run_id, "document"), "writer"]]);
 });
 
 test("history pages newest first with each event's writer and wanted actions; a unit's history omits run-level events", async () => {
   const { run_id, unit } = await reviewedRun();
-  const first = await readHistory(authority.db, { run_id, unit_id: null, after: null, limit: 3 });
-  const rest = await readHistory(authority.db, { run_id, unit_id: null, after: first.next, limit: 10 });
-  const unit_only = await readHistory(authority.db, { run_id, unit_id: unit, after: null, limit: 10 });
+  const first = (await readHistory(authority.db, { run_id, unit_id: null, after: null, limit: 3 }))!;
+  const rest = (await readHistory(authority.db, { run_id, unit_id: null, after: first.next, limit: 10 }))!;
+  const unit_only = (await readHistory(authority.db, { run_id, unit_id: unit, after: null, limit: 10 }))!;
+  expect(await readHistory(authority.db, { run_id, unit_id: `${run_id}/missing`, after: null, limit: 10 })).toBeNull();
   const kinds = [...first.items, ...rest.items].map((item) => item.event.payload.kind);
   expect({ kinds, last_page: rest.next, launch_writer: rest.items.at(-1)?.event.writer.kind,
     decided_wanted: first.items[0]?.wanted.flatMap((item) => item.actions.map((wanted) => wanted.kind === "run_worker" ? wanted.mode.kind : wanted.kind)),
@@ -158,25 +154,30 @@ test("history pages newest first with each event's writer and wanted actions; a 
       decided_wanted: ["revise"], unit_kinds: ["operator_decided", "worker_ended", "revision_published", "worker_started"] });
 });
 
-test("a unit's diagnostics hold its intents' bookkeeping and the events step refused", async () => {
+test("a unit's diagnostics hold its attempts, its intents' bookkeeping and the events step refused", async () => {
   const { run_id, unit } = await reviewedRun();
   const diagnostics = await readUnitDiagnostics(authority.db, { run_id, unit_id: unit });
-  expect({ intents: diagnostics?.intents.length, rejected: diagnostics?.rejected.map((receipt) => receipt.result.kind),
+  expect({ attempts: diagnostics?.attempts.length, intents: diagnostics?.intents.length, rejected: diagnostics?.rejected.map((receipt) => receipt.result.kind),
     missing: await readUnitDiagnostics(authority.db, { run_id, unit_id: `${run_id}/missing` }) })
-    .toEqual({ intents: 3, rejected: ["rejected"], missing: null });
+    .toEqual({ attempts: 3, intents: 3, rejected: ["rejected"], missing: null });
 });
 
-test("review candidates are active reviewed units of live runs, with each artifact's latest revision and its decisions", async () => {
-  const { run_id, unit } = await reviewedRun();
-  const cancelled = await reviewedRun();
-  await submitter(authority)({ run_id: cancelled.run_id, event: { kind: "cancel_requested" } });
-  const page = await listReviewCandidates(authority.db, { run_id, after: null, limit: 10 });
-  const gone = await listReviewCandidates(authority.db, { run_id: cancelled.run_id, after: null, limit: 10 });
-  const all = await listReviewCandidates(authority.db, { run_id: null, after: null, limit: 1 });
-  expect({ units: page.items.map((item) => String(item.unit.id)), latest: page.items[0]?.latest.map((revision) => String(revision.id)),
-    decisions: page.items[0]?.decisions.map((decision) => decision.decision), has_reviews: Object.keys(page.items[0]?.workflow.stages.document?.reviews ?? {}),
-    gone: gone.items, pages: all.next !== null })
-    .toEqual({ units: [unit], latest: [`${unit}:draft:1`], decisions: ["request_changes"], has_reviews: ["editor"], gone: [], pages: true });
+test("live runs are launched, unfinished and unarchived, paged by id", async () => {
+  const live = await launched();
+  const cancelled = await launched();
+  const archived = await launched();
+  await submitter(authority)({ run_id: cancelled, event: { kind: "cancel_requested" } });
+  await setRunArchived(authority.db, archived, true);
+  const ids: string[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const listed = await listLiveRuns(authority.db, { after, limit: 1 });
+    ids.push(...listed.items.map((item) => item.run.id));
+    if (listed.next === null) break;
+    after = listed.next;
+  }
+  expect({ live: ids.includes(live), cancelled: ids.includes(cancelled), archived: ids.includes(archived), sorted: [...ids].sort().join() === ids.join() })
+    .toEqual({ live: true, cancelled: false, archived: false, sorted: true });
 });
 
 test("a definition graph lists each declared unit with its dependencies as edges", () => {

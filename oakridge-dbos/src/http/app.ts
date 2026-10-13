@@ -4,10 +4,10 @@ import type { CoreClient } from "../core-client/client";
 import { compileWorkflow } from "../core-client/client";
 import type { Workflow } from "../core-client/core-types";
 import type { RunId } from "../domain/primitives";
+import { selectDefinitionSummary } from "../projections/definition-view";
 import { redactingReadResponses } from "../projections/serialization-view";
 import { readWorkflowPrompts } from "../runtime/prompt-files";
 import type { Database } from "../storage/database";
-import { listDefinitions, listRuns, readDefinition, readPinnedDefinition, readRunInspect, readRunView } from "../storage/read-store";
 import { pinDefinition, setDefinitionArchived, setRunArchived } from "../storage/registry-store";
 import { deleteRun } from "../storage/run-deletion";
 import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
@@ -18,6 +18,7 @@ import { errorResponse, fault, InvalidPayloadError, MalformedRequestError, Missi
 import { installEventStream } from "./events";
 import { installIngress } from "./ingress";
 import { installProjectApi } from "./projects";
+import { installReadModels } from "./read-models";
 
 export interface DefinitionApiDependencies { readonly db: Database; readonly core: CoreClient; readonly wake: (run_id: RunId) => void }
 export interface HttpAppDependencies extends DefinitionApiDependencies {
@@ -29,32 +30,6 @@ export interface HttpAppDependencies extends DefinitionApiDependencies {
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
   onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) });
 
-const DEFAULT_PAGE_LIMIT = 100;
-function pageLimit(raw: string | undefined): number | MalformedRequestError {
-  const limit = raw === undefined ? DEFAULT_PAGE_LIMIT : Number(raw);
-  return Number.isSafeInteger(limit) && limit >= 1 && limit <= DEFAULT_PAGE_LIMIT ? limit : new MalformedRequestError("invalid page limit");
-}
-interface RunPageCursor { readonly created_at: string; readonly id: string }
-function runCursor(raw: string | undefined): RunPageCursor | null | MalformedRequestError {
-  if (raw === undefined) return null;
-  try {
-    const value: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!value || typeof value !== "object" || !("created_at" in value) || typeof value.created_at !== "string"
-      || !Number.isFinite(Date.parse(value.created_at)) || !("id" in value) || typeof value.id !== "string" || !value.id)
-      throw new Error("bad cursor");
-    return { created_at: value.created_at, id: value.id };
-  } catch { return new MalformedRequestError("invalid runs cursor"); }
-}
-function definitionCursor(raw: string | undefined): string | null | MalformedRequestError {
-  if (raw === undefined) return null;
-  const value = Buffer.from(raw, "base64url").toString("utf8");
-  return /^[0-9a-f-]{36}$/i.test(value) ? value : new MalformedRequestError("invalid definitions cursor");
-}
-/** `?archived=true` lists archived items; without it, the active ones. */
-function archivedQuery(raw: string | undefined): boolean | MalformedRequestError {
-  if (raw === undefined || raw === "false") return false;
-  return raw === "true" ? true : new MalformedRequestError("archived must be true or false");
-}
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 
 const isPromptPath = (value: unknown): boolean => typeof value === "string";
@@ -97,38 +72,15 @@ export function createHttpApp(deps: HttpAppDependencies): Hono {
 export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies): void {
   installProjectApi(app, deps);
   installIngress(app, deps);
+  installReadModels(app, deps);
   const collaboration = collaborationHandlers({ db: deps.db });
   app.get("/api/runs/:run_id/units/:unit_id/revisions/:revision_id/threads", collaboration.getThreads);
   app.post("/api/runs/:run_id/units/:unit_id/revisions/:revision_id/threads", collaboration.createThread);
   app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/messages", collaboration.addMessage);
   app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/review-items", collaboration.addReviewItem);
 
-  app.get("/api/runs", async (c) => { try {
-    const limit = pageLimit(c.req.query("limit"));
-    if (limit instanceof MalformedRequestError) return errorResponse(limit);
-    const after = runCursor(c.req.query("cursor"));
-    if (after instanceof MalformedRequestError) return errorResponse(after);
-    const is_archived = archivedQuery(c.req.query("archived"));
-    if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
-    return Response.json(await listRuns(deps.db, { after, limit, is_archived }));
-  } catch (cause) { return fault(cause); } });
-
-  app.get("/api/definitions", async (c) => { try {
-    const limit = pageLimit(c.req.query("limit"));
-    if (limit instanceof MalformedRequestError) return errorResponse(limit);
-    const after = definitionCursor(c.req.query("cursor"));
-    if (after instanceof MalformedRequestError) return errorResponse(after);
-    const is_archived = archivedQuery(c.req.query("archived"));
-    if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
-    return Response.json(await listDefinitions(deps.db, { after, limit, is_archived }));
-  } catch (cause) { return fault(cause); } });
   app.get("/api/prompts", () => { try { return Response.json(listPromptCatalog()); }
     catch (cause) { return fault(cause); } });
-  app.get("/api/definitions/:bundle_id", async (c) => { try {
-    const definition = await readDefinition(deps.db, c.req.param("bundle_id"));
-    return definition ? c.json(definition) : errorResponse(new MissingEntityError("definition not found"));
-  } catch (cause) { return fault(cause); } });
-
   /** Compile a workflow against its prompt files; `pin` stores it. */
   const compile = (is_pinned: boolean) => async (c: Context) => {
     const source = await requestBody(c.req.raw);
@@ -142,8 +94,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!compiled.ok) return errorResponse(new InvalidPayloadError(compiled.error.detail));
       if (!is_pinned) return Response.json(compiled.value);
       const pinned = await pinDefinition(deps.db, { source, compiled: compiled.value, prompts: prompts.value });
-      return Response.json({ bundle_id: pinned.bundle.id, digest: pinned.bundle.digest, source: pinned.bundle.source, archived_at: pinned.bundle.archived_at },
-        { status: pinned.kind === "pinned" ? 201 : 200 });
+      return Response.json(selectDefinitionSummary({ bundle_id: pinned.bundle.id, digest: pinned.bundle.digest, version: pinned.bundle.version,
+        source: pinned.bundle.source, archived_at: pinned.bundle.archived_at }), { status: pinned.kind === "pinned" ? 201 : 200 });
     } catch (cause) { return fault(cause); }
   };
   app.post("/api/definitions/compile", compile(false));
@@ -161,18 +113,4 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
   app.post("/api/runs/:run_id/unarchive", archiveRun(false));
   app.post("/api/definitions/:bundle_id/archive", archiveDefinition(true));
   app.post("/api/definitions/:bundle_id/unarchive", archiveDefinition(false));
-
-  app.get("/api/runs/:run_id", async (c) => { try {
-    const view = await readRunView(deps.db, c.req.param("run_id"));
-    return view ? c.json(view) : errorResponse(new MissingEntityError("run not found"));
-  } catch (cause) { return fault(cause); } });
-
-  app.get("/api/runs/:run_id/inspect", async (c) => { try {
-    const inspect = await readRunInspect(deps.db, c.req.param("run_id"));
-    return inspect ? c.json(inspect) : errorResponse(new MissingEntityError("run not found"));
-  } catch (cause) { return fault(cause); } });
-  app.get("/api/runs/:run_id/definition", async (c) => { try {
-    const pinned = await readPinnedDefinition(deps.db, c.req.param("run_id"));
-    return pinned ? c.json(pinned) : errorResponse(new MissingEntityError("run not found"));
-  } catch (cause) { return fault(cause); } });
 }

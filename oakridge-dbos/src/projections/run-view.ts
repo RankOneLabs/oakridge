@@ -1,68 +1,96 @@
-import type { Action, ScopedSnapshot, UnitStatus } from "../core-client/core-types";
+import type { UnitStatus, Writer } from "../core-client/core-types";
 import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
+import type { RunRead } from "../storage/read-store";
+import type { EventRecord } from "../storage/schema-records";
+import { selectRunAttention, type UnitAttention } from "./attention";
+import { selectUnitLabel } from "./unit-label";
+import { isAsk, isTerminalStatus, selectAttemptViews, selectAvailableDecisions, selectUnitView, type AttemptView, type ArtifactView, type DecisionDefinition, type DecisionSubmit, type UnitView } from "./unit-view";
 
-export interface RunUnitSummary { readonly unit_id: UnitId; readonly unit_key: string; readonly stage: string | null; readonly status: UnitStatus; readonly version: number }
+/** v1 `RunScopeSummary`. */
+export interface RunUnitSummary {
+  readonly unit_id: UnitId;
+  readonly unit_key: string;
+  readonly label: string;
+  readonly version: number;
+  readonly is_terminal: boolean;
+  /** Keys of the decisions that ask for the operator now (not the run's cancel). */
+  readonly available_decisions: readonly string[];
+  readonly stage: string | null;
+  readonly status: UnitStatus;
+}
 export interface RunSummary {
   readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string; readonly version: number;
-  readonly status: UnitStatus; readonly created_at: Date; readonly archived_at: Date | null;
+  readonly created_at: Date; readonly archived_at: Date | null;
+  /** The root unit's status. */
+  readonly status: UnitStatus;
 }
-export interface RunView extends RunSummary { readonly units: readonly RunUnitSummary[] }
+export interface RunView extends RunSummary {
+  readonly cursor: readonly { readonly unit_id: UnitId; readonly version: number }[];
+  readonly units: readonly RunUnitSummary[];
+}
 /** The run endpoint's complete projection. */
 export type RunDetail = RunView;
 export interface RunPage { readonly items: readonly RunView[]; readonly next_cursor: string | null }
 
-export interface InspectAttention {
-  readonly kind: "stalled_worker";
-  readonly unit_id: string;
-  readonly worker: string;
-  readonly action_id: string;
-  readonly detail: string;
+const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
+  attention.find((item) => item.unit_id === unit_id) ?? { unit_id, awaiting: [], stalled: [], blocked: null };
+
+export function selectRunView(read: RunRead): RunView {
+  const attention = selectRunAttention(read);
+  return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
+    version: read.run.version, created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,
+    cursor: read.units.map((unit) => ({ unit_id: unit.id, version: unit.version })),
+    units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: unit.unit_key, label: selectUnitLabel(unit, read.definition.workflow),
+      version: unit.version, is_terminal: isTerminalStatus(unit.status), stage: unit.stage, status: unit.status,
+      available_decisions: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).map((item) => item.definition).filter(isAsk)
+        .map((decision) => decision.key) })) };
 }
+
+/** One unit of a run, or null when the run has no such unit. */
+export function selectRunUnitView(read: RunRead, unit_id: string): UnitView | null {
+  const unit = read.units.find((candidate) => candidate.id === unit_id);
+  return unit ? selectUnitView(read, unit, attentionOf(selectRunAttention(read), unit.id)) : null;
+}
+
+// ------------------------------------------------------------- inspect -----
+
+/** What needs attention in the minimal inspect view, with what the decide and retry buttons submit. */
+export type InspectAttention =
+  | { readonly kind: "stalled_worker"; readonly unit_id: string; readonly worker: string; readonly action_id: string; readonly detail: string;
+    readonly decisions: readonly DecisionDefinition[] }
+  | { readonly kind: "awaiting_review"; readonly unit_id: string; readonly review: string; readonly target: string;
+    readonly decisions: readonly DecisionDefinition[] };
+export interface InspectEvent { readonly id: string; readonly unit_id: string | null; readonly kind: string; readonly writer: Writer; readonly created_at: Date }
+/**
+ * The minimal inspect view (part 1 §10.4): the run's units and statuses, what
+ * needs attention, artifacts and attempts (with their kbbl sessions), and the
+ * writer of each recent event.
+ */
 export interface RunInspectView {
   readonly run_id: string;
   readonly status: UnitStatus;
-  readonly units: readonly { readonly id: string; readonly stage: string | null; readonly status: UnitStatus }[];
+  readonly units: readonly { readonly id: string; readonly unit_key: string; readonly label: string; readonly stage: string | null; readonly status: UnitStatus }[];
   readonly attention: readonly InspectAttention[];
-}
-export interface LatestWanted { readonly unit_id: string; readonly actions: readonly Action[] }
-
-/** A failed attempt leaves its unit active. Surface it when no retry is
- * pending and the latest wanted set has no work for that worker. */
-export function selectInspectAttention(snapshot: ScopedSnapshot, wanted: readonly LatestWanted[]): readonly InspectAttention[] {
-  const actions = new Map(wanted.map((item) => [item.unit_id, item.actions]));
-  const retry_event = new Map<string, string>();
-  for (const retry of snapshot.retry_events) {
-    const [unit_id, worker, event_id] = retry;
-    if (typeof unit_id === "string" && typeof worker === "string" && typeof event_id === "string")
-      retry_event.set(`${unit_id}:${worker}`, event_id);
-  }
-  const latest = new Map<string, ScopedSnapshot["attempts"][number]>();
-  for (const attempt of snapshot.attempts) {
-    const key = `${attempt.unit}:${attempt.worker}`;
-    const previous = latest.get(key);
-    const wanted_retry = retry_event.get(key);
-    const is_current_retry = attempt.cause.kind === "retry" && attempt.cause.event === wanted_retry;
-    const was_current_retry = previous?.cause.kind === "retry" && previous.cause.event === wanted_retry;
-    const is_open = attempt.status.kind === "pending" || attempt.status.kind === "running";
-    const was_open = previous?.status.kind === "pending" || previous?.status.kind === "running";
-    if (!previous || is_current_retry && !was_current_retry || is_current_retry === was_current_retry
-      && (is_open && !was_open || is_open === was_open && attempt.seq >= previous.seq))
-      latest.set(key, attempt);
-  }
-  const attention: InspectAttention[] = [];
-  for (const attempt of latest.values()) {
-    if (attempt.status.kind !== "failed") continue;
-    const unit = snapshot.units.find((item) => item.id === attempt.unit);
-    if (!unit || unit.status.kind !== "active") continue;
-    if ((actions.get(attempt.unit) ?? []).some((action) => action.kind === "run_worker" && action.worker === attempt.worker)) continue;
-    attention.push({ kind: "stalled_worker", unit_id: attempt.unit, worker: attempt.worker,
-      action_id: attempt.action_id, detail: attempt.status.detail });
-  }
-  return attention.sort((left, right) => left.unit_id.localeCompare(right.unit_id) || left.worker.localeCompare(right.worker));
+  readonly artifacts: readonly ArtifactView[];
+  readonly attempts: readonly AttemptView[];
+  /** Newest first. */
+  readonly events: readonly InspectEvent[];
 }
 
-export function selectRunInspect(snapshot: ScopedSnapshot, wanted: readonly LatestWanted[]): RunInspectView {
-  return { run_id: snapshot.run.id, status: snapshot.run.status,
-    units: snapshot.units.map((unit) => ({ id: unit.id, stage: unit.stage ?? null, status: unit.status })),
-    attention: selectInspectAttention(snapshot, wanted) };
+export function selectRunInspect(read: RunRead, events: readonly EventRecord[]): RunInspectView {
+  const attention = selectRunAttention(read);
+  const views = read.units.map((unit) => selectUnitView(read, unit, attentionOf(attention, unit.id)));
+  const decisionsOf = (unit_id: string, submits: (submit: DecisionSubmit) => boolean): readonly DecisionDefinition[] =>
+    views.find((view) => view.unit_id === unit_id)?.decisions.filter((decision) => submits(decision.submit)) ?? [];
+  return { run_id: read.run.id, status: read.run.status,
+    units: views.map((view) => ({ id: view.unit_id, unit_key: view.unit_key, label: view.label, stage: view.stage, status: view.state })),
+    attention: attention.flatMap((unit): InspectAttention[] => [
+      ...unit.stalled.map((stalled): InspectAttention => ({ kind: "stalled_worker", unit_id: stalled.unit_id, worker: stalled.worker,
+        action_id: stalled.action_id, detail: stalled.detail, decisions: decisionsOf(stalled.unit_id, (submit) => submit.kind === "retry" && submit.worker === stalled.worker) })),
+      ...unit.awaiting.map((awaiting): InspectAttention => ({ kind: "awaiting_review", unit_id: awaiting.unit_id, review: awaiting.review,
+        target: awaiting.target, decisions: decisionsOf(awaiting.unit_id, (submit) => submit.kind === "review" && submit.review === awaiting.review) })),
+    ]),
+    artifacts: views.flatMap((view) => view.artifacts),
+    attempts: selectAttemptViews(read.attempts),
+    events: events.map((event) => ({ id: event.id, unit_id: event.unit_id, kind: event.payload.kind, writer: event.writer, created_at: event.created_at })) };
 }

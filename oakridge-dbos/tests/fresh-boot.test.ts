@@ -34,7 +34,7 @@ test("an empty database migrates, boots, pins, launches and carries the first wo
     const runs = await (await app.request("/api/runs")).json() as { readonly items: readonly { readonly run_id: string }[] };
     expect({ empty, pinned: pinned.status, launched: launched.status, replay: [replay.status, (await replay.json() as { event_id: string }).event_id === created.event_id],
       conflict: conflict.status, invalid, runs: runs.items.map((run) => run.run_id),
-      attention: inspect?.attention.map((item) => [item.worker, item.detail]), writers: writers.map((row) => row.writer.kind) })
+      attention: inspect?.attention.flatMap((item) => item.kind === "stalled_worker" ? [[item.worker, item.detail]] : []), writers: writers.map((row) => row.writer.kind) })
       .toEqual({ empty: { definitions: { items: [], next_cursor: null }, runs: { items: [], next_cursor: null } }, pinned: 201, launched: 201,
         replay: [200, true], conflict: 409, invalid: [400, 400, 400, 400], runs: [created.run_id],
         attention: [["writer", "agent workers need KBBL_BASE_URL and OAKRIDGE_PUBLICATION_KEY"]], writers: ["operator", "executor"] });
