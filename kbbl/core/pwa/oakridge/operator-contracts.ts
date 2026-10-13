@@ -515,7 +515,9 @@ export type OperatorWorkerInstruction =
   | { readonly kind: "agent"; readonly session_key: string; readonly session: OperatorSessionMode; readonly prompt: OperatorPinnedPrompt;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
       readonly handoff: OperatorPinnedPrompt | null;
-      readonly runtime: OperatorWorkerRuntime | null; readonly creates: readonly OperatorCreatedArtifact[] }
+      readonly runtime: OperatorWorkerRuntime | null; readonly creates: readonly OperatorCreatedArtifact[];
+      /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
+      readonly schemas: { readonly [name: string]: OperatorTypeExpression } }
   | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
       /** The one artifact a code worker creates, which its output is published as. */
       readonly artifact: string };

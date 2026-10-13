@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { KbblClient, REVIVE_HEADER, silentDurationMs } from "../src/adapters/kbbl";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
-import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
+import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
 import type { ExternalHandle } from "../src/effects/provider";
 import { sampleWorkflow } from "./authority-fixture";
 
@@ -110,9 +110,23 @@ test("silence is measured from kbbl's last activity, and absent activity is not 
 
 // ---------------------------------------------------------- provider -------
 
-test("an agent attempt without kbbl configured is refused with a typed code", async () => {
-  const started = await createAgentProvider({ kbbl: null, publication_key: null, publish_base_url: "", default_workdir: "/" }).start(instructionFor());
-  expect(started.kind === "permanently_rejected" ? started.code : started.kind).toBe("kbbl_unconfigured");
+test("without kbbl an agent start is refused with a typed code, and a stop stays owed rather than claimed", async () => {
+  const provider = createAgentProvider({ kbbl: null, publication_key: null, publish_base_url: "", default_workdir: "/" });
+  const started = await provider.start(instructionFor());
+  expect([started.kind === "permanently_rejected" ? started.code : started.kind, (await provider.stop(instructionFor(), session)).kind])
+    .toEqual(["kbbl_unconfigured", "transiently_unavailable"]);
+});
+
+test("a delivery key is fixed-length however long the action id", () => {
+  const long = instructionFor({ resolved: { action_id: `run-1/${"k".repeat(400)}:writer:Initial:Missing` } });
+  expect([selectDeliveryKey(long).length, selectDeliveryKey(instructionFor()) === selectDeliveryKey(long)]).toEqual([64, false]);
+});
+
+test("a failed activity read counts toward unavailability instead of reading as running", async () => {
+  const { fetch } = recording((call) => call.method === "GET" ? new Response("down", { status: 503 })
+    : Response.json({ accepted: true, status: "prompting" }));
+  const observed = await createAgentProvider(config(fetch)).observe(instructionFor(), { task: "t" }, session);
+  expect(observed.kind).toBe("transiently_unavailable");
 });
 
 test("every ensure of a session sends the same spec, carrying the session's secret and its hash on the attempt", async () => {
@@ -148,7 +162,7 @@ test("observing delivers the task under the action's key and reads its turn", as
     delivered: calls.filter((call) => call.method === "PUT").map((call) => [call.url, call.body]) }).toEqual({
     results: [{ kind: "running" }, { kind: "terminal", result: { kind: "succeeded" } },
       { kind: "terminal", result: { kind: "failed", code: "session_failed", detail: "the task's turn in kbbl session sid-1 ended failed" } }],
-    delivered: Array.from({ length: 3 }, () => ["http://kbbl.test/sessions/resumable/sid-1/input/action-initial", { text: "write it" }]) });
+    delivered: Array.from({ length: 3 }, () => [`http://kbbl.test/sessions/resumable/sid-1/input/${selectDeliveryKey(instructionFor())}`, { text: "write it" }]) });
 });
 
 test("a session closed under a running task fails the attempt as closed", async () => {

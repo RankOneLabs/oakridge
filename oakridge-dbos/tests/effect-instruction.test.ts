@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_DEADLINE_MS, selectEffectInstruction, selectEverySeconds,
-  selectResolvedSchema, selectSessionKey, selectSessionKeyParts, type RunWorkerAction } from "../src/domain/effect-instruction";
+  selectReferencedSchemas, selectResolvedSchema, selectSessionKey, selectSessionKeyParts, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
 
@@ -17,7 +17,7 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
   expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1", action, attempt: { action_id: resolved.action_id, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
       prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, runtime: null,
-      creates: [{ key: "draft", schema: { title: "text", body: "text" } }] },
+      creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },
     inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: null, subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
 });
@@ -39,6 +39,12 @@ test("a fresh worker pins its handoff template; a resume worker never does", () 
 test("a created artifact's schema resolves the named schemas it references", () => {
   expect(selectResolvedSchema({ plan: "plan_body", note: "list(text)" }, { plan_body: { title: "text", steps: "step_list" }, step_list: "list(text)" }))
     .toEqual({ plan: { title: "text", steps: "list(text)" }, note: "list(text)" });
+});
+
+test("the named schemas an artifact references inside compound types are carried, transitively", () => {
+  expect(selectReferencedSchemas([{ items: "list(item)", note: "optional(text)" }],
+    { item: { name: "text", tags: "list(tag)" }, tag: "ident", unused: "text" }))
+    .toEqual({ item: { name: "text", tags: "list(tag)" }, tag: "ident" });
 });
 
 test("every is whole seconds, minutes or hours, and nothing else", () => {

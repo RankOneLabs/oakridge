@@ -19,6 +19,9 @@ export function derivePublicationSecret(publication_key: string, session_key: st
 }
 /** The form an attempt stores and publish compares: sha256 hex of the secret. */
 export const publicationSecretHash = (secret: string): string => createHash("sha256").update(secret).digest("hex");
+/** The kbbl delivery key of an attempt's task: fixed-length, since an action id grows with its unit's path and kbbl caps keys at 300. */
+export const selectDeliveryKey = (instruction: EffectInstruction): string =>
+  createHash("sha256").update(`${instruction.attempt.action_id}\0${instruction.attempt.seq}`).digest("hex");
 
 /** The repository a `repository(<expr>)` workspace names, as `repository.prepare` publishes it. */
 export interface AgentWorkspace { readonly repository_path: string; readonly head: string }
@@ -64,7 +67,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
   const name = `${instruction.action.worker} · ${unitPath(instruction)}`;
   return {
     initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: instruction.action.unit, worker: instruction.action.worker,
-      creates: worker.creates, publish_base_url: config.publish_base_url, secret }),
+      creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret }),
     workdir: workspace?.repository_path ?? config.default_workdir,
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.runtime ? { runtime: worker.runtime.harness, model: worker.runtime.model } : {}),
@@ -104,8 +107,11 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
   /** Bounds a turn that never makes progress: kbbl truthfully reports it as unfinished forever. */
   async function silence(kbbl: KbblClient, sid: string, signal: AbortSignal | undefined): Promise<ProviderResult<TerminalObservation>> {
     const reading = await kbbl.read(sid, signal);
-    const session: KbblSession | null = reading.kind === "acknowledged" ? reading.value.session : null;
-    const last = session?.last_activity_ts ? Date.parse(session.last_activity_ts) : Number.NaN;
+    // A failed read is not activity: it counts toward the observation's unavailable bound.
+    if (reading.kind !== "acknowledged") return reading.kind === "permanently_rejected"
+      ? { kind: "transiently_unavailable", detail: reading.detail } : reading;
+    const session: KbblSession = reading.value.session;
+    const last = session.last_activity_ts ? Date.parse(session.last_activity_ts) : Number.NaN;
     const silent_for = Number.isNaN(last) ? null : Math.max(0, now() - last);
     if (silent_for !== null && silent_for > max_silent_ms) return failed(PROVIDER_ERROR_CODES.executor_silent_timeout,
       `kbbl session ${sid} reported no activity for ${Math.round(silent_for / 1000)}s (limit ${Math.round(max_silent_ms / 1000)}s)`);
@@ -129,7 +135,7 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
     async observe(instruction, material, handle, options = {}) {
       const kbbl = config.kbbl;
       if (!kbbl) return unconfigured;
-      const receipt = await kbbl.deliver(handle.session_id, instruction.attempt.action_id, material.task, options.signal);
+      const receipt = await kbbl.deliver(handle.session_id, selectDeliveryKey(instruction), material.task, options.signal);
       if (receipt.kind === "permanently_rejected") return ended(kbbl, handle.session_id, receipt.detail, options.signal);
       if (receipt.kind !== "acknowledged") return receipt;
       switch (receipt.value.status) {
@@ -142,12 +148,14 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
 
     async stop(instruction, handle, options = {}) {
       const kbbl = config.kbbl;
-      if (!kbbl || instruction.worker.kind !== "agent") return { kind: "acknowledged", value: { stopped: true } };
+      if (instruction.worker.kind !== "agent") return { kind: "acknowledged", value: { stopped: true } };
+      // Without kbbl a session started earlier cannot be proven stopped: the stop stays owed until kbbl is back.
+      if (!kbbl || config.publication_key === null) return { kind: "transiently_unavailable", detail: unconfigured.detail };
       let session_id = handle?.session_id ?? null;
       if (session_id === null) {
         // A start whose answer was lost may still have opened the session: the same ensure finds it.
         const started = await ensure(instruction, options.signal);
-        if (!started) return { kind: "acknowledged", value: { stopped: true } };
+        if (!started) return { kind: "transiently_unavailable", detail: unconfigured.detail };
         if (started.ensured.kind !== "acknowledged") return { kind: "uncertain", detail: `cannot find the session to stop: ${started.ensured.detail}` };
         session_id = started.ensured.value.session.sid;
       }

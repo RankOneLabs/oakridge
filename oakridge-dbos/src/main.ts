@@ -14,12 +14,16 @@ const port = Number(process.env.PORT ?? 8790);
 // Agents publish to this backend directly (the kbbl proxy does not forward
 // their secret), so their preamble names it as they reach it.
 const publish_base_url = optional("OAKRIDGE_PUBLIC_URL") ?? `http://${host}:${port}`;
-// A `workspace: none` session still needs a repository to run in; an empty one keeps it out of any checkout.
-const workdir = await prepareAgentWorkdir(resolve(optional("OAKRIDGE_AGENT_WORKDIR") ?? `${tmpdir()}/oakridge-agent-workdir`), new BunGitCommandRunner());
-if (!workdir.ok) throw new Error(`agent workdir: ${workdir.error.detail}`);
-const agent_workdir = workdir.value;
 const kbbl_base_url = optional("KBBL_BASE_URL");
 if (!kbbl_base_url) console.warn("KBBL_BASE_URL is unset: agent workers cannot run, and each agent attempt fails with kbbl_unconfigured");
+// A `workspace: none` session still needs a repository to run in; an empty one keeps it out of any checkout.
+// Only agents use it, so a deployment without kbbl never prepares it.
+let agent_workdir = resolve(optional("OAKRIDGE_AGENT_WORKDIR") ?? `${tmpdir()}/oakridge-agent-workdir`);
+if (kbbl_base_url) {
+  const workdir = await prepareAgentWorkdir(agent_workdir, new BunGitCommandRunner());
+  if (!workdir.ok) throw new Error(`agent workdir: ${workdir.error.detail}`);
+  agent_workdir = workdir.value;
+}
 const github_token = optional("OAKRIDGE_GITHUB_TOKEN");
 if (!github_token) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: pull_request.observe fails with discovery_unsupported");
 // The DBOS application version is the engine digest unless DBOS_APPLICATION_VERSION

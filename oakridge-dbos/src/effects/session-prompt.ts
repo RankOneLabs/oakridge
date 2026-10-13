@@ -1,4 +1,4 @@
-import type { AttemptStatus, Mode } from "../core-client/core-types";
+import type { AttemptStatus, Mode, TypeExpression } from "../core-client/core-types";
 import type { CreatedArtifact, EffectInstruction } from "../domain/effect-instruction";
 import { renderTemplate, renderValue } from "../domain/prompt-template";
 
@@ -144,6 +144,8 @@ export interface SessionPreambleInput {
   readonly unit: string;
   readonly worker: string;
   readonly creates: readonly CreatedArtifact[];
+  /** The named schemas the artifacts' schemas reference. */
+  readonly schemas: { readonly [name: string]: TypeExpression };
   /** The backend's base URL as agents reach it: they publish to it directly, not through the kbbl proxy. */
   readonly publish_base_url: string;
   readonly secret: string;
@@ -176,6 +178,8 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
       `  endpoint: ${selectPublishEndpoint(input, artifact.key)}`,
       `  schema: ${JSON.stringify(artifact.schema)}`,
     ]),
+    ...(Object.keys(input.schemas).length === 0 ? [] : ["", "Named schemas these refer to:",
+      ...Object.entries(input.schemas).map(([name, schema]) => `- \`${name}\`: ${JSON.stringify(schema)}`)]),
     "",
     `Your publication secret: ${input.secret}`,
     "It is valid only while one of your tasks is running. Do not write it into any file or artifact.",

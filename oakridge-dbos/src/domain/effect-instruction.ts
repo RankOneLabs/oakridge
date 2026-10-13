@@ -17,7 +17,9 @@ export type WorkerInstruction =
   | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
       readonly handoff: PinnedPrompt | null;
-      readonly runtime: WorkerRuntime | null; readonly creates: readonly CreatedArtifact[] }
+      readonly runtime: WorkerRuntime | null; readonly creates: readonly CreatedArtifact[];
+      /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
+      readonly schemas: { readonly [name: string]: TypeExpression } }
   | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
       /** The one artifact a code worker creates, which its output is published as. */
       readonly artifact: string };
@@ -100,6 +102,23 @@ export function selectResolvedSchema(schema: TypeExpression, schemas: { readonly
   return Object.fromEntries(Object.entries(schema).map(([field, type]) => [field, selectResolvedSchema(type, schemas, depth + 1)]));
 }
 
+/** The named schemas a set of types references anywhere, including inside compound types, transitively. */
+export function selectReferencedSchemas(types: readonly TypeExpression[], schemas: { readonly [name: string]: TypeExpression }):
+  { readonly [name: string]: TypeExpression } {
+  const referenced: { [name: string]: TypeExpression } = {};
+  const visit = (type: TypeExpression): void => {
+    if (typeof type !== "string") { Object.values(type).forEach(visit); return; }
+    for (const name of type.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) {
+      const named = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
+      if (named === undefined || Object.hasOwn(referenced, name)) continue;
+      referenced[name] = named;
+      visit(named);
+    }
+  };
+  types.forEach(visit);
+  return Object.fromEntries(Object.entries(referenced).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 /** Build the instruction for a newly wanted RunWorker from its pinned definition and resolved inputs. */
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
@@ -127,7 +146,8 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
-      prompt: prompt.value, handoff: handoff?.value ?? null, runtime: declared.runtime ?? null, creates };
+      prompt: prompt.value, handoff: handoff?.value ?? null, runtime: declared.runtime ?? null, creates,
+      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
   } else {
     const artifact = declared.creates[0];
     if (declared.creates.length !== 1 || artifact === undefined)
@@ -187,7 +207,8 @@ function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   return isString(value.session_key) && (value.session === "resume" || value.session === "fresh")
     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
     && (runtime === null || isFields(runtime) && isString(runtime.harness) && isString(runtime.model))
-    && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact);
+    && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)
+    && isFields(value.schemas) && Object.values(value.schemas).every((schema) => isTypeExpression(schema));
 }
 function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && "feedback" in value && isNullableRevision(value.subject);

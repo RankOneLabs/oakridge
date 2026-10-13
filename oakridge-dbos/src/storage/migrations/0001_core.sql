@@ -100,9 +100,11 @@ CREATE TABLE authority.attempt (
   ended_at bigint,
   kbbl_session_id text,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
-  -- When commit opened the attempt; the handoff a fresh session starts with
-  -- reads only discussion written before it, so a re-rendered handoff is the same text.
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- When commit opened the attempt, stamped after it took the run row lock
+  -- (clock_timestamp, not the transaction's start), so it orders after every
+  -- revision committed before it: a task renders only revisions written by
+  -- then, and a re-rendered task is the same text.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (action_id, seq),
   UNIQUE (run_id, action_id, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
@@ -117,7 +119,9 @@ CREATE TABLE authority.artifact_revision (
   by_id text NOT NULL,
   predecessor_id text,
   subject text,
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Stamped at insert, under the run row lock, so revisions and attempts of a
+  -- run order by when commit wrote them (see attempt.created_at).
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE (run_id, id),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, predecessor_id) REFERENCES authority.artifact_revision(run_id, id)

@@ -70,7 +70,9 @@ test("the task context takes each artifact's latest revision and the most recent
 test("the preamble's publication block names each artifact's endpoint and schema and the session's secret", () => {
   const instruction = writerInstruction({ action: revise });
   const creates = instruction.worker.kind === "agent" ? instruction.worker.creates : [];
-  const preamble = renderSessionPreamble({ run_id: "run-1", unit, worker: "writer", creates, publish_base_url: "http://oakridge.test/", secret: "s3cret" });
+  const preamble = renderSessionPreamble({ run_id: "run-1", unit, worker: "writer", creates, schemas: { tag: "ident" },
+    publish_base_url: "http://oakridge.test/", secret: "s3cret" });
   expect([preamble.includes("endpoint: http://oakridge.test/api/runs/run-1/units/run-1%2Fdocument/artifacts/draft"),
-    preamble.includes('schema: {"title":"text","body":"text"}'), preamble.includes("Your publication secret: s3cret")]).toEqual([true, true, true]);
+    preamble.includes('schema: {"title":"text","body":"text"}'), preamble.includes('- `tag`: "ident"'), preamble.includes("Your publication secret: s3cret")])
+    .toEqual([true, true, true, true]);
 });

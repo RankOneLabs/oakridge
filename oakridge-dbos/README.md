@@ -63,8 +63,13 @@ Configuration (read by `src/main.ts`):
 
 - `KBBL_BASE_URL` — the kbbl agents run in. Unset, every agent attempt fails
   with `kbbl_unconfigured`.
-- `OAKRIDGE_PUBLICATION_KEY` — required with `KBBL_BASE_URL`. Changing it
-  invalidates the secrets of sessions already started.
+- `OAKRIDGE_PUBLICATION_KEY` — required with `KBBL_BASE_URL`. Rotating it
+  does not revoke secrets already handed out: publish resolves a secret by the
+  hash its attempt stored, so an old secret keeps working while its session
+  has a running attempt. To revoke, stop the sessions. Rotating it also breaks
+  every `resume` session started under the old key, whose next ensure sends a
+  different preamble that kbbl refuses as a spec conflict, so rotate only when
+  no run has agent sessions in progress.
 - `OAKRIDGE_PUBLIC_URL` — this backend as agents reach it (default
   `http://<host>:<port>`). Agents publish to it directly: the kbbl proxy does
   not forward their secret.
