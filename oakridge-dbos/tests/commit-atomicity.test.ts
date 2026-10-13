@@ -34,7 +34,7 @@ test("a fault on the receipt rolls back the event, writer, delta, intent stops a
   const before = await counts(run_id);
   // The receipt follows the event, delta, intents and wanted log; failing it proves they share its transaction.
   await sql`CREATE FUNCTION authority.fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt fault'; END $$`.execute(authority.db);
-  await sql`CREATE TRIGGER fail_receipt BEFORE INSERT ON authority.ingress_receipt FOR EACH ROW WHEN (NEW.ingress_id = 'faulted-cancel') EXECUTE FUNCTION authority.fail_receipt()`.execute(authority.db);
+  await sql`CREATE TRIGGER fail_receipt BEFORE INSERT ON authority.ingress_receipt FOR EACH ROW WHEN (NEW.ingress_id = 'operator:faulted-cancel') EXECUTE FUNCTION authority.fail_receipt()`.execute(authority.db);
   try {
     const result = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, { run_id, ingress_id: "faulted-cancel",
       event: { kind: "cancel_requested" }, writer: { kind: "operator", subject: "credential:test" } });
@@ -72,7 +72,7 @@ test("a fault mid-write rolls back the event, writer, delta and receipt together
   const [after, events, receipt] = await Promise.all([
     authority.db.selectFrom("authority.run").select(["version", "status"]).where("id", "=", run_id).executeTakeFirstOrThrow(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
-    authority.db.selectFrom("authority.ingress_receipt").select("id").where("ingress_id", "=", ingress_id).execute(),
+    authority.db.selectFrom("authority.ingress_receipt").select("id").where("ingress_id", "=", `operator:${ingress_id}`).execute(),
   ]);
   expect({ is_error: !result.ok, version: after.version, status: after.status.kind, events: events.length, receipts: receipt.length })
     .toEqual({ is_error: true, version: before.version, status: "active", events: 1, receipts: 0 });

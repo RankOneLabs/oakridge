@@ -512,8 +512,15 @@ mod v2_step {
         match previous.status {
             AttemptStatus::Pending | AttemptStatus::Running => None,
             AttemptStatus::Failed { .. } => {
+                // A retry authorizes exactly one attempt: once any attempt of
+                // this worker carries it, a later failure waits for a new one.
                 let retry = latest_retry(state, unit, worker)?;
-                if matches!(previous.cause, Cause::Retry { ref event } if event == retry) {
+                let is_consumed = state.attempts.iter().any(|attempt| {
+                    attempt.unit == *unit
+                        && attempt.worker == *worker
+                        && matches!(&attempt.cause, Cause::Retry { event } if event == retry)
+                });
+                if is_consumed {
                     None
                 } else {
                     Some(Some(Cause::Retry {
@@ -1431,11 +1438,13 @@ mod v2_step {
                         return Ok(());
                     }
                 }
+                // The ingress id is the retry's identity in every later
+                // snapshot, so a retry without one could not be recognized.
                 let id = EventId(
                     incoming
                         .ingress_id
                         .clone()
-                        .unwrap_or_else(|| format!("retry:{}", state.retry_events.len() + 1)),
+                        .ok_or_else(|| rejected("a retry request needs an ingress id"))?,
                 );
                 state.retry_events.push((unit.clone(), worker.clone(), id));
             }
@@ -2737,6 +2746,96 @@ mod v2_step {
             .unwrap();
             assert_eq!(retry.wanted[0].1.len(), 1);
             assert_eq!(retry.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn a_failed_retry_attempt_waits_for_another_retry() {
+            let program = program();
+            let mut state = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let fail = |state: &StepSnapshot, action: ActionKey, id: &str| {
+                let started = step(
+                    &program,
+                    state,
+                    &incoming(
+                        Event::WorkerStarted {
+                            action: action.clone(),
+                            kbbl_session_id: None,
+                        },
+                        &format!("{id}:start"),
+                    ),
+                )
+                .unwrap();
+                step(
+                    &program,
+                    &started.snapshot,
+                    &incoming(
+                        Event::WorkerEnded {
+                            action,
+                            result: WorkerResult::Failed {
+                                code: "oops".into(),
+                                detail: "failed".into(),
+                            },
+                        },
+                        &format!("{id}:end"),
+                    ),
+                )
+                .unwrap()
+            };
+            state = fail(&state, state.attempts[0].action_id.clone(), "first").snapshot;
+            state = step(
+                &program,
+                &state,
+                &incoming(
+                    Event::RetryRequested {
+                        unit: UnitId::from("run/document"),
+                        worker: WorkerKey::from("writer"),
+                    },
+                    "retry",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let retried = state.attempts.last().unwrap().action_id.clone();
+            let failed_again = fail(&state, retried, "second");
+            assert!(failed_again
+                .wanted
+                .iter()
+                .all(|(_, actions)| actions.is_empty()));
+            assert_eq!(failed_again.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn a_retry_request_without_an_ingress_id_is_rejected() {
+            let program = program();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap();
+            let retry = Incoming {
+                event: Event::RetryRequested {
+                    unit: UnitId::from("run/document"),
+                    worker: WorkerKey::from("writer"),
+                },
+                writer: Writer::Engine,
+                ingress_id: None,
+            };
+            assert!(step(&program, &launched.snapshot, &retry).is_err());
         }
         #[test]
         fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
