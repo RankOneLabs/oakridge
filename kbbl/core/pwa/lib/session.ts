@@ -81,11 +81,11 @@ export function selectSessionRunLabel(
   return runs.find((run) => run.run_id === runId)?.run_id ?? null;
 }
 
-export function selectSessionScopeLabel(
-  scopeId: string,
+export function selectSessionUnitLabel(
+  unitId: string,
   run: OperatorRunView | undefined,
 ): string | null {
-  return run?.scopes.find((scope) => scope.scope_id === scopeId)?.label
+  return run?.units.find((unit) => unit.unit_id === unitId)?.label
     ?? null;
 }
 

@@ -8,11 +8,11 @@ function parseOperatorEvent(data: string): OperatorRunEvent | null {
   try {
     const value: unknown = JSON.parse(data);
     return value && typeof value === "object" && "run_id" in value && typeof value.run_id === "string"
-      && "scope_id" in value && typeof value.scope_id === "string" ? value as OperatorRunEvent : null;
+      && "unit_id" in value && typeof value.unit_id === "string" ? value as OperatorRunEvent : null;
   } catch { return null; }
 }
 
-/** Committed transitions from the authority (GET /events), relayed through kbbl's shared live connection. */
+/** Committed events from the authority (GET /events), relayed through kbbl's shared live connection. */
 export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event: OperatorRunEvent) => void): void {
   const client = useQueryClient();
   const subscriberRef = useRef(subscriber);

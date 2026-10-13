@@ -1,8 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorDefinitions, fetchOperatorScope,
-  launchOperatorRun, submitOperatorCommand } from "./client";
-import { makeCommandReceipt, makeCommandSubmission, makeDefinitionSummary, makeExecutionView,
-  makeOakridgeConfig, makeRunDetail, makeScopeView, makeStartedRun, makeStartPinnedRunRequest } from "./__fixtures__/read-models";
+import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorDefinitions, fetchOperatorUnit,
+  launchOperatorRun, submitOperatorDecision } from "./client";
+import { makeIngressCommitted, makeDecisionSubmission, makeDefinitionSummary, makeAttemptView,
+  makeOakridgeConfig, makeRunView, makeUnitView, makeLaunchRequest } from "./__fixtures__/read-models";
 import { DEFAULT_FALLBACK_REFRESH_MS } from "./lib/oakridge-config";
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -12,7 +12,7 @@ test("run and definition consumers follow every cursor page", async () => {
     const second = url.includes("cursor=");
     return Response.json(url.includes("definitions")
       ? { items: [makeDefinitionSummary({ bundle_id: second ? "bundle-2" : "bundle-1" })], next_cursor: second ? null : "next" }
-      : { items: [makeRunDetail({ run_id: second ? "run-2" : "run-1" })], next_cursor: second ? null : "next" });
+      : { items: [makeRunView({ run_id: second ? "run-2" : "run-1" })], next_cursor: second ? null : "next" });
   });
   vi.stubGlobal("fetch", fetch);
   expect((await fetchOperatorRuns()).map((item) => item.run_id)).toEqual(["run-1", "run-2"]);
@@ -39,37 +39,40 @@ test("an unreachable config endpoint reports the surface unavailable with a usab
   expect(await fetchOakridgeConfig()).toEqual({ available: false, fallback_refresh_ms: DEFAULT_FALLBACK_REFRESH_MS });
 });
 
-test("two scopes sharing one request id each deliver their own command", async () => {
-  const fetch = vi.fn(async (url: string) => Response.json(makeCommandReceipt({ request_id: "shared-id", transition_id: url })));
+test("each decision goes to the route its submit names, carrying its request id", async () => {
+  const fetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(makeIngressCommitted()));
   vi.stubGlobal("fetch", fetch);
-  const [first, second] = await Promise.all([
-    submitOperatorCommand(makeCommandSubmission({ scope_id: "scope-one", request_id: "shared-id" })),
-    submitOperatorCommand(makeCommandSubmission({ scope_id: "scope-two", request_id: "shared-id" }))]);
-  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-    "/oakridge/api/api/runs/run-1/scopes/scope-one/commands", "/oakridge/api/api/runs/run-1/scopes/scope-two/commands"]);
-  expect(first.transition_id).not.toBe(second.transition_id);
+  await submitOperatorDecision(makeDecisionSubmission({ unit_id: "run-1/cohort", request_id: "review-1", payload: { feedback: "more" } }));
+  await submitOperatorDecision(makeDecisionSubmission({ request_id: "retry-1", target_revision_id: null, submit: { kind: "retry", worker: "builder" } }));
+  await submitOperatorDecision(makeDecisionSubmission({ request_id: "cancel-1", target_revision_id: null, submit: { kind: "cancel" } }));
+  expect(fetch.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
+    ["/oakridge/api/api/runs/run-1/units/run-1%2Fcohort/reviews/analysis_review/decide",
+      { request_id: "review-1", decision: "approve", target: "revision-1", payload: { feedback: "more" } }],
+    ["/oakridge/api/api/runs/run-1/units/unit-1/workers/builder/retry", { request_id: "retry-1" }],
+    ["/oakridge/api/api/runs/run-1/cancel", { request_id: "cancel-1" }],
+  ]);
 });
 
-test("one scope resubmitting its request id reuses the in-flight delivery", async () => {
-  const fetch = vi.fn(async () => Response.json(makeCommandReceipt({ request_id: "shared-id" })));
+test("resubmitting a request id reuses the in-flight delivery", async () => {
+  const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
   vi.stubGlobal("fetch", fetch);
-  const input = makeCommandSubmission({ scope_id: "scope-one", request_id: "shared-id" });
-  await Promise.all([submitOperatorCommand(input), submitOperatorCommand(input)]);
+  const input = makeDecisionSubmission({ request_id: "shared-id" });
+  await Promise.all([submitOperatorDecision(input), submitOperatorDecision(input)]);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-test("sends the caller-owned launch idempotency key in the pinned run request", async () => {
-  const fetch = vi.fn(async () => Response.json(makeStartedRun()));
+test("sends the caller-owned launch idempotency key in the launch request", async () => {
+  const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
   vi.stubGlobal("fetch", fetch);
-  await launchOperatorRun(makeStartPinnedRunRequest({ request_id: "launch-1" }));
-  expect(fetch).toHaveBeenCalledWith("/oakridge/api/runs", expect.objectContaining({
+  await launchOperatorRun(makeLaunchRequest({ request_id: "launch-1" }));
+  expect(fetch).toHaveBeenCalledWith("/oakridge/api/api/runs", expect.objectContaining({
     method: "POST", body: expect.stringContaining('"request_id":"launch-1"'),
   }));
 });
 
-test("reads the generated scope's execution attempts", async () => {
-  const scope = makeScopeView({ executions: [makeExecutionView({ worker_key: "builder", generation: 2 })] });
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(scope)));
-  const result = await fetchOperatorScope("run-1", "scope-1");
-  expect(result.executions[0]).toMatchObject({ worker_key: "builder", generation: 2 });
+test("reads a unit's attempts", async () => {
+  const unit = makeUnitView({ attempts: [makeAttemptView({ worker: "builder", number: 2 })] });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(unit)));
+  const result = await fetchOperatorUnit("run-1", "unit-1");
+  expect(result.attempts[0]).toMatchObject({ worker: "builder", number: 2 });
 });

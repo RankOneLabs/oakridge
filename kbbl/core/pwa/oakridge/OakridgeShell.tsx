@@ -21,8 +21,8 @@ export function OakridgeShell({ route }: Props) {
   if (config.isPending) content = <p role="status">Connecting to Oakridge…</p>;
   else if (!config.data?.available) content = <p role="alert">Oakridge backend is unavailable.</p>;
   else switch (route.sub) {
-    case "run": content = <RunDetailView runId={route.id} routePane={route.pane ?? null} scopeId={route.scope_id ?? null} onBack={runs} />; break;
-    case "review-inbox": content = <ReviewInboxView onSelectScope={(runId, scopeId) => navigate(formatRunWorkspaceHash(runId, scopeId))} />; break;
+    case "run": content = <RunDetailView runId={route.id} routePane={route.pane ?? null} unitId={route.unit_id ?? null} onBack={runs} />; break;
+    case "review-inbox": content = <ReviewInboxView onSelectUnit={(runId, unitId) => navigate(formatRunWorkspaceHash(runId, unitId))} />; break;
     case "new-run": content = <NewRunView onBack={runs} onCreated={run} onEdit={() => navigate("oakridge/def-new")} />; break;
     case "create-project": content = <CreateProjectView onBack={runs} />; break;
     case "projects": content = <OperatorProjectsView onBack={runs} />; break;

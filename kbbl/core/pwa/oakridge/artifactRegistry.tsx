@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { OperatorCheckedValue, OperatorSchema } from "./operator-contracts";
+import type { OperatorBodyValue } from "./operator-contracts";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
@@ -8,7 +8,7 @@ import { AssessmentViewer } from "./components/molecules/AssessmentViewer";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { OperatorTypedValue } from "./components/molecules/OperatorTypedValue";
 
-export interface ViewerProps { readonly body: OperatorCheckedValue; readonly schemas: readonly OperatorSchema[] }
+export interface ViewerProps { readonly body: OperatorBodyValue }
 
 const VIEWERS: Readonly<Record<string, ComponentType<ViewerProps>>> = {
   analysis_body: SpecAnalysisViewer,
@@ -23,6 +23,6 @@ export function resolveViewer(schema: string): ComponentType<ViewerProps> {
   return VIEWERS[schema] ?? OperatorTypedValueViewer;
 }
 
-function OperatorTypedValueViewer({ body, schemas }: ViewerProps) {
-  return <OperatorTypedValue value={body} schemas={schemas} />;
+function OperatorTypedValueViewer({ body }: ViewerProps) {
+  return <OperatorTypedValue value={body} />;
 }

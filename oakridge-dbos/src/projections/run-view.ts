@@ -6,30 +6,24 @@ import { selectRunAttention, type UnitAttention } from "./attention";
 import { selectUnitLabel } from "./unit-label";
 import { isAsk, isTerminalStatus, selectAttemptViews, selectAvailableDecisions, selectUnitView, type AttemptView, type ArtifactView, type DecisionDefinition, type DecisionSubmit, type UnitView } from "./unit-view";
 
-/** v1 `RunScopeSummary`. */
+/** One unit as the run lists it. */
 export interface RunUnitSummary {
   readonly unit_id: UnitId;
   readonly unit_key: string;
   readonly label: string;
-  readonly version: number;
-  readonly is_terminal: boolean;
-  /** Keys of the decisions that ask for the operator now (not the run's cancel). */
-  readonly available_decisions: readonly string[];
   readonly stage: string | null;
   readonly status: UnitStatus;
+  readonly is_terminal: boolean;
+  /** Keys of the decisions that ask for the operator now (not the run's cancel). */
+  readonly asks: readonly string[];
 }
 export interface RunSummary {
-  readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string; readonly version: number;
+  readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string;
   readonly created_at: Date; readonly archived_at: Date | null;
   /** The root unit's status. */
   readonly status: UnitStatus;
 }
-export interface RunView extends RunSummary {
-  readonly cursor: readonly { readonly unit_id: UnitId; readonly version: number }[];
-  readonly units: readonly RunUnitSummary[];
-}
-/** The run endpoint's complete projection. */
-export type RunDetail = RunView;
+export interface RunView extends RunSummary { readonly units: readonly RunUnitSummary[] }
 export interface RunPage { readonly items: readonly RunView[]; readonly next_cursor: string | null }
 
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
@@ -38,12 +32,10 @@ const attentionOf = (attention: readonly UnitAttention[], unit_id: string): Unit
 export function selectRunView(read: RunRead): RunView {
   const attention = selectRunAttention(read);
   return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
-    version: read.run.version, created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,
-    cursor: read.units.map((unit) => ({ unit_id: unit.id, version: unit.version })),
+    created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: unit.unit_key, label: selectUnitLabel(unit, read.definition.workflow),
-      version: unit.version, is_terminal: isTerminalStatus(unit.status), stage: unit.stage, status: unit.status,
-      available_decisions: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).map((item) => item.definition).filter(isAsk)
-        .map((decision) => decision.key) })) };
+      stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),
+      asks: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).filter(isAsk).map((decision) => decision.key) })) };
 }
 
 /** One unit of a run, or null when the run has no such unit. */
@@ -83,7 +75,7 @@ export function selectRunInspect(read: RunRead, events: readonly EventRecord[]):
   const decisionsOf = (unit_id: string, submits: (submit: DecisionSubmit) => boolean): readonly DecisionDefinition[] =>
     views.find((view) => view.unit_id === unit_id)?.decisions.filter((decision) => submits(decision.submit)) ?? [];
   return { run_id: read.run.id, status: read.run.status,
-    units: views.map((view) => ({ id: view.unit_id, unit_key: view.unit_key, label: view.label, stage: view.stage, status: view.state })),
+    units: views.map((view) => ({ id: view.unit_id, unit_key: view.unit_key, label: view.label, stage: view.stage, status: view.status })),
     attention: attention.flatMap((unit): InspectAttention[] => [
       ...unit.stalled.map((stalled): InspectAttention => ({ kind: "stalled_worker", unit_id: stalled.unit_id, worker: stalled.worker,
         action_id: stalled.action_id, detail: stalled.detail, decisions: decisionsOf(stalled.unit_id, (submit) => submit.kind === "retry" && submit.worker === stalled.worker) })),

@@ -2,27 +2,24 @@ import type { Event, UnitStatus, Workflow } from "../core-client/core-types";
 import type { RunId, UnitId } from "../domain/primitives";
 import { selectUnitLabel, type LabelledUnit } from "./unit-label";
 
-/** Set when the event leaves a review awaiting the operator (v1 `AttentionMetadata`). */
-export interface AttentionMetadata { readonly label: string; readonly trigger: string }
+/** A review that began awaiting the operator with the event. */
+export interface AwaitingReviewNotice { readonly review: string; readonly label: string }
 /**
- * One committed event as the operator event stream delivers it (GET /events),
- * in v1's `RunEvent` shape renamed per rescue spec §2.3. A launch or a cancel
- * addresses the run's root unit.
+ * One committed event as the operator event stream delivers it (GET /events).
+ * A launch or a cancel addresses the run's root unit.
  */
 export interface RunEvent {
   readonly event_id: string;
   readonly run_id: RunId;
   readonly unit_id: UnitId;
   readonly unit_key: string;
-  /** `wait` when the event left a review awaiting the operator, otherwise `apply`. */
-  readonly decision: "apply" | "wait";
-  readonly attention: AttentionMetadata | null;
+  readonly kind: Event["kind"];
+  readonly awaiting: AwaitingReviewNotice | null;
   /** The addressed unit is done or cancelled. */
   readonly is_terminal: boolean;
+  readonly run_status: UnitStatus["kind"];
   /** ISO-8601, as the event log recorded it. */
   readonly occurred_at: string;
-  readonly kind: Event["kind"];
-  readonly run_status: UnitStatus["kind"];
 }
 /** Resume position in the operator outbox: the last delivered row, by writing transaction then id. */
 export interface RunEventCursor { readonly commit_txid: string; readonly id: string }
@@ -40,10 +37,9 @@ export interface RunEventSource {
 }
 export function selectRunEvent(source: RunEventSource): RunEvent {
   const [review] = source.newly_awaiting;
-  const attention = review === undefined ? null
-    : { label: `${selectUnitLabel(source.unit, source.workflow)}: awaiting ${review} review`, trigger: review };
-  return { event_id: source.event_id, run_id: source.run_id, unit_id: source.unit.id, unit_key: source.unit.unit_key,
-    decision: attention ? "wait" : "apply", attention,
+  const awaiting = review === undefined ? null
+    : { review, label: `${selectUnitLabel(source.unit, source.workflow)}: awaiting ${review} review` };
+  return { event_id: source.event_id, run_id: source.run_id, unit_id: source.unit.id, unit_key: source.unit.unit_key, kind: source.kind, awaiting,
     is_terminal: source.unit.status.kind === "done" || source.unit.status.kind === "cancelled",
-    occurred_at: source.occurred_at.toISOString(), kind: source.kind, run_status: source.run_status.kind };
+    run_status: source.run_status.kind, occurred_at: source.occurred_at.toISOString() };
 }

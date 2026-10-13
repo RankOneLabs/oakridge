@@ -40,13 +40,13 @@ test("invalidation and run-event hooks share a source while replay refreshes wit
   await waitFor(() => expect(EventSourceStub.instances.filter((source) => source.readyState !== EventSourceStub.CLOSED)).toHaveLength(1));
   const source = EventSourceStub.instances.find((item) => item.readyState !== EventSourceStub.CLOSED);
   expect(source?.url.match(/topic=%2Foakridge%2Fapi%2Fevents/g)).toHaveLength(1);
-  const replay = makeRunEvent({ transition_id: "transition-7" });
-  const live = makeRunEvent({ transition_id: "transition-8" });
+  const replay = makeRunEvent({ event_id: "event-7" });
+  const live = makeRunEvent({ event_id: "event-8" });
   act(() => {
     source?.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: JSON.stringify({ ...replay, replay: true }) } });
     source?.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: JSON.stringify(live) } });
   });
-  expect(received.map((event) => event.transition_id)).toEqual(["transition-8"]);
+  expect(received.map((event) => event.event_id)).toEqual(["event-8"]);
   expect(invalidations).toHaveBeenCalledWith({ queryKey: queryKeys.run("run-one") });
   hook.unmount();
 });

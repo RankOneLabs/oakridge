@@ -10,18 +10,18 @@ const plan = makePlanGraphFixture([
 
 describe("PlanViewer", () => {
   test("draws every cohort in the graph", () => {
-    render(<PlanViewer body={plan.body} schemas={plan.schemas} />);
+    render(<PlanViewer body={plan.body} />);
     expect(screen.getAllByTestId("or-plan-graph-node")).toHaveLength(2);
   });
 
   test("lists cohort cards in the pinned dependency order", () => {
-    render(<PlanViewer body={plan.body} schemas={plan.schemas} />);
+    render(<PlanViewer body={plan.body} />);
     expect(screen.getAllByTestId("or-plan-cohort").map((card) => card.querySelector("strong")?.textContent))
       .toEqual(["core: Core", "api: API"]);
   });
 
   test("selects a cohort card from its graph node", () => {
-    render(<PlanViewer body={plan.body} schemas={plan.schemas} />);
+    render(<PlanViewer body={plan.body} />);
     fireEvent.click(screen.getAllByTestId("or-plan-graph-node")[1]!);
     expect(screen.getAllByTestId("or-plan-cohort")[1]?.getAttribute("aria-current")).toBe("true");
   });

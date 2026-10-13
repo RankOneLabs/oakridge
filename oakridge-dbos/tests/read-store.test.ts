@@ -182,7 +182,7 @@ test("live runs are launched, unfinished and unarchived, paged by id", async () 
 
 test("a definition graph lists each declared unit with its dependencies as edges", () => {
   const graph = selectDefinitionGraph(sampleWorkflow("fan-out"));
-  expect({ nodes: graph.nodes.map((node) => [node.key, node.scope, node.depends_on]), edges: graph.edges }).toEqual({
+  expect({ nodes: graph.nodes.map((node) => [node.key, node.stage, node.depends_on]), edges: graph.edges }).toEqual({
     nodes: [["prepare", "prepare", []], ["work", "work", ["prepare"]], ["work/item", "item", []]],
     edges: [{ from: "prepare", to: "work" }] });
 });

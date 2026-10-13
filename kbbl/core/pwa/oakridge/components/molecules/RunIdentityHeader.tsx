@@ -11,7 +11,7 @@ export function RunIdentityHeader({ run, onBack }: Props) {
     <span className="or-run-identity__accent" aria-hidden="true" />
     <Button variant="secondary" onClick={onBack}>← Runs</Button>
     <div><h1 className="or-page-title">{run.run_id}</h1><small>{run.definition_digest}</small></div>
-    <Chip tone="info">{progress.complete}/{progress.total} scopes complete</Chip>
+    <Chip tone="info">{progress.complete}/{progress.total} units complete</Chip>
     {progress.needs_attention > 0 && <Chip tone="warning">{progress.needs_attention} need attention</Chip>}
   </header>;
 }

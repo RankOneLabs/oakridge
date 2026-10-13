@@ -25,7 +25,7 @@ import { useRun } from "../oakridge/hooks/useRun";
 import { useRuns } from "../oakridge/hooks/useRuns";
 import {
   selectSessionRunLabel,
-  selectSessionScopeLabel,
+  selectSessionUnitLabel,
 } from "../lib/session";
 
 interface StartSessionBody {
@@ -91,7 +91,7 @@ function SessionRunSection({
           <SessionCohortHeading
             title={group.kind === "cohort"
               ? group.title
-              : selectSessionScopeLabel(group.stageInstanceId, runQuery.data) ?? "Stage"}
+              : selectSessionUnitLabel(group.stageInstanceId, runQuery.data) ?? "Stage"}
             secondaryId={group.kind === "cohort" ? group.cohortId : undefined}
             repositoryKey={group.repositoryKey}
           />

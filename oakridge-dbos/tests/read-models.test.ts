@@ -2,17 +2,45 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { installDefinitionApi } from "../src/http/app";
-import type { ArtifactDetail, Decision, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInspectView, RunPage, RunView,
+import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInspectView, RunPage, RunView,
   UnitDiagnostics, UnitHistory, UnitView } from "../src/http/operator-api";
 import type { RunEvent } from "../src/projections/run-event";
-import { expectedFields, type ReadModelName } from "./port-map";
 import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 /**
- * R4 acceptance (rescue spec §4.4): each read model carries exactly the
- * port-map field list, and every derived field is tested. Runs go through
- * commit; reads go through the HTTP surface.
+ * Each read model carries exactly its contract's fields, and every derived
+ * field is tested. Runs go through commit; reads go through the HTTP surface.
  */
+const CONTRACT_FIELDS = {
+  RunView: ["archived_at", "created_at", "definition_bundle_id", "definition_digest", "run_id", "status", "units"],
+  RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
+  UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
+    "run_id", "stage", "status", "unit_id", "unit_key"],
+  AttemptView: ["cause", "created_at", "failure", "id", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
+  ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
+  ArtifactRevisionView: ["artifact_key", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
+  DecisionDefinition: ["fields", "key", "label", "payload_schema", "submit"],
+  DecisionField: ["key", "label"],
+  InboxPage: ["items", "next_cursor"],
+  InboxDecisionItem: ["key", "kind", "label", "prompt", "run_id", "submit", "unit_id"],
+  InboxWaitingItem: ["kind", "label", "reason", "run_id", "unit_id"],
+  InboxStalledItem: ["detail", "kind", "run_id", "unit_id"],
+  UnitHistory: ["events", "next_cursor", "unit_id"],
+  EventHistory: ["created_at", "event", "id", "ingress_id", "writer"],
+  UnitDiagnostics: ["attempts", "effects", "rejected", "unit_id"],
+  EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
+  ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "revisions", "run_id", "schema", "status", "unit_id"],
+  DefinitionSummary: ["archived_at", "bundle", "bundle_id", "digest"],
+  PinnedDefinition: ["archived_at", "bundle", "bundle_id", "checked_program", "digest"],
+  DefinitionDetail: ["archived_at", "bundle", "bundle_id", "digest", "graph", "workflow"],
+  DefinitionBundle: ["key", "root", "schemas", "units", "version"],
+  UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],
+  ArtifactDefinition: ["key", "schema"],
+  Schema: ["key", "shape"],
+  RunEvent: ["awaiting", "event_id", "is_terminal", "kind", "occurred_at", "run_id", "run_status", "unit_id", "unit_key"],
+  AwaitingReviewNotice: ["label", "review"],
+} as const;
+type ReadModelName = keyof typeof CONTRACT_FIELDS;
 let authority: Authority;
 let app: Hono;
 let review_loop: DefinitionBundleId;
@@ -36,7 +64,7 @@ const unitPath = (run_id: string, unit: string, rest = ""): string => `/api/runs
 const fields = (value: object): readonly string[] => Object.keys(value).sort();
 const holds = (model: ReadModelName, value: object | null | undefined): void => {
   if (!value) throw new Error(`${model}: no value to check`);
-  expect({ model, fields: fields(value) }).toEqual({ model, fields: expectedFields(model) });
+  expect({ model, fields: fields(value) }).toEqual({ model, fields: [...CONTRACT_FIELDS[model]] });
 };
 
 async function launched(bundle_id: DefinitionBundleId, input: unknown): Promise<RunId> {
@@ -81,30 +109,25 @@ async function runEvents(run_id: string): Promise<readonly RunEvent[]> {
   return rows.flatMap((row) => row.payload.kind === "run_event" ? [row.payload.data] : []);
 }
 
-describe("each read model carries exactly its port-map fields", () => {
-  test("runs, run units and the run cursor", async () => {
+describe("each read model carries exactly its contract's fields", () => {
+  test("runs and run units", async () => {
     const { run_id } = await drafted();
     const page = await get<RunPage>("/api/runs");
     const view = await get<RunView>(`/api/runs/${segment(run_id)}`);
     holds("RunView", view);
     holds("RunView", page.items[0]);
     holds("RunUnitSummary", view.units[0]);
-    holds("RunCursorEntry", view.cursor[0]);
     expect(fields(page)).toEqual(["items", "next_cursor"]);
   });
 
-  test("a unit, its attempts, artifacts, revisions, decisions and cursor", async () => {
+  test("a unit, its attempts, artifacts, revisions and decisions", async () => {
     const { run_id, unit } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
     holds("UnitView", view);
-    holds("UnitCursor", view.cursor);
     holds("AttemptView", view.attempts[0]);
     holds("ArtifactView", view.artifacts[0]);
     holds("ArtifactRevisionView", view.artifacts.find((artifact) => artifact.latest_revision)?.latest_revision);
     holds("DecisionDefinition", view.decisions[0]);
-    holds("DecisionFieldPresentation", view.decisions.flatMap((decision) => decision.field_presentation)[0]);
-    holds("TargetRevision", Object.values(view.decision_targets).flat()[0]);
-    holds("Decision", await get<Decision>(unitPath(run_id, unit, "/decision")));
   });
 
   test("the inbox and each kind of item", async () => {
@@ -113,8 +136,8 @@ describe("each read model carries exactly its port-map fields", () => {
     const inbox = await get<InboxPage>("/api/inbox");
     holds("InboxPage", inbox);
     holds("InboxDecisionItem", inbox.items.find((item) => item.kind === "decision"));
-    holds("InboxWaitItem", inbox.items.find((item) => item.kind === "wait"));
-    holds("InboxDiagnosticItem", inbox.items.find((item) => item.kind === "diagnostic"));
+    holds("InboxWaitingItem", inbox.items.find((item) => item.kind === "waiting"));
+    holds("InboxStalledItem", inbox.items.find((item) => item.kind === "stalled"));
   });
 
   test("history, diagnostics and their entries", async () => {
@@ -132,27 +155,26 @@ describe("each read model carries exactly its port-map fields", () => {
     holds("ArtifactDetail", await get<ArtifactDetail>(unitPath(run_id, unit, "/artifacts/draft")));
   });
 
-  test("definitions, the translated bundle, its units, artifacts, schemas and presentation", async () => {
+  test("definitions, the translated bundle, its units, artifacts and schemas", async () => {
     const run_id = await launched(review_loop, { topic: "Oakridge" });
     const page = await get<DefinitionPage>("/api/definitions");
     const pinned = await get<PinnedDefinition>(`/api/runs/${segment(run_id)}/definition`);
     const detail = await get<DefinitionDetail>(`/api/definitions/${review_loop}`);
-    const staged = pinned.source.units.find((unit) => unit.artifacts.length > 0);
+    const staged = pinned.bundle.units.find((unit) => unit.artifacts.length > 0);
     holds("DefinitionSummary", page.items[0]);
     holds("PinnedDefinition", pinned);
     holds("DefinitionDetail", detail);
-    holds("DefinitionBundle", pinned.source);
+    holds("DefinitionBundle", pinned.bundle);
     holds("UnitDefinition", staged);
-    holds("Presentation", staged?.presentation);
     holds("ArtifactDefinition", staged?.artifacts[0]);
-    holds("Schema", pinned.source.schemas[0]);
+    holds("Schema", pinned.bundle.schemas[0]);
   });
 
-  test("the event stream's run event and its attention", async () => {
+  test("the event stream's run event and its awaiting review", async () => {
     const { run_id } = await drafted();
     const events = await runEvents(run_id);
     holds("RunEvent", events[0]);
-    holds("AttentionMetadata", events.find((event) => event.attention)?.attention);
+    holds("AwaitingReviewNotice", events.find((event) => event.awaiting)?.awaiting);
   });
 });
 
@@ -168,82 +190,79 @@ describe("derived fields", () => {
     const { run_id } = await drafted();
     const view = await get<RunView>(`/api/runs/${segment(run_id)}`);
     const root = await get<UnitView>(unitPath(run_id, run_id));
-    expect({ listed: view.units.map((unit) => [unit.unit_key, unit.available_decisions]), root: root.decisions.map((decision) => decision.submit) })
+    expect({ listed: view.units.map((unit) => [unit.unit_key, unit.asks]), root: root.decisions.map((decision) => decision.submit) })
       .toEqual({ listed: [["$root", []], ["document", ["approve", "request_changes"]]], root: [{ kind: "cancel" }] });
   });
 
-  test("an awaiting review offers its decisions, submitted to that review, on its latest revision", async () => {
+  test("an awaiting review offers its decisions, each submitted to that review on the revision it awaits", async () => {
     const { run_id, unit } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect({ decisions: view.decisions.map((decision) => [decision.key, decision.consequence, decision.payload_schema, decision.submit, decision.targets]),
-      targets: view.decision_targets, prefill: view.decision_prefill })
-      .toEqual({ decisions: [
-        ["approve", "approve", "{}", { kind: "review", review: "editor" }, [{ kind: "reference", root: { kind: "artifact", key: "draft" }, path: [] }]],
-        ["request_changes", "request changes", "{feedback: text}", { kind: "review", review: "editor" }, [{ kind: "reference", root: { kind: "artifact", key: "draft" }, path: [] }]],
-      ], targets: { approve: [{ identity: `${unit}:draft:1`, version: 1 }], request_changes: [{ identity: `${unit}:draft:1`, version: 1 }] },
-      prefill: { approve: {}, request_changes: {} } });
+    const target = `${unit}:draft:1`;
+    expect(view.decisions.map((decision) => [decision.key, decision.payload_schema, decision.submit])).toEqual([
+      ["approve", "{}", { kind: "review", review: "editor", decision: "approve", effect: "approve", target_revision_id: target }],
+      ["request_changes", "{feedback: text}", { kind: "review", review: "editor", decision: "request_changes", effect: "request_changes", target_revision_id: target }],
+    ]);
   });
 
   test("a decided review offers nothing more until the next revision", async () => {
     const { run_id, unit } = await drafted();
     await decide(run_id, unit, "request_changes", `${unit}:draft:1`, { feedback: "more" });
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect({ decisions: view.decisions, decision: view.decision }).toEqual({ decisions: [], decision: null });
+    expect({ decisions: view.decisions, attention: view.attention }).toEqual({ decisions: [], attention: null });
   });
 
   test("a stalled worker offers a retry and its unit's attention is the failure", async () => {
     const { run_id, unit } = await stalled();
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect({ decisions: view.decisions.map((decision) => [decision.key, decision.label, decision.consequence, decision.submit]), decision: view.decision })
-      .toEqual({ decisions: [["retry:writer", "Retry Writer", "retry", { kind: "retry", worker: "writer" }]],
-        decision: { kind: "reject", error: "writer failed: it broke" } });
+    expect({ decisions: view.decisions.map((decision) => [decision.key, decision.label, decision.submit]), attention: view.attention })
+      .toEqual({ decisions: [["retry:writer", "Retry Writer", { kind: "retry", worker: "writer" }]],
+        attention: { kind: "stalled", detail: "writer failed: it broke" } });
   });
 
   test("a unit's attention: awaiting a review, blocked on another unit, or nothing", async () => {
     const { run_id, unit } = await drafted();
     const fan = await launched(fan_out, { repository: { repository_path: "/tmp/repo", expected_head: null }, items: [] });
     const quiet = await launched(review_loop, { topic: "Oakridge" });
-    expect({ awaiting: (await get<UnitView>(unitPath(run_id, unit))).decision,
-      blocked: (await get<UnitView>(unitPath(fan, unitOf(fan, "work")))).decision,
-      quiet: (await get<Decision>(unitPath(quiet, unitOf(quiet, "document"), "/decision"))).decision })
-      .toEqual({ awaiting: { kind: "wait", reason: "awaiting editor review" }, blocked: { kind: "wait", reason: "waiting on Prepare" }, quiet: null });
+    expect({ awaiting: (await get<UnitView>(unitPath(run_id, unit))).attention,
+      blocked: (await get<UnitView>(unitPath(fan, unitOf(fan, "work")))).attention,
+      quiet: (await get<UnitView>(unitPath(quiet, unitOf(quiet, "document")))).attention })
+      .toEqual({ awaiting: { kind: "waiting", reason: "awaiting editor review" }, blocked: { kind: "waiting", reason: "waiting on Prepare" }, quiet: null });
   });
 
-  test("a finished unit is terminal with its outcome as state and outcome", async () => {
+  test("a finished unit is terminal, done, with its outcome", async () => {
     const { run_id, unit } = await drafted();
     await decide(run_id, unit, "approve", `${unit}:draft:1`, {});
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect({ is_terminal: view.is_terminal, state: view.state.kind, outcome: view.outcome })
-      .toEqual({ is_terminal: true, state: "done", outcome: { draft: { title: "T", body: "first" } } });
+    expect({ is_terminal: view.is_terminal, status: view.status.kind, outcome: view.outcome })
+      .toEqual({ is_terminal: true, status: "done", outcome: { draft: { title: "T", body: "first" } } });
   });
 
   test("attempts are numbered per worker, oldest first, and only the latest is current", async () => {
     const { run_id, unit } = await stalled();
     await submitter(authority)({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect(view.attempts.map((attempt) => [attempt.worker_key, attempt.generation, attempt.status, attempt.is_current, attempt.result, attempt.cause.kind]))
+    expect(view.attempts.map((attempt) => [attempt.worker, attempt.number, attempt.status, attempt.is_current, attempt.failure, attempt.cause.kind]))
       .toEqual([["writer", 1, "failed", false, { code: "boom", detail: "it broke" }, "missing"], ["writer", 2, "pending", true, null, "retry"]]);
   });
 
-  test("artifacts carry their schema name, reviewability, revision count and latest revision", async () => {
+  test("artifacts carry their schema name, reviewability, editability, revision count and latest revision", async () => {
     const { run_id, unit, writer } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
-    expect(view.artifacts.map((artifact) => [artifact.artifact_key, artifact.schema, artifact.reviewable, artifact.version,
-      artifact.latest_revision?.version ?? null, artifact.latest_revision?.attempt_id ?? null, artifact.collection_key]))
-      .toEqual([["critique", "{notes: list(text)}", false, 0, null, null, ""], ["draft", "{body: text, title: text}", true, 1, 1, writer, ""]]);
+    expect(view.artifacts.map((artifact) => [artifact.artifact_key, artifact.schema, artifact.is_reviewable, artifact.is_editable, artifact.revision_count,
+      artifact.latest_revision?.number ?? null, artifact.latest_revision?.attempt_id ?? null]))
+      .toEqual([["critique", "{notes: list(text)}", false, true, 0, null, null], ["draft", "{body: text, title: text}", true, true, 1, 1, writer]]);
   });
 
-  test("the inbox derives decisions with the review's prompt, a diagnostic per stalled worker, and waits", async () => {
+  test("the inbox derives decisions with the review's prompt, each stalled worker, and waits", async () => {
     const drafted_run = await drafted();
     const stalled_run = await stalled();
     const inbox = await get<InboxPage>("/api/inbox");
     const of = (run_id: string) => inbox.items.filter((item) => item.run_id === run_id)
       .map((item) => item.kind === "decision" ? [item.kind, item.key, item.prompt?.startsWith("Review ") ?? null]
-        : item.kind === "wait" ? [item.kind, item.reason, item.label] : [item.kind, item.detail]);
-    expect({ drafted: of(drafted_run.run_id), stalled: of(stalled_run.run_id),
-      cursor: inbox.cursor.some((entry) => entry.unit_id === drafted_run.unit) })
-      .toEqual({ drafted: [["decision", "approve", true], ["decision", "request_changes", true], ["wait", "awaiting editor review", "Document"]],
-        stalled: [["decision", "retry:writer", null], ["diagnostic", "writer failed: it broke"]], cursor: true });
+        : item.kind === "waiting" ? [item.kind, item.reason, item.label] : [item.kind, item.detail]);
+    expect({ drafted: of(drafted_run.run_id), stalled: of(stalled_run.run_id) })
+      .toEqual({ drafted: [["decision", "approve", true], ["decision", "request_changes", true], ["waiting", "awaiting editor review", "Document"]],
+        stalled: [["decision", "retry:writer", null], ["stalled", "writer failed: it broke"]] });
   });
 
   test("the inbox leaves out finished and archived runs and pages by run", async () => {
@@ -262,13 +281,11 @@ describe("derived fields", () => {
     expect({ done: run_ids.has(done.run_id), archived: run_ids.has(archived.run_id), some: run_ids.size > 0 }).toEqual({ done: false, archived: false, some: true });
   });
 
-  test("history is the unit's events newest first, each with its ingress id, writer and commit order", async () => {
+  test("history is the unit's events newest first, each with its ingress id and writer", async () => {
     const { run_id, unit } = await drafted();
     const history = await get<UnitHistory>(unitPath(run_id, unit, "/history"));
-    const versions = history.events.map((event) => event.version);
-    expect({ events: history.events.map((event) => [event.decision.kind, event.writer.kind, typeof event.trigger_id]),
-      descending: versions.every((version, index) => index === 0 || version <= versions[index - 1]!), next: history.next_cursor })
-      .toEqual({ events: [["revision_published", "executor", "string"], ["worker_started", "executor", "string"]], descending: true, next: null });
+    expect({ events: history.events.map((event) => [event.event.kind, event.writer.kind, typeof event.ingress_id]), next: history.next_cursor })
+      .toEqual({ events: [["revision_published", "executor", "string"], ["worker_started", "executor", "string"]], next: null });
   });
 
   test("diagnostics carry the unit's intents and the events step refused", async () => {
@@ -287,20 +304,20 @@ describe("derived fields", () => {
     await decide(approved.run_id, approved.unit, "approve", `${approved.unit}:draft:1`, {});
     const detail = (run: { readonly run_id: string; readonly unit: string }) => get<ArtifactDetail>(unitPath(run.run_id, run.unit, "/artifacts/draft"));
     const [as_draft, as_rejected, as_approved] = await Promise.all([detail(draft), detail(rejected), detail(approved)]);
-    expect({ statuses: [as_draft.status, as_rejected.status, as_approved.status], schema: as_draft.schema, reviewable: as_draft.reviewable,
-      version: as_draft.artifact_version, decisions: as_rejected.decisions.map((decision) => decision.decision) })
-      .toEqual({ statuses: ["draft", "rejected", "approved"], schema: "{body: text, title: text}", reviewable: true, version: 1, decisions: ["request_changes"] });
+    expect({ statuses: [as_draft.status, as_rejected.status, as_approved.status], schema: as_draft.schema, is_reviewable: as_draft.is_reviewable,
+      revisions: as_draft.revisions.length, decisions: as_rejected.decisions.map((decision) => decision.decision) })
+      .toEqual({ statuses: ["draft", "rejected", "approved"], schema: "{body: text, title: text}", is_reviewable: true, revisions: 1, decisions: ["request_changes"] });
   });
 
-  test("a launch's event addresses the root; an event that leaves a review awaiting carries attention", async () => {
+  test("a launch's event addresses the root; an event that leaves a review awaiting names it", async () => {
     const { run_id, unit } = await drafted();
     await decide(run_id, unit, "approve", `${unit}:draft:1`, {});
     const events = await runEvents(run_id);
-    expect(events.map((event) => [event.kind, event.unit_key, event.decision, event.attention?.trigger ?? null, event.is_terminal])).toEqual([
-      ["launched", "$root", "apply", null, false],
-      ["worker_started", "document", "apply", null, false],
-      ["revision_published", "document", "wait", "editor", false],
-      ["operator_decided", "document", "apply", null, true],
+    expect(events.map((event) => [event.kind, event.unit_key, event.awaiting?.review ?? null, event.is_terminal])).toEqual([
+      ["launched", "$root", null, false],
+      ["worker_started", "document", null, false],
+      ["revision_published", "document", "editor", false],
+      ["operator_decided", "document", null, true],
     ]);
   });
 

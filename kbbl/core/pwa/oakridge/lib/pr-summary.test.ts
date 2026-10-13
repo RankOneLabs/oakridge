@@ -7,15 +7,15 @@ import { PrSummaryViewer } from "../components/molecules/PrSummaryViewer";
 
 afterEach(cleanup);
 
-describe("checked pull request summary", () => {
+describe("pull request summary", () => {
   test("reads a missing review status as null", () => {
-    const { body, schemas } = makePrSummaryFixture();
-    expect(selectFieldText(body, schemas, "review_status")).toBeNull();
+    const { body } = makePrSummaryFixture();
+    expect(selectFieldText(body, "review_status")).toBeNull();
   });
 
   test("renders a GitHub pull request as a safe link", () => {
-    const { body, schemas } = makePrSummaryFixture();
-    render(createElement(PrSummaryViewer, { body, schemas }));
+    const { body } = makePrSummaryFixture();
+    render(createElement(PrSummaryViewer, { body }));
     expect(screen.getByRole("link", { name: "Open pull request" }).getAttribute("href"))
       .toBe("https://github.com/RankOneLabs/assay/pull/50");
   });

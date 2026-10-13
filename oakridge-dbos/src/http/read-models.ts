@@ -5,14 +5,13 @@ import { selectDefinitionDetail, selectDefinitionSummary, selectPinnedDefinition
 import { selectUnitDiagnostics, selectUnitHistory } from "../projections/history-view";
 import { selectInboxPage } from "../projections/inbox";
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
-import { selectDecision } from "../projections/unit-view";
 import type { Database } from "../storage/database";
 import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readUnitDiagnostics,
   type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
- * The operator read models (rescue spec R4): each route reads authority rows
+ * The operator read models: each route reads authority rows
  * from the read store and answers with its projection.
  */
 export interface ReadModelDependencies { readonly db: Database }
@@ -73,12 +72,6 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
   app.get("/api/runs/:run_id/units/:unit_id", async (c) => { try {
     const read = await readRun(db, c.req.param("run_id"));
     return found(c, read && selectRunUnitView(read, c.req.param("unit_id")), "unit");
-  } catch (cause) { return fault(cause); } });
-
-  app.get("/api/runs/:run_id/units/:unit_id/decision", async (c) => { try {
-    const read = await readRun(db, c.req.param("run_id"));
-    const view = read && selectRunUnitView(read, c.req.param("unit_id"));
-    return found(c, view && selectDecision(view), "unit");
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/runs/:run_id/units/:unit_id/artifacts/:artifact", async (c) => { try {

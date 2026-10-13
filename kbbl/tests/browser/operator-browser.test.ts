@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
+import { Hono } from "hono";
+import { installDefinitionApi } from "../../../oakridge-dbos/src/http/app";
+import type { DecideRequest } from "../../../oakridge-dbos/src/http/ingress";
+import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf } from "../../../oakridge-dbos/tests/authority-fixture";
 
 async function browserScript(): Promise<string> {
   const built = await Bun.build({ entrypoints: [resolve(import.meta.dir, "operator-browser-entry.tsx")], target: "browser",
@@ -23,21 +27,25 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); });
 
-// Real Chromium and the production React surface, against a mocked API. The
-// scope-command scenario drove the v1 command route and fixture that rescue R1
-// deletes; R6 restores it against the v2 decide route when it ports the PWA.
-test("browser recovers a committed launch after losing its response and reloading", async () => {
-  const requests: Array<{ readonly request_id: string; readonly digest: string; readonly input: unknown }> = [];
-  let launches = 0;
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+// Real Chromium, the production React surface, and the authority's own HTTP
+// API over a real core and a scratch Postgres database.
+test("browser submits a decision on its target revision and recovers a lost receipt after reload", async () => {
+  const authority = await openAuthority();
+  const { bundle_id } = await pinSample(authority);
+  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const unit = unitOf(run_id, "document");
+  const writer = await actionOf(authority, run_id, "writer");
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-writer" }, writer: executor(writer) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: writer }, writer: executor(writer) });
+  const api = new Hono();
+  installDefinitionApi(api, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
-    if (url.pathname === "/oakridge/api/api/definitions") return Response.json({ items: [{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }], next_cursor: null });
-    if (url.pathname === "/oakridge/api/runs") {
-      const input = await request.json() as typeof requests[number];
-      if (!requests.some((previous) => previous.request_id === input.request_id)) launches++;
-      requests.push(input);
-      return Response.json({ run_id: "run-1", root_scope_id: "scope-1", bundle_id: "bundle-1" }, { status: 201 });
+    if (url.pathname.startsWith("/oakridge/api/")) {
+      url.pathname = url.pathname.slice("/oakridge/api".length);
+      return api.fetch(new Request(url, request));
     }
     return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
   } });
@@ -47,7 +55,58 @@ test("browser recovers a committed launch after losing its response and reloadin
     page.setDefaultTimeout(10_000);
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
-    await page.route("**/oakridge/api/runs", async (route) => {
+    const requests: DecideRequest[] = [];
+    const receipts: unknown[] = [];
+    await page.route("**/reviews/editor/decide", async (route) => {
+      requests.push(route.request().postDataJSON() as DecideRequest);
+      const response = await route.fetch();
+      receipts.push(await response.json());
+      if (requests.length === 1) await route.abort("failed");
+      else await route.fulfill({ response });
+    });
+    await page.goto(`${server.url.href}?run=${encodeURIComponent(run_id)}&unit=${encodeURIComponent(unit)}`);
+    const change = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit Request changes", exact: true }) });
+    await change.waitFor();
+    await change.getByRole("textbox").fill("Change draft");
+    await change.getByRole("button", { name: "Submit Request changes", exact: true }).click();
+    await change.getByRole("alert").filter({ hasText: "Delivery is uncertain." }).waitFor();
+    expect(requests[0]).toMatchObject({ decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "Change draft" } });
+    await page.reload();
+    await page.getByText("Receipt recovered for request_changes.", { exact: true }).waitFor();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(receipts[1]).toEqual(receipts[0]);
+    const events = await authority.db.selectFrom("authority.event").select("payload").where("run_id", "=", run_id).execute();
+    expect(events.filter((event) => event.payload.kind === "operator_decided")).toHaveLength(1);
+    expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("oakridge:operator:pending:")))).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  } finally { await context.close(); server.stop(true); await authority.close(); }
+}, 30_000);
+
+test("browser recovers a committed launch after losing its response and reloading", async () => {
+  const requests: Array<{ readonly request_id: string; readonly digest: string; readonly input: unknown }> = [];
+  let launches = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    if (url.pathname === "/oakridge/api/api/definitions") return Response.json({ items: [{ bundle_id: "bundle-1", digest: "sha-1", archived_at: null,
+      bundle: { key: "demo", version: 1, root: "$root", schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } }],
+      next_cursor: null });
+    if (url.pathname === "/oakridge/api/api/runs") {
+      const input = await request.json() as typeof requests[number];
+      if (!requests.some((previous) => previous.request_id === input.request_id)) launches++;
+      requests.push(input);
+      return Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 201 });
+    }
+    return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
+  } });
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    page.setDefaultTimeout(10_000);
+    const pageErrors: Error[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error));
+    await page.route("**/oakridge/api/api/runs", async (route) => {
       const response = await route.fetch();
       expect(response.status()).toBe(201);
       if (requests.length === 1) await route.abort("failed");

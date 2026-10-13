@@ -8,7 +8,7 @@ export function ProgressRow({ run, attentionCount, onSelectRun }: Props) {
   const progress = selectRunProgress(run);
   return <Button variant="progress-row" onClick={() => onSelectRun(run.run_id)} data-testid="or-cohort-lifecycle-card">
     <span className="or-progress-row__identity"><strong>{run.run_id}</strong><small>{run.definition_digest}</small></span>
-    <span className="or-progress-row__state">{progress.complete}/{progress.total} scopes complete</span>
+    <span className="or-progress-row__state">{progress.complete}/{progress.total} units complete</span>
     {attentionCount > 0 && <Chip tone="warning">{attentionCount} need attention</Chip>}
     <span className="or-progress-row__open">View</span>
   </Button>;

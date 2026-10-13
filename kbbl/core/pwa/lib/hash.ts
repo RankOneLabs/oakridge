@@ -58,8 +58,8 @@ export function readHashSessionTarget(): SessionHashTarget | null {
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
-  /** A run can address its workspace pane, or a scope needing attention. */
-  | { sub: "run"; id: string; pane?: RoutePaneTarget | null; scope_id?: string | null }
+  /** A run can address its workspace pane, or a unit needing attention. */
+  | { sub: "run"; id: string; pane?: RoutePaneTarget | null; unit_id?: string | null }
   | { sub: "new-run" }
   | { sub: "projects" }
   | { sub: "create-project" }
@@ -81,8 +81,8 @@ function tryDecode(s: string): string {
 }
 
 /**
- * `#oakridge/run/:id`, with the optional `/scope/:scope_id` suffix that names
- * the scope to open; any other suffix opens the run at its root scope.
+ * `#oakridge/run/:id`, with the optional `/unit/:unit_id` suffix that names
+ * the unit to open; any other suffix opens the run at its root unit.
  *
  * Segments are split while still percent-encoded: every id reaches the hash
  * through `encodeURIComponent`, so a literal `/` inside one is `%2F` here and
@@ -94,21 +94,21 @@ function parseRunRoute(rest: string): OakridgeSubRoute | null {
   if (!rawId) return null;
   const id = tryDecode(rawId);
   const target = segments.length === 3 && rawTargetId ? tryDecode(rawTargetId) : null;
-  const scope_id = suffix === "scope" ? target : null;
+  const unit_id = suffix === "unit" ? target : null;
   const pane: RoutePaneTarget | null = suffix === "session" && target ? { kind: "session", session_id: target as Sid }
     : suffix === "artifact" && target ? { kind: "artifact", artifact_id: target as ArtifactId } : null;
-  return { sub: "run", id, pane, scope_id };
+  return { sub: "run", id, pane, unit_id };
 }
 
 /**
- * The canonical URL for a run, optionally opened at one scope. The one place
+ * The canonical URL for a run, optionally opened at one unit. The one place
  * these hashes are built, so the parser above and every navigation that
  * produces one cannot disagree about encoding.
  */
 export function formatRunWorkspaceHash(runId: string, target: RoutePaneTarget | string | null): string {
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
   if (target === null) return base;
-  if (typeof target === "string") return `${base}/scope/${encodeURIComponent(target)}`;
+  if (typeof target === "string") return `${base}/unit/${encodeURIComponent(target)}`;
   return target.kind === "session" ? `${base}/session/${encodeURIComponent(target.session_id)}`
     : `${base}/artifact/${encodeURIComponent(target.artifact_id)}`;
 }

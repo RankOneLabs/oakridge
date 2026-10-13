@@ -19,6 +19,13 @@ export function stringFloor(schema: OperatorSchema | undefined): number | null {
   return schema?.shape.kind === "string" ? schema.shape.min_length : null;
 }
 
+/** An `optional(T)` field admits null; every other field needs a value. */
+export const isOptionalSchema = (schema: OperatorSchema | undefined): boolean => schema?.shape.kind === "optional";
+
+/**
+ * The record the form submits. The core requires every field to be present:
+ * an untouched optional field is null, an untouched zero-minimum string is "".
+ */
 export function buildRootInput(raw: string, fields: readonly InputField[] | null, drafts: FieldDrafts): unknown {
   if (!fields) return JSON.parse(raw);
   const record = inputRecord(raw);
@@ -26,26 +33,21 @@ export function buildRootInput(raw: string, fields: readonly InputField[] | null
     const floor = stringFloor(schema);
     const draft = drafts[field.key];
     if (draft === undefined) {
-      if (record[field.key] !== undefined || !field.required) continue;
-      if (floor === 0) { record[field.key] = ""; continue; } // A required zero-minimum string starts as the empty value it admits.
+      if (record[field.key] !== undefined) continue;
+      if (isOptionalSchema(schema)) { record[field.key] = null; continue; }
+      if (floor === 0) { record[field.key] = ""; continue; }
       throw new Error(`${field.key} is required.`);
     }
     if (floor !== null) {
-      // Whitespace is content in a string, so only a truly empty draft is a question:
-      // omitted when the field is optional, "" when the schema's minimum admits it.
-      if (draft === "") {
-        if (!field.required) { delete record[field.key]; continue; }
-        if (floor > 0) throw new Error(`${field.key} is required.`);
-        record[field.key] = "";
-        continue;
-      }
+      // Whitespace is content in a string, so only the schema's minimum decides a short entry.
+      if (draft === "" && floor > 0) throw new Error(`${field.key} is required.`);
       if (draft.length < floor) throw new Error(`${field.key} must be at least ${floor} characters.`);
       record[field.key] = draft;
       continue;
     }
     if (draft.trim() === "") {
-      if (field.required) throw new Error(`${field.key} is required.`);
-      delete record[field.key];
+      if (!isOptionalSchema(schema)) throw new Error(`${field.key} is required.`);
+      record[field.key] = null;
       continue;
     }
     const parsed = parseOperatorFieldValue({ raw: draft, schema });

@@ -14,14 +14,14 @@ describe("run workspace hash route replacing saved pane arrangement", () => {
 
   it("opens the run overview when no pane target is in the URL", () => {
     expect(readHashRoute(`#${formatRunWorkspaceHash(makeRunSummary().run_id, null)}`)).toEqual({
-      view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null },
+      view: "oakridge", route: { sub: "run", id: "run-1", pane: null, unit_id: null },
     });
   });
 
   it("round-trips a session target without local storage", () => {
     const sid = makeSessionSnapshot("sid-1").sid as Sid;
     expect(readHashRoute(`#${formatRunWorkspaceHash(makeRunSummary().run_id, { kind: "session", session_id: sid })}`)).toEqual({
-      view: "oakridge", route: { sub: "run", id: "run-1", pane: { kind: "session", session_id: "sid-1" }, scope_id: null },
+      view: "oakridge", route: { sub: "run", id: "run-1", pane: { kind: "session", session_id: "sid-1" }, unit_id: null },
     });
   });
 
@@ -31,13 +31,13 @@ describe("run workspace hash route replacing saved pane arrangement", () => {
       { kind: "artifact", artifact_id: revision.id as ArtifactId });
     expect(route).toBe("oakridge/run/run%2Fone/artifact/revision%2Fone");
     expect(readHashRoute(`#${route}`)).toEqual({ view: "oakridge", route: {
-      sub: "run", id: "run/one", pane: { kind: "artifact", artifact_id: "revision/one" }, scope_id: null,
+      sub: "run", id: "run/one", pane: { kind: "artifact", artifact_id: "revision/one" }, unit_id: null,
     } });
   });
 
   it("keeps an unknown pane suffix at the run overview", () => {
     expect(readHashRoute("#oakridge/run/run-1/terminal/unknown")).toEqual({
-      view: "oakridge", route: { sub: "run", id: "run-1", pane: null, scope_id: null },
+      view: "oakridge", route: { sub: "run", id: "run-1", pane: null, unit_id: null },
     });
   });
 });

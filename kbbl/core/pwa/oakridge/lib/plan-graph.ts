@@ -1,21 +1,21 @@
-import type { OperatorCheckedValue, OperatorSchema } from "../operator-contracts";
-import { selectCheckedField, selectCheckedItems, selectCheckedText, selectFieldItems, selectFieldText } from "../artifact-types";
+import type { OperatorBodyValue } from "../operator-contracts";
+import { selectBodyText, selectFieldItems, selectFieldText } from "../artifact-types";
 
-export interface PlanGraphNode { readonly id: string; readonly title: string; readonly depends_on: readonly string[]; readonly cohort: OperatorCheckedValue }
+export interface PlanGraphNode { readonly id: string; readonly title: string; readonly depends_on: readonly string[]; readonly cohort: OperatorBodyValue }
 export interface PlanGraphLayoutNode extends PlanGraphNode { readonly x: number; readonly y: number }
 export interface PlanGraphLayout { readonly nodes: readonly PlanGraphLayoutNode[]; readonly edges: readonly { readonly from: string; readonly to: string; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number }[]; readonly width: number; readonly height: number }
 
-export function selectPlanGraph(body: OperatorCheckedValue, schemas: readonly OperatorSchema[]): PlanGraphLayout {
-  const dependencyOrder = selectFieldItems(body, schemas, "dependency_order").flatMap((item) => {
-    const id = selectCheckedText(item); return id === null ? [] : [id];
-  });
+const texts = (items: readonly OperatorBodyValue[]): readonly string[] => items.flatMap((item) => {
+  const text = selectBodyText(item); return text === null ? [] : [text];
+});
+
+export function selectPlanGraph(body: OperatorBodyValue): PlanGraphLayout {
+  const dependencyOrder = texts(selectFieldItems(body, "dependency_order"));
   const order = new Map(dependencyOrder.map((id, index) => [id, index]));
-  const cohorts = selectFieldItems(body, schemas, "cohorts").map((cohort) => ({
-    id: selectFieldText(cohort, schemas, "id") ?? "",
-    title: selectFieldText(cohort, schemas, "title") ?? "Untitled cohort",
-    depends_on: selectCheckedItems(selectCheckedField(cohort, schemas, "depends_on")).flatMap((item) => {
-      const id = selectCheckedText(item); return id === null ? [] : [id];
-    }),
+  const cohorts = selectFieldItems(body, "cohorts").map((cohort) => ({
+    id: selectFieldText(cohort, "id") ?? "",
+    title: selectFieldText(cohort, "title") ?? "Untitled cohort",
+    depends_on: texts(selectFieldItems(cohort, "depends_on")),
     cohort,
   })).filter((cohort) => cohort.id.length > 0)
     .sort((left, right) => (order.get(left.id) ?? dependencyOrder.length) - (order.get(right.id) ?? dependencyOrder.length));

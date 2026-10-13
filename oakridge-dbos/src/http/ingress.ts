@@ -22,10 +22,11 @@ export interface DecideRequest extends IngressRequest { readonly decision: strin
 /** What an agent sends to publish a revision; its attempt comes from the session secret. */
 export interface PublishRequest extends IngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
 /** The response to an ingress request: the committed event, or why `step` refused it. */
-export type IngressResponse =
-  | { readonly run_id: string; readonly event_id: string }
+export type IngressResponse = IngressCommitted
   | { readonly kind: "rejected"; readonly reason: string }
   | { readonly kind: "conflict"; readonly detail: string };
+/** A committed (or replayed) ingress request: the only success body. */
+export interface IngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string }
 
 type Fields = { readonly [key: string]: unknown };
 const isFields = (value: unknown): value is Fields => !!value && typeof value === "object" && !Array.isArray(value);
@@ -61,8 +62,8 @@ export function ingressResponse(run_id: string, result: CommitResult): Response 
   const outcome: CommitOutcome = result.value;
   const json = (body: IngressResponse, status = 200) => Response.json(body, { status });
   switch (outcome.kind) {
-    case "committed": return json({ run_id, event_id: outcome.event_id }, 201);
-    case "replayed": return outcome.receipt.kind === "committed" ? json({ run_id, event_id: outcome.receipt.event_id })
+    case "committed": return json({ kind: "committed", run_id, event_id: outcome.event_id }, 201);
+    case "replayed": return outcome.receipt.kind === "committed" ? json({ kind: "committed", run_id, event_id: outcome.receipt.event_id })
       : json({ kind: "rejected", reason: outcome.receipt.reason }, 409);
     case "rejected": return json({ kind: "rejected", reason: outcome.reason }, 409);
     case "conflict": return json({ kind: "conflict", detail: outcome.detail }, 409);

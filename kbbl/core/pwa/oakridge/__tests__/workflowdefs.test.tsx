@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { fetchOperatorDefinitionDetail, fetchOperatorDefinitions } from "../client";
-import { makeDefinitionDetail, makeDefinitionSummary, makeWorkflowAuthoring } from "../__fixtures__/read-models";
+import { makeDefinitionDetail, makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
 import { WorkflowDefListView } from "../views/WorkflowDefListView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
 import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
@@ -53,7 +53,7 @@ describe("pinned definition catalog", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("server down");
   });
 
-  it("opens new authoring", async () => {
+  it("opens the editor for a new definition", async () => {
     const onNew = vi.fn();
     list(onNew);
     await screen.findByText("No pinned definitions.");
@@ -79,23 +79,23 @@ describe("pinned definition catalog", () => {
 });
 
 describe("pinned definition detail", () => {
-  it("shows the generated root and scope labels", async () => {
+  it("shows the definition's unit labels", async () => {
     vi.mocked(fetchOperatorDefinitions).mockImplementation(async () => [makeDefinitionSummary()]);
     show(<WorkflowDefDetailView definitionId="bundle-1" onBack={() => undefined} onClone={() => undefined} />);
     const detail = await screen.findByTestId("or-def-detail");
-    expect(detail.textContent).toContain("Root scope: development");
+    expect(detail.textContent).toContain("Development");
     expect(detail.querySelectorAll("li").length).toBeGreaterThan(0);
   });
 });
 
 describe("pinned definition editor", () => {
-  it("renders a new authoring form", () => {
+  it("renders an empty workflow editor for a new definition", () => {
     editor();
     expect(screen.getByTestId("or-def-editor")).toBeTruthy();
-    expect(screen.getByLabelText<HTMLInputElement>("Key").value).toBe("development");
+    expect(screen.getByLabelText<HTMLTextAreaElement>("Workflow JSON").value).toBe("");
   });
 
-  it("shows loading while clone authoring is pending", () => {
+  it("shows loading while the clone source is pending", () => {
     vi.mocked(fetchOperatorDefinitionDetail).mockImplementation(() => new Promise(() => undefined));
     editor("bundle-1");
     expect(screen.getByRole("status").textContent).toContain("Loading definition");
@@ -107,24 +107,19 @@ describe("pinned definition editor", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("not found");
   });
 
-  it("offers compilation of the pinned template", () => {
+  it("offers compilation of the workflow", () => {
     editor();
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Compile definition" }).disabled).toBe(false);
   });
 
-  it("requires a nonempty authoring key", () => {
+  it("requires a workflow before compiling", () => {
     editor();
-    const key = screen.getByLabelText<HTMLInputElement>("Key");
-    fireEvent.change(key, { target: { value: "" } });
-    expect(key.checkValidity()).toBe(false);
+    expect(screen.getByLabelText<HTMLTextAreaElement>("Workflow JSON").checkValidity()).toBe(false);
   });
 
-  it("clones the stored authoring choices under a new key", async () => {
-    vi.mocked(fetchOperatorDefinitionDetail).mockResolvedValue(makeDefinitionDetail({
-      authoring: makeWorkflowAuthoring({ key: "v2-staged", implementation_capacity: 3 }),
-    }));
+  it("clones the pinned workflow under a new name", async () => {
+    vi.mocked(fetchOperatorDefinitionDetail).mockResolvedValue(makeDefinitionDetail({ workflow: makeWorkflowSource({ workflow: "v2_staged" }) }));
     editor("bundle-1");
-    expect((await screen.findByDisplayValue("v2-staged-copy"))).toBeTruthy();
-    expect(screen.getByLabelText<HTMLInputElement>("Implementation capacity").value).toBe("3");
+    expect((await screen.findByDisplayValue(/"workflow": "v2_staged_copy"/))).toBeTruthy();
   });
 });

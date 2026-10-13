@@ -56,7 +56,7 @@ test("every named leaf operation remains present", () => {
 test("only leaf support types remain in the former domain directory", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
     "delegated-session.ts", "effect-instruction.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
-    "pull-request.ts", "repository-provisioning.ts", "session-settings.ts", "workflow.ts",
+    "pull-request.ts", "repository-provisioning.ts", "workflow.ts",
   ]);
 });
 

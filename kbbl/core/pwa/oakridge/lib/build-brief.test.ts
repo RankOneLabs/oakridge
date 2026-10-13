@@ -4,15 +4,15 @@ import { selectFieldItems, selectFieldText } from "../artifact-types";
 
 describe("checked build brief projection", () => {
   test("reads the registered brief's visible identity and goal", () => {
-    const { body, schemas } = makeBuildBriefFixture();
-    expect([selectFieldText(body, schemas, "cohort_id"), selectFieldText(body, schemas, "title"),
-      selectFieldText(body, schemas, "goal")]).toEqual(["brief-ui", "Build brief review UI", "Make the brief reviewable."]);
+    const { body } = makeBuildBriefFixture();
+    expect([selectFieldText(body, "cohort_id"), selectFieldText(body, "title"),
+      selectFieldText(body, "goal")]).toEqual(["brief-ui", "Build brief review UI", "Make the brief reviewable."]);
   });
 
   test("reads a decision and its rationale through the pinned record schema", () => {
-    const { body, schemas } = makeBuildBriefFixture();
-    const decision = selectFieldItems(body, schemas, "decisions_made")[0];
-    expect(decision && [selectFieldText(decision, schemas, "decision"), selectFieldText(decision, schemas, "rationale")])
+    const { body } = makeBuildBriefFixture();
+    const decision = selectFieldItems(body, "decisions_made")[0];
+    expect(decision && [selectFieldText(decision, "decision"), selectFieldText(decision, "rationale")])
       .toEqual(["Reuse v1", "It is proven."]);
   });
 });

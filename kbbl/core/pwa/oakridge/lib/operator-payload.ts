@@ -26,18 +26,9 @@ export function parseOperatorFieldValue({ raw, schema }: OperatorFieldInput): Re
       return reject(`Enter a whole number from ${schema.shape.min} to ${schema.shape.max}.`);
     return { ok: true, value };
   }
-  if (schema.shape.kind === "record" || schema.shape.kind === "list" || schema.shape.kind === "union"
-    || schema.shape.kind === "optional" || schema.shape.kind === "reference") {
-    let value: unknown;
-    try { value = JSON.parse(raw); }
+  if (schema.shape.kind === "record" || schema.shape.kind === "list" || schema.shape.kind === "optional") {
+    try { return { ok: true, value: JSON.parse(raw) as unknown }; }
     catch { return reject("Enter valid JSON."); }
-    if (schema.shape.kind === "reference") {
-      if (typeof value !== "object" || value === null || Array.isArray(value)
-        || !("brand" in value) || value.brand !== schema.shape.brand
-        || !("id" in value) || typeof value.id !== "string" || value.id.trim().length === 0)
-        return reject(`Enter a reference object with brand "${schema.shape.brand}" and a non-empty id.`);
-    }
-    return { ok: true, value };
   }
   return { ok: true, value: raw };
 }

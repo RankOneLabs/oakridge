@@ -4,16 +4,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
 import { ReviewInboxView } from "../views/ReviewInboxView";
-import { OperatorCommandForm } from "../components/organisms/OperatorCommandForm";
+import { OperatorDecisionForm } from "../components/organisms/OperatorDecisionForm";
 import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
 import { useOakridgeInvalidationStream } from "../hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "../hooks/useOakridgeRunEventStream";
 import { selectEventNotification } from "../lib/run-notifications";
-import { operatorEvent } from "../lib/__fixtures__/operator-event";
 import { useReviewInbox } from "../hooks/useReviewInbox";
-import { savePendingCommand } from "../lib/operator-drafts";
-import type { OperatorCommandDefinition, OperatorScopeView } from "../operator-contracts";
-import { makeInboxCommand, makeReviewInbox } from "../__fixtures__/read-models";
+import { savePendingDecision } from "../lib/operator-drafts";
+import { makeDecision, makeDecisionSubmission, makeInboxDecision, makeInboxPage, makeRunEvent, makeUnitView } from "../__fixtures__/read-models";
 import type { LiveStreamFrame } from "../../../live-stream";
 
 class EventSourceStub {
@@ -45,12 +43,12 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 function RunConsumer() { useRun("run-one"); return null; }
 function InboxConsumer() { useReviewInbox(); return null; }
 function runResponse(url: string): Response {
-  if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", scopes: [{ scope_id: "scope-one", scope_key: "root", label: "Current scope" }] });
+  if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", units: [{ unit_id: "unit-one", unit_key: "root", label: "Current unit" }] });
   if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [] } });
-  if (url.endsWith("/history")) return Response.json({ transitions: [], facts: [] });
-  return Response.json({ scope_id: "scope-one", run_id: "run-one", label: "Current scope",
+  if (url.endsWith("/history")) return Response.json({ events: [], facts: [] });
+  return Response.json({ unit_id: "unit-one", run_id: "run-one", label: "Current unit",
     state: { schema: "text", data: { kind: "string", value: "snapshot" } }, outcome: null,
-    outputs: [], resources: [], executions: [], commands: [], cursor: { scope_version: 1 } });
+    artifacts: [], resources: [], attempts: [], decisions: [], cursor: { unit_version: 1 } });
 }
 
 test("the app badge and visible inbox share one fetch and one invalidation key", async () => {
@@ -58,7 +56,7 @@ test("the app badge and visible inbox share one fetch and one invalidation key",
   vi.stubGlobal("fetch", fetch);
   const cache = client();
   render(<QueryClientProvider client={cache}><InboxConsumer />
-    <ReviewInboxView onSelectScope={() => undefined} /></QueryClientProvider>);
+    <ReviewInboxView onSelectUnit={() => undefined} /></QueryClientProvider>);
   await screen.findByText("Nothing needs attention.");
   expect(fetch).toHaveBeenCalledTimes(1);
   await cache.invalidateQueries({ queryKey: ["operator", "inbox"] });
@@ -66,11 +64,11 @@ test("the app badge and visible inbox share one fetch and one invalidation key",
 });
 
 test("settled inbox work keeps its row while the next action stays in place", async () => {
-  const first = makeInboxCommand({ key: "approve-first", label: "Approve first" });
-  const second = makeInboxCommand({ key: "approve-second", label: "Approve second" });
+  const first = makeInboxDecision({ key: "approve-first", label: "Approve first" });
+  const second = makeInboxDecision({ key: "approve-second", label: "Approve second" });
   let items = [first, second];
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(makeReviewInbox({ items }))));
-  render(<QueryClientProvider client={client()}><ReviewInboxView onSelectScope={() => undefined} /></QueryClientProvider>);
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(makeInboxPage({ items }))));
+  render(<QueryClientProvider client={client()}><ReviewInboxView onSelectUnit={() => undefined} /></QueryClientProvider>);
   expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
   items = [second];
   screen.getByRole("button", { name: "Refresh" }).click();
@@ -80,22 +78,20 @@ test("settled inbox work keeps its row while the next action stays in place", as
   expect((rows[0]?.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
 });
 
-test("StrictMode recovery delivers one pending command with its retained request id", async () => {
-  const command = { key: "action", label: "Act", consequence: "Continue", payload_schema: "empty",
-    available_in: [], required: true, field_presentation: [], targets: [] } satisfies OperatorCommandDefinition;
-  const scope = { run_id: "run-one", scope_id: "scope-one", commands: [command], outputs: [],
-    cursor: { scope_version: 1, transition_id: null }, command_targets: { action: [] }, command_prefill: {}, resources: [] } as unknown as OperatorScopeView;
-  savePendingCommand({ run_id: "run-one", scope_id: "scope-one", command_key: "action", owner_version: 1,
-    targets: [], request_id: "stable-id", payload: {} });
+test("StrictMode recovery delivers one pending decision with its retained request id", async () => {
+  const decision = makeDecision({ key: "retry:writer", label: "Act", submit: { kind: "retry", worker: "writer" } });
+  const unit = makeUnitView({ run_id: "run-one", unit_id: "unit-one", decisions: [decision] });
+  savePendingDecision(makeDecisionSubmission({ run_id: "run-one", unit_id: "unit-one", decision_key: "retry:writer",
+    target_revision_id: null, submit: decision.submit, request_id: "stable-id" }));
   let complete: (value: Response) => void = () => undefined;
   const response = new Promise<Response>((resolve) => { complete = resolve; });
   const fetch = vi.fn((_url: string, _init?: RequestInit) => response);
   vi.stubGlobal("fetch", fetch);
-  render(<StrictMode><OperatorCommandForm scope={scope} command={command} schemas={[]} onRefresh={() => undefined} /></StrictMode>);
+  render(<StrictMode><OperatorDecisionForm unit={unit} decision={decision} schemas={[]} onRefresh={() => undefined} /></StrictMode>);
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).request_id).toBe("stable-id");
-  complete(Response.json({ kind: "accepted_pending", request_id: "stable-id", transition_id: "transition", scope_version: 2 }));
-  await screen.findByText("Command accepted.");
+  complete(Response.json({ kind: "committed", run_id: "run-one", event_id: "event-1" }));
+  await screen.findByText("Decision accepted.");
 });
 
 test("replayed authority frames refresh queries without toasts; session snapshots refresh only sessions", async () => {
@@ -108,7 +104,7 @@ test("replayed authority frames refresh queries without toasts; session snapshot
   await waitFor(() => expect(EventSourceStub.instances.some((source) => source.readyState !== EventSourceStub.CLOSED)).toBe(true));
   const source = EventSourceStub.instances.findLast((item) => item.readyState !== EventSourceStub.CLOSED);
   if (!source) throw new Error("live source did not connect");
-  source.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", id: "first", data: JSON.stringify({ ...operatorEvent(), replay: true }) } });
+  source.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", id: "first", data: JSON.stringify({ ...makeRunEvent(), replay: true }) } });
   expect(invalidations.mock.calls.map(([filter]) => filter?.queryKey)).toEqual([
     ["operator", "run-one"], ["operator", "runs"], ["operator", "inbox"],
   ]);

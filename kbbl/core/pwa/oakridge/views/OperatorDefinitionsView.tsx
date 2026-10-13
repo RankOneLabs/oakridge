@@ -20,7 +20,7 @@ export function OperatorDefinitionsView({ onBack, onNew, onClone }: Props) {
     <Button variant="secondary" onClick={() => setIsShowingArchived(!isShowingArchived)}>{isShowingArchived ? "Show active" : "Show archived"}</Button></header>
     {(definitions.isError || error) && <p role="alert">{error ?? String(definitions.error)}</p>}
     {definitions.data?.length === 0 && <p>{isShowingArchived ? "No archived definitions." : "No pinned definitions."}</p>}
-    <ul>{definitions.data?.map((item) => <li key={item.digest}>{item.source.key} v{item.source.version} · <code>{item.digest}</code>{" "}
+    <ul>{definitions.data?.map((item) => <li key={item.digest}>{item.bundle.key} v{item.bundle.version} · <code>{item.digest}</code>{" "}
       <Button variant="secondary" onClick={() => onClone(item.bundle_id)}>Clone JSON</Button>{" "}
       <Button variant="secondary" onClick={() => void toggleArchive(item.bundle_id)}>{isShowingArchived ? "Unarchive" : "Archive"}</Button></li>)}</ul>
   </main>;

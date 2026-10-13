@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
 import type { OperatorRunView } from "../oakridge/operator-contracts";
+import { makeRunUnitSummary, makeRunView } from "../oakridge/__fixtures__/read-models";
 import { SessionListView } from "./SessionListView";
 
 const runtimes: RuntimeDescriptor[] = [
@@ -48,17 +49,8 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
   };
 }
 
-const runSummary: OperatorRunView = {
-  run_id: "run-1",
-  definition_bundle_id: "bundle-1",
-  definition_digest: "sha-1",
-  version: 1,
-  created_at: "2026-10-09T00:00:00.000Z",
-  archived_at: null,
-  cursor: [{ scope_id: "stage-plan", version: 1 }],
-  scopes: [{ scope_id: "stage-plan", scope_key: "planning", label: "Plan the work",
-    version: 1, is_terminal: false, available_commands: [] }],
-};
+const runSummary: OperatorRunView = makeRunView({ definition_digest: "sha-1", created_at: "2026-10-09T00:00:00.000Z",
+  units: [makeRunUnitSummary({ unit_id: "stage-plan", unit_key: "planning", label: "Plan the work", stage: "planning" })] });
 
 const runDetail: OperatorRunView = runSummary;
 

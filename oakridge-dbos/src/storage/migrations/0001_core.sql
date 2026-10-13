@@ -29,7 +29,6 @@ CREATE TABLE authority.project (
   repo_dir text NOT NULL,
   forge_repository jsonb,
   integration_branch text,
-  session_policy jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -276,7 +275,6 @@ COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundle
 COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';
 COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}';
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
-COMMENT ON COLUMN authority.project.session_policy IS '@type {SessionPolicy}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.run.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';

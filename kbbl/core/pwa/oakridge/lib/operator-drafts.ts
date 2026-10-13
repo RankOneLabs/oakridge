@@ -1,28 +1,19 @@
-import type { OperatorScopeCommandRequest } from "../operator-contracts";
+import type { OperatorDecisionSubmit } from "../operator-contracts";
 
-/** What a command form edits: one command on one scope, at an owner version and target revisions. */
-export interface OperatorDraftKey extends Pick<OperatorScopeCommandRequest, "command_key" | "targets"> {
-  readonly run_id: string; readonly scope_id: string; readonly owner_version: number;
+/** What a decision form edits: one decision on one unit, and the revision it decides (null for a retry or cancel). */
+export interface OperatorDraftKey {
+  readonly run_id: string; readonly unit_id: string; readonly decision_key: string; readonly target_revision_id: string | null;
 }
-/** A command the operator submitted, retained until the authority acknowledges it. */
-export interface OperatorCommandSubmission extends OperatorDraftKey, Pick<OperatorScopeCommandRequest, "request_id" | "payload"> {}
+/** A decision the operator submitted, retained until the authority acknowledges it. */
+export interface OperatorDecisionSubmission extends OperatorDraftKey {
+  readonly submit: OperatorDecisionSubmit; readonly request_id: string; readonly payload: unknown;
+}
 
 const DRAFT_PREFIX = "oakridge:operator:draft:";
 const PENDING_PREFIX = "oakridge:operator:pending:";
 
-export function operatorDraftIdentity(key: OperatorDraftKey): string {
-  return JSON.stringify([key.run_id, key.scope_id, key.command_key, key.owner_version,
-    key.targets.map((target) => [target.identity, target.version])]);
-}
-
-/**
- * What a mounted command form stands for: the command and its target revisions,
- * without the owner version. A version bump moves the draft under a new storage
- * identity but must not replace the form that is holding the operator's edits.
- */
-export function operatorFormIdentity(key: OperatorDraftKey): string {
-  return JSON.stringify([key.run_id, key.scope_id, key.command_key, key.targets.map((target) => [target.identity, target.version])]);
-}
+export const operatorDraftIdentity = (key: OperatorDraftKey): string =>
+  JSON.stringify([key.run_id, key.unit_id, key.decision_key, key.target_revision_id]);
 
 export function readOperatorDraft(key: OperatorDraftKey): string {
   try { return localStorage.getItem(DRAFT_PREFIX + operatorDraftIdentity(key)) ?? ""; }
@@ -34,25 +25,25 @@ export function saveOperatorDraft(key: OperatorDraftKey, value: string): void {
 export function clearOperatorDraft(key: OperatorDraftKey): void {
   try { localStorage.removeItem(DRAFT_PREFIX + operatorDraftIdentity(key)); } catch { /* storage may be disabled */ }
 }
-export function readPendingCommand(key: OperatorDraftKey): OperatorCommandSubmission | null {
+export function readPendingDecision(key: OperatorDraftKey): OperatorDecisionSubmission | null {
   try {
     const raw = localStorage.getItem(PENDING_PREFIX + operatorDraftIdentity(key));
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || !("request_id" in parsed) || typeof parsed.request_id !== "string"
-      || !("payload" in parsed)) return null;
-    return parsed as OperatorCommandSubmission;
+      || !("payload" in parsed) || !("submit" in parsed) || !parsed.submit || typeof parsed.submit !== "object") return null;
+    return parsed as OperatorDecisionSubmission;
   } catch { return null; }
 }
-export function savePendingCommand(input: OperatorCommandSubmission): void {
+export function savePendingDecision(input: OperatorDecisionSubmission): void {
   localStorage.setItem(PENDING_PREFIX + operatorDraftIdentity(input), JSON.stringify(input));
 }
-export function clearPendingCommand(key: OperatorDraftKey): void {
+export function clearPendingDecision(key: OperatorDraftKey): void {
   localStorage.removeItem(PENDING_PREFIX + operatorDraftIdentity(key));
 }
 
 export function findRetainedDrafts(key: OperatorDraftKey): readonly { readonly identity: string; readonly text: string }[] {
-  const prefix = JSON.stringify([key.run_id, key.scope_id, key.command_key]).slice(0, -1) + ",";
+  const prefix = JSON.stringify([key.run_id, key.unit_id, key.decision_key]).slice(0, -1) + ",";
   try {
     return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
       .filter((storedKey): storedKey is string => storedKey !== null && storedKey.startsWith(DRAFT_PREFIX + prefix)
@@ -62,7 +53,7 @@ export function findRetainedDrafts(key: OperatorDraftKey): readonly { readonly i
   } catch { return []; }
 }
 
-export function listPendingCommands(runId: string): readonly OperatorCommandSubmission[] {
+export function listPendingDecisions(runId: string): readonly OperatorDecisionSubmission[] {
   try {
     return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
       .filter((key): key is string => key !== null && key.startsWith(PENDING_PREFIX))
@@ -70,7 +61,7 @@ export function listPendingCommands(runId: string): readonly OperatorCommandSubm
       .flatMap((raw) => {
         if (!raw) return [];
         try {
-          const parsed = JSON.parse(raw) as OperatorCommandSubmission;
+          const parsed = JSON.parse(raw) as OperatorDecisionSubmission;
           return parsed.run_id === runId && typeof parsed.request_id === "string" ? [parsed] : [];
         } catch { return []; }
       });

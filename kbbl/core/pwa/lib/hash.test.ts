@@ -48,7 +48,7 @@ describe("readHashRoute oakridge routes", () => {
     });
     expect(withHash("#oakridge/run/run-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: null, pane: null },
+      route: { sub: "run", id: "run-1", unit_id: null, pane: null },
     });
     expect(withHash("#oakridge/def/def%2F1")).toEqual({
       view: "oakridge",
@@ -64,16 +64,16 @@ describe("readHashRoute oakridge routes", () => {
 
 describe("run scope routes", () => {
   it("parses a run route that names a scope", () => {
-    expect(withHash("#oakridge/run/run-1/scope/scope-1")).toEqual({
+    expect(withHash("#oakridge/run/run-1/unit/scope-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: "scope-1", pane: null },
+      route: { sub: "run", id: "run-1", unit_id: "scope-1", pane: null },
     });
   });
 
   it("opens a session pane within its run", () => {
     expect(withHash("#oakridge/run/run-1/session/sid-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", scope_id: null, pane: { kind: "session", session_id: "sid-1" } },
+      route: { sub: "run", id: "run-1", unit_id: null, pane: { kind: "session", session_id: "sid-1" } },
     });
   });
 
@@ -89,16 +89,16 @@ describe("run scope routes", () => {
     ["ids that need URL encoding", "run/one", "scope/one"],
   ];
 
-  it.each(ROUND_TRIPS)("round-trips %s", (_label, runId, scopeId) => {
-    expect(withHash(`#${formatRunWorkspaceHash(runId, scopeId)}`)).toEqual({
+  it.each(ROUND_TRIPS)("round-trips %s", (_label, runId, unitId) => {
+    expect(withHash(`#${formatRunWorkspaceHash(runId, unitId)}`)).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: runId, scope_id: scopeId, pane: null },
+      route: { sub: "run", id: runId, unit_id: unitId, pane: null },
     });
   });
 
   it("round-trips an artifact pane and both project routes", () => {
     expect(withHash(`#${formatRunWorkspaceHash("run/one", { kind: "artifact", artifact_id: "revision/one" as never })}`))
-      .toEqual({ view: "oakridge", route: { sub: "run", id: "run/one", scope_id: null,
+      .toEqual({ view: "oakridge", route: { sub: "run", id: "run/one", unit_id: null,
         pane: { kind: "artifact", artifact_id: "revision/one" } } });
     expect(withHash("#oakridge/create-project")).toEqual({ view: "oakridge", route: { sub: "create-project" } });
     expect(withHash("#oakridge/projects")).toEqual({ view: "oakridge", route: { sub: "projects" } });

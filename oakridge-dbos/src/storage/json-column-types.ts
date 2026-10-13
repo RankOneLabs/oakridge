@@ -17,7 +17,6 @@ export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value>
 
 export type { AttemptStatus, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
 export type { EffectInstruction } from "../domain/effect-instruction";
-export type { SessionPolicy } from "../domain/session-settings";
 export type { OperatorEventPayload } from "../projections/operator-event";
 /** Run input, unit input, revision bodies and decision payloads are schema-checked by the Rust core. */
 export type RuntimeValue = unknown;

@@ -1,19 +1,19 @@
-import type { OperatorCheckedValue, OperatorSchema } from "../operator-contracts";
+import type { OperatorBodyValue } from "../operator-contracts";
 import { selectFieldItems, selectFieldText } from "../artifact-types";
 
-export interface CheckedAssessmentView {
-  readonly needs_attention: readonly OperatorCheckedValue[];
-  readonly met: readonly OperatorCheckedValue[];
+export interface AssessmentView {
+  readonly needs_attention: readonly OperatorBodyValue[];
+  readonly met: readonly OperatorBodyValue[];
   readonly status_counts: readonly { readonly status: string; readonly count: number }[];
 }
 
 const COUNT_ORDER = ["not_met", "partial", "met"] as const;
 
-/** Group checked findings without inventing brief criteria absent from this projection. */
-export function selectCheckedAssessmentView(body: OperatorCheckedValue, schemas: readonly OperatorSchema[]): CheckedAssessmentView {
-  const findings = selectFieldItems(body, schemas, "findings");
-  const status = (finding: OperatorCheckedValue) => selectFieldText(finding, schemas, "status");
-  const attentionPriority = (finding: OperatorCheckedValue): number => status(finding) === "not_met" ? 0 : status(finding) === "partial" ? 1 : 2;
+/** Group the assessor's findings by status, the unmet first, without inventing criteria the body does not name. */
+export function selectAssessmentView(body: OperatorBodyValue): AssessmentView {
+  const findings = selectFieldItems(body, "findings");
+  const status = (finding: OperatorBodyValue) => selectFieldText(finding, "status");
+  const attentionPriority = (finding: OperatorBodyValue): number => status(finding) === "not_met" ? 0 : status(finding) === "partial" ? 1 : 2;
   const needs_attention = findings.filter((finding) => status(finding) !== "met")
     .toSorted((left, right) => attentionPriority(left) - attentionPriority(right));
   const met = findings.filter((finding) => status(finding) === "met");

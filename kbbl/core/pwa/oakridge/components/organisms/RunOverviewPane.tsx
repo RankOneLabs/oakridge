@@ -1,24 +1,24 @@
-import type { OperatorRunView, OperatorScopeView, OperatorSchema } from "../../operator-contracts";
-import { selectCompletedScopeDetails, selectFinalIntegrationScope, selectRunProgress, selectWaitingScopes } from "../../lib/run-overview";
+import type { OperatorRunView, OperatorUnitView } from "../../operator-contracts";
+import { selectCompletedUnitDetails, selectFinalIntegrationUnit, selectRunProgress, selectWaitingUnits } from "../../lib/run-overview";
 import { OperatorTypedValue } from "../molecules/OperatorTypedValue";
 import { RunStageRow } from "../molecules/RunStageRows";
 import { ParkedGateList } from "./ParkedGateList";
 import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
-interface Props { readonly run: OperatorRunView; readonly scopes: readonly OperatorScopeView[]; readonly schemas: readonly OperatorSchema[]; readonly onOpenScope: (id: string) => void }
-export function RunOverviewPane({ run, scopes, schemas, onOpenScope }: Props) {
+interface Props { readonly run: OperatorRunView; readonly units: readonly OperatorUnitView[]; readonly onOpenUnit: (id: string) => void }
+export function RunOverviewPane({ run, units, onOpenUnit }: Props) {
   const progress = selectRunProgress(run);
-  const finalIntegration = selectFinalIntegrationScope(scopes);
+  const finalIntegration = selectFinalIntegrationUnit(units);
   return <section data-testid="or-run-overview"><h2>Overview</h2>
-    <p>{progress.complete} of {progress.total} scopes complete · {progress.needs_attention} need attention</p>
-    <ul>{run.scopes.map((scope) => <RunStageRow key={scope.scope_id} scope={scope} onOpen={onOpenScope} />)}</ul>
-    <ParkedGateList scopes={scopes} onOpenScope={onOpenScope} />
-    {finalIntegration && <FinalIntegrationPanel scope={finalIntegration} schemas={schemas} />}
-    {selectWaitingScopes(scopes).map((scope) => <section key={scope.scope_id}>
-      <h3>{scope.label}</h3><p>{scope.decision?.kind === "wait" ? scope.decision.reason : ""}</p>
+    <p>{progress.complete} of {progress.total} units complete · {progress.needs_attention} need attention</p>
+    <ul>{run.units.map((unit) => <RunStageRow key={unit.unit_id} unit={unit} onOpen={onOpenUnit} />)}</ul>
+    <ParkedGateList units={units} onOpenUnit={onOpenUnit} />
+    {finalIntegration && <FinalIntegrationPanel unit={finalIntegration} />}
+    {selectWaitingUnits(units).map((unit) => <section key={unit.unit_id}>
+      <h3>{unit.label}</h3><p>{unit.attention?.kind === "waiting" ? unit.attention.reason : ""}</p>
     </section>)}
-    {selectCompletedScopeDetails(scopes).map((scope) => <section key={scope.scope_id}>
-      <h3>{scope.label} outcome</h3>{scope.outcome && <OperatorTypedValue value={scope.outcome} schemas={schemas} />}
+    {selectCompletedUnitDetails(units).map((unit) => <section key={unit.unit_id}>
+      <h3>{unit.label} outcome</h3>{unit.outcome && <OperatorTypedValue value={unit.outcome} />}
     </section>)}
   </section>;
 }

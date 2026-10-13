@@ -29,14 +29,14 @@ test("a record expression and its inline form share one canonical key, fields so
 
 test("an alias keeps its name; an alias of an alias takes the shape it resolves to", () => {
   expect({ plan: shape("plan"), plan_body: shape("plan_body") }).toEqual({
-    plan: { kind: "record", fields: [{ key: "summary", required: true, schema: "text" }] },
-    plan_body: { kind: "record", fields: [{ key: "summary", required: true, schema: "text" }] } });
+    plan: { kind: "record", fields: [{ key: "summary", schema: "text" }] },
+    plan_body: { kind: "record", fields: [{ key: "summary", schema: "text" }] } });
 });
 
-test("an optional field is still required (it admits null, not absence), and nested lists and optionals get their own schemas", () => {
+test("an optional field admits null, and nested lists and optionals get their own schemas", () => {
   expect({ repository: shape("repository"), list: shape("list(repository)"), optional: shape("optional(repo_path)"), path: shape("repo_path") }).toEqual({
-    repository: { kind: "record", fields: [{ key: "name", required: true, schema: "ident" }, { key: "owner", required: true, schema: "ident" },
-      { key: "path", required: true, schema: "optional(repo_path)" }] },
+    repository: { kind: "record", fields: [{ key: "name", schema: "ident" }, { key: "owner", schema: "ident" },
+      { key: "path", schema: "optional(repo_path)" }] },
     list: { kind: "list", item: "repository", max_items: Number.MAX_SAFE_INTEGER },
     optional: { kind: "optional", item: "repo_path" },
     path: { kind: "string", min_length: 0, max_length: Number.MAX_SAFE_INTEGER } });
@@ -72,7 +72,7 @@ test("every schema the bundle references is listed exactly once", () => {
 test("the bundle lists the root with the run input and each staged unit with its artifacts", () => {
   const bundle = selectDefinitionBundle(workflow, 3);
   expect({ key: bundle.key, version: bundle.version, root: bundle.root,
-    units: bundle.units.map((unit) => [unit.key, unit.input_schema, unit.presentation.label, unit.artifacts.map((artifact) => [artifact.key, artifact.schema])]) })
+    units: bundle.units.map((unit) => [unit.key, unit.input_schema, unit.label, unit.artifacts.map((artifact) => [artifact.key, artifact.schema])]) })
     .toEqual({ key: "dev_flow", version: 3, root: "$root", units: [
       ["$root", "{repositories: list(repository), spec: text}", "Dev Flow", []],
       ["planning", "{}", "Planning", [["notes", "{count: integer, done: boolean}"], ["plan", "plan"]]]] });

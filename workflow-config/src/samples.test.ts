@@ -45,7 +45,7 @@ let prompt_root: string;
 let previous_root: string | undefined;
 beforeEach(() => {
   prompt_root = mkdtempSync(resolve(tmpdir(), "oakridge-prompt-root-"));
-  mkdirSync(resolve(prompt_root, "workflow-config/prompts/dev-flow/v3"), { recursive: true });
+  mkdirSync(resolve(prompt_root, "workflow-config/prompts/development"), { recursive: true });
   previous_root = process.env.OAKRIDGE_PROMPT_ROOT;
   process.env.OAKRIDGE_PROMPT_ROOT = prompt_root;
 });
@@ -56,10 +56,10 @@ afterEach(() => {
 });
 
 test("the catalog lists every allowlisted file with its server-computed digest", () => {
-  writeFileSync(resolve(prompt_root, "workflow-config/prompts/dev-flow/v3/build_initial.md"), "One.\n");
+  writeFileSync(resolve(prompt_root, "workflow-config/prompts/development/build.md"), "One.\n");
   writeFileSync(resolve(prompt_root, "workflow-config/prompts/review-loop.md"), "Two.\n");
   expect(listPromptCatalog()).toEqual([
-    { key: "build_initial_v3", path: "workflow-config/prompts/dev-flow/v3/build_initial.md", content_digest: digest("One.\n") },
+    { key: "workflow-config/prompts/development/build.md", path: "workflow-config/prompts/development/build.md", content_digest: digest("One.\n") },
     { key: "workflow-config/prompts/review-loop.md", path: "workflow-config/prompts/review-loop.md", content_digest: digest("Two.\n") },
   ]);
 });

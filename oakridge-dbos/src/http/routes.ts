@@ -40,7 +40,6 @@ export const HTTP_ROUTES: readonly HttpRoute[] = [
   { method: "GET", path: "/api/runs/:run_id/inspect", authority: "operator" },
   { method: "GET", path: "/api/inbox", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/units/:unit_id", authority: "operator" },
-  { method: "GET", path: "/api/runs/:run_id/units/:unit_id/decision", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/units/:unit_id/history", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/units/:unit_id/diagnostics", authority: "operator" },
   { method: "GET", path: "/api/runs/:run_id/units/:unit_id/artifacts/:artifact", authority: "operator" },

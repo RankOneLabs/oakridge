@@ -27,24 +27,6 @@ export function listPromptCatalog(): PromptCatalogEntry[] {
   visit(prompt_root);
   return files.map((file): PromptCatalogEntry => {
     const path = relative(root, file).split(sep).join("/");
-    const generated = path.match(/^workflow-config\/prompts\/dev-flow\/v3\/(.*)\.md$/);
-    return { key: generated ? `${generated[1]}_v3` : path,
-      path, content_digest: createHash("sha256").update(readFileSync(file)).digest("hex") };
+    return { key: path, path, content_digest: createHash("sha256").update(readFileSync(file)).digest("hex") };
   }).sort((left, right) => left.path.localeCompare(right.path));
-}
-
-type PromptReference = { readonly key: string; readonly path: string; readonly content_digest: string };
-
-/** Pin authored prompt keys to the server-owned path and current file digest. */
-export function resolvePromptKeys<T extends { readonly prompts: readonly PromptReference[] }>(bundle: T):
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly key: string; readonly detail: string } {
-  const catalog = new Map(listPromptCatalog().map((prompt) => [prompt.key, prompt]));
-  const prompts: PromptReference[] = [];
-  for (const prompt of bundle.prompts) {
-    const found = catalog.get(prompt.key);
-    if (!found) return { ok: false, key: prompt.key, detail: "prompt key is not in the catalog" };
-    prompts.push({ ...prompt, path: found.path, content_digest: found.content_digest });
-  }
-  return { ok: true, value: { ...bundle, prompts } };
 }

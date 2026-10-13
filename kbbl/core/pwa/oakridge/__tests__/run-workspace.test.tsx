@@ -3,28 +3,28 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
-  makeBuildResultFixture, makeCommand, makeDefinitionSummary, makeExecutionView, makeRunDetail,
-  makeRunScopeSummary, makeScopeHistory, makeScopeView, makeScopeWithOutput,
+  makeBuildResultFixture, makeDecision, makeDefinitionSummary, makeAttemptView, makeRunView,
+  makeRunUnitSummary, makeUnitHistory, makeUnitView, makeUnitWithArtifact,
 } from "../__fixtures__/read-models";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
-import type { OperatorRunDetail, OperatorScopeView } from "../operator-contracts";
+import type { OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import type { ArtifactId } from "../../lib/ids";
 
 const result = makeBuildResultFixture({ summary: "Build completed" });
-const scope = makeScopeWithOutput({ body: result.body, output_key: "build_result",
-  scope: { executions: [makeExecutionView({ status: "terminal" })] } });
-const run = makeRunDetail({ scopes: [makeRunScopeSummary({ available_commands: ["approve"] })] });
+const unit = makeUnitWithArtifact({ body: result.body, artifact_key: "build_result",
+  unit: { attempts: [makeAttemptView({ status: "succeeded" })] } });
+const run = makeRunView({ units: [makeRunUnitSummary({ asks: ["approve"] })] });
 
-function stubWorkspace(options: { readonly run?: OperatorRunDetail; readonly scope?: OperatorScopeView;
+function stubWorkspace(options: { readonly run?: OperatorRunView; readonly unit?: OperatorUnitView;
   readonly failed?: "run" | "scope" | "definition" } = {}) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/runs/run-1")) return options.failed === "run"
       ? Response.json({ detail: "run unavailable" }, { status: 503 }) : Response.json(options.run ?? run);
     if (url.endsWith("/definition")) return options.failed === "definition"
       ? Response.json({ detail: "definition unavailable" }, { status: 503 }) : Response.json(makeDefinitionSummary());
-    if (url.endsWith("/scopes/scope-1")) return options.failed === "scope"
-      ? Response.json({ detail: "scope unavailable" }, { status: 503 }) : Response.json(options.scope ?? scope);
-    if (url.endsWith("/history")) return Response.json(makeScopeHistory());
+    if (url.endsWith("/units/unit-1")) return options.failed === "scope"
+      ? Response.json({ detail: "unit unavailable" }, { status: 503 }) : Response.json(options.unit ?? unit);
+    if (url.endsWith("/history")) return Response.json(makeUnitHistory());
     if (url.endsWith("/threads")) return Response.json([]);
     throw new Error(url);
   }));
@@ -32,18 +32,18 @@ function stubWorkspace(options: { readonly run?: OperatorRunDetail; readonly sco
 
 function show(routePane: Parameters<typeof RunWorkspace>[0]["routePane"] = null) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <RunWorkspace runId="run-1" routePane={routePane} scopeId="scope-1" onBack={() => undefined} />
+    <RunWorkspace runId="run-1" routePane={routePane} unitId="unit-1" onBack={() => undefined} />
   </QueryClientProvider>);
 }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); history.replaceState(null, "", window.location.pathname); localStorage.clear(); });
 
-it("shows generated run identity, scope progress, executions, artifacts and overview", async () => {
+it("shows run identity, unit progress, attempts, artifacts and overview", async () => {
   stubWorkspace();
   show();
   const header = await screen.findByTestId("or-run-identity");
   expect(header.textContent).toContain("run-1");
-  expect(header.textContent).toContain("0/1 scopes complete");
+  expect(header.textContent).toContain("0/1 units complete");
   expect(screen.getByTestId("or-sidebar-sessions").textContent).toContain("author #1");
   expect(screen.getByTestId("or-sidebar-artifacts").textContent).toContain("build_result");
   expect(screen.getByTestId("or-run-overview")).toBeTruthy();
@@ -77,10 +77,10 @@ it("shows a run load failure as an alert", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain("run unavailable");
 });
 
-it("keeps the overview visible when the selected scope read fails", async () => {
+it("keeps the overview visible when the selected unit read fails", async () => {
   stubWorkspace({ failed: "scope" });
   show();
-  expect((await screen.findByText(/Could not load scope:.*scope unavailable/)).getAttribute("role")).toBe("alert");
+  expect((await screen.findByText(/Could not load unit:.*unit unavailable/)).getAttribute("role")).toBe("alert");
   expect(screen.getByTestId("or-run-overview")).toBeTruthy();
 });
 
@@ -90,8 +90,8 @@ it("reports a pinned definition read failure separately", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain("definition unavailable");
 });
 
-it("shows decisions from live scope commands", async () => {
-  stubWorkspace({ scope: makeScopeView({ commands: [makeCommand()], scope_id: "scope-1" }) });
+it("shows decisions from live unit decisions", async () => {
+  stubWorkspace({ unit: makeUnitView({ decisions: [makeDecision()], unit_id: "unit-1" }) });
   show();
   expect((await screen.findByTestId("or-parked-gates")).textContent).toContain("Approve");
 });

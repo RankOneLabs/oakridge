@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { selectFailureDetail } from "./client-errors";
 
 test("the authority's {error, detail} answer surfaces the detail, not the bare kind", () => {
-  expect(selectFailureDetail({ error: "conflict", detail: "scope version changed" }, "fallback")).toBe("scope version changed");
+  expect(selectFailureDetail({ error: "conflict", detail: "unit version changed" }, "fallback")).toBe("unit version changed");
 });
 
 test("a {kind, detail} domain result surfaces the detail", () => {

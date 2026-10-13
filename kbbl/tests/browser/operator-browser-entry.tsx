@@ -5,9 +5,10 @@ import { RunDetailView } from "../../core/pwa/oakridge/views/RunDetailView";
 
 const container = document.getElementById("app");
 if (!container) throw new Error("Browser fixture container missing");
+const params = new URL(location.href).searchParams;
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 createRoot(container).render(<QueryClientProvider client={client}>
-  {new URL(location.href).searchParams.has("launch")
+  {params.has("launch")
     ? <OperatorLaunchView onBack={() => {}} onEdit={() => {}} onCreated={(runId) => { location.hash = `run/${runId}`; }} />
-    : <RunDetailView runId="run-1" routePane={null} scopeId={null} onBack={() => {}} />}
+    : <RunDetailView runId={params.get("run") ?? "run-1"} routePane={null} unitId={params.get("unit")} onBack={() => {}} />}
 </QueryClientProvider>);
