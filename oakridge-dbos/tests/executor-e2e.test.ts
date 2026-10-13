@@ -365,7 +365,10 @@ test("a revise under session: resume revives its ended session and continues it"
     const [drafts, critiques] = await Promise.all([revisions(run_id, "draft"), revisions(run_id, "critique")]);
     return drafts.length === 1 && critiques.length === 1 ? drafts : null;
   });
-  // The writer's session ends between attempts, as kbbl ends an idle one or an operator closes it.
+  // The writer's session ends between attempts, as kbbl ends an idle one or an operator closes it. Only once the
+  // executor has seen the first turn succeed: ending it earlier fails that attempt as closed mid-task.
+  await eventually("the writer's first attempt to succeed", async () =>
+    (await attempts(run_id, "writer")).some((attempt) => attempt.status.kind === "succeeded"));
   const [writer] = sessionsOfRun(run_id, "writer");
   writer!.status = "ended";
   expect((await decide(run_id, unit, "request_changes", r1!.id, { feedback: "shorter" })).status).toBe(201);
