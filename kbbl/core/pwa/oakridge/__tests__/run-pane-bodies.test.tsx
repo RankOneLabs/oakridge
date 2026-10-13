@@ -188,7 +188,9 @@ describe("a session purged while a pane holds it", () => {
 
     await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
     expect(screen.queryByTestId("or-run-pane-session")).toBeNull();
-    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-c1");
+    // Pruning removes the entry outright; a later render may write the default
+    // arrangement back. Either way the purged sid must be gone.
+    expect(localStorage.getItem(runWorkspaceStorageKey("run-1")) ?? "").not.toContain("sid-c1");
   });
 
   it("stops listing it in the sidebar, which the run's own reads still would", async () => {
