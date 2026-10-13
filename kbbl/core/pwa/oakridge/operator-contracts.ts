@@ -3,39 +3,143 @@
 
 export interface OperatorRunPage { readonly items: readonly OperatorRunView[]; readonly next_cursor: string | null }
 
-export interface OperatorRunView extends OperatorRunSummary { readonly units: readonly OperatorRunUnitSummary[] }
+export interface OperatorRunView extends OperatorRunSummary {
+  readonly cursor: readonly { readonly unit_id: string; readonly version: number }[];
+  readonly units: readonly OperatorRunUnitSummary[];
+}
 
 export interface OperatorRunSummary {
   readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string; readonly version: number;
-  readonly status: OperatorUnitStatus; readonly created_at: string; readonly archived_at: string | null;
+  readonly created_at: string; readonly archived_at: string | null;
+  /** The root unit's status. */
+  readonly status: OperatorUnitStatus;
 }
 
 export type OperatorRunDetail = OperatorRunView;
 
-export interface OperatorRunUnitSummary { readonly unit_id: string; readonly unit_key: string; readonly stage: string | null; readonly status: OperatorUnitStatus; readonly version: number }
+export interface OperatorRunUnitSummary {
+  readonly unit_id: string;
+  readonly unit_key: string;
+  readonly label: string;
+  readonly version: number;
+  readonly is_terminal: boolean;
+  /** Keys of the decisions that ask for the operator now (not the run's cancel). */
+  readonly available_decisions: readonly string[];
+  readonly stage: string | null;
+  readonly status: OperatorUnitStatus;
+}
 
 export interface OperatorRunInspectView {
   readonly run_id: string;
   readonly status: OperatorUnitStatus;
-  readonly units: readonly { readonly id: string; readonly stage: string | null; readonly status: OperatorUnitStatus }[];
+  readonly units: readonly { readonly id: string; readonly unit_key: string; readonly label: string; readonly stage: string | null; readonly status: OperatorUnitStatus }[];
   readonly attention: readonly OperatorInspectAttention[];
+  readonly artifacts: readonly OperatorArtifactView[];
+  readonly attempts: readonly OperatorAttemptView[];
+  /** Newest first. */
+  readonly events: readonly OperatorInspectEvent[];
 }
 
-export interface OperatorInspectAttention {
-  readonly kind: "stalled_worker";
-  readonly unit_id: string;
-  readonly worker: string;
-  readonly action_id: string;
-  readonly detail: string;
-}
+export type OperatorInspectAttention =
+  | { readonly kind: "stalled_worker"; readonly unit_id: string; readonly worker: string; readonly action_id: string; readonly detail: string;
+    readonly decisions: readonly OperatorDecisionDefinition[] }
+  | { readonly kind: "awaiting_review"; readonly unit_id: string; readonly review: string; readonly target: string;
+    readonly decisions: readonly OperatorDecisionDefinition[] };
 
 export interface OperatorDefinitionPage { readonly items: readonly OperatorDefinitionSummary[]; readonly next_cursor: string | null }
 
-export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: OperatorWorkflow; readonly archived_at: string | null }
+export interface OperatorDefinitionSummary { readonly bundle_id: string; readonly digest: string; readonly source: OperatorDefinitionBundle; readonly archived_at: string | null }
 
 export interface OperatorDefinitionDetail extends OperatorDefinitionSummary { readonly graph: OperatorDefinitionGraph }
 
 export interface OperatorPinnedDefinition extends OperatorDefinitionSummary { readonly checked_program: OperatorCompiledWorkflow }
+
+export interface OperatorUnitView {
+  readonly unit_id: string;
+  readonly run_id: string;
+  readonly unit_key: string;
+  readonly label: string;
+  readonly stage: string | null;
+  readonly collection_key: string | null;
+  readonly input: OperatorBodyValue;
+  readonly depends_on: readonly string[];
+  /** v1's scope state: the unit's status. */
+  readonly state: OperatorUnitStatus;
+  readonly outcome: OperatorBodyValue | null;
+  readonly is_terminal: boolean;
+  readonly decisions: readonly OperatorDecisionDefinition[];
+  readonly attempts: readonly OperatorAttemptView[];
+  readonly artifacts: readonly OperatorArtifactView[];
+  readonly decision_targets: Readonly<{ readonly [decision_key: string]: readonly OperatorTargetRevision[] }>;
+  readonly decision_prefill: Readonly<{ readonly [decision_key: string]: OperatorDecisionPrefill }>;
+  /** Derived attention under its v1 name (R4 decision, part 1 §12). */
+  readonly decision: OperatorAttention | null;
+  readonly cursor: OperatorUnitCursor;
+}
+
+export interface OperatorDecision { readonly decision: OperatorAttention | null; readonly cursor: OperatorUnitCursor }
+
+export type OperatorInboxItem =
+  | { readonly kind: "decision"; readonly run_id: string; readonly unit_id: string; readonly unit_version: number; readonly key: string;
+    readonly label: string; readonly consequence: string; readonly submit: OperatorDecisionSubmit;
+    /** The awaiting review's prompt, rendered with its resolved inputs; null for a retry. */
+    readonly prompt: string | null }
+  | { readonly kind: "wait"; readonly run_id: string; readonly unit_id: string; readonly unit_version: number; readonly reason: string; readonly label: string }
+  | { readonly kind: "diagnostic"; readonly run_id: string; readonly unit_id: string; readonly unit_version: number; readonly detail: string };
+
+export interface OperatorInboxPage {
+  readonly cursor: readonly { readonly unit_id: string; readonly version: number }[];
+  readonly items: readonly OperatorInboxItem[];
+  readonly next_cursor: string | null;
+}
+
+export type OperatorReviewInbox = OperatorInboxPage;
+
+export interface OperatorSessionLocation {
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly attempt_id: string;
+}
+
+export interface OperatorRunSessionAttempt {
+  readonly location: OperatorSessionLocation;
+  readonly worker_key: string;
+  readonly generation: number;
+  readonly status: OperatorAttemptView["status"];
+  readonly result: OperatorAttemptView["result"];
+}
+
+export interface OperatorArtifactDetail {
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly artifact_key: string;
+  readonly collection_key: string;
+  /** How many revisions the artifact has. */
+  readonly artifact_version: number;
+  readonly revision_id: string | null;
+  readonly predecessor_id: string | null;
+  readonly body: OperatorBodyValue | null;
+  /** Of the latest revision: its latest decision's effect, or draft while it has none. */
+  readonly status: OperatorArtifactRevisionStatus;
+  readonly schema: string;
+  readonly reviewable: boolean;
+  /** Oldest first. */
+  readonly revisions: readonly OperatorArtifactRevisionView[];
+  readonly decisions: readonly OperatorRevisionDecision[];
+}
+
+export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
+
+export interface OperatorUnitHistory { readonly unit_id: string; readonly events: readonly OperatorEventHistory[]; readonly next_cursor: string | null }
+
+export interface OperatorUnitDiagnostics {
+  readonly unit_id: string;
+  readonly unit_version: number;
+  readonly attempts: readonly OperatorAttemptView[];
+  readonly effects: readonly OperatorEffectDiagnostic[];
+  /** Events step refused for this unit. */
+  readonly rejected: readonly OperatorRejectedEvent[];
+}
 
 export interface OperatorCollaborationThreadView {
   readonly id: string;
@@ -65,12 +169,17 @@ export type OperatorProjectView = OperatorProjectRecord;
 export interface OperatorRunEvent {
   readonly event_id: string;
   readonly run_id: string;
-  /** The unit the event addressed; null for a launch or a cancel. */
-  readonly unit_id: string | null;
-  readonly kind: OperatorEvent["kind"];
-  readonly run_status: OperatorUnitStatus["kind"];
+  readonly unit_id: string;
+  readonly unit_key: string;
+  /** `wait` when the event left a review awaiting the operator, otherwise `apply`. */
+  readonly decision: "apply" | "wait";
+  readonly attention: OperatorAttentionMetadata | null;
+  /** The addressed unit is done or cancelled. */
+  readonly is_terminal: boolean;
   /** ISO-8601, as the event log recorded it. */
   readonly occurred_at: string;
+  readonly kind: OperatorEvent["kind"];
+  readonly run_status: OperatorUnitStatus["kind"];
 }
 
 export interface OperatorIngressRequest { readonly request_id: string }
@@ -86,11 +195,138 @@ export type OperatorIngressResponse =
 
 export type OperatorUnitStatus = { readonly "kind": "not_started" } | { readonly "kind": "active" } | { readonly "kind": "blocked"; readonly "reason": OperatorBlockedReason } | { readonly "kind": "done"; readonly "outcome": unknown } | { readonly "kind": "cancelled" };
 
-export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorStage }; readonly "workflow": string };
+export interface OperatorArtifactView {
+  /** `<unit id>:<artifact key>`. */
+  readonly id: string;
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly artifact_key: string;
+  readonly collection_key: string;
+  readonly latest_revision_id: string | null;
+  /** How many revisions the artifact has. */
+  readonly version: number;
+  readonly latest_revision: OperatorArtifactRevisionView | null;
+  /** The resolved schema name the PWA's viewer registry dispatches on (§3.1). */
+  readonly schema: string;
+  /** A review of this artifact is declared (§3.1). */
+  readonly reviewable: boolean;
+}
+
+export interface OperatorAttemptView {
+  /** Opaque: `<action id>:<seq>`. Show the worker, mode and cause instead. */
+  readonly id: string;
+  readonly unit_id: string;
+  readonly worker_key: string;
+  /** The attempt's position among its worker's attempts on the unit, from 1, in the order commit opened them. */
+  readonly generation: number;
+  readonly status: OperatorAttemptStatusKind;
+  readonly result: OperatorAttemptFailure | null;
+  /** The attempt's seq within its action (a periodic worker's attempts share one action). */
+  readonly version: number;
+  readonly mode: OperatorMode["kind"];
+  readonly cause: OperatorCause;
+  readonly kbbl_session_id: string | null;
+  readonly created_at: string;
+  /** The worker's latest attempt; earlier ones are superseded. */
+  readonly is_current: boolean;
+}
+
+export interface OperatorInspectEvent { readonly id: string; readonly unit_id: string | null; readonly kind: string; readonly writer: OperatorWriter; readonly created_at: string }
+
+export interface OperatorDecisionDefinition {
+  /** Unique within the unit: the decision key, `<review>:<decision>` where a stage reuses a key across reviews, `retry:<worker>`, or `cancel`. */
+  readonly key: string;
+  readonly label: string;
+  readonly consequence: string;
+  readonly payload_schema: string;
+  readonly targets: readonly OperatorDecisionTarget[];
+  /** v2 decisions declare no prefill; the target revision rides in `decision_targets`. */
+  readonly prefill: readonly { readonly key: string }[];
+  readonly field_presentation: readonly OperatorDecisionFieldPresentation[];
+  readonly submit: OperatorDecisionSubmit;
+}
+
+export interface OperatorDefinitionBundle {
+  readonly key: string;
+  readonly version: number;
+  /** The root unit's key, as the run view lists it. */
+  readonly root: string;
+  readonly schemas: readonly OperatorSchema[];
+  readonly units: readonly OperatorUnitDefinition[];
+}
 
 export interface OperatorDefinitionGraph { readonly nodes: readonly OperatorDefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 
 export type OperatorCompiledWorkflow = { readonly "digest": string; readonly "stages": (string)[] };
+
+export type OperatorBodyValue = OperatorJsonValue;
+
+export interface OperatorTargetRevision { readonly identity: string; readonly version: number }
+
+export type OperatorDecisionPrefill = Readonly<{ readonly [field_key: string]: OperatorBodyValue }>;
+
+export type OperatorAttention = { readonly kind: "wait"; readonly reason: string } | { readonly kind: "reject"; readonly error: string };
+
+export interface OperatorUnitCursor { readonly unit_version: number }
+
+export type OperatorDecisionSubmit =
+  | { readonly kind: "review"; readonly review: string }
+  | { readonly kind: "retry"; readonly worker: string }
+  | { readonly kind: "cancel" };
+
+export interface OperatorArtifactRevisionView {
+  readonly id: string;
+  readonly run_id: string;
+  readonly unit_id: string;
+  /** The action whose attempt published it. */
+  readonly attempt_id: string;
+  readonly artifact_key: string;
+  /** Every v2 artifact is single per unit: always "". */
+  readonly collection_key: string;
+  readonly body: OperatorBodyValue;
+  readonly predecessor_id: string | null;
+  /** The revision a review artifact reviews. */
+  readonly subject_id: string | null;
+  readonly created_at: string;
+  /** The revision's position in its artifact, from 1. */
+  readonly version: number;
+}
+
+export interface OperatorRevisionDecision {
+  readonly id: string;
+  readonly review: string;
+  readonly decision: string;
+  readonly effect: OperatorDecisionEffect;
+  readonly target_revision_id: string;
+  readonly payload: OperatorBodyValue;
+  readonly created_at: string;
+}
+
+export interface OperatorEventHistory {
+  readonly id: string;
+  /** The ingress id the event was committed under; null for an event with none. */
+  readonly trigger_id: string | null;
+  /** What happened: the event itself (v1's evaluator outcome has no v2 source). */
+  readonly decision: OperatorEvent;
+  readonly writer: OperatorWriter;
+  readonly created_at: string;
+  /** The writing transaction's id: increases with commit order. */
+  readonly version: number;
+}
+
+export interface OperatorEffectDiagnostic {
+  readonly id: string;
+  /** The intent's action id. */
+  readonly effect_key: string;
+  readonly seq: number;
+  readonly status: OperatorIntentStanding["status"];
+  readonly tries: number;
+  readonly next_try_at: string | null;
+  readonly last_error: string | null;
+  readonly updated_at: string;
+}
+
+export interface OperatorRejectedEvent { readonly ingress_id: string; readonly reason: string }
 
 export interface OperatorCollaborationThreadRow {
   readonly id: string; readonly run_id: string; readonly unit_id: string;
@@ -119,17 +355,42 @@ export interface OperatorForgeRepository { readonly provider: "github"; readonly
 
 export type OperatorProjectRecord = OperatorBranded<OperatorRow<"authority.project">, { id: string }>;
 
+export interface OperatorAttentionMetadata { readonly label: string; readonly trigger: string }
+
 export type OperatorEvent = { readonly "input": unknown; readonly "kind": "launched" } | { readonly "action": string; readonly "kbbl_session_id"?: string | null; readonly "kind": "worker_started" } | { readonly "action": string; readonly "kind": "worker_ended"; readonly "result": OperatorWorkerResult } | { readonly "artifact": string; readonly "body": unknown; readonly "by": string; readonly "kind": "revision_published"; readonly "predecessor"?: string | null; readonly "subject"?: string | null; readonly "unit": string } | { readonly "decision": string; readonly "kind": "operator_decided"; readonly "payload": unknown; readonly "review": string; readonly "target": string; readonly "unit": string } | { readonly "kind": "retry_requested"; readonly "unit": string; readonly "worker": string } | { readonly "kind": "cancel_requested" };
 
 export type OperatorBlockedReason = { readonly "kind": "waiting_on"; readonly "units": (string)[] } | { readonly "kind": "capacity"; readonly "pool": string };
 
-export type OperatorTypeExpression = string | { readonly [key: string]: OperatorTypeExpression };
+export type OperatorAttemptStatusKind = OperatorAttemptRecord["status"]["kind"];
 
-export type OperatorGroup = { readonly "outcome": { readonly [key: string]: string }; readonly "pools"?: { readonly [key: string]: number }; readonly "units": { readonly [key: string]: OperatorUnit } };
+export interface OperatorAttemptFailure { readonly code: string; readonly detail: string }
 
-export type OperatorStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorReview }; readonly "workers": { readonly [key: string]: OperatorWorker } };
+export type OperatorMode = { readonly "kind": "initial" } | { readonly "kind": "revise" } | { readonly "kind": "review" };
+
+export type OperatorCause = { readonly "kind": "missing" } | { readonly "decision": string; readonly "kind": "changes_requested" } | { readonly "kind": "review_of"; readonly "revision": string } | { readonly "event": string; readonly "kind": "retry" } | { readonly "kind": "periodic" };
+
+export type OperatorWriter = { readonly "attempt": string; readonly "kind": "session"; readonly "session": string } | { readonly "attempt": string; readonly "kind": "executor" } | { readonly "kind": "operator"; readonly "subject": string } | { readonly "kind": "engine" };
+
+export interface OperatorDecisionTarget { readonly kind: "reference"; readonly root: { readonly kind: "artifact"; readonly key: string }; readonly path: readonly string[] }
+
+export interface OperatorDecisionFieldPresentation { readonly key: string; readonly presentation: { readonly label: string } }
+
+export interface OperatorSchema { readonly key: string; readonly shape: OperatorSchemaShape }
+
+export interface OperatorUnitDefinition {
+  readonly key: string;
+  readonly input_schema: string;
+  readonly presentation: { readonly label: string };
+  readonly artifacts: readonly OperatorArtifactDefinition[];
+}
 
 export interface OperatorDefinitionGraphNode { readonly key: string; readonly scope: string; readonly depends_on: readonly string[] }
+
+export type OperatorJsonValue = OperatorJsonPrimitive | readonly OperatorJsonValue[] | { readonly [key: string]: OperatorJsonValue };
+
+export type OperatorDecisionEffect = "approve" | "request_changes";
+
+export type OperatorIntentStanding = Pick<OperatorEffectIntentRecord, "id" | "action_id" | "seq" | "status" | "tries" | "next_try_at" | "last_error" | "updated_at">;
 
 export interface OperatorCollaborationThreadContext { readonly title: string; readonly anchor: string | null }
 
@@ -148,13 +409,29 @@ export type OperatorRow<Table extends keyof OperatorDB> = Selectable<OperatorDB[
 
 export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
-export type OperatorUnit = { readonly "after"?: OperatorUnitDependencies; readonly "for_each"?: string | null; readonly "group"?: OperatorGroup | null; readonly "input"?: { readonly [key: string]: string }; readonly "key"?: string | null; readonly "pool"?: string | null; readonly "stage"?: string | null };
+export type OperatorAttemptRecord = OperatorBranded<OperatorRow<"authority.attempt">, { action_id: string; run_id: string; unit_id: string }>;
 
-export type OperatorArtifact = { readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
+export type OperatorSchemaShape =
+  | { readonly kind: "boolean" }
+  | { readonly kind: "integer"; readonly min: number; readonly max: number }
+  | { readonly kind: "string"; readonly min_length: number; readonly max_length: number }
+  | { readonly kind: "enum"; readonly variants: readonly string[] }
+  | { readonly kind: "record"; readonly fields: readonly OperatorSchemaField[] }
+  | { readonly kind: "list"; readonly item: string; readonly max_items: number }
+  | { readonly kind: "optional"; readonly item: string };
 
-export type OperatorReview = { readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorReviewDecision }; readonly "inputs": { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null };
+export interface OperatorArtifactDefinition {
+  readonly key: string;
+  readonly schema: string;
+  /** Every v2 artifact is single per unit. */
+  readonly collection_key: string | null;
+  /** Operator edits (D2) have no route yet: null hides the edit entry point. */
+  readonly edit_trigger: string | null;
+}
 
-export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "prompts": { readonly [key: string]: string }; readonly "reviews"?: string | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "workspace"?: string | null } | { readonly "creates": (string)[]; readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string };
+export type OperatorJsonPrimitive = string | number | boolean | null;
+
+export type OperatorEffectIntentRecord = OperatorBranded<OperatorRow<"authority.effect_intent">, { id: string; run_id: string; unit_id: string; action_id: string }>;
 
 export interface OperatorDB {
   "authority.artifact_revision": OperatorAuthorityArtifactRevision;
@@ -177,17 +454,7 @@ export interface OperatorDB {
   "authority.wanted_log": OperatorAuthorityWantedLog;
 }
 
-export type OperatorUnitDependencies = null | (string)[] | string;
-
-export type OperatorValidationCheck = { readonly "check": string; readonly "message": string };
-
-export type OperatorReviewBy = "operator";
-
-export type OperatorReviewDecision = { readonly "effect": OperatorDecisionEffect; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null };
-
-export type OperatorWorkerRuntime = { readonly "harness": string; readonly "model": string };
-
-export type OperatorSessionMode = "resume" | "fresh";
+export interface OperatorSchemaField { readonly key: string; readonly required: boolean; readonly schema: string }
 
 export interface OperatorAuthorityArtifactRevision {
   artifact: string;
@@ -451,8 +718,6 @@ export interface OperatorAuthorityWantedLog {
   unit_id: string;
 }
 
-export type OperatorDecisionEffect = "approve" | "request_changes";
-
 export type OperatorJsonColumn<Value> = ColumnType<Value, OperatorJsonText<Value>, OperatorJsonText<Value>>;
 
 export type OperatorRuntimeValue = unknown;
@@ -462,10 +727,6 @@ export type OperatorGenerated<T> = T extends ColumnType<infer S, infer I, infer 
   : ColumnType<T, T | undefined, T>;
 
 export type OperatorTimestamp = ColumnType<string, string | string, string | string>;
-
-export type OperatorCause = { readonly "kind": "missing" } | { readonly "decision": string; readonly "kind": "changes_requested" } | { readonly "kind": "review_of"; readonly "revision": string } | { readonly "event": string; readonly "kind": "retry" } | { readonly "kind": "periodic" };
-
-export type OperatorMode = { readonly "kind": "initial" } | { readonly "kind": "revise" } | { readonly "kind": "review" };
 
 export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly "kind": "running" } | { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
@@ -490,8 +751,6 @@ export type OperatorAuthorityEffectStatus = "acknowledged" | "failed" | "pending
 
 export type OperatorCoreEvent = OperatorEvent;
 
-export type OperatorWriter = { readonly "attempt": string; readonly "kind": "session"; readonly "session": string } | { readonly "attempt": string; readonly "kind": "executor" } | { readonly "kind": "operator"; readonly "subject": string } | { readonly "kind": "engine" };
-
 export type OperatorCommitReceipt =
   | { readonly kind: "committed"; readonly event_id: string }
   | { readonly kind: "rejected"; readonly reason: string };
@@ -509,6 +768,8 @@ export type OperatorReviewPrompts = { readonly [review: string]: OperatorReviewP
 export type OperatorWantedActions = readonly OperatorAction[];
 
 export type OperatorJsonText<Value> = string & { readonly __json: Value };
+
+export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorStage }; readonly "workflow": string };
 
 export type OperatorRunWorkerAction = Extract<OperatorAction, { readonly kind: "run_worker" }>;
 
@@ -535,7 +796,17 @@ export interface OperatorReviewPrompt { readonly target: string; readonly prompt
 
 export type OperatorAction = { readonly "cause": OperatorCause; readonly "kind": "run_worker"; readonly "mode": OperatorMode; readonly "unit": string; readonly "worker": string } | { readonly "input": unknown; readonly "kind": "start"; readonly "unit": string } | { readonly "kind": "complete"; readonly "outcome": unknown; readonly "unit": string };
 
+export type OperatorTypeExpression = string | { readonly [key: string]: OperatorTypeExpression };
+
+export type OperatorGroup = { readonly "outcome": { readonly [key: string]: string }; readonly "pools"?: { readonly [key: string]: number }; readonly "units": { readonly [key: string]: OperatorUnit } };
+
+export type OperatorStage = { readonly "artifacts": { readonly [key: string]: OperatorArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorTypeExpression; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorReview }; readonly "workers": { readonly [key: string]: OperatorWorker } };
+
+export type OperatorSessionMode = "resume" | "fresh";
+
 export interface OperatorPinnedPrompt { readonly path: string; readonly digest: string }
+
+export type OperatorWorkerRuntime = { readonly "harness": string; readonly "model": string };
 
 export interface OperatorCreatedArtifact { readonly key: string; readonly schema: OperatorTypeExpression }
 
@@ -552,4 +823,20 @@ export interface OperatorSessionSettings {
   readonly effort: string | null;
 }
 
+export type OperatorUnit = { readonly "after"?: OperatorUnitDependencies; readonly "for_each"?: string | null; readonly "group"?: OperatorGroup | null; readonly "input"?: { readonly [key: string]: string }; readonly "key"?: string | null; readonly "pool"?: string | null; readonly "stage"?: string | null };
+
+export type OperatorArtifact = { readonly "schema": OperatorTypeExpression; readonly "validate"?: (OperatorValidationCheck)[] };
+
+export type OperatorReview = { readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorReviewDecision }; readonly "inputs": { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null };
+
+export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "prompts": { readonly [key: string]: string }; readonly "reviews"?: string | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "workspace"?: string | null } | { readonly "creates": (string)[]; readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string };
+
 export type OperatorRuntimeId = "claude-code" | "codex";
+
+export type OperatorUnitDependencies = null | (string)[] | string;
+
+export type OperatorValidationCheck = { readonly "check": string; readonly "message": string };
+
+export type OperatorReviewBy = "operator";
+
+export type OperatorReviewDecision = { readonly "effect": OperatorDecisionEffect; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorTypeExpression | null };

@@ -5,7 +5,7 @@ import type { Event, Incoming, ResolvedRunWorker, ScopedSnapshot, StepResult, Wr
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
-import type { RunEvent } from "../projections/run-event";
+import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompts } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
@@ -130,13 +130,19 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
     ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
   await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
-  await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
+  const newly_awaiting = await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
   for (const { unit_id: unit, actions } of selectWanted(step))
     await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
       actions: jsonText(actions) }).execute();
   await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result: { kind: "committed", event_id: event.id } });
-  const run_event: RunEvent = { event_id: event.id, run_id, unit_id: unit_id.value as UnitId | null, kind: request.event.kind,
-    run_status: step.snapshot.run.status.kind, occurred_at: new Date(event.created_at).toISOString() };
+  // A launch or a cancel addresses the whole run: its event names the root unit.
+  const addressed = step.snapshot.units.find((unit) => unit.id === (unit_id.value ?? step.snapshot.run.root));
+  if (!addressed) throw fault(run_id, `event ${event.id} addresses no unit of the run`);
+  const run_event = selectRunEvent({ event_id: event.id, run_id, kind: request.event.kind, occurred_at: new Date(event.created_at),
+    run_status: step.snapshot.run.status, workflow: definition.source,
+    unit: { id: addressed.id as UnitId, unit_key: addressed.declaration, collection_key: collectionKey(addressed), stage: addressed.stage ?? null,
+      status: addressed.status },
+    newly_awaiting: newly_awaiting.get(addressed.id) ?? [] });
   await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id, event_key: "run_event",
     payload: jsonText({ kind: "run_event", data: run_event }) }).execute();
   return { kind: "committed", event_id: event.id };
@@ -290,12 +296,14 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
  * Render each operator review a decision is legal on now with the inputs step
  * resolved for it (part 1 §2.3: the inbox shows `prompt` with the review's
  * resolved inputs), and keep it on its unit. A unit whose reviews are all
- * decided, or that is no longer active, keeps none. Only a changed set is written.
+ * decided, or that is no longer active, keeps none. Only a changed set is
+ * written. Returns, per unit, the reviews that began awaiting with this event.
  */
-async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): Promise<void> {
+async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): Promise<ReadonlyMap<string, readonly string[]>> {
   const { run_id, step, source } = input;
+  const newly_awaiting = new Map<string, readonly string[]>();
   const stage_units = step.snapshot.units.filter((unit) => unit.stage != null);
-  if (stage_units.length === 0) return;
+  if (stage_units.length === 0) return newly_awaiting;
   const paths = step.reviews.flatMap((review) => {
     const stage = stage_units.find((unit) => unit.id === review.unit)?.stage;
     const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
@@ -320,7 +328,10 @@ async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): P
     const next: ReviewPrompts = rendered.get(row.id) ?? {};
     if (canonical(next) === canonical(row.review_prompts)) continue;
     await trx.updateTable("authority.unit").set({ review_prompts: jsonText(next) }).where("run_id", "=", run_id).where("id", "=", row.id).execute();
+    const began = Object.keys(next).filter((review) => row.review_prompts[review]?.target !== next[review]?.target).sort();
+    if (began.length > 0) newly_awaiting.set(row.id, began);
   }
+  return newly_awaiting;
 }
 
 interface ReceiptInput { readonly request: CommitRequest; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }

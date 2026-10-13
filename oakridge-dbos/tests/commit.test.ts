@@ -93,7 +93,7 @@ test("a step rejection is stored as a rejected receipt, replays as rejected, and
   const replay = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
   const receipt = await authority.db.selectFrom("authority.ingress_receipt").select("result").where("run_id", "=", first.run_id).executeTakeFirstOrThrow();
   const events = await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", first.run_id).execute();
-  const listed = (await listRuns(authority.db, { after: null, limit: 100, is_archived: false })).items.map((run) => run.run_id);
+  const listed = (await listRuns(authority.db, { after: null, limit: 100, is_archived: false })).items.map((read) => read.run.id);
   expect({ first: first.result.ok && first.result.value.kind, replay: replay.result.ok && replay.result.value.kind === "replayed" && replay.result.value.receipt.kind,
     receipt: receipt.result.kind, events: events.length, is_listed: listed.includes(first.run_id) })
     .toEqual({ first: "rejected", replay: "rejected", receipt: "rejected", events: 0, is_listed: false });
