@@ -278,6 +278,10 @@ pub(crate) fn parse_expression(text: &str) -> Result<StageExpr, DomainError> {
     parse_atom(text)
 }
 fn parse_atom(text: &str) -> Result<StageExpr, DomainError> {
+    // Parentheses group: `a and (b or c)`.
+    if let Some((inner, "")) = split_call(text, "") {
+        return parse_expression(inner);
+    }
     if let Some((argument, trailing)) = split_call(text, "len") {
         trailing_path(trailing, "len", false)?;
         return Ok(StageExpr::Len(boxed(argument)?));

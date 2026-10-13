@@ -315,3 +315,28 @@ fn record_literals_build_typed_records() {
         "check 11"
     );
 }
+
+#[test]
+fn parentheses_group_a_disjunction_inside_a_conjunction() {
+    compile(&fixture(&[(
+        DONE,
+        json!("approved(assessment) and (input.admission or not input.admission)"),
+    )]))
+    .unwrap();
+    assert_eq!(
+        rejection(&[(DONE, json!("approved(assessment) and (input.admission or"))]),
+        "check 1"
+    );
+}
+
+#[test]
+fn an_alias_inside_a_list_is_the_type_it_names() {
+    // The unit passes list({id: ident}); the stage declares list(cohort_ref).
+    compile(&fixture(&[
+        ("/input/cohorts", json!("list({id: ident})")),
+        ("/schemas/cohort_ref", json!({ "id": "ident" })),
+        ("/stages/plan/input/cohorts", json!("list(cohort_ref)")),
+        ("/run/units/plan/input/cohorts", json!("input.cohorts")),
+    ]))
+    .unwrap();
+}

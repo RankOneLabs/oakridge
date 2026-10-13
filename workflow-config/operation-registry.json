@@ -36,5 +36,14 @@
       "auth",
       "provider_rejected"
     ]
+  },
+  {
+    "key": "value.publish",
+    "version": 1,
+    "input_schema": {
+      "value": "$value"
+    },
+    "output_schema": "$value",
+    "error_codes": []
   }
 ]

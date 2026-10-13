@@ -1,6 +1,6 @@
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
-import type { Event } from "../core-client/core-types";
+import type { Event, Writer } from "../core-client/core-types";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
@@ -82,9 +82,16 @@ export function publicationSecretHash(request: Pick<Request, "headers">): string
   if (!authorization?.startsWith("Bearer ") || authorization.length === 7) return null;
   return createHash("sha256").update(authorization.slice(7)).digest("hex");
 }
+/** The writer of a publication and the attempt it names; an operator's edit names none. */
+interface Publisher { readonly writer: Writer; readonly by: string | null }
 const refusedSecret = (): Response => Response.json({ error: "publication secret refused", code: "unauthorized" }, { status: 401 });
 
-export function installIngress(app: Hono, deps: CommitDependencies): void {
+export interface IngressDependencies extends CommitDependencies {
+  /** Whether a request on the publish route carries the operator's credential (see `operatorCredentialCheck`). */
+  readonly is_operator_request: (request: Request) => boolean;
+}
+
+export function installIngress(app: Hono, deps: IngressDependencies): void {
   const commit = (request: CommitRequest) => commitEvent(deps, request);
 
   app.post("/api/runs", async (c) => {
@@ -122,23 +129,34 @@ export function installIngress(app: Hono, deps: CommitDependencies): void {
   app.post("/api/runs/:run_id/units/:unit_id/reviews/:review/decide", operatorEvent(parseDecideRequest, (c, body) =>
     ({ kind: "operator_decided", unit: param(c, "unit_id"), review: param(c, "review"), decision: body.decision, target: body.target, payload: body.payload })));
 
-  /** Publish: the session secret names the running attempt, which is both the writer's attempt and the revision's `by`. */
+  /**
+   * Publish. A session secret names the running attempt, which is both the
+   * writer's attempt and the revision's `by`. Failing that, the operator's
+   * credential makes it an operator's edit (D2): `Writer::Operator`, no `by`.
+   */
   app.put("/api/runs/:run_id/units/:unit_id/artifacts/:artifact", async (c) => {
-    const secret_hash = publicationSecretHash(c.req.raw);
-    if (!secret_hash) return refusedSecret();
     const raw = await requestBody(c.req.raw);
     if (raw instanceof MalformedRequestError) return errorResponse(raw);
     const parsed = parsePublishRequest(raw);
     if (!parsed.ok) return errorResponse(parsed.error);
     const run_id = param(c, "run_id") as RunId, unit = param(c, "unit_id");
     try {
-      const attempt = await readSessionAttempt(deps.db, { run_id, secret_hash });
-      if (!attempt || attempt.unit_id !== unit) return refusedSecret();
+      const publisher = await resolvePublisher(c.req.raw, { run_id, unit });
+      if (!publisher) return refusedSecret();
       const request = parsed.value;
       return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id,
         event: { kind: "revision_published", unit, artifact: param(c, "artifact"), body: request.body,
-          predecessor: request.predecessor, subject: request.subject, by: attempt.action_id },
-        writer: { kind: "session", session: attempt.kbbl_session_id, attempt: attempt.action_id } }));
+          predecessor: request.predecessor, subject: request.subject, by: publisher.by },
+        writer: publisher.writer }));
     } catch (cause) { return fault(cause); }
   });
+
+  /** Who publishes: the session whose secret is presented, else the operator, else no one. */
+  async function resolvePublisher(request: Request, scope: { readonly run_id: RunId; readonly unit: string }): Promise<Publisher | null> {
+    const secret_hash = publicationSecretHash(request);
+    const attempt = secret_hash ? await readSessionAttempt(deps.db, { run_id: scope.run_id, secret_hash }) : null;
+    if (attempt) return attempt.unit_id === scope.unit
+      ? { writer: { kind: "session", session: attempt.kbbl_session_id, attempt: attempt.action_id }, by: attempt.action_id } : null;
+    return deps.is_operator_request(request) ? { writer: operatorWriterFromCredential(request), by: null } : null;
+  }
 }

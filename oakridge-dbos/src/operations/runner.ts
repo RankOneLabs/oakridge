@@ -1,7 +1,7 @@
 import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import type { PullRequestReader } from "../runtime/github-pull-requests";
-import type { OperationCallOptions, OperationOutcome } from "./outcome";
+import { isFields, type OperationCallOptions, type OperationOutcome } from "./outcome";
 import { decodePullRequestObserveInput, observePullRequests } from "./pull-request-observe";
 import { OPERATION_KEYS, type OperationKey } from "./registry";
 import { decodeRepositoryPrepareInput, prepareRepository } from "./repository-prepare";
@@ -34,6 +34,9 @@ export function createOperationRunner(services: OperationServices): OperationRun
       const input = decodePullRequestObserveInput(inputs);
       return input ? observePullRequests(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_observe);
     },
+    // Step resolved the input against the workflow's type, and commit checks the output against the artifact's schema.
+    [OPERATION_KEYS.value_publish]: async (inputs) => isFields(inputs) && "value" in inputs
+      ? { kind: "succeeded", body: inputs.value } : invalidInput(OPERATION_KEYS.value_publish),
   };
   const isKey = (key: string): key is OperationKey => Object.hasOwn(implementations, key);
   return {

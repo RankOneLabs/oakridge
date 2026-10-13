@@ -120,7 +120,23 @@ pub(crate) fn resolve_type(
                 .map(|(k, v)| (k.clone(), resolve_type(v, aliases)))
                 .collect(),
         ),
-        _ => ty.clone(),
+        // Aliases resolve at every depth, so `list(brief)` and the list of
+        // the record `brief` names are one type. Validation has already
+        // refused a recursive alias, so this terminates.
+        TypeExpression::Name(name) if name.starts_with('{') => match parse_type(name) {
+            Ok(parsed) => resolve_type(&parsed, aliases),
+            Err(_) => ty.clone(),
+        },
+        TypeExpression::Name(name) => ["list", "optional"]
+            .into_iter()
+            .find_map(|function| {
+                let inner = parse_type(inner_type(name, function)?).ok()?;
+                Some(TypeExpression::Name(format!(
+                    "{function}({})",
+                    render_type(&resolve_type(&inner, aliases))
+                )))
+            })
+            .unwrap_or_else(|| ty.clone()),
     }
 }
 pub(crate) fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
