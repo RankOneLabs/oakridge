@@ -13,6 +13,10 @@ import { buildRootInput, inputRecord, isOptionalSchema, type FieldDrafts, type I
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
 import { readBriefNotesFile } from "../lib/brief-notes";
+import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfigState } from "../../hooks/useServerConfig";
+import { coerceRoleSelection, initialSelectionForRole } from "../lib/runtime-selection";
+import { selectDefinitionStages, selectRunConfig } from "../lib/launch-role-settings";
+import { RoleSettingsFields } from "../components/organisms/RoleSettingsFields";
 
 
 function selectInputFields(bundle: OperatorDefinitionBundle | undefined): readonly InputField[] | null {
@@ -51,6 +55,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(stored.error);
   const [launching, setLaunching] = useState(false);
+  const [plannerSelection, setPlannerSelection] = useState(() => initialSelectionForRole(runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [workerSelection, setWorkerSelection] = useState(() => initialSelectionForRole(runtimeDescriptorsForConfig(null), defaultRuntimeIdForConfig(null)));
+  const [plannerRuntimeTouched, setPlannerRuntimeTouched] = useState(false);
+  const [workerRuntimeTouched, setWorkerRuntimeTouched] = useState(false);
   const selected = selectLaunchDigest({ pending_digest: pending?.digest, chosen_digest: digest, definitions: definitions.data });
   useEffect(() => {
     specFileReadVersion.current += 1;
@@ -58,6 +66,13 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
   }, [selected]);
   const selectedDefinition = definitions.data?.find((item) => item.digest === selected);
   const fields = selectInputFields(selectedDefinition?.bundle);
+  const stages = selectDefinitionStages(selectedDefinition?.bundle);
+  const supportsRoleSettings = stages.length > 0;
+  const { config: serverConfig, error: configError } = useServerConfigState(supportsRoleSettings && pending === null);
+  const descriptors = runtimeDescriptorsForConfig(serverConfig);
+  const defaultRuntimeId = defaultRuntimeIdForConfig(serverConfig);
+  const planner = coerceRoleSelection(plannerSelection, descriptors, defaultRuntimeId, plannerRuntimeTouched);
+  const worker = coerceRoleSelection(workerSelection, descriptors, defaultRuntimeId, workerRuntimeTouched);
   const inputValues = (() => { try { return inputRecord(input); } catch { return {}; } })();
   const toggleRaw = () => {
     specFileReadVersion.current += 1;
@@ -78,8 +93,10 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     catch (cause) { setIsStorageUnreadable(true); setError(String(cause)); return; }
     let request: OperatorLaunchRequest;
     try {
+      if (!retained && supportsRoleSettings && serverConfig === null) throw new Error("Model settings are not available yet.");
       request = retained ?? { request_id: randomUuid(), digest: selected, project_id: projectId,
-        input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts) };
+        input: rawMode ? JSON.parse(input) : buildRootInput(input, fields, fieldDrafts),
+        ...(supportsRoleSettings ? { config: selectRunConfig(stages, { planner, worker }) } : {}) };
       savePendingLaunch(request);
       setPending(request);
     } catch (cause) { setError(String(cause)); return; }
@@ -182,10 +199,15 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
           </>}
         </div>;
       })}</div>}
+      {supportsRoleSettings && pending === null && serverConfig === null && <p role={configError ? "alert" : "status"}>
+        {configError ? `Could not load model settings: ${configError.message}` : "Loading model settings…"}</p>}
+      {supportsRoleSettings && pending === null && serverConfig !== null && <RoleSettingsFields serverConfig={serverConfig} planner={planner} worker={worker}
+        onPlannerChange={setPlannerSelection} onWorkerChange={setWorkerSelection}
+        onPlannerRuntimeTouched={setPlannerRuntimeTouched} onWorkerRuntimeTouched={setWorkerRuntimeTouched} isPending={launching} />}
       {pending && <p role="status">A launch is awaiting confirmation. Retry to recover its result, or discard it to compose a new launch. Discarding forgets the retry identity, and the earlier attempt may still have created a run; check the runs list.</p>}
       {isStorageUnreadable && !pending && <p role="status">Stored launch state is unreadable. Discard it to compose a new launch; any earlier attempt may still have created a run, so check the runs list.</p>}
       {error && <p role="alert">{error}</p>}
-      <Button type="submit" disabled={!selected || launching}>{pending ? "Retry launch" : "Launch"}</Button>
+      <Button type="submit" disabled={!selected || launching || (pending === null && supportsRoleSettings && serverConfig === null)}>{pending ? "Retry launch" : "Launch"}</Button>
       {(pending || isStorageUnreadable) && <Button variant="secondary" onClick={discard} disabled={launching}>Discard</Button>}
     </form>
   </main>;

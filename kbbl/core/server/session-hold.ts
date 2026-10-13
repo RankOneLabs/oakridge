@@ -10,6 +10,8 @@ import { SESSION_HELD_CODE, isSessionHold, type SessionHold } from "../session/s
 
 export interface SessionHoldLookupDeps {
   readonly baseUrl: string | undefined;
+  /** The core control token: the hold route is an operator route, so it needs the token when one is configured. */
+  readonly controlToken?: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -30,6 +32,7 @@ export const findSessionHold = async (sessionId: string, deps: SessionHoldLookup
   const request = deps.fetch ?? globalThis.fetch;
   try {
     const response = await request(`${deps.baseUrl.replace(/\/$/, "")}/session_holds/${encodeURIComponent(sessionId)}`, {
+      headers: deps.controlToken ? { authorization: `Bearer ${deps.controlToken}` } : {},
       signal: AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
     if (!response.ok) return null;

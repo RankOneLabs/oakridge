@@ -10,11 +10,12 @@ import { selectRunArtifacts, selectRunProgress, selectUnitStatus } from "./run-o
 describe("generated run overview", () => {
   it("counts completed and actionable units", () => {
     const run = makeRunView({ units: [
-      makeRunUnitSummary({ unit_id: "plan", is_terminal: true }),
+      makeRunUnitSummary({ unit_id: "plan", status: { kind: "done", outcome: {} }, is_terminal: true }),
       makeRunUnitSummary({ unit_id: "build", asks: ["approve"] }),
       makeRunUnitSummary({ unit_id: "assess" }),
+      makeRunUnitSummary({ unit_id: "dropped", status: { kind: "cancelled" }, is_terminal: true }),
     ] });
-    expect(selectRunProgress(run)).toEqual({ total: 3, complete: 1, needs_attention: 1 });
+    expect(selectRunProgress(run)).toEqual({ total: 4, complete: 1, needs_attention: 1 });
   });
 
   it("reports zero progress for a run with no units", () => {
@@ -37,9 +38,13 @@ describe("generated run overview", () => {
     expect(selectActionableUnits([unit])[0]?.decisions.map((decision) => decision.label)).toEqual(["Approve", "Reject"]);
   });
 
-  it("shows asks as attention, with terminal state taking precedence", () => {
+  it("shows asks as attention, with a finished unit's own state taking precedence", () => {
     expect(selectUnitStatus(makeRunUnitSummary({ asks: ["approve"] }))).toBe("attention");
-    expect(selectUnitStatus(makeRunUnitSummary({ is_terminal: true, asks: ["approve"] }))).toBe("complete");
+    expect(selectUnitStatus(makeRunUnitSummary({ status: { kind: "done", outcome: {} }, is_terminal: true, asks: ["approve"] }))).toBe("complete");
+  });
+
+  it("never shows a cancelled unit as complete", () => {
+    expect(selectUnitStatus(makeRunUnitSummary({ status: { kind: "cancelled" }, is_terminal: true }))).toBe("cancelled");
   });
 
   it("exposes only published current revisions as artifacts", () => {

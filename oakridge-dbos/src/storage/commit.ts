@@ -3,6 +3,7 @@ import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted } from "../core-client/client";
 import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import type { RunConfig } from "../domain/run-config";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
 import { selectRunEvent } from "../projections/run-event";
@@ -18,7 +19,7 @@ export interface CommitRequest {
   readonly event: Event;
   readonly writer: Writer;
   /** Required with `launched`: the run is created pinned to this definition. */
-  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null };
+  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
    * Only with `worker_started`: the sha256 hex of the publication secret minted
    * for the attempt's session. Commit stores it on the attempt, and publish
@@ -94,9 +95,10 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   if (request.event.kind === "launched") {
     if (!request.launch) return { kind: "missing", detail: "a launch names its pinned definition" };
     await trx.insertInto("authority.run").values({ id: run_id, definition_bundle_id: request.launch.definition_bundle_id,
-      project_id: request.launch.project_id }).onConflict((conflict) => conflict.column("id").doNothing()).execute();
+      project_id: request.launch.project_id, config: request.launch.config === null ? null : jsonText(request.launch.config) })
+      .onConflict((conflict) => conflict.column("id").doNothing()).execute();
   }
-  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id"])
+  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config"])
     .where("id", "=", run_id).forUpdate().executeTakeFirst();
   if (!run) return { kind: "missing", detail: "run not found" };
   if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
@@ -129,7 +131,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   const event = await trx.insertInto("authority.event").values({ id: crypto.randomUUID(), run_id, unit_id: unit_id.value,
     ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
-  await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
+  await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, config: run.config, step });
   const newly_awaiting = await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
   for (const { unit_id: unit, actions } of selectWanted(step))
     await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
@@ -252,6 +254,7 @@ interface Reconcile {
   readonly run_id: string;
   readonly source: import("../core-client/core-types").Workflow;
   readonly prompts: { readonly [path: string]: string };
+  readonly config: RunConfig | null;
   readonly step: StepResult;
 }
 /**
@@ -281,7 +284,8 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     if (existing.has(inputs.action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === action.unit);
     if (!unit?.stage) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, action, seq: attempt.seq, resolved: inputs });
+    const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, config: input.config,
+      action, seq: attempt.seq, resolved: inputs });
     if (!instruction.ok) throw fault(run_id, instruction.error.detail);
     await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
       action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
@@ -299,7 +303,7 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
  * decided, or that is no longer active, keeps none. Only a changed set is
  * written. Returns, per unit, the reviews that began awaiting with this event.
  */
-async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): Promise<ReadonlyMap<string, readonly string[]>> {
+async function writeReviewPrompts(trx: DatabaseTransaction, input: Omit<Reconcile, "config">): Promise<ReadonlyMap<string, readonly string[]>> {
   const { run_id, step, source } = input;
   const newly_awaiting = new Map<string, readonly string[]>();
   const stage_units = step.snapshot.units.filter((unit) => unit.stage != null);

@@ -4,7 +4,7 @@ export interface RunProgress { readonly complete: number; readonly total: number
 export interface RunArtifact { readonly unit_id: string; readonly artifact: OperatorArtifactView; readonly revision: OperatorArtifactRevisionView }
 
 export const selectRunProgress = (run: OperatorRunView): RunProgress => ({
-  complete: run.units.filter((unit) => unit.is_terminal).length,
+  complete: run.units.filter((unit) => unit.status.kind === "done").length,
   total: run.units.length,
   needs_attention: run.units.filter((unit) => !unit.is_terminal && unit.asks.length > 0).length,
 });
@@ -39,8 +39,15 @@ export const selectFinalIntegrationUnit = (units: readonly OperatorUnitView[]): 
 export const selectArtifactInUnits = (units: readonly OperatorUnitView[], revisionId: string): RunArtifact | null =>
   selectRunArtifacts(units).find((artifact) => artifact.revision.id === revisionId) ?? null;
 
-export const selectUnitStatus = (unit: OperatorRunUnitSummary): "complete" | "attention" | "running" =>
-  unit.is_terminal ? "complete" : unit.asks.length > 0 ? "attention" : "running";
+/** A unit's badge: done is complete and cancelled is cancelled, never complete; otherwise asks are attention. */
+export function selectUnitBadgeStatus(status: OperatorUnitStatus, has_asks: boolean): "complete" | "cancelled" | "attention" | "running" {
+  if (status.kind === "done") return "complete";
+  if (status.kind === "cancelled") return "cancelled";
+  return has_asks ? "attention" : "running";
+}
+
+export const selectUnitStatus = (unit: OperatorRunUnitSummary): "complete" | "cancelled" | "attention" | "running" =>
+  selectUnitBadgeStatus(unit.status, unit.asks.length > 0);
 
 /** A unit's status in words. */
 export function selectUnitStatusLabel(status: OperatorUnitStatus): string {

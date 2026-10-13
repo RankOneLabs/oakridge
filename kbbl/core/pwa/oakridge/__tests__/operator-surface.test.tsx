@@ -87,6 +87,7 @@ const isLaunch = (url: string, init?: RequestInit): boolean => url === "/oakridg
 
 /** Serves one pinned bundle and accepts the launch it produces. */
 const launchFetch = (bundle: OperatorDefinitionBundle) => vi.fn(async (url: string, init?: RequestInit) => {
+  if (url === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "claude-code", runtimes: [] });
   if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", bundle }]);
   if (isLaunch(url, init)) return committed("new-run");
   throw new Error(url);
@@ -157,6 +158,19 @@ test("the development launch sends every root field the operator entered", async
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
   expect(postedLaunch(fetch).input).toEqual(rootInputRecord(sampleRootFields(bundle)));
+});
+
+test("the development launch carries the planner and worker settings as each stage's session settings", async () => {
+  const bundle = makeDevelopmentBundle();
+  const fetch = launchFetch(bundle);
+  vi.stubGlobal("fetch", fetch);
+  renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
+  await screen.findByTestId("or-role-settings");
+  for (const field of sampleRootFields(bundle)) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
+  const sessions = postedLaunch(fetch).config.sessions as { readonly [stage: string]: { readonly harness: string } };
+  expect(Object.keys(sessions).sort()).toEqual([...new Set(bundle.units.flatMap((unit) => unit.stage ?? []))].sort());
 });
 
 test("launches a run using the pinned digest and entered root input", async () => {

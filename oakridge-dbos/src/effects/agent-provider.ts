@@ -70,7 +70,8 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
       creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret }),
     workdir: workspace?.repository_path ?? config.default_workdir,
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
-    ...(worker.runtime ? { runtime: worker.runtime.harness, model: worker.runtime.model } : {}),
+    ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
+      ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
     ...(workspace ? { worktree: { branch_name: `oakridge/${shortDigest(worker.session_key)}`, worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
     workflow: { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker },
   };

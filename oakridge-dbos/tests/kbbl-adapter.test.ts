@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { RunConfig } from "../src/domain/run-config";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -26,14 +27,15 @@ const snapshot = (status = "live", extra: object = {}) => ({ sid: "sid-1", statu
 const run_id = "run-1";
 const unit = "run-1/document";
 const writer: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
-function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean } = {}): EffectInstruction {
+function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean;
+  readonly config?: RunConfig } = {}): EffectInstruction {
   const workflow = sampleWorkflow("review-loop");
   const declared = workflow.stages.document!.workers.writer!;
   const fresh = overrides.fresh && declared.kind === "agent"
     ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...declared, session: "fresh" as const } } } } }
     : workflow;
   const action = overrides.action ?? writer;
-  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", action, seq: 0,
+  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", config: overrides.config ?? null, action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
     resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, ...overrides.resolved } });
   if (!selected.ok) throw new Error(selected.error.detail);
@@ -150,6 +152,12 @@ test("a repository workspace runs in a worktree branched from the prepared head;
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect({ plain: [plain.workdir, plain.worktree ?? null], repo: [repo.workdir, repo.worktree?.base_ref, repo.worktree?.branch_name.startsWith("oakridge/")] })
     .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "abc123", true] });
+});
+
+test("a session starts with the runtime, model and effort the run chose for its stage", () => {
+  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } }),
+    { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  expect([start.runtime, start.model, start.effort]).toEqual(["codex", "gpt-6-sol", "high"]);
 });
 
 test("observing delivers the task under the action's key and reads its turn", async () => {

@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
 import type { Event, Writer } from "../core-client/core-types";
 import { err, ok, type ProjectId, type Result, type RunId } from "../domain/primitives";
+import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
 import { findLaunchableDefinition, hasProject } from "../storage/registry-store";
@@ -17,7 +18,11 @@ import { errorResponse, fault, MalformedRequestError, MissingEntityError, reques
 
 /** Every ingress request carries the id that makes it idempotent. */
 export interface IngressRequest { readonly request_id: string }
-export interface LaunchRequest extends IngressRequest { readonly digest: string; readonly input: unknown; readonly project_id?: string | null }
+export interface LaunchRequest extends IngressRequest {
+  readonly digest: string; readonly input: unknown; readonly project_id?: string | null;
+  /** Session settings by stage; a stage it does not name keeps its workers' declared runtime. */
+  readonly config?: RunConfig | null;
+}
 export interface DecideRequest extends IngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
 /** What an agent sends to publish a revision; its attempt comes from the session secret. */
 export interface PublishRequest extends IngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
@@ -43,7 +48,10 @@ export function parseIngressRequest(raw: unknown): Parsed<IngressRequest> {
 export function parseLaunchRequest(raw: unknown): Parsed<LaunchRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || typeof raw.digest !== "string" || !("input" in raw) || !isOptionalId(raw.project_id))
     return malformed("request_id (1 to 200 characters), digest and input are required");
-  return ok({ request_id: raw.request_id, digest: raw.digest, input: raw.input, project_id: raw.project_id ?? null });
+  const config = raw.config === undefined || raw.config === null ? null : parseRunConfig(raw.config);
+  if (raw.config !== undefined && raw.config !== null && config === null)
+    return malformed("config.sessions maps each stage to { harness, model, effort }");
+  return ok({ request_id: raw.request_id, digest: raw.digest, input: raw.input, project_id: raw.project_id ?? null, config });
 }
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target) || !("payload" in raw))
@@ -108,7 +116,7 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
       if (project_id && !await hasProject(deps.db, project_id)) return errorResponse(new MissingEntityError("project not found"));
       const run_id = launchRunId(request.request_id);
       return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id, event: { kind: "launched", input: request.input },
-        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_bundle_id, project_id } }));
+        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_bundle_id, project_id, config: request.config ?? null } }));
     } catch (cause) { return fault(cause); }
   });
 

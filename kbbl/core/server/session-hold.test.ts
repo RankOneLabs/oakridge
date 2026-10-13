@@ -33,6 +33,16 @@ test("the lookup asks about the session it was given, escaped", async () => {
   expect(requested).toBe("http://oakridge/session_holds/a%2Fb%20c");
 });
 
+test("the lookup carries the control token the backend's operator routes require", async () => {
+  let authorization = null as string | null;
+  const fetch = (async (_input: string | URL, init?: RequestInit) => {
+    authorization = new Headers(init?.headers).get("authorization");
+    return new Response(JSON.stringify({ hold }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof globalThis.fetch;
+  expect(await findSessionHold("session-1", { baseUrl: "http://oakridge", controlToken: "secret", fetch })).toEqual(hold);
+  expect(authorization).toBe("Bearer secret");
+});
+
 /**
  * The guard catches an ordinary operator mistake; it must not hand Oakridge a
  * veto over kbbl's own lifecycle. A close that slips through while Oakridge is

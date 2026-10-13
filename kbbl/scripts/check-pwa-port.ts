@@ -34,7 +34,6 @@ const V1_VOCABULARY: readonly RegExp[] = [
 const RETIRED_TEST_IDS: Readonly<Record<string, string>> = {
   "operator-pending-evidence": "v1 decision prefill: a v2 decision carries its target revision in `submit`",
   "operator-prefilled-field": "v1 decision prefill: a v2 decision carries its target revision in `submit`",
-  "or-role-settings": "launch-time planner and worker settings: a v2 workflow sets each worker's runtime",
 };
 /** Test ids may keep their v1 words; they are the browser tests' and the operator's handles. */
 const ALLOWED = [/(?:data-testid|testId)=(?:"[^"]*"|\{`[^`]*`\})/g, /getByTestId\("[^"]*"\)/g];

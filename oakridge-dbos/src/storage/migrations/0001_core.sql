@@ -44,6 +44,8 @@ CREATE TABLE authority.run (
   project_id text REFERENCES authority.project(id),
   root_unit_id text,
   input jsonb,
+  -- The operator's launch-time session settings, by stage (RunConfig).
+  config jsonb,
   status jsonb NOT NULL DEFAULT '{"kind":"not_started"}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
@@ -276,6 +278,7 @@ COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {Compile
 COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}';
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
+COMMENT ON COLUMN authority.run.config IS '@type {RunConfig}';
 COMMENT ON COLUMN authority.run.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';

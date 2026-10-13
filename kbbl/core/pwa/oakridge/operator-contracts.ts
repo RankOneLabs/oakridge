@@ -160,7 +160,11 @@ export interface OperatorSessionHoldResponse { readonly hold: OperatorSessionHol
 
 export interface OperatorIngressRequest { readonly request_id: string }
 
-export interface OperatorLaunchRequest extends OperatorIngressRequest { readonly digest: string; readonly input: unknown; readonly project_id?: string | null }
+export interface OperatorLaunchRequest extends OperatorIngressRequest {
+  readonly digest: string; readonly input: unknown; readonly project_id?: string | null;
+  /** Session settings by stage; a stage it does not name keeps its workers' declared runtime. */
+  readonly config?: OperatorRunConfig | null;
+}
 
 export interface OperatorDecideRequest extends OperatorIngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
 
@@ -318,6 +322,8 @@ export type OperatorEvent = { readonly "input": unknown; readonly "kind": "launc
 
 export interface OperatorAwaitingReviewNotice { readonly review: string; readonly label: string }
 
+export interface OperatorRunConfig { readonly sessions: { readonly [stage: string]: OperatorSessionSettings } }
+
 export type OperatorBlockedReason = { readonly "kind": "waiting_on"; readonly "units": (string)[] } | { readonly "kind": "capacity"; readonly "pool": string };
 
 export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];
@@ -367,6 +373,8 @@ export type OperatorCollaborationDeliveryPayload =
   | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
 
 export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
+
+export interface OperatorSessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }
 
 export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly "kind": "running" } | { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
