@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeArtifactRevision, makeDecision, makeInboxDecision, makeArtifact, makeUnitView } from "../__fixtures__/read-models";
-import { selectActionableUnits, selectArtifactDecisions, selectStableOperatorDecisionQueue } from "./decision-queue";
+import { selectActionableUnits, selectArtifactDecisions, selectStableOperatorDecisionQueue, selectUnitAsks } from "./decision-queue";
 
 describe("projected decision queue", () => {
   it("keeps actionable units in projection order", () => {
@@ -11,6 +11,14 @@ describe("projected decision queue", () => {
       makeUnitView({ unit_id: "last", decisions: [decision] }),
     ];
     expect(selectActionableUnits(units).map((unit) => unit.unit_id)).toEqual(["first", "last"]);
+  });
+
+  it("does not count the run's cancel as a decision waiting", () => {
+    const cancel = makeDecision({ key: "cancel", label: "Cancel run", submit: { kind: "cancel" } });
+    const root = makeUnitView({ unit_id: "root", decisions: [cancel] });
+    const asking = makeUnitView({ unit_id: "build", decisions: [makeDecision(), cancel] });
+    expect({ units: selectActionableUnits([root, asking]).map((unit) => unit.unit_id), labels: selectUnitAsks(asking).map((decision) => decision.label) })
+      .toEqual({ units: ["build"], labels: ["Approve"] });
   });
 
   it("offers an artifact decision only on the revision it targets", () => {

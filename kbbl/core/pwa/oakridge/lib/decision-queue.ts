@@ -1,8 +1,12 @@
 import type { OperatorDecisionDefinition, OperatorInboxItem, OperatorUnitView } from "../operator-contracts";
 import { selectTargetRevisionId } from "./operator-selectors";
 
+/** The decisions that ask for the operator: every one but the run's own cancel, which a live root always offers. */
+export const selectUnitAsks = (unit: OperatorUnitView): readonly OperatorDecisionDefinition[] =>
+  unit.decisions.filter((decision) => decision.submit.kind !== "cancel");
+
 export const selectActionableUnits = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
-  units.filter((unit) => unit.decisions.length > 0 && !unit.is_terminal);
+  units.filter((unit) => selectUnitAsks(unit).length > 0 && !unit.is_terminal);
 
 /** The decisions made on one revision. */
 export const selectArtifactDecisions = (unit: OperatorUnitView, revisionId: string): readonly OperatorDecisionDefinition[] =>

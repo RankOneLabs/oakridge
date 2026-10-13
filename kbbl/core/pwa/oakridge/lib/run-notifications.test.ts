@@ -11,6 +11,11 @@ test("a finished unit reports success", () => {
   expect(selectEventNotification(makeRunEvent({ awaiting: null, is_terminal: true }))?.kind).toBe("success");
 });
 
+test("a cancelled run is reported as cancelled, not as a success", () => {
+  expect(selectEventNotification(makeRunEvent({ awaiting: null, is_terminal: true, run_status: "cancelled" })))
+    .toMatchObject({ kind: "info", message: "analysis cancelled" });
+});
+
 test("an intermediate event is not operator-facing", () => {
   expect(selectEventNotification(makeRunEvent({ awaiting: null }))).toBeNull();
 });
