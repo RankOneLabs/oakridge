@@ -148,6 +148,19 @@ test("happy path: ensure provisions, runs the initial prompt, reports terminal s
   expect(turn?.stop_reason).toBe("end_turn");
 }, 15000);
 
+test("session creation preserves the adapter's underlying error in the durable failure", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir, behavior: "new_session_error" });
+  const ensured = await service.ensureResumableSession("key-1", spec(workdir));
+  if (ensured.ok) throw new Error("expected session creation to fail");
+  const row = store.listSessions()[0]!;
+  const observed = await service.observeInitialTurn(row.sid, 8000);
+  if (!observed.ok || observed.value.kind !== "failed") {
+    throw new Error("expected a durable failed observation");
+  }
+  expect(observed.value.failure_detail).toContain("Claude Code process exited with code 1");
+}, 15000);
+
 test("a session that died provisioning is observed with the code that killed it", async () => {
   // The observation is all a DBOS observer or the PWA ever sees, and
   // reporting every provisioning death as `agent_spawn_failed` said the
