@@ -337,12 +337,16 @@ pub enum Worker {
         runtime: Option<WorkerRuntime>,
         workspace: Option<String>,
         session: Option<SessionMode>,
+        /// Optional guard: the worker is wanted only while it holds, and the
+        /// artifacts it proves published type the worker's inputs.
+        when: Option<String>,
     },
     Code {
         operation: SymbolKey,
         inputs: BTreeMap<String, String>,
         creates: Vec<SymbolKey>,
         every: Option<String>,
+        when: Option<String>,
     },
 }
 
@@ -366,14 +370,20 @@ pub struct Review {
     pub of: SymbolKey,
     pub by: ReviewBy,
     pub prompt: Option<String>,
+    #[serde(default)]
     pub inputs: BTreeMap<String, String>,
     pub decisions: BTreeMap<String, ReviewDecision>,
+    /// Optional for an operator review: it awaits a decision only while this
+    /// holds. Required for an engine review: the engine decides when it holds.
+    pub when: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewBy {
     Operator,
+    /// Decided by the engine, once per target revision, when `when` holds.
+    Engine,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -385,6 +395,8 @@ pub struct ReviewDecision {
     pub payload: Option<TypeExpression>,
     #[serde(default)]
     pub fields: BTreeMap<String, String>,
+    /// The fixed feedback an engine review's `request_changes` carries.
+    pub feedback: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

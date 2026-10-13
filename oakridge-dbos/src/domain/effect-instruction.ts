@@ -184,7 +184,7 @@ function isRunWorkerAction(value: unknown): value is RunWorkerAction {
 }
 function isRevision(value: unknown): value is RevisionState {
   return isFields(value) && isString(value.id) && isString(value.unit) && isString(value.artifact) && "body" in value
-    && isString(value.by) && isNullableString(value.predecessor ?? null) && isNullableString(value.subject ?? null);
+    && isNullableString(value.by ?? null) && isNullableString(value.predecessor ?? null) && isNullableString(value.subject ?? null);
 }
 const isNullableRevision = (value: unknown): value is RevisionState | null => value === null || isRevision(value);
 const isPinnedPrompt = (value: unknown): value is PinnedPrompt => isFields(value) && isString(value.path) && isString(value.digest);

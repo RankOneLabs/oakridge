@@ -20,7 +20,7 @@ let fan_out: DefinitionBundleId;
 beforeAll(async () => {
   authority = await openAuthority();
   app = new Hono();
-  installDefinitionApi(app, { db: authority.db, core: authority.core, wake: () => undefined });
+  installDefinitionApi(app, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => false });
   review_loop = (await pinSample(authority)).bundle_id;
   fan_out = (await pinSample(authority, "fan-out")).bundle_id;
 });

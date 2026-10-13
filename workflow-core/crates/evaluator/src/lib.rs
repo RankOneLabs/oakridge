@@ -138,6 +138,15 @@ mod v2_step {
         }
         Some(current.clone())
     }
+    /// What names are bound while an expression is walked: the collection
+    /// member (`each`), the list element inside a list function (`item`), and
+    /// the body a validate check binds to its artifact's key.
+    #[derive(Clone, Copy)]
+    struct Bindings<'a> {
+        each: Option<&'a Value>,
+        item: Option<&'a Value>,
+        body: Option<(&'a str, &'a Value)>,
+    }
     /// Walk a resolved stage expression. The compiler already type-checked it,
     /// so an unresolvable read is None rather than an error.
     fn eval_expression(
@@ -148,7 +157,12 @@ mod v2_step {
         own_body: Option<(&str, &Value)>,
         context: &EvaluationContext<'_>,
     ) -> Result<Option<Value>, StepError> {
-        let result = eval_expression_inner(expression, unit, state, each, own_body, context);
+        let bindings = Bindings {
+            each,
+            item: None,
+            body: own_body,
+        };
+        let result = eval_expression_inner(expression, unit, state, bindings, context);
         if let Some(reason) = context.limit_error.get() {
             return Err(rejected(reason));
         }
@@ -160,12 +174,84 @@ mod v2_step {
         }
         Ok(result)
     }
+    /// The graph check behind `valid_graph`: every key a legal ident and
+    /// unique, every dependency list free of repeats and naming a key, and no
+    /// cycle. Malformed members fail the check rather than the evaluation.
+    fn is_valid_graph(items: &[Value], key_field: &str, dependencies_field: &str) -> bool {
+        let mut keys = BTreeSet::new();
+        let mut edges = BTreeMap::new();
+        for item in items {
+            let Some(key) = item.get(key_field).and_then(Value::as_str) else {
+                return false;
+            };
+            if !is_ident(key) || !keys.insert(key) {
+                return false;
+            }
+            let Some(dependencies) = item.get(dependencies_field).and_then(Value::as_array) else {
+                return false;
+            };
+            let mut named = BTreeSet::new();
+            for dependency in dependencies {
+                let Some(dependency) = dependency.as_str() else {
+                    return false;
+                };
+                if !named.insert(dependency) {
+                    return false;
+                }
+            }
+            edges.insert(key, named);
+        }
+        if edges
+            .values()
+            .flatten()
+            .any(|dependency| !keys.contains(dependency))
+        {
+            return false;
+        }
+        // Kahn's algorithm over a ready queue, O(keys + dependencies): every key
+        // must become reachable from an empty prerequisite set.
+        let mut waiting: BTreeMap<&str, usize> = edges
+            .iter()
+            .map(|(key, named)| (*key, named.len()))
+            .collect();
+        let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (key, named) in &edges {
+            for dependency in named {
+                dependents.entry(*dependency).or_default().push(*key);
+            }
+        }
+        let mut ready: Vec<&str> = waiting
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(key, _)| *key)
+            .collect();
+        let mut reached = 0usize;
+        while let Some(key) = ready.pop() {
+            reached += 1;
+            for dependent in dependents.get(key).map(Vec::as_slice).unwrap_or_default() {
+                let count = waiting
+                    .get_mut(dependent)
+                    .expect("every dependent is a key");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(dependent);
+                }
+            }
+        }
+        reached == keys.len()
+    }
+    fn is_ident(text: &str) -> bool {
+        !text.is_empty()
+            && text.chars().count() <= MAX_IDENT_CHARS
+            && !text
+                .chars()
+                .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+    }
     fn eval_expression_inner(
         expression: &Expression,
         unit: &UnitState,
         state: &ScopedSnapshot,
-        each: Option<&Value>,
-        own_body: Option<(&str, &Value)>,
+        bindings: Bindings<'_>,
         context: &EvaluationContext<'_>,
     ) -> Option<Value> {
         if !context.charge() {
@@ -185,21 +271,32 @@ mod v2_step {
                 })
             }))
         }
+        let eval =
+            |inner: &Expression| eval_expression_inner(inner, unit, state, bindings, context);
+        let eval_item = |inner: &Expression, item: &Value| {
+            let bound = Bindings {
+                item: Some(item),
+                ..bindings
+            };
+            eval_expression_inner(inner, unit, state, bound, context)
+        };
+        let boolean = |inner: &Expression| eval(inner)?.as_bool();
+        let list = |inner: &Expression| -> Option<Vec<Value>> {
+            let Value::Array(items) = eval(inner)? else {
+                return None;
+            };
+            context.check_list_len(items.len()).then_some(items)
+        };
         let integers = |left: &Expression, right: &Expression| -> Option<(i64, i64)> {
-            Some((
-                eval_expression_inner(left, unit, state, each, own_body, context)?.as_i64()?,
-                eval_expression_inner(right, unit, state, each, own_body, context)?.as_i64()?,
-            ))
+            Some((eval(left)?.as_i64()?, eval(right)?.as_i64()?))
         };
         match expression {
             Expression::Literal { value, .. } => Some(value.clone()),
-            Expression::Len { value } => Some(Value::from(
-                match eval_expression_inner(value, unit, state, each, own_body, context)? {
-                    Value::String(text) => text.chars().count(),
-                    Value::Array(items) => items.len(),
-                    _ => return None,
-                },
-            )),
+            Expression::Len { value } => Some(Value::from(match eval(value)? {
+                Value::String(text) => text.chars().count(),
+                Value::Array(items) => items.len(),
+                _ => return None,
+            })),
             Expression::GreaterThan { left, right } => {
                 let (left, right) = integers(left, right)?;
                 Some(Value::Bool(left > right))
@@ -216,13 +313,84 @@ mod v2_step {
                 let (left, right) = integers(left, right)?;
                 Some(Value::Bool(left <= right))
             }
+            // `a and b` reads b only where a holds, so a false a short-circuits
+            // and an unresolved a leaves the conjunction unresolved.
+            Expression::All { items } => {
+                for item in items {
+                    if !boolean(item)? {
+                        return Some(Value::Bool(false));
+                    }
+                }
+                Some(Value::Bool(true))
+            }
+            Expression::Any { items } => {
+                for item in items {
+                    if boolean(item)? {
+                        return Some(Value::Bool(true));
+                    }
+                }
+                Some(Value::Bool(false))
+            }
+            Expression::Not { value } => Some(Value::Bool(!boolean(value)?)),
+            Expression::Equals { left, right } => Some(Value::Bool(eval(left)? == eval(right)?)),
+            Expression::Every { source, predicate } => {
+                for item in list(source)? {
+                    if !eval_item(predicate, &item)?.as_bool()? {
+                        return Some(Value::Bool(false));
+                    }
+                }
+                Some(Value::Bool(true))
+            }
+            Expression::Filter { source, predicate } => {
+                let mut kept = Vec::new();
+                for item in list(source)? {
+                    if eval_item(predicate, &item)?.as_bool()? {
+                        kept.push(item);
+                    }
+                }
+                Some(Value::Array(kept))
+            }
+            Expression::Contains { source, value } => {
+                let value = eval(value)?;
+                Some(Value::Bool(list(source)?.contains(&value)))
+            }
+            Expression::Lookup {
+                source,
+                key_field,
+                key,
+            } => {
+                let key = eval(key)?;
+                let mut matches = list(source)?
+                    .into_iter()
+                    .filter(|item| item.get(key_field) == Some(&key));
+                let found = matches.next()?;
+                // Exactly one: an ambiguous key resolves to nothing.
+                matches.next().is_none().then_some(found)
+            }
+            Expression::Field { value, key } => eval(value)?.get(key).cloned(),
+            Expression::CheckCollection {
+                source,
+                key_field,
+                dependencies_field,
+            } => Some(Value::Bool(is_valid_graph(
+                &list(source)?,
+                key_field,
+                dependencies_field,
+            ))),
+            Expression::Record { fields, .. } => {
+                let mut record = serde_json::Map::new();
+                for field in fields {
+                    record.insert(field.key.clone(), eval(&field.value)?);
+                }
+                Some(Value::Object(record))
+            }
             Expression::List { items, .. } => {
                 if !context.check_list_len(items.len()) {
                     return None;
                 }
                 items
                     .iter()
-                    .map(|item| eval_expression_inner(item, unit, state, each, own_body, context))
+                    .map(eval)
                     .collect::<Option<Vec<_>>>()
                     .map(Value::Array)
             }
@@ -230,30 +398,11 @@ mod v2_step {
                 source,
                 value: projection,
                 ..
-            } => {
-                let Value::Array(items) =
-                    eval_expression_inner(source, unit, state, each, own_body, context)?
-                else {
-                    return None;
-                };
-                if !context.check_list_len(items.len()) {
-                    return None;
-                }
-                items
-                    .iter()
-                    .map(|item| {
-                        eval_expression_inner(
-                            projection,
-                            unit,
-                            state,
-                            Some(item),
-                            own_body,
-                            context,
-                        )
-                    })
-                    .collect::<Option<Vec<_>>>()
-                    .map(Value::Array)
-            }
+            } => list(source)?
+                .iter()
+                .map(|item| eval_item(projection, item))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Array),
             Expression::Reference {
                 root,
                 path: segments,
@@ -268,9 +417,10 @@ mod v2_step {
                 };
                 match root {
                     ReferenceRoot::UnitInput => read(&unit.input),
-                    ReferenceRoot::EachMember | ReferenceRoot::Item => read(each?),
+                    ReferenceRoot::EachMember => read(bindings.each?),
+                    ReferenceRoot::Item => read(bindings.item?),
                     ReferenceRoot::ValidationBody { artifact } => {
-                        let (bound, body) = own_body?;
+                        let (bound, body) = bindings.body?;
                         (bound == artifact.0).then(|| read(body)).flatten()
                     }
                     ReferenceRoot::Latest { artifact } => {
@@ -376,18 +526,44 @@ mod v2_step {
             AttemptStatus::Succeeded => Some(None),
         }
     }
+    /// Whether an optional guard holds; no guard always holds, and an
+    /// unresolved one does not.
+    fn holds(
+        guard: Option<&CheckedStageExpression>,
+        unit: &UnitState,
+        state: &ScopedSnapshot,
+        context: &EvaluationContext<'_>,
+    ) -> Result<bool, StepError> {
+        let Some(guard) = guard else {
+            return Ok(true);
+        };
+        Ok(
+            eval_expression(&guard.expression, unit, state, None, None, context)?
+                == Some(Value::Bool(true)),
+        )
+    }
     fn stage_actions(
         program: &CheckedWorkflow,
         state: &ScopedSnapshot,
         unit: &UnitState,
+        context: &EvaluationContext<'_>,
     ) -> Result<Vec<Action>, StepError> {
         let definition = stage(program, unit)?;
+        let checked = checked_stage(program, unit)?;
         let mut wanted = Vec::new();
         for (key, definition_worker) in &definition.workers {
             let worker_key = WorkerKey::from(key.as_str());
             let Some(retry) = can_run(state, &unit.id, &worker_key) else {
                 continue;
             };
+            let checked_worker = checked
+                .workers
+                .iter()
+                .find(|candidate| candidate.key == worker_key)
+                .ok_or_else(|| invalid(format!("checked worker {worker_key} absent")))?;
+            if !holds(checked_worker.when.as_ref(), unit, state, context)? {
+                continue;
+            }
             let candidate = match definition_worker {
                 Worker::Agent {
                     creates,
@@ -448,7 +624,11 @@ mod v2_step {
                         })
                     }
                 }
-                Worker::Code { every: Some(_), .. } => Some((Mode::Initial, Cause::Periodic)),
+                // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
+                Worker::Code { every: Some(_), .. } => {
+                    eval_fields(&checked_worker.inputs, unit, state, None, context)?
+                        .map(|_| (Mode::Initial, Cause::Periodic))
+                }
                 Worker::Code {
                     creates,
                     every: None,
@@ -485,7 +665,15 @@ mod v2_step {
         context: &EvaluationContext<'_>,
     ) -> Result<Vec<ResolvedReview>, StepError> {
         let mut resolved = Vec::new();
+        let definition = stage(program, unit)?;
         for review in &checked_stage(program, unit)?.reviews {
+            let is_operator = definition
+                .reviews
+                .get(&review.key.0)
+                .is_some_and(|source| source.by == ReviewBy::Operator);
+            if !is_operator || !holds(review.when.as_ref(), unit, state, context)? {
+                continue;
+            }
             let Some(target) = latest(state, &unit.id, &review.of) else {
                 continue;
             };
@@ -667,13 +855,15 @@ mod v2_step {
             TypeExpression::Name(name) if name == "text" || name == "repo_path" => {
                 value.is_string()
             }
-            TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(|text| {
-                !text.is_empty()
-                    && text.chars().count() <= MAX_IDENT_CHARS
-                    && !text
-                        .chars()
-                        .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
-            }),
+            TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(is_ident),
+            TypeExpression::Name(name) if name.starts_with("enum(") => name
+                .strip_prefix("enum(")
+                .and_then(|s| s.strip_suffix(')'))
+                .is_some_and(|variants| {
+                    value
+                        .as_str()
+                        .is_some_and(|text| variants.split(',').any(|v| v.trim() == text))
+                }),
             TypeExpression::Name(name) if name == "boolean" => value.is_boolean(),
             TypeExpression::Name(name) if name == "integer" => value.is_i64(),
             TypeExpression::Name(name) if name.starts_with("optional(") => name
@@ -976,10 +1166,10 @@ mod v2_step {
                     WorkerResult::Succeeded
                         if !matches!(attempt.cause, Cause::Periodic)
                             && creates(definition).iter().any(|artifact| {
-                                !state
-                                    .revisions
-                                    .iter()
-                                    .any(|r| r.by == attempt.action_id && r.artifact == *artifact)
+                                !state.revisions.iter().any(|r| {
+                                    r.by.as_ref() == Some(&attempt.action_id)
+                                        && r.artifact == *artifact
+                                })
                             }) =>
                     {
                         AttemptStatus::Failed {
@@ -1021,27 +1211,61 @@ mod v2_step {
                 let is_unchanged = |revision: &RevisionState| {
                     revision.body == *body && revision.subject == *subject
                 };
+                // An operator's edit (D2) names no attempt; every other
+                // revision names the attempt that published it.
+                let is_operator = matches!(incoming.writer, Writer::Operator { .. });
+                if is_operator != by.is_none() {
+                    return Err(rejected(if is_operator {
+                        "an operator's revision names no attempt"
+                    } else {
+                        "a revision that names no attempt must be the operator's"
+                    }));
+                }
                 if latest(state, unit, artifact)
                     .is_some_and(|revision| revision.by == *by && is_unchanged(revision))
                 {
                     return Ok(());
                 }
-                let attempt_index = state
-                    .attempts
-                    .iter()
-                    .rposition(|a| {
-                        a.action_id == *by
-                            && a.unit == *unit
-                            && matches!(a.status, AttemptStatus::Pending | AttemptStatus::Running)
-                    })
-                    .ok_or_else(|| rejected("publication attempt is not current"))?;
-                let attempt = state.attempts[attempt_index].clone();
-                let producer = worker(&definition, &attempt.worker)?;
-                if !creates(producer).contains(artifact) {
-                    return Err(rejected("worker does not create artifact"));
+                let attempt_index = match by {
+                    None => None,
+                    Some(by) => Some(
+                        state
+                            .attempts
+                            .iter()
+                            .rposition(|a| {
+                                a.action_id == *by
+                                    && a.unit == *unit
+                                    && matches!(
+                                        a.status,
+                                        AttemptStatus::Pending | AttemptStatus::Running
+                                    )
+                            })
+                            .ok_or_else(|| rejected("publication attempt is not current"))?,
+                    ),
+                };
+                let producer = match attempt_index {
+                    Some(index) => {
+                        let producer = worker(&definition, &state.attempts[index].worker)?;
+                        if !creates(producer).contains(artifact) {
+                            return Err(rejected("worker does not create artifact"));
+                        }
+                        producer
+                    }
+                    None => definition
+                        .workers
+                        .values()
+                        .find(|candidate| creates(candidate).contains(artifact))
+                        .ok_or_else(|| invalid("artifact has no creator"))?,
+                };
+                let is_code = matches!(producer, Worker::Code { .. });
+                if is_code && by.is_none() {
+                    return Err(rejected("an operator cannot edit a code worker's artifact"));
                 }
+                // An unchanged value from a code worker (a periodic observation)
+                // or an operator publishes nothing. An agent's attempt that
+                // republishes it records a revision: the attempt published it.
                 let previous = latest(state, unit, artifact);
-                if previous.is_some_and(is_unchanged) {
+                if previous.is_some_and(is_unchanged) && (is_code || by.is_none()) {
                     return Ok(());
                 }
                 if previous.map(|r| &r.id) != predecessor.as_ref() {
@@ -1067,7 +1291,10 @@ mod v2_step {
                         messages.push(rule.message.clone());
                     }
                 }
-                if !messages.is_empty() && matches!(producer, Worker::Code { .. }) {
+                if let (false, true, Some(attempt_index)) =
+                    (messages.is_empty(), is_code, attempt_index)
+                {
+                    let attempt = state.attempts[attempt_index].clone();
                     state.attempts[attempt_index].status = AttemptStatus::Failed {
                         code: "validation_failed".into(),
                         detail: messages.join("; "),
@@ -1085,7 +1312,7 @@ mod v2_step {
                     subject: subject.clone(),
                     by: by.clone(),
                 });
-                if !messages.is_empty() && !matches!(producer, Worker::Code { .. }) {
+                if !messages.is_empty() && !is_code {
                     let decision = decision_id(state, unit);
                     state.decisions.push(DecisionState {
                         id: decision,
@@ -1120,6 +1347,17 @@ mod v2_step {
                     .decisions
                     .get(&decision.0)
                     .ok_or_else(|| rejected("decision absent"))?;
+                if review_definition.by == ReviewBy::Engine {
+                    return Err(rejected("the engine decides this review"));
+                }
+                let checked_review = checked_stage(program, owner)?
+                    .reviews
+                    .iter()
+                    .find(|candidate| candidate.key == *review)
+                    .ok_or_else(|| invalid(format!("checked review {review} absent")))?;
+                if !holds(checked_review.when.as_ref(), owner, state, context)? {
+                    return Err(rejected("review is not open"));
+                }
                 if state.decisions.iter().any(|d| {
                     d.unit == *unit
                         && d.review == *review
@@ -1214,6 +1452,70 @@ mod v2_step {
         }
         Ok(())
     }
+    /// The first engine review of an active stage whose guard holds and
+    /// that has not yet decided on its target's latest revision, decided:
+    /// once per target revision, with the review's fixed feedback.
+    fn engine_decision(
+        program: &CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Option<DecisionState>, StepError> {
+        let definition = stage(program, unit)?;
+        for review in &checked_stage(program, unit)?.reviews {
+            let Some(source) = definition.reviews.get(&review.key.0) else {
+                continue;
+            };
+            if source.by != ReviewBy::Engine {
+                continue;
+            }
+            let Some((decision_key, decision)) = source.decisions.iter().next() else {
+                continue;
+            };
+            let target_artifact = decision.on.as_ref().unwrap_or(&source.of);
+            let Some(target) = latest(state, &unit.id, target_artifact) else {
+                continue;
+            };
+            // Wait for the target's creator to finish its attempt: a revise that
+            // has published the new target but not yet the rest of its output
+            // (a replacement PR) would otherwise be judged on what it replaces.
+            let is_creator_working = definition
+                .workers
+                .iter()
+                .filter(|(_, worker)| creates(worker).contains(target_artifact))
+                .any(|(key, _)| {
+                    attempt(state, &unit.id, &WorkerKey::from(key.as_str())).is_some_and(
+                        |current| {
+                            matches!(
+                                current.status,
+                                AttemptStatus::Pending | AttemptStatus::Running
+                            )
+                        },
+                    )
+                });
+            if is_creator_working {
+                continue;
+            }
+            let is_decided = state.decisions.iter().any(|existing| {
+                existing.unit == unit.id
+                    && existing.review == review.key
+                    && existing.target == target.id
+            });
+            if is_decided || !holds(review.when.as_ref(), unit, state, context)? {
+                continue;
+            }
+            return Ok(Some(DecisionState {
+                id: decision_id(state, &unit.id),
+                unit: unit.id.clone(),
+                review: review.key.clone(),
+                decision: SymbolKey::from(decision_key.as_str()),
+                effect: decision.effect.clone(),
+                target: target.id.clone(),
+                payload: serde_json::json!({ "feedback": decision.feedback.clone().unwrap_or_default() }),
+            }));
+        }
+        Ok(None)
+    }
     fn advance(
         program: &CheckedWorkflow,
         state: &mut ScopedSnapshot,
@@ -1238,6 +1540,10 @@ mod v2_step {
                     let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
                         .ok_or_else(|| invalid("stage outcome unresolved"))?;
                     state.units[index].status = UnitStatus::Done { outcome };
+                    return Ok(true);
+                }
+                if let Some(decision) = engine_decision(program, state, &unit, context)? {
+                    state.decisions.push(decision);
                     return Ok(true);
                 }
             }
@@ -1396,7 +1702,7 @@ mod v2_step {
             .collect();
         for unit in active {
             let stage_unit = unit.clone();
-            let actions = stage_actions(program, &state, &unit)?;
+            let actions = stage_actions(program, &state, &unit, &context)?;
             for action in &actions {
                 if let Action::RunWorker {
                     unit,
@@ -1463,6 +1769,23 @@ mod v2_step {
                 .into_iter()
                 .collect();
             workflow_compiler::compile_workflow(&source, &[], &prompts).unwrap()
+        }
+        #[test]
+        fn valid_graph_accepts_a_long_chain_and_refuses_it_closed_into_a_cycle() {
+            let chain = |is_closed: bool| -> Vec<Value> {
+                (0..10_000)
+                    .map(|index: usize| {
+                        let previous = match index {
+                            0 if is_closed => vec![format!("k{}", 9_999)],
+                            0 => vec![],
+                            _ => vec![format!("k{}", index - 1)],
+                        };
+                        serde_json::json!({ "id": format!("k{index}"), "after": previous })
+                    })
+                    .collect()
+            };
+            assert!(is_valid_graph(&chain(false), "id", "after"));
+            assert!(!is_valid_graph(&chain(true), "id", "after"));
         }
         fn snapshot() -> ScopedSnapshot {
             ScopedSnapshot {
@@ -1590,7 +1913,7 @@ mod v2_step {
                     body: spec["body"].clone(),
                     predecessor: spec["predecessor"].as_str().map(RevisionId::from),
                     subject: spec["subject"].as_str().map(RevisionId::from),
-                    by: action(),
+                    by: Some(action()),
                 },
                 "decide" => Event::OperatorDecided {
                     unit: UnitId::from(unit),
@@ -1730,14 +2053,22 @@ mod v2_step {
                 body: serde_json::json!({"notes": []}),
                 predecessor: None,
                 subject: Some(RevisionId::from("run/document:draft:1")),
-                by: ActionKey::from("previous-review"),
+                by: Some(ActionKey::from("previous-review")),
             });
             let unit = state
                 .units
                 .iter()
                 .find(|unit| unit.id.0 == "run/document")
                 .unwrap();
-            assert!(stage_actions(&program, &state, unit).unwrap().iter().any(|action| matches!(
+            assert!(stage_actions(
+                &program,
+                &state,
+                unit,
+                &EvaluationContext::new(&ResourceLimits::default())
+            )
+            .unwrap()
+            .iter()
+            .any(|action| matches!(
                 action, Action::RunWorker { worker, mode: Mode::Review, .. } if worker.0 == "critic"
             )));
         }
@@ -2279,7 +2610,7 @@ mod v2_step {
                             body: serde_json::json!({"title":"x","body":"x"}),
                             predecessor: None,
                             subject: None,
-                            by: action,
+                            by: Some(action),
                         },
                         Event::OperatorDecided {
                             unit: unit.clone(),
@@ -2586,7 +2917,7 @@ mod v2_step {
                             body: serde_json::json!({"title":"x","body":"x"}),
                             predecessor: None,
                             subject: None,
-                            by: ActionKey::from("forged")
+                            by: Some(ActionKey::from("forged"))
                         },
                         "forged"
                     )

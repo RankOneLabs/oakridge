@@ -18,7 +18,7 @@ export interface AuthorityArtifactRevision {
    * @type {RuntimeValue}
    */
   body: JsonColumn<RuntimeValue>;
-  by_id: string;
+  by_id: string | null;
   created_at: Generated<Timestamp>;
   id: string;
   predecessor_id: string | null;

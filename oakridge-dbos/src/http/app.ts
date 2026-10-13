@@ -13,15 +13,21 @@ import { deleteRun } from "../storage/run-deletion";
 import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
 import { browserWriteMiddleware, type BrowserWritePolicy } from "./browser-write-policy";
 import { collaborationHandlers } from "./collaboration";
-import { classifiedRoutesMiddleware, controlTokenMiddleware } from "./control-auth";
+import { classifiedRoutesMiddleware, controlTokenMiddleware, operatorCredentialCheck } from "./control-auth";
 import { errorResponse, fault, InvalidPayloadError, MalformedRequestError, MissingEntityError, requestBody } from "./errors";
 import { installEventStream } from "./events";
 import { installIngress } from "./ingress";
 import { installProjectApi } from "./projects";
 import { installReadModels } from "./read-models";
 
-export interface DefinitionApiDependencies { readonly db: Database; readonly core: CoreClient; readonly wake: (run_id: RunId) => void }
-export interface HttpAppDependencies extends DefinitionApiDependencies {
+export interface DefinitionApiDependencies {
+  readonly db: Database;
+  readonly core: CoreClient;
+  readonly wake: (run_id: RunId) => void;
+  /** Whether a request on the publish route is the operator's edit rather than a session's publication. */
+  readonly is_operator_request: (request: Request) => boolean;
+}
+export interface HttpAppDependencies extends Omit<DefinitionApiDependencies, "is_operator_request"> {
   readonly application_version: string;
   /** Null when the bind is loopback (or explicitly insecure) and no token is configured. */
   readonly control_token: string | null;
@@ -56,7 +62,7 @@ export function createHttpApp(deps: HttpAppDependencies): Hono {
   app.use("*", redactingReadResponses());
   app.use("*", browserWriteMiddleware(deps.write_policy));
   if (deps.control_token !== null) app.use("*", controlTokenMiddleware(deps.control_token, deps.write_policy));
-  installDefinitionApi(app, deps);
+  installDefinitionApi(app, { ...deps, is_operator_request: operatorCredentialCheck(deps.control_token, deps.write_policy) });
   installEventStream(app, { db: deps.db });
   app.get("/health", (context) => context.json({ status: "ok", application_version: deps.application_version, core: deps.core.health }));
   app.delete("/runs/:run_id", async (context) => {

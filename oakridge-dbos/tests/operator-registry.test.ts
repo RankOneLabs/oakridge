@@ -75,7 +75,7 @@ const project = { name: "oakridge", repo_dir: "/home/steve/codes/rol/oakridge", 
 async function withApi(body: (input: { readonly authority: Authority; readonly app: Hono }) => Promise<void>): Promise<void> {
   const authority = await openAuthority();
   const app = new Hono();
-  installDefinitionApi(app, { db: authority.db, core: authority.core, wake: () => undefined });
+  installDefinitionApi(app, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => false });
   try { await body({ authority, app }); } finally { await authority.close(); }
 }
 

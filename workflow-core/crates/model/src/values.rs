@@ -73,7 +73,9 @@ pub enum Event {
         body: Value,
         predecessor: Option<RevisionId>,
         subject: Option<RevisionId>,
-        by: ActionKey,
+        /// The attempt that published it; None only for an operator's edit
+        /// (`Writer::Operator`), which no attempt produced.
+        by: Option<ActionKey>,
     },
     OperatorDecided {
         unit: UnitId,
@@ -179,7 +181,8 @@ pub struct RevisionState {
     pub body: Value,
     pub predecessor: Option<RevisionId>,
     pub subject: Option<RevisionId>,
-    pub by: ActionKey,
+    /// None for an operator's edit.
+    pub by: Option<ActionKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

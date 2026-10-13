@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
+import { WORKFLOW_SOURCES } from "./workflow-sources";
 
 const root = resolve(import.meta.dir, "../..");
 const isCheck = process.argv.includes("--check");
 
-for (const name of ["review-loop", "fan-out"] as const) {
-  const source = resolve(root, "workflow-config/samples", `${name}.yaml`);
+for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+  const source = resolve(root, path);
   const document = YAML.parseDocument(readFileSync(source, "utf8"), { uniqueKeys: true });
   if (document.errors.length > 0) {
     throw new Error(`${source}: ${document.errors.map((error) => error.message).join("; ")}`);

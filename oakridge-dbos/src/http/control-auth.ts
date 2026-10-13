@@ -86,6 +86,19 @@ export function isValidControlRequest(request: Pick<Request, "method" | "headers
   catch { return false; }
 }
 
+/**
+ * Whether a request on the publish route carries the operator's credential
+ * rather than a session secret (part 1 §12, D2: the operator edits an
+ * artifact). With a token, the control credential decides. Without one the
+ * control plane is loopback-open, as for every operator route, and a request
+ * that presents no secret is the operator's; a secret that resolves to no
+ * session is refused, never taken for the operator.
+ */
+export const operatorCredentialCheck = (token: string | null, policy?: BrowserWritePolicy) =>
+  (request: Request): boolean => token === null
+    ? request.headers.get("authorization") === null
+    : isValidControlRequest(request, token, policy);
+
 /** Fail closed: a request no route in the table classifies is refused, even where a handler is registered. */
 export const classifiedRoutesMiddleware = (): MiddlewareHandler => async (context, next) =>
   matchRoute(context.req.method, context.req.path) ? next() : context.json({ error: "unclassified route" }, 404);

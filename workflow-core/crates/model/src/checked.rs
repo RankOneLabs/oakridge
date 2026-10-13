@@ -55,6 +55,7 @@ pub struct CheckedReview {
     pub key: SymbolKey,
     pub of: SymbolKey,
     pub inputs: Vec<CheckedNamedExpression>,
+    pub when: Option<CheckedStageExpression>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -64,6 +65,7 @@ pub struct CheckedWorker {
     pub inputs: Vec<CheckedNamedExpression>,
     /// The expression inside `repository(<expr>)`; None for `none` or no workspace.
     pub workspace: Option<CheckedStageExpression>,
+    pub when: Option<CheckedStageExpression>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

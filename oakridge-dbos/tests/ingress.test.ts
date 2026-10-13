@@ -144,12 +144,31 @@ test("publish succeeds with the session secret", async () => {
     .toEqual({ status: 201, revisions: [`${unitOf(run_id, "document")}:draft:1`] });
 });
 
-test("publish fails without a secret, with a wrong one, or with the control token", async () => {
+test("publish fails without a secret or with a wrong one", async () => {
   const run_id = await sessionRun("only-secret");
-  const statuses = await Promise.all([null, "Bearer wrong-secret", `Bearer ${CONTROL_TOKEN}`]
+  const statuses = await Promise.all([null, "Bearer wrong-secret"]
     .map(async (authorization) => (await publish(run_id, draft(), authorization)).status));
   const revisions = await authority.db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id).execute();
-  expect({ statuses, revisions: revisions.length }).toEqual({ statuses: [401, 401, 401], revisions: 0 });
+  expect({ statuses, revisions: revisions.length }).toEqual({ statuses: [401, 401], revisions: 0 });
+});
+
+test("D2: the control token on the publish route is the operator's edit, which names no attempt", async () => {
+  const run_id = await sessionRun("edit-secret");
+  const response = await publish(run_id, draft({ by: "forged" }), `Bearer ${CONTROL_TOKEN}`);
+  const last = (await events(run_id)).at(-1);
+  const revision = await authority.db.selectFrom("authority.artifact_revision").select("by_id").where("run_id", "=", run_id).executeTakeFirst();
+  expect({ status: response.status, writer: last?.writer, by: last?.payload.kind === "revision_published" ? last.payload.by : "absent",
+    by_id: revision?.by_id }).toEqual({ status: 201, writer: { kind: "operator", subject: OPERATOR_SUBJECT }, by: null, by_id: null });
+});
+
+test("D2: on a loopback-open control plane a publish with no secret is the operator's, and a wrong secret is still refused", async () => {
+  const open = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
+    control_token: null, write_policy: browserWritePolicy([]) });
+  const run_id = await sessionRun("open-secret");
+  const put = (authorization: string | null) => Promise.resolve(open.request(path("runs", run_id, "units", unitOf(run_id, "document"), "artifacts", "draft"),
+    { method: "PUT", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body: JSON.stringify(draft()) }));
+  const statuses = [(await put("Bearer wrong-secret")).status, (await put(null)).status];
+  expect({ statuses, writer: (await events(run_id)).at(-1)?.writer }).toEqual({ statuses: [401, 201], writer: { kind: "operator", subject: "local-control" } });
 });
 
 test("a session secret speaks for nothing once its attempt has ended", async () => {
