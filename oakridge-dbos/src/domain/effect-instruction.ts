@@ -1,4 +1,5 @@
-import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, Workflow, WorkerRuntime } from "../core-client/core-types";
+import { createHash } from "node:crypto";
+import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow, WorkerRuntime } from "../core-client/core-types";
 import type { Result } from "./primitives";
 
 /** Provider start attempts an instruction may claim until the YAML carries a budget. */
@@ -9,9 +10,20 @@ export const DEFAULT_PROVIDER_DEADLINE_MS = 600_000;
 export type RunWorkerAction = Extract<Action, { readonly kind: "run_worker" }>;
 /** A prompt path from the workflow source and the content digest pinned for it at compile. */
 export interface PinnedPrompt { readonly path: string; readonly digest: string }
+/** An artifact an agent creates, with its declared schema (named schemas resolved), for the publication block. */
+export interface CreatedArtifact { readonly key: string; readonly schema: TypeExpression }
+/** The prompt key whose template words a fresh session's handoff (part 1 §2.5). */
+export const HANDOFF_PROMPT = "handoff";
 export type WorkerInstruction =
-  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt; readonly runtime: WorkerRuntime | null }
-  | { readonly kind: "code"; readonly operation: string; readonly every: string | null };
+  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
+      /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
+      readonly handoff: PinnedPrompt | null;
+      readonly runtime: WorkerRuntime | null; readonly creates: readonly CreatedArtifact[];
+      /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
+      readonly schemas: { readonly [name: string]: TypeExpression } }
+  | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
+      /** The one artifact a code worker creates, which its output is published as. */
+      readonly artifact: string };
 /** Inputs the engine adds for the action's mode; null where the mode has none. */
 export interface EngineInputs {
   readonly previous: RevisionState | null;
@@ -25,6 +37,7 @@ export interface EngineInputs {
  */
 export interface EffectInstruction {
   readonly version: 1;
+  readonly run_id: string;
   readonly action: RunWorkerAction;
   readonly attempt: { readonly action_id: string; readonly seq: number };
   readonly worker: WorkerInstruction;
@@ -36,14 +49,28 @@ export interface EffectInstruction {
 }
 export interface InstructionError { readonly operation: string; readonly entity_id: string; readonly detail: string }
 
-/** One kbbl path segment: base64url never contains `/` or `.`. */
-const segment = (text: string): string => Buffer.from(text).toString("base64url");
-/** `session: resume` keeps one session per unit and worker; `fresh` gives each action its own (part 1 §7.2). */
+/** A periodic code worker's `every` (`30s`, `5m`, `1h`, as the compiler checks it) in seconds; null when it is not one. */
+export function selectEverySeconds(every: string): number | null {
+  const match = /^([1-9][0-9]*)([smh])$/.exec(every);
+  if (!match) return null;
+  const unit_seconds = { s: 1, m: 60, h: 3600 } as const;
+  return Number(match[1]) * unit_seconds[match[2] as keyof typeof unit_seconds];
+}
+
+/**
+ * The kbbl session key (part 1 §7.2). `session: resume` keeps one session per
+ * unit and worker; `fresh` gives each action its own. It is a sha256 hex, so it
+ * is one path segment and 70 characters however long the unit's path: kbbl
+ * caps keys at 300, and unit ids and action ids grow with collection keys. kbbl
+ * learns the unit and worker from the ensure's `workflow` block, not the key.
+ */
 export function selectSessionKey(action: RunWorkerAction, action_id: string, session: SessionMode): string {
-  return session === "resume" ? `${segment(action.unit)}.${segment(action.worker)}` : segment(action_id);
+  const named = session === "resume" ? `resume\0${action.unit}\0${action.worker}` : `fresh\0${action_id}`;
+  return `${session}-${createHash("sha256").update(named).digest("hex")}`;
 }
 
 export interface InstructionSource {
+  readonly run_id: string;
   readonly workflow: Workflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
@@ -55,22 +82,73 @@ export interface InstructionSource {
 const failure = (entity_id: string, detail: string): Result<never, InstructionError> =>
   ({ ok: false, error: { operation: "select_effect_instruction", entity_id, detail } });
 
+/**
+ * A schema with every exact reference to a named schema replaced by its
+ * definition, so an agent reads the shape it must publish. A name inside a
+ * compound type (`list(x)`) is left as written.
+ */
+export function selectResolvedSchema(schema: TypeExpression, schemas: { readonly [name: string]: TypeExpression }, depth = 0): TypeExpression {
+  if (depth > 32) return schema;
+  if (typeof schema === "string") {
+    const named = Object.hasOwn(schemas, schema) ? schemas[schema] : undefined;
+    return named === undefined ? schema : selectResolvedSchema(named, schemas, depth + 1);
+  }
+  return Object.fromEntries(Object.entries(schema).map(([field, type]) => [field, selectResolvedSchema(type, schemas, depth + 1)]));
+}
+
+/** The named schemas a set of types references anywhere, including inside compound types, transitively. */
+export function selectReferencedSchemas(types: readonly TypeExpression[], schemas: { readonly [name: string]: TypeExpression }):
+  { readonly [name: string]: TypeExpression } {
+  const referenced: { [name: string]: TypeExpression } = {};
+  const visit = (type: TypeExpression): void => {
+    if (typeof type !== "string") { Object.values(type).forEach(visit); return; }
+    for (const name of type.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) {
+      const named = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
+      if (named === undefined || Object.hasOwn(referenced, name)) continue;
+      referenced[name] = named;
+      visit(named);
+    }
+  };
+  types.forEach(visit);
+  return Object.fromEntries(Object.entries(referenced).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 /** Build the instruction for a newly wanted RunWorker from its pinned definition and resolved inputs. */
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
-  const declared = source.workflow.stages[source.stage]?.workers[action.worker];
-  if (!declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
+  const stage = source.workflow.stages[source.stage];
+  const declared = stage?.workers[action.worker];
+  if (!stage || !declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
+  const pin = (path: string): Result<PinnedPrompt, InstructionError> => {
+    const digest = source.prompts[path];
+    return digest === undefined ? failure(resolved.action_id, `prompt ${path} is not pinned`) : { ok: true, value: { path, digest } };
+  };
   let worker: WorkerInstruction;
   if (declared.kind === "agent") {
     const path = declared.prompts[action.mode.kind];
     if (path === undefined) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
-    const digest = source.prompts[path];
-    if (digest === undefined) return failure(resolved.action_id, `prompt ${path} is not pinned`);
+    const prompt = pin(path);
+    if (!prompt.ok) return prompt;
     const session = declared.session ?? "resume";
+    const handoff_path = session === "fresh" ? declared.prompts[HANDOFF_PROMPT] : undefined;
+    const handoff = handoff_path === undefined ? null : pin(handoff_path);
+    if (handoff && !handoff.ok) return handoff;
+    const creates: CreatedArtifact[] = [];
+    for (const key of declared.creates) {
+      const artifact = stage.artifacts[key];
+      if (!artifact) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
+      creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
+    }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
-      prompt: { path, digest }, runtime: declared.runtime ?? null };
-  } else worker = { kind: "code", operation: declared.operation, every: declared.every ?? null };
-  return { ok: true, value: { version: 1, action, attempt: { action_id: resolved.action_id, seq: source.seq }, worker,
+      prompt: prompt.value, handoff: handoff?.value ?? null, runtime: declared.runtime ?? null, creates,
+      schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
+  } else {
+    const artifact = declared.creates[0];
+    if (declared.creates.length !== 1 || artifact === undefined)
+      return failure(resolved.action_id, `code worker ${action.worker} must create exactly one artifact`);
+    worker = { kind: "code", operation: declared.operation, every: declared.every ?? null, artifact };
+  }
+  return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id, seq: source.seq }, worker,
     inputs: resolved.inputs,
     engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? null, subject: resolved.subject ?? null },
     workspace: resolved.workspace ?? null,
@@ -109,15 +187,22 @@ function isRevision(value: unknown): value is RevisionState {
     && isString(value.by) && isNullableString(value.predecessor ?? null) && isNullableString(value.subject ?? null);
 }
 const isNullableRevision = (value: unknown): value is RevisionState | null => value === null || isRevision(value);
+const isPinnedPrompt = (value: unknown): value is PinnedPrompt => isFields(value) && isString(value.path) && isString(value.digest);
+function isTypeExpression(value: unknown, depth = 0): value is TypeExpression {
+  if (isString(value)) return true;
+  return depth < 64 && isFields(value) && Object.values(value).every((member) => isTypeExpression(member, depth + 1));
+}
+const isCreatedArtifact = (value: unknown): value is CreatedArtifact => isFields(value) && isString(value.key) && isTypeExpression(value.schema);
 function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   if (!isFields(value)) return false;
-  if (value.kind === "code") return isString(value.operation) && isNullableString(value.every);
+  if (value.kind === "code") return isString(value.operation) && isNullableString(value.every) && isString(value.artifact);
   if (value.kind !== "agent") return false;
-  const prompt = value.prompt;
   const runtime = value.runtime;
   return isString(value.session_key) && (value.session === "resume" || value.session === "fresh")
-    && isFields(prompt) && isString(prompt.path) && isString(prompt.digest)
-    && (runtime === null || isFields(runtime) && isString(runtime.harness) && isString(runtime.model));
+    && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
+    && (runtime === null || isFields(runtime) && isString(runtime.harness) && isString(runtime.model))
+    && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)
+    && isFields(value.schemas) && Object.values(value.schemas).every((schema) => isTypeExpression(schema));
 }
 function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && "feedback" in value && isNullableRevision(value.subject);
@@ -128,6 +213,7 @@ export function decodeEffectInstruction(value: unknown): Result<EffectInstructio
   const refuse = (detail: string): Result<never, InstructionError> =>
     ({ ok: false, error: { operation: "decode_effect_instruction", entity_id: isFields(value) && isFields(value.attempt) && isString(value.attempt.action_id) ? value.attempt.action_id : "unknown", detail } });
   if (!isFields(value) || value.version !== 1) return refuse("unsupported instruction version");
+  if (!isString(value.run_id)) return refuse("run id is missing");
   if (!isRunWorkerAction(value.action)) return refuse("action is not a run_worker action");
   const attempt = value.attempt;
   if (!isFields(attempt) || !isString(attempt.action_id) || !isCount(attempt.seq)) return refuse("attempt is malformed");

@@ -476,6 +476,42 @@ mod v2_step {
         }
         Ok(wanted)
     }
+    /// The operator reviews of a stage a decision is legal on now, each with its
+    /// inputs evaluated against the stepped state (an unresolved read as null).
+    fn resolve_reviews(
+        program: &CheckedWorkflow,
+        state: &ScopedSnapshot,
+        unit: &UnitState,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Vec<ResolvedReview>, StepError> {
+        let mut resolved = Vec::new();
+        for review in &checked_stage(program, unit)?.reviews {
+            let Some(target) = latest(state, &unit.id, &review.of) else {
+                continue;
+            };
+            let is_decided = state.decisions.iter().any(|decision| {
+                decision.unit == unit.id
+                    && decision.review == review.key
+                    && decision.target == target.id
+            });
+            if is_decided {
+                continue;
+            }
+            let mut inputs = serde_json::Map::new();
+            for field in &review.inputs {
+                let value =
+                    eval_expression(&field.value.expression, unit, state, None, None, context)?;
+                inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
+            }
+            resolved.push(ResolvedReview {
+                unit: unit.id.clone(),
+                review: review.key.clone(),
+                target: target.id.clone(),
+                inputs: Value::Object(inputs),
+            });
+        }
+        Ok(resolved)
+    }
     /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
     fn resolve_run_worker(
         program: &CheckedWorkflow,
@@ -633,6 +669,7 @@ mod v2_step {
             }
             TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(|text| {
                 !text.is_empty()
+                    && text.chars().count() <= MAX_IDENT_CHARS
                     && !text
                         .chars()
                         .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
@@ -687,8 +724,25 @@ mod v2_step {
         }
         TypeExpression::Record(fields)
     }
+    /// The longest `ident`. Collection keys are idents taken from runtime data
+    /// and every id under a member embeds its key, so an unbounded ident would
+    /// make unbounded ids. 100 fits a GitHub repository or owner name, which
+    /// `pull_request.observe` carries as idents.
+    pub const MAX_IDENT_CHARS: usize = 100;
+    /// `hash(unit, worker, mode, cause)` (part 1 §4): 32 hex characters, so an
+    /// action's id is bounded however long its unit's path. The parts are
+    /// hashed as their wire JSON, which their schemas fix, not as Rust's
+    /// `Debug` output, which a refactor could change.
     fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
-        ActionKey(format!("{}:{}:{mode:?}:{cause:?}", unit.0, worker.0))
+        use sha2::{Digest, Sha256};
+        let parts = serde_json::json!([unit, worker, mode, cause]);
+        let digest = Sha256::digest(parts.to_string().as_bytes());
+        ActionKey(
+            digest[..16]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
     }
     fn materialize_group(
         program: &CheckedWorkflow,
@@ -962,8 +1016,13 @@ mod v2_step {
                 if !check_type(&artifact_definition.schema, body, &program.source.schemas) {
                     return Err(rejected("artifact body fails schema"));
                 }
+                // A revision is its body and what it reviews: the same body about a
+                // new subject (a reviewer repeating itself on a new revision) is new.
+                let is_unchanged = |revision: &RevisionState| {
+                    revision.body == *body && revision.subject == *subject
+                };
                 if latest(state, unit, artifact)
-                    .is_some_and(|revision| revision.by == *by && revision.body == *body)
+                    .is_some_and(|revision| revision.by == *by && is_unchanged(revision))
                 {
                     return Ok(());
                 }
@@ -982,7 +1041,7 @@ mod v2_step {
                     return Err(rejected("worker does not create artifact"));
                 }
                 let previous = latest(state, unit, artifact);
-                if previous.is_some_and(|r| r.body == *body) {
+                if previous.is_some_and(is_unchanged) {
                     return Ok(());
                 }
                 if previous.map(|r| &r.id) != predecessor.as_ref() {
@@ -1328,6 +1387,7 @@ mod v2_step {
         }
         let mut wanted = Vec::new();
         let mut resolved = Vec::new();
+        let mut reviews = Vec::new();
         let active: Vec<_> = state
             .units
             .iter()
@@ -1372,6 +1432,7 @@ mod v2_step {
                     }
                 }
             }
+            reviews.extend(resolve_reviews(program, &state, &stage_unit, &context)?);
             wanted.push((unit.id, actions));
         }
         let statuses = state
@@ -1384,6 +1445,7 @@ mod v2_step {
             statuses,
             wanted,
             resolved,
+            reviews,
         })
     }
     #[cfg(test)]
@@ -1681,6 +1743,36 @@ mod v2_step {
         }
 
         #[test]
+        fn a_review_repeating_its_body_about_a_new_subject_is_a_new_revision() {
+            let program = sample("review-loop");
+            let mut trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let first_critique = trace["rows"][2]["events"][0]["body"].clone();
+            let rows = trace["rows"].as_array_mut().unwrap();
+            for event in rows[7]["events"].as_array_mut().unwrap() {
+                if event["artifact"] == "critique" {
+                    event["body"] = first_critique.clone();
+                }
+            }
+            let mut state = snapshot();
+            for (index, row) in rows.iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            let subjects: Vec<_> = state
+                .revisions
+                .iter()
+                .filter(|revision| revision.artifact.0 == "critique")
+                .map(|revision| revision.subject.as_ref().map(|id| id.0.as_str()))
+                .collect();
+            assert_eq!(
+                subjects,
+                [Some("run/document:draft:1"), Some("run/document:draft:3")]
+            );
+            assert!(matches!(state.run.status, UnitStatus::Done { .. }));
+        }
+
+        #[test]
         fn member_outcomes_are_projected_in_key_order() {
             let program = sample("fan-out");
             let trace: Value =
@@ -1912,6 +2004,99 @@ mod v2_step {
                 .find(|resolved| resolved.action_id == attempt.action_id)
                 .unwrap()
         }
+        #[test]
+        fn an_awaiting_review_resolves_its_inputs_and_a_decided_one_drops_out() {
+            let program = sample("review-loop");
+            let published = [
+                serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+                serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+                serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                    "artifact":"draft","body":{"title":"First","body":"Long"}}),
+            ];
+            let awaiting = step_specs(&program, &snapshot(), &published);
+            let [editor] = awaiting.reviews.as_slice() else {
+                panic!("one review awaits: {:?}", awaiting.reviews)
+            };
+            assert_eq!(
+                (
+                    editor.review.0.as_str(),
+                    editor.target.0.as_str(),
+                    &editor.inputs["topic"],
+                    &editor.inputs["draft"],
+                    &editor.inputs["critique"]
+                ),
+                (
+                    "editor",
+                    "run/document:draft:1",
+                    &serde_json::json!("Oakridge"),
+                    &serde_json::json!({"title":"First","body":"Long"}),
+                    &Value::Null
+                )
+            );
+            let decided = step_specs(&program, &snapshot(), &[
+                published.as_slice(),
+                &[serde_json::json!({"op":"decide","unit":"run/document","review":"editor",
+                    "decision":"request_changes","target":"run/document:draft:1","payload":{"feedback":"shorter"}})],
+            ].concat());
+            assert!(decided.reviews.is_empty());
+        }
+
+        #[test]
+        fn an_action_id_is_a_fixed_length_hash_of_its_parts() {
+            let short = action_id(
+                &UnitId::from("run/document"),
+                &WorkerKey::from("writer"),
+                &Mode::Revise,
+                &Cause::ChangesRequested {
+                    decision: DecisionId::from("run/document:d1"),
+                },
+            );
+            let long_unit = UnitId::from(format!("run/work/{}", "k".repeat(400)).as_str());
+            let long = action_id(
+                &long_unit,
+                &WorkerKey::from("writer"),
+                &Mode::Initial,
+                &Cause::Missing,
+            );
+            let again = action_id(
+                &long_unit,
+                &WorkerKey::from("writer"),
+                &Mode::Initial,
+                &Cause::Missing,
+            );
+            assert_eq!(
+                (short.0.len(), long.0.len(), long == again, short == long),
+                (32, 32, true, false)
+            );
+        }
+
+        #[test]
+        fn a_collection_key_longer_than_an_ident_is_refused_at_launch() {
+            let program = sample("fan-out");
+            let input = |key: String| {
+                serde_json::json!({"repository":{"repository_path":"/tmp/repo","expected_head":null},
+                "items":[{"key":key,"text":"t","after":[]}]})
+            };
+            let launch = |key: String| {
+                step(
+                    &program,
+                    &snapshot(),
+                    &incoming(
+                        event(
+                            &serde_json::json!({"op":"launch","input":input(key)}),
+                            &snapshot(),
+                        ),
+                        "launch",
+                    ),
+                )
+            };
+            assert!(launch("k".repeat(MAX_IDENT_CHARS)).is_ok());
+            assert!(matches!(
+                launch("k".repeat(MAX_IDENT_CHARS + 1)),
+                Err(StepError::Rejected { .. })
+            ));
+        }
+
         #[test]
         fn initial_worker_inputs_resolve_with_unpublished_reads_as_null() {
             let program = sample("review-loop");

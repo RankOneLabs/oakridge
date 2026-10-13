@@ -30,7 +30,8 @@ const scriptOf = (instruction: EffectInstruction): Script => {
 const provider: EffectProvider = {
   async start(instruction) {
     start_calls.set(runOf(instruction), (start_calls.get(runOf(instruction)) ?? 0) + 1);
-    return scriptOf(instruction).start;
+    const start = scriptOf(instruction).start;
+    return start.kind === "acknowledged" ? { kind: "acknowledged", value: { handle: start.value, publication_secret_hash: "0".repeat(64) } } : start;
   },
   async observe(instruction) { return scriptOf(instruction).observe; },
   async stop(instruction, handle) {

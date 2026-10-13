@@ -22,11 +22,12 @@ export async function readScopedSnapshot(db: Reader, run_id: string, unit_id: st
     db.selectFrom("authority.unit_dependency").select(["unit_id", "depends_on_id"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("unit_id").orderBy("depends_on_id").execute(),
     db.selectFrom("authority.attempt").select(["action_id", "seq", "unit_id", "worker", "mode", "cause", "status", "ended_at", "kbbl_session_id"])
-      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("action_id").orderBy("seq").execute(),
+      // The core reads a worker's latest attempt by position: they go in the order commit opened them, not by (hashed) id.
+      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("seq").execute(),
     db.selectFrom("authority.artifact_revision").select(["id", "unit_id", "artifact", "body", "by_id", "predecessor_id", "subject"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("id").execute(),
     db.selectFrom("authority.review_decision").select(["id", "unit_id", "review", "decision", "effect", "target_revision_id", "payload"])
-      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("id").execute(),
+      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("id").execute(),
     db.selectFrom("authority.event").select(["id", "unit_id", "payload"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids))
       .where((eb) => eb.ref("payload", "->>").key("kind"), "=", "retry_requested")

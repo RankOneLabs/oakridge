@@ -3,10 +3,11 @@ import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted } from "../core-client/client";
 import type { Event, Incoming, ResolvedRunWorker, ScopedSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
 import type { RunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt } from "./json-column-types";
+import type { CommitReceipt, ReviewPrompts } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
 import { readScopedSnapshot } from "./snapshot-store";
 
@@ -129,6 +130,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
     ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
   await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
+  await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
   for (const { unit_id: unit, actions } of selectWanted(step))
     await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
       actions: jsonText(actions) }).execute();
@@ -273,7 +275,7 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     if (existing.has(inputs.action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === action.unit);
     if (!unit?.stage) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ workflow: input.source, prompts: input.prompts, stage: unit.stage, action, seq: attempt.seq, resolved: inputs });
+    const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, action, seq: attempt.seq, resolved: inputs });
     if (!instruction.ok) throw fault(run_id, instruction.error.detail);
     await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
       action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
@@ -284,6 +286,43 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", ["pending", "acknowledged"]).execute();
 }
 
+/**
+ * Render each operator review a decision is legal on now with the inputs step
+ * resolved for it (part 1 §2.3: the inbox shows `prompt` with the review's
+ * resolved inputs), and keep it on its unit. A unit whose reviews are all
+ * decided, or that is no longer active, keeps none. Only a changed set is written.
+ */
+async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): Promise<void> {
+  const { run_id, step, source } = input;
+  const stage_units = step.snapshot.units.filter((unit) => unit.stage != null);
+  if (stage_units.length === 0) return;
+  const paths = step.reviews.flatMap((review) => {
+    const stage = stage_units.find((unit) => unit.id === review.unit)?.stage;
+    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    return path ? [path] : [];
+  });
+  const texts = await readPromptTexts(trx, paths.flatMap((path) => input.prompts[path] ?? []));
+  const rendered = new Map<string, { [review: string]: { readonly target: string; readonly prompt: string } }>();
+  for (const review of step.reviews) {
+    const stage = stage_units.find((unit) => unit.id === review.unit)?.stage;
+    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    const digest = path ? input.prompts[path] : undefined;
+    const text = digest === undefined ? undefined : texts.get(digest);
+    if (text === undefined) throw fault(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);
+    const inputs = typeof review.inputs === "object" && review.inputs !== null ? review.inputs as { readonly [key: string]: unknown } : {};
+    const unit = rendered.get(review.unit) ?? {};
+    unit[review.review] = { target: review.target, prompt: renderTemplate(text, inputs) };
+    rendered.set(review.unit, unit);
+  }
+  const current = await trx.selectFrom("authority.unit").select(["id", "review_prompts"]).where("run_id", "=", run_id)
+    .where("id", "=", anyOf(stage_units.map((unit) => unit.id))).execute();
+  for (const row of current) {
+    const next: ReviewPrompts = rendered.get(row.id) ?? {};
+    if (canonical(next) === canonical(row.review_prompts)) continue;
+    await trx.updateTable("authority.unit").set({ review_prompts: jsonText(next) }).where("run_id", "=", run_id).where("id", "=", row.id).execute();
+  }
+}
+
 interface ReceiptInput { readonly request: CommitRequest; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }
 async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Promise<void> {
   if (input.request.ingress_id === null) return;
@@ -291,7 +330,12 @@ async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Prom
     ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) }).execute();
 }
 
-/** The one run id derivation (D8): a launch's request id names its run, so a replayed launch finds its receipt. */
+/**
+ * The one run id derivation (D8): a launch's request id names its run, so a
+ * replayed launch finds its receipt. Sixteen hex characters (64 bits) of the
+ * digest: every id in a run is prefixed by its run id, and 64 bits keep two
+ * launches from colliding.
+ */
 export function launchRunId(request_id: string): RunId {
-  return `run-${createHash("sha256").update(request_id).digest("hex")}` as RunId;
+  return `run-${createHash("sha256").update(request_id).digest("hex").slice(0, 16)}` as RunId;
 }

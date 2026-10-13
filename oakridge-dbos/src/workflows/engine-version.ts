@@ -5,19 +5,30 @@ import { CORE_WASM_PATH } from "../core-client/client";
 
 /**
  * Runtime sources reachable from the workflows and their injected services:
- * the core client, the storage factory and stores, commit, and the production
- * provider. The import-graph test checks this manifest when engine
+ * the core client, the storage factory and stores, commit, the agent provider
+ * and its kbbl client, and the code operations. The import-graph test checks this manifest when engine
  * dependencies change.
  */
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/client.ts",
   "core-client/core-types.ts",
+  "adapters/kbbl.ts",
   "domain/effect-instruction.ts",
   "domain/primitives.ts",
-  "effects/operations/production-provider.ts",
+  "domain/prompt-template.ts",
+  "effects/agent-provider.ts",
   "effects/outcomes.ts",
   "effects/provider-catalog.ts",
+  "effects/session-prompt.ts",
+  "operations/outcome.ts",
+  "operations/pull-request-observe.ts",
+  "operations/registry.ts",
+  "operations/repository-prepare.ts",
+  "operations/runner.ts",
   "projections/run-view.ts",
+  "runtime/git-command-runner.ts",
+  "runtime/github-pull-requests.ts",
+  "runtime/project-identity.ts",
   "storage/commit.ts",
   "storage/database.ts",
   "storage/executor-store.ts",

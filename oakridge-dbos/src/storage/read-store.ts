@@ -118,12 +118,13 @@ export async function readUnit(db: Kysely<DB>, location: UnitLocation): Promise<
     const [dependencies, attempts, revisions, decisions, intents] = await Promise.all([
       trx.selectFrom("authority.unit_dependency").select("depends_on_id").where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("depends_on_id").execute(),
+      // Action ids are hashes: attempts read in the order commit opened them.
       trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
-        .orderBy("action_id").orderBy("seq").execute(),
+        .orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
       trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("created_at").orderBy("id").execute(),
       trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
-        .orderBy("id").execute(),
+        .orderBy("created_at").orderBy("id").execute(),
       trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("action_id").orderBy("seq").execute(),
     ]);
@@ -137,12 +138,59 @@ export interface AttemptRead { readonly attempt: AttemptRecord; readonly intent:
 export async function listRunAttempts(db: Kysely<DB>, run_id: string): Promise<readonly AttemptRead[]> {
   return consistent(db, async (trx) => {
     const [attempts, intents] = await Promise.all([
-      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("action_id").orderBy("seq").execute(),
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
       trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", run_id).execute(),
     ]);
     const by_action = new Map(intents.map((intent) => [intent.action_id, intent as IntentStanding]));
     return attempts.map((attempt) => ({ attempt: attempt as AttemptRecord, intent: by_action.get(attempt.action_id) ?? null }));
   });
+}
+
+/** An agent attempt whose task is about to be rendered, and what it reads beside its instruction. */
+export interface SessionHistoryQuery {
+  readonly run_id: string;
+  readonly unit_id: string;
+  readonly worker: string;
+  readonly attempt: { readonly action_id: string; readonly seq: number };
+  /** The artifacts the worker creates. */
+  readonly artifacts: readonly string[];
+}
+/**
+ * The state an agent's task is rendered from beside its instruction, as it
+ * stood when commit opened the attempt: only rows written by then are read,
+ * so a task rendered again after a crash is the same text.
+ */
+export interface SessionHistory {
+  /** The worker's attempts on this unit opened before this one, oldest first. */
+  readonly earlier_attempts: readonly AttemptRecord[];
+  /** The latest revision of each created artifact, as of the attempt opening. */
+  readonly latest: readonly ArtifactRevisionRecord[];
+}
+export async function readSessionHistory(db: Kysely<DB>, query: SessionHistoryQuery): Promise<SessionHistory | null> {
+  return consistent(db, async (trx) => {
+    const current = await trx.selectFrom("authority.attempt").select("created_at").where("run_id", "=", query.run_id)
+      .where("action_id", "=", query.attempt.action_id).where("seq", "=", query.attempt.seq).executeTakeFirst();
+    if (!current) return null;
+    const opened_at = current.created_at;
+    const [earlier_attempts, latest] = await Promise.all([
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id)
+        .where("worker", "=", query.worker).where("created_at", "<=", opened_at)
+        .where((eb) => eb.not(eb.and([eb("action_id", "=", query.attempt.action_id), eb("seq", "=", query.attempt.seq)])))
+        .orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
+      query.artifacts.length === 0 ? [] : trx.selectFrom("authority.artifact_revision").selectAll().distinctOn("artifact")
+        .where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id).where("artifact", "=", anyOf(query.artifacts))
+        .where("created_at", "<=", opened_at).orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
+    ]);
+    return { earlier_attempts: earlier_attempts as AttemptRecord[], latest: latest as ArtifactRevisionRecord[] };
+  });
+}
+
+/** The latest revision of one artifact, which a code worker's output names as its predecessor; null before the first. */
+export async function readLatestRevisionId(db: Reader, input: UnitLocation & { readonly artifact: string }): Promise<string | null> {
+  const latest = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", input.run_id)
+    .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact)
+    .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+  return latest?.id ?? null;
 }
 
 /** The running attempt a publication secret speaks for, and the kbbl session it was minted for. */
@@ -174,7 +222,7 @@ export async function readArtifactHistory(db: Kysely<DB>, input: UnitLocation & 
       .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact).orderBy("created_at").orderBy("id").execute();
     const revision_ids = revisions.map((revision) => revision.id);
     const decisions = revision_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
-      .where("run_id", "=", input.run_id).where("target_revision_id", "=", anyOf(revision_ids)).orderBy("id").execute();
+      .where("run_id", "=", input.run_id).where("target_revision_id", "=", anyOf(revision_ids)).orderBy("created_at").orderBy("id").execute();
     return { revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[] };
   });
 }
@@ -251,7 +299,7 @@ export async function listReviewCandidates(db: Kysely<DB>, query: ReviewCandidat
       .orderBy("run_id").orderBy("unit_id").orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute();
     const latest_ids = latest.map((revision) => revision.id);
     const decisions = latest_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
-      .where("target_revision_id", "=", anyOf(latest_ids)).orderBy("id").execute();
+      .where("target_revision_id", "=", anyOf(latest_ids)).orderBy("created_at").orderBy("id").execute();
     const last = selected.at(-1);
     return {
       items: reviewed.map(({ source, ...unit }) => ({ unit: unit as UnitRecord, workflow: source,

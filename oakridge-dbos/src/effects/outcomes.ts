@@ -1,5 +1,5 @@
 import type { WorkerResult } from "../core-client/core-types";
-import type { ExternalHandle, ProviderResult, TerminalObservation } from "./provider";
+import type { ExternalHandle, ProviderResult, StartedSession, TerminalObservation } from "./provider";
 import { INPUT_CONTRACTS } from "./provider-catalog";
 
 /** Provider calls are bounded here; the step that runs them never hangs the workflow. */
@@ -20,19 +20,22 @@ function isWorkerResult(value: unknown): value is WorkerResult {
   return value.kind === "failed" && "code" in value && typeof value.code === "string" && "detail" in value && typeof value.detail === "string";
 }
 export function isExternalHandle(value: unknown): value is ExternalHandle {
-  if (!value || typeof value !== "object" || !("kind" in value)) return false;
-  if (value.kind === INPUT_CONTRACTS.session) return "session_id" in value && typeof value.session_id === "string";
-  return value.kind === "completed" && "result" in value && isWorkerResult(value.result);
+  return !!value && typeof value === "object" && "kind" in value && value.kind === INPUT_CONTRACTS.session
+    && "session_id" in value && typeof value.session_id === "string";
+}
+function isStartedSession(value: unknown): value is StartedSession {
+  return !!value && typeof value === "object" && "handle" in value && isExternalHandle(value.handle)
+    && "publication_secret_hash" in value && typeof value.publication_secret_hash === "string";
 }
 
 /** What one start attempt taught us: a started execution, a definite refusal, or try again. */
 export type StartOutcome =
-  | { readonly kind: "started"; readonly handle: ExternalHandle }
+  | { readonly kind: "started"; readonly started: StartedSession }
   | { readonly kind: "refused"; readonly failure: WorkerFailure }
   | { readonly kind: "retry"; readonly detail: string };
 export function resolveStart(result: ProviderResult<unknown>): StartOutcome {
   switch (result.kind) {
-    case "acknowledged": return isExternalHandle(result.value) ? { kind: "started", handle: result.value }
+    case "acknowledged": return isStartedSession(result.value) ? { kind: "started", started: result.value }
       : { kind: "retry", detail: "provider acknowledged a start without a valid handle" };
     case "permanently_rejected": return { kind: "refused", failure: failed(result.code, result.detail) };
     case "transiently_unavailable": case "uncertain": return { kind: "retry", detail: result.detail };

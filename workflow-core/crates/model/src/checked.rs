@@ -45,6 +45,16 @@ pub struct CheckedStage {
     pub done_when: CheckedStageExpression,
     pub outcome: Vec<CheckedNamedExpression>,
     pub validations: Vec<CheckedArtifactValidation>,
+    pub reviews: Vec<CheckedReview>,
+}
+
+/// An operator review's checked `inputs`, which its prompt is rendered with.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedReview {
+    pub key: SymbolKey,
+    pub of: SymbolKey,
+    pub inputs: Vec<CheckedNamedExpression>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

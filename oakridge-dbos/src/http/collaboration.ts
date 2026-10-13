@@ -6,11 +6,12 @@ import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCo
 export interface CollaborationApiDependencies { readonly db: Database }
 
 /**
- * Why a ping reaches no session yet: delivering a message into the agent's
- * kbbl session belongs to the executor's agent path (rescue spec R3). The
- * message is kept and the failed delivery is recorded, so the thread shows it.
+ * Why a ping reaches no session: threads are for people, and nothing in them
+ * is delivered to an agent. What an agent receives about its work is the
+ * review form an operator submits, as the decision's payload. The message is
+ * kept and the undelivered ping is recorded, so the thread shows it.
  */
-const SESSION_DELIVERY_PENDING = "delivery into the agent's session is not ported to effect instructions yet";
+const SESSION_DELIVERY_PENDING = "threads are for people and are not delivered to agents; an agent receives the review decision's form";
 
 const object = (value: unknown): value is { readonly [key: string]: unknown } =>
   typeof value === "object" && value !== null && !Array.isArray(value);

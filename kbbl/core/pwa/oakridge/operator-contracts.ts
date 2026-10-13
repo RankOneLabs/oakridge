@@ -210,6 +210,7 @@ export interface OperatorAuthorityAttempt {
    * @type {Cause}
    */
   cause: OperatorJsonColumn<OperatorCause>;
+  created_at: OperatorGenerated<OperatorTimestamp>;
   ended_at: number | null;
   kbbl_session_id: string | null;
   /**
@@ -364,6 +365,7 @@ export interface OperatorAuthorityPromptContent {
 }
 
 export interface OperatorAuthorityReviewDecision {
+  created_at: OperatorGenerated<OperatorTimestamp>;
   decision: string;
   effect: string;
   id: string;
@@ -418,6 +420,10 @@ export interface OperatorAuthorityUnit {
   input: OperatorJsonColumn<OperatorRuntimeValue>;
   parent_id: string | null;
   pool: string | null;
+  /**
+   * @type {ReviewPrompts}
+   */
+  review_prompts: OperatorGenerated<OperatorJsonColumn<OperatorReviewPrompts>>;
   run_id: string;
   stage: string | null;
   /**
@@ -469,6 +475,7 @@ export type OperatorDefinitionBundleSource = OperatorWorkflow;
 
 export interface OperatorEffectInstruction {
   readonly version: 1;
+  readonly run_id: string;
   readonly action: OperatorRunWorkerAction;
   readonly attempt: { readonly action_id: string; readonly seq: number };
   readonly worker: OperatorWorkerInstruction;
@@ -497,6 +504,8 @@ export type OperatorNullableJsonColumn<Value> = ColumnType<Value | null, Operato
 
 export interface OperatorSessionPolicy { readonly version: number; readonly entries: readonly OperatorSessionPolicyEntry[] }
 
+export type OperatorReviewPrompts = { readonly [review: string]: OperatorReviewPrompt };
+
 export type OperatorWantedActions = readonly OperatorAction[];
 
 export type OperatorJsonText<Value> = string & { readonly __json: Value };
@@ -504,8 +513,15 @@ export type OperatorJsonText<Value> = string & { readonly __json: Value };
 export type OperatorRunWorkerAction = Extract<OperatorAction, { readonly kind: "run_worker" }>;
 
 export type OperatorWorkerInstruction =
-  | { readonly kind: "agent"; readonly session_key: string; readonly session: OperatorSessionMode; readonly prompt: OperatorPinnedPrompt; readonly runtime: OperatorWorkerRuntime | null }
-  | { readonly kind: "code"; readonly operation: string; readonly every: string | null };
+  | { readonly kind: "agent"; readonly session_key: string; readonly session: OperatorSessionMode; readonly prompt: OperatorPinnedPrompt;
+      /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
+      readonly handoff: OperatorPinnedPrompt | null;
+      readonly runtime: OperatorWorkerRuntime | null; readonly creates: readonly OperatorCreatedArtifact[];
+      /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
+      readonly schemas: { readonly [name: string]: OperatorTypeExpression } }
+  | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
+      /** The one artifact a code worker creates, which its output is published as. */
+      readonly artifact: string };
 
 export interface OperatorEngineInputs {
   readonly previous: OperatorRevisionState | null;
@@ -515,9 +531,13 @@ export interface OperatorEngineInputs {
 
 export interface OperatorSessionPolicyEntry { readonly selector: OperatorSessionScopeSelector; readonly settings: OperatorSessionSettings }
 
+export interface OperatorReviewPrompt { readonly target: string; readonly prompt: string }
+
 export type OperatorAction = { readonly "cause": OperatorCause; readonly "kind": "run_worker"; readonly "mode": OperatorMode; readonly "unit": string; readonly "worker": string } | { readonly "input": unknown; readonly "kind": "start"; readonly "unit": string } | { readonly "kind": "complete"; readonly "outcome": unknown; readonly "unit": string };
 
 export interface OperatorPinnedPrompt { readonly path: string; readonly digest: string }
+
+export interface OperatorCreatedArtifact { readonly key: string; readonly schema: OperatorTypeExpression }
 
 export type OperatorRevisionState = { readonly "artifact": string; readonly "body": unknown; readonly "by": string; readonly "id": string; readonly "predecessor"?: string | null; readonly "subject"?: string | null; readonly "unit": string };
 

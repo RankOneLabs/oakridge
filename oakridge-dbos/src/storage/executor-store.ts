@@ -1,7 +1,7 @@
 import type { Kysely } from "kysely";
 import type { DB } from "./db-types";
 import type { Database, DatabaseTransaction } from "./database";
-import type { EffectIntentRecord, EffectStatus } from "./schema-records";
+import type { AttemptRecord, EffectIntentRecord, EffectStatus } from "./schema-records";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
 
@@ -104,4 +104,12 @@ export async function readAttemptSession(db: Reader, input: { readonly action_id
   const attempt = await db.selectFrom("authority.attempt").select("kbbl_session_id")
     .where("action_id", "=", input.action_id).where("seq", "=", input.seq).executeTakeFirst();
   return attempt?.kbbl_session_id ?? null;
+}
+
+/** An action's latest attempt: where a carrier resumes a periodic worker after another engine version ran it. */
+export interface LatestAttempt { readonly seq: number; readonly status: AttemptRecord["status"] }
+export async function readLatestAttempt(db: Reader, action_id: string): Promise<LatestAttempt | null> {
+  const attempt = await db.selectFrom("authority.attempt").select(["seq", "status"]).where("action_id", "=", action_id)
+    .orderBy("seq", "desc").executeTakeFirst();
+  return attempt ?? null;
 }

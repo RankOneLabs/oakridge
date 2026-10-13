@@ -1,21 +1,27 @@
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from "@dbos-inc/dbos-sdk";
 import type { CoreClient } from "../core-client/client";
-import { decodeEffectInstruction, type EffectInstruction } from "../domain/effect-instruction";
+import type { WorkerResult } from "../core-client/core-types";
+import { decodeEffectInstruction, selectEverySeconds, type EffectInstruction } from "../domain/effect-instruction";
 import type { RunId } from "../domain/primitives";
 import { bounded, resolveObserve, resolveStart, resolveStop, type WorkerFailure } from "../effects/outcomes";
-import type { EffectProvider, ExternalHandle, ProviderResult } from "../effects/provider";
+import type { EffectProvider, ExternalHandle, ProviderResult, SessionMaterial } from "../effects/provider";
 import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
+import { renderSessionTask, selectSessionTaskContext } from "../effects/session-prompt";
+import type { OperationOutcome } from "../operations/outcome";
+import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
-import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent,
-  type EffectStatus, type SettledStatus, type StartClaim } from "../storage/executor-store";
-import { listRunsNeedingWork, readRunStanding } from "../storage/read-store";
+import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure, settleIntent,
+  type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim } from "../storage/executor-store";
+import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readSessionHistory } from "../storage/read-store";
+import { readPromptTexts } from "../storage/registry-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
 
 /**
  * Three generic workflows carry every run. None of them knows a stage or a
  * worker: commit decides what is wanted and writes it as effect instructions,
- * and these workflows only carry instructions to the provider and report what
- * happened back to commit as WorkerStarted and WorkerEnded events. DBOS owns
+ * and these workflows only carry instructions to an agent's kbbl session or a
+ * registered code operation, and report what happened back to commit as
+ * WorkerStarted, WorkerEnded and (for code output) RevisionPublished events. DBOS owns
  * the execution — a crash mid-step resumes at that step on the next process of
  * the same engine version. A process of a different engine version never runs
  * another version's workflows, so on boot it fences them and carries their
@@ -27,7 +33,10 @@ import { reportWorker, type ExecutorReport } from "./executor-ingress";
 export interface WorkflowServices {
   readonly db: Database;
   readonly core: CoreClient;
+  /** Agent workers: their kbbl sessions. */
   readonly provider: EffectProvider;
+  /** Code workers: the registered operations. */
+  readonly operations: OperationRunner;
   readonly timing: WorkflowTiming;
 }
 /** Provider calls carry no timing here: each is bounded by its instruction's `deadline_ms`. */
@@ -152,12 +161,43 @@ async function callProvider<Value>(deadline_ms: number, operation: (signal: Abor
 const claimStartStep = DBOS.registerStep(async (intent: CarriedIntent): Promise<StartClaim> =>
   claimStart(current().db, { intent_id: intent.id, max_tries: intent.instruction.max_start_attempts }),
 { name: "oakridgeClaimStart", retriesAllowed: true, maxAttempts: 5 });
-const startStep = DBOS.registerStep(async (instruction: EffectInstruction): Promise<ProviderResult<ExternalHandle>> =>
+const startStep = DBOS.registerStep(async (instruction: EffectInstruction): Promise<ProviderResult<unknown>> =>
   callProvider(instruction.deadline_ms, (signal) => current().provider.start(instruction, { signal })), { name: "oakridgeStart" });
-const observeStep = DBOS.registerStep(async (instruction: EffectInstruction, handle: ExternalHandle): Promise<ProviderResult<unknown>> =>
-  callProvider(instruction.deadline_ms, (signal) => current().provider.observe(instruction, handle, { signal })), { name: "oakridgeObserve" });
+const observeStep = DBOS.registerStep(async (instruction: EffectInstruction, material: SessionMaterial, handle: ExternalHandle): Promise<ProviderResult<unknown>> =>
+  callProvider(instruction.deadline_ms, (signal) => current().provider.observe(instruction, material, handle, { signal })), { name: "oakridgeObserve" });
 const stopStep = DBOS.registerStep(async (instruction: EffectInstruction, handle: ExternalHandle | null): Promise<ProviderResult<unknown>> =>
   callProvider(instruction.deadline_ms, (signal) => current().provider.stop(instruction, handle, { signal })), { name: "oakridgeStop" });
+
+/** An agent attempt's task, rendered once from its pinned prompts and the state it opened on; or why it cannot be. */
+type PreparedSession = { readonly kind: "prepared"; readonly material: SessionMaterial } | { readonly kind: "invalid"; readonly detail: string };
+const prepareSessionStep = DBOS.registerStep(async (instruction: EffectInstruction): Promise<PreparedSession> => {
+  const { db } = current();
+  const worker = instruction.worker;
+  if (worker.kind !== "agent") return { kind: "invalid", detail: "only an agent attempt has a session task" };
+  const texts = await readPromptTexts(db, [worker.prompt.digest, ...(worker.handoff ? [worker.handoff.digest] : [])]);
+  const prompt_text = texts.get(worker.prompt.digest);
+  if (prompt_text === undefined) return { kind: "invalid", detail: `prompt ${worker.prompt.path} has no pinned text` };
+  const handoff_text = worker.handoff ? texts.get(worker.handoff.digest) ?? null : null;
+  if (worker.handoff && handoff_text === null) return { kind: "invalid", detail: `prompt ${worker.handoff.path} has no pinned text` };
+  const history = await readSessionHistory(db, { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker,
+    attempt: instruction.attempt, artifacts: worker.creates.map((artifact) => artifact.key) });
+  if (!history) return { kind: "invalid", detail: `attempt ${instruction.attempt.action_id}#${instruction.attempt.seq} is not recorded` };
+  const context = selectSessionTaskContext(instruction, history, { prompt_text, handoff_text });
+  return { kind: "prepared", material: { task: renderSessionTask(instruction, context) } };
+}, { name: "oakridgePrepareSession", retriesAllowed: true, maxAttempts: 5 });
+
+const operationStep = DBOS.registerStep(async (instruction: EffectInstruction): Promise<OperationOutcome> => {
+  if (instruction.worker.kind !== "code") return { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: "not a code attempt" };
+  const call = { operation: instruction.worker.operation, inputs: instruction.inputs };
+  const outcome = await callProvider(instruction.deadline_ms, async (signal) =>
+    ({ kind: "acknowledged", value: await current().operations.run(call, { signal }) }));
+  return outcome.kind === "acknowledged" ? outcome.value : { kind: "unavailable", detail: outcome.detail };
+}, { name: "oakridgeRunOperation" });
+/** The artifact's latest revision, resolved once so a re-sent `published` report is the same event (R2). */
+const latestRevisionStep = DBOS.registerStep(async (input: { readonly run_id: string; readonly unit_id: string; readonly artifact: string }): Promise<string | null> =>
+  readLatestRevisionId(current().db, input), { name: "oakridgeLatestRevision", retriesAllowed: true, maxAttempts: 5 });
+const latestAttemptStep = DBOS.registerStep(async (action_id: string): Promise<LatestAttempt | null> =>
+  readLatestAttempt(current().db, action_id), { name: "oakridgeLatestAttempt", retriesAllowed: true, maxAttempts: 5 });
 
 const markAcknowledgedStep = DBOS.registerStep(async (intent_id: string): Promise<EffectStatus | null> => markAcknowledged(current().db, intent_id),
   { name: "oakridgeMarkAcknowledged", retriesAllowed: true, maxAttempts: 5 });
@@ -180,17 +220,22 @@ const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string 
   const committed = await reportWorker({ db, core, wake: () => undefined }, input);
   if (!committed.ok) throw new Error(`${committed.error.operation}: ${committed.error.detail}`);
   const outcome = committed.value;
-  return outcome.kind === "committed" || outcome.kind === "replayed" ? null : `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
+  if (outcome.kind === "committed") return null;
+  if (outcome.kind === "replayed") return outcome.receipt.kind === "committed" ? null : `rejected: ${outcome.receipt.reason}`;
+  return `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
 }, { name: "oakridgeReportWorker", retriesAllowed: true, maxAttempts: 5 });
 
-async function report(input: ReportInput): Promise<void> {
+/** Report to commit; a refusal is returned (and logged), never thrown: step decides what an event means. */
+async function report(input: ReportInput): Promise<string | null> {
   const refused = await reportStep(input);
-  if (refused) DBOS.logger.warn(`attempt ${input.attempt.action_id}: ${input.report.kind} report not applied: ${refused}`);
+  if (refused) DBOS.logger.warn(`attempt ${input.attempt.action_id}#${input.attempt.seq}: ${input.report.kind} report not applied: ${refused}`);
+  return refused;
 }
+const failureText = (result: WorkerResult): string | null => result.kind === "failed" ? `${result.code}: ${result.detail}` : null;
 /** The attempt failed and no execution exists (the provider definitely refused it): report it and settle the intent. */
 async function failAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
   await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: failure } });
-  return settleStep({ intent_id: intent.id, status: "failed", last_error: `${failure.code}: ${failure.detail}` });
+  return settleStep({ intent_id: intent.id, status: "failed", last_error: failureText(failure) });
 }
 /**
  * The attempt failed but an execution may still exist: a session that can no
@@ -232,10 +277,9 @@ async function untilSettled<Value>(label: string, body: () => Promise<Value>): P
   }
 }
 
-/** Carries one start: claim, start, report WorkerStarted, observe, report WorkerEnded. Workflow id = `intentWorkflowId(intent_id)`. */
+/** Carries one intent: an agent's session, or a code worker's operation. Workflow id = `intentWorkflowId(intent_id)`. */
 export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: "oakridgeEffectWorkflow" });
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
-  const timing = current().timing;
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind === "missing") return null;
   if (loaded.kind === "invalid") {
@@ -247,7 +291,26 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     return settled;
   }
   const intent = loaded.intent;
+  const status = intent.instruction.worker.kind === "code" ? await carryCode(intent) : await carryAgent(intent);
+  await wakeRun(intent.run_id);
+  return status;
+}
+
+/**
+ * An agent attempt: claim a start, ensure its kbbl session, report
+ * WorkerStarted with the session and its secret's hash, then observe. The
+ * first observation delivers the task, after WorkerStarted is committed, so
+ * the agent's first publish already has a running attempt to speak for.
+ */
+async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
+  const timing = current().timing;
+  const intent_id = intent.id;
   let status: EffectStatus | null = intent.status;
+  if (status !== "pending" && status !== "acknowledged") return status;
+  const prepared = await prepareSessionStep(intent.instruction);
+  if (prepared.kind === "invalid")
+    return failAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: prepared.detail });
+  const material = prepared.material;
   let handle = intent.handle;
   // WorkerStarted commits the session before the intent is acknowledged; a
   // carrier re-run between the two resumes that session rather than starting another.
@@ -258,52 +321,105 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     if (claim.kind === "not_pending") { status = claim.status; break; }
     if (claim.kind === "exhausted") {
       // Every try got no definite answer, so a start may have landed.
-      status = await abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.start_attempts_exhausted,
+      return abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.start_attempts_exhausted,
         detail: `start attempts exhausted (${claim.tries})` });
-      break;
     }
     const outcome = resolveStart(await startStep(intent.instruction));
-    if (outcome.kind === "refused") { status = await failAttempt(intent, outcome.failure); break; }
+    if (outcome.kind === "refused") return failAttempt(intent, outcome.failure);
     if (outcome.kind === "retry") {
       const retry_in = backoff(attempt, timing);
       status = await recordTryFailureStep({ intent_id, last_error: outcome.detail, retry_in_seconds: retry_in });
       if (status === "pending") await DBOS.sleepSeconds(retry_in);
       continue;
     }
-    handle = outcome.handle;
+    handle = outcome.started.handle;
     await report({ run_id: intent.run_id, attempt: intent.instruction.attempt,
-      // The publication secret is minted at session start by the agent provider (rescue spec R3).
-      report: { kind: "started", session_id: handle.kind === INPUT_CONTRACTS.session ? handle.session_id : null, publication_secret_hash: null } });
-    if (handle.kind === "completed") {
-      await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: handle.result } });
-      status = await settleStep({ intent_id, status: handle.result.kind === "succeeded" ? "stopped" : "failed",
-        last_error: handle.result.kind === "failed" ? `${handle.result.code}: ${handle.result.detail}` : null });
-      break;
-    }
+      report: { kind: "started", session_id: handle.session_id, publication_secret_hash: outcome.started.publication_secret_hash } });
     status = await markAcknowledgedStep(intent_id);
   }
   for (let unavailable = 0; status === "acknowledged" && handle !== null;) {
-    const outcome = resolveObserve(await observeStep(intent.instruction, handle));
+    const outcome = resolveObserve(await observeStep(intent.instruction, material, handle));
     if (outcome.kind === "ended") {
       await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: outcome.result } });
-      status = await settleStep({ intent_id, status: outcome.result.kind === "succeeded" ? "stopped" : "failed",
-        last_error: outcome.result.kind === "failed" ? `${outcome.result.code}: ${outcome.result.detail}` : null });
-      break;
+      return settleStep({ intent_id, status: outcome.result.kind === "succeeded" ? "stopped" : "failed", last_error: failureText(outcome.result) });
     }
-    if (outcome.kind === "refused") { status = await abandonAttempt(intent, outcome.failure); break; }
+    if (outcome.kind === "refused") return abandonAttempt(intent, outcome.failure);
     unavailable = outcome.kind === "retry" && outcome.is_unavailable ? unavailable + 1 : 0;
     if (unavailable >= Math.max(1, timing.max_observe_unavailable_attempts)) {
-      status = await abandonAttempt(intent, { kind: "failed", code: "observation_unavailable",
+      return abandonAttempt(intent, { kind: "failed", code: "observation_unavailable",
         detail: `observation unavailable after ${unavailable} consecutive attempts${outcome.kind === "retry" ? `: ${outcome.detail}` : ""}` });
-      break;
     }
     await DBOS.sleepSeconds(timing.observe_interval_seconds);
     const reloaded = await loadIntentStep(intent_id);
     // A requested stop ends observation; the cleanup carrier owns the session now.
     status = reloaded.kind === "carried" ? reloaded.intent.status : null;
   }
-  await wakeRun(intent.run_id);
   return status;
+}
+
+/** One run of a code operation, transient failures retried within the start budget: the attempt's result and output. */
+type OperationResult = Exclude<OperationOutcome, { readonly kind: "unavailable" }>;
+async function runOperation(intent: CarriedIntent): Promise<OperationResult> {
+  const timing = current().timing;
+  for (let attempt = 1; ; attempt++) {
+    const outcome = await operationStep(intent.instruction);
+    if (outcome.kind !== "unavailable") return outcome;
+    if (attempt >= intent.instruction.max_start_attempts) return { kind: "failed", code: PROVIDER_ERROR_CODES.operation_unavailable,
+      detail: `operation unavailable after ${attempt} tries: ${outcome.detail}` };
+    await DBOS.sleepSeconds(backoff(attempt - 1, timing));
+  }
+}
+
+/**
+ * A code worker (part 1 §7.2): report WorkerStarted, run the operation,
+ * publish its value as the revision of the worker's artifact by the action,
+ * report WorkerEnded. With `every` it repeats while the intent is live, each
+ * run a later attempt of the same action; step leaves an unchanged value
+ * unpublished. A stop needs nothing outside: the loop ends when it sees one.
+ */
+async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
+  const worker = intent.instruction.worker;
+  if (worker.kind !== "code") return null;
+  if (intent.status !== "pending" && intent.status !== "acknowledged") return intent.status;
+  const interval = worker.every === null ? null : selectEverySeconds(worker.every);
+  if (worker.every !== null && interval === null)
+    return failAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: `every ${worker.every} is not a duration` });
+  // Resume where the action's attempts stand: another engine version may have run some of them.
+  const latest = await latestAttemptStep(intent.instruction.attempt.action_id);
+  let seq = latest?.seq ?? intent.instruction.attempt.seq;
+  if (latest && latest.status.kind !== "pending" && latest.status.kind !== "running") {
+    if (interval === null || latest.status.kind === "failed")
+      return settleStep({ intent_id: intent.id, status: latest.status.kind === "failed" ? "failed" : "stopped",
+        last_error: latest.status.kind === "failed" ? `${latest.status.code}: ${latest.status.detail}` : null });
+    seq += 1;
+  }
+  let status: EffectStatus | null = intent.status;
+  for (;;) {
+    const attempt = { action_id: intent.instruction.attempt.action_id, seq };
+    const refused_start = await report({ run_id: intent.run_id, attempt, report: { kind: "started", session_id: null, publication_secret_hash: null } });
+    if (refused_start) return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
+    if (status === "pending") status = await markAcknowledgedStep(intent.id);
+    const outcome = await runOperation(intent);
+    let result: WorkerResult = outcome.kind === "succeeded" ? { kind: "succeeded" } : { kind: "failed", code: outcome.code, detail: outcome.detail };
+    if (outcome.kind === "succeeded") {
+      const location = { run_id: intent.run_id, unit_id: intent.instruction.action.unit, artifact: worker.artifact };
+      const predecessor = await latestRevisionStep(location);
+      const refused = await report({ run_id: intent.run_id, attempt,
+        report: { kind: "published", unit: location.unit_id, artifact: worker.artifact, body: outcome.body, predecessor } });
+      if (refused) result = { kind: "failed", code: PROVIDER_ERROR_CODES.output_rejected, detail: refused };
+    }
+    await report({ run_id: intent.run_id, attempt, report: { kind: "ended", result } });
+    // Step may have failed the attempt itself (a validator refusing the output): its record decides.
+    const ended = await latestAttemptStep(attempt.action_id);
+    const failure = ended?.seq === seq && ended.status.kind === "failed" ? ended.status : result.kind === "failed" ? result : null;
+    if (failure !== null || interval === null)
+      return settleStep({ intent_id: intent.id, status: failure ? "failed" : "stopped", last_error: failure ? `${failure.code}: ${failure.detail}` : null });
+    await DBOS.sleepSeconds(interval);
+    const reloaded = await loadIntentStep(intent.id);
+    status = reloaded.kind === "carried" ? reloaded.intent.status : null;
+    if (status !== "acknowledged") return status;
+    seq += 1;
+  }
 }
 
 /** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`. */
@@ -316,10 +432,16 @@ async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   if (intent.status !== "stop_requested") return intent.status;
   // Why the stop was requested, when the executor requested it; kept past the stop's own retries.
   const reason = intent.last_error;
+  // A code operation leaves nothing running outside: its loop ends when it sees the stop.
+  if (intent.instruction.worker.kind === "code") return settleStep({ intent_id, status: "stopped", last_error: reason });
   let handle = intent.handle;
   for (let attempt = 0; ; attempt++) {
     const outcome = resolveStop(await stopStep(intent.instruction, handle));
     if (outcome.kind === "confirmed") {
+      // A stop commit requested (the unit is no longer active) ends an attempt nothing else will;
+      // one the executor requested has already reported how its attempt ended.
+      if (reason === null) await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended",
+        result: { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" } } });
       const settled = await settleStep({ intent_id, status: "stopped", last_error: reason });
       await wakeRun(intent.run_id);
       return settled;

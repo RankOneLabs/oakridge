@@ -21,5 +21,7 @@
     { "name": "12 unknown code operation", "base": "fan-out", "pointer": "/stages/prepare/workers/git/operation", "value": "missing", "reason": "check 12" }
     ,{ "name": "6 malformed workspace", "base": "fan-out", "pointer": "/stages/item/workers/worker/workspace", "value": "worktree(input.workspace)", "reason": "check 6" }
     ,{ "name": "12 forbidden code prompts", "base": "fan-out", "pointer": "/stages/prepare/workers/git/prompts", "value": {}, "reason": "check 12" }
+    ,{ "name": "7 handoff prompt on a resume session", "base": "review-loop", "pointer": "/stages/document/workers/writer/prompts/handoff", "value": "review-loop/revise.md", "reason": "check 7" }
+    ,{ "name": "12 every that is not a duration", "base": "fan-out", "pointer": "/stages/prepare/workers/git/every", "value": "soon", "reason": "check 12" }
   ]
 }

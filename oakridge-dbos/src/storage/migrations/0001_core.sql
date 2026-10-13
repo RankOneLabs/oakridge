@@ -62,6 +62,11 @@ CREATE TABLE authority.unit (
   pool text,
   input jsonb NOT NULL,
   status jsonb NOT NULL,
+  -- Each operator review awaiting a decision, by review key: the revision it
+  -- decides on and its prompt rendered with its resolved inputs. Commit
+  -- rewrites it on every event that steps the unit; nothing is asked or stored
+  -- beyond what state already derives.
+  review_prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
   version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   PRIMARY KEY (run_id, id),
   -- run_id is load-bearing: roots in different runs both have a NULL parent
@@ -95,6 +100,11 @@ CREATE TABLE authority.attempt (
   ended_at bigint,
   kbbl_session_id text,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
+  -- When commit opened the attempt, stamped after it took the run row lock
+  -- (clock_timestamp, not the transaction's start), so it orders after every
+  -- revision committed before it: a task renders only revisions written by
+  -- then, and a re-rendered task is the same text.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (action_id, seq),
   UNIQUE (run_id, action_id, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
@@ -109,7 +119,9 @@ CREATE TABLE authority.artifact_revision (
   by_id text NOT NULL,
   predecessor_id text,
   subject text,
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Stamped at insert, under the run row lock, so revisions and attempts of a
+  -- run order by when commit wrote them (see attempt.created_at).
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE (run_id, id),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, predecessor_id) REFERENCES authority.artifact_revision(run_id, id)
@@ -124,6 +136,9 @@ CREATE TABLE authority.review_decision (
   effect text NOT NULL CHECK (effect IN ('approve', 'request_changes')),
   target_revision_id text NOT NULL,
   payload jsonb NOT NULL,
+  -- The order commit wrote it, stamped under the run row lock. The core reads
+  -- a unit's decisions in this order; the id (`<unit>:d<n>`) does not sort.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
 );
@@ -265,6 +280,7 @@ COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.run.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';
+COMMENT ON COLUMN authority.unit.review_prompts IS '@type {ReviewPrompts}';
 COMMENT ON COLUMN authority.attempt.mode IS '@type {Mode}';
 COMMENT ON COLUMN authority.attempt.cause IS '@type {Cause}';
 COMMENT ON COLUMN authority.attempt.status IS '@type {AttemptStatus}';

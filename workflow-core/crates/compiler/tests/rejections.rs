@@ -91,3 +91,43 @@ fn v2_rejection_manifest_names_every_section_three_class() {
         assert_eq!(&*error.entity_id, expected, "{name}: {error:?}");
     }
 }
+
+/// Sample A with its writer on `session: fresh` and a handoff template whose text is `handoff`.
+fn fresh_writer_with_handoff(handoff: &str) -> Result<(), DomainError> {
+    use std::collections::BTreeMap;
+    use workflow_compiler::{compile_workflow, decode_workflow};
+    let mut value: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    let writer = value
+        .pointer_mut("/stages/document/workers/writer")
+        .unwrap();
+    writer["session"] = "fresh".into();
+    writer["prompts"]["handoff"] = "review-loop/handoff.md".into();
+    let prompts: BTreeMap<String, String> = [
+        ("review-loop/write.md", "{{topic}}"),
+        ("review-loop/revise.md", "{{feedback}}"),
+        ("review-loop/critique.md", "{{subject}}"),
+        ("review-loop/editor.md", "{{draft}}"),
+        ("review-loop/handoff.md", handoff),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v.into()))
+    .collect();
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap())?;
+    compile_workflow(&source, &[], &prompts).map(|_| ())
+}
+
+#[test]
+fn a_fresh_handoff_template_reads_its_engine_fields_and_the_declared_inputs() {
+    let template = "{{artifacts}} {{feedback}} {{previous_attempt}} {{topic}}";
+    assert!(fresh_writer_with_handoff(template).is_ok());
+}
+
+#[test]
+fn a_handoff_template_cannot_read_a_mode_only_engine_input() {
+    // Threads are for people: no prompt reads them.
+    for field in ["previous", "subject", "threads"] {
+        let error = fresh_writer_with_handoff(&format!("{{{{{field}}}}}")).unwrap_err();
+        assert_eq!(&*error.entity_id, "check 10", "{field}");
+    }
+}

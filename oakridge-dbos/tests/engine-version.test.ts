@@ -11,7 +11,8 @@ const { computeEngineSourceDigest, computeEngineVersion, computeStorageBaselineD
 test("engine manifest covers workflow imports and injected service implementations", () => {
   const root = resolve(import.meta.dir, "../src");
   const entries = ["workflows/topology.ts", "workflows/engine-version.ts", "core-client/client.ts",
-    "storage/commit.ts", "storage/database.ts", "effects/operations/production-provider.ts"];
+    "storage/commit.ts", "storage/database.ts", "effects/agent-provider.ts", "operations/runner.ts", "adapters/kbbl.ts",
+    "runtime/git-command-runner.ts", "runtime/github-pull-requests.ts"];
   const sources = [...buildGraph(entries.map((path) => resolve(root, path))).keys()].map((path) => relative(root, path)).sort();
   expect([...ENGINE_SOURCE_MANIFEST].sort()).toEqual(sources);
 });

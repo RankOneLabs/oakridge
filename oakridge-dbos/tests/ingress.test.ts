@@ -12,7 +12,7 @@ import { createHttpApp } from "../src/http/app";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { launchRunId } from "../src/storage/commit";
 import { reportWorker, type WorkerReport } from "../src/workflows/executor-ingress";
-import { openAuthority, pinSample, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, openAuthority, pinSample, unitOf, type Authority } from "./authority-fixture";
 
 const CONTROL_TOKEN = "ingress-test-token";
 const OPERATOR_SUBJECT = `credential:${createHash("sha256").update(CONTROL_TOKEN).digest("hex").slice(0, 24)}`;
@@ -37,7 +37,7 @@ function send(method: string, url: string, body: unknown, authorization: string 
 }
 const events = (run_id: RunId) => authority.db.selectFrom("authority.event").select(["payload", "writer"])
   .where("run_id", "=", run_id).orderBy("created_at").execute();
-const writerAction = (run_id: RunId): string => `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 async function launched(): Promise<RunId> {
@@ -47,7 +47,7 @@ async function launched(): Promise<RunId> {
   return launchRunId(request_id);
 }
 async function report(run_id: RunId, report: WorkerReport): Promise<void> {
-  const action_id = writerAction(run_id);
+  const action_id = await writerAction(run_id);
   const attempt = await authority.db.selectFrom("authority.attempt").select("seq").where("run_id", "=", run_id)
     .where("action_id", "=", action_id).orderBy("seq", "desc").executeTakeFirstOrThrow();
   const result = await reportWorker({ db: authority.db, core: authority.core, wake: () => undefined }, { run_id, attempt: { action_id, seq: attempt.seq }, report });
@@ -102,12 +102,12 @@ test("K4: publish takes its writer and its `by` from the session secret, not the
   const response = await publish(run_id, draft({ writer: { kind: "operator", subject: "forged" }, by: "someone-else" }), "Bearer publish-secret");
   const last = (await events(run_id)).at(-1);
   expect({ status: response.status, writer: last?.writer, by: last?.payload.kind === "revision_published" ? last.payload.by : null })
-    .toEqual({ status: 201, writer: { kind: "session", session: sid, attempt: writerAction(run_id) }, by: writerAction(run_id) });
+    .toEqual({ status: 201, writer: { kind: "session", session: sid, attempt: await writerAction(run_id) }, by: await writerAction(run_id) });
 });
 
 test("K4: an executor report is written by the executor, bound to the attempt it reports", async () => {
   const run_id = await sessionRun("executor-secret");
-  expect((await events(run_id)).at(-1)?.writer).toEqual({ kind: "executor", attempt: writerAction(run_id) });
+  expect((await events(run_id)).at(-1)?.writer).toEqual({ kind: "executor", attempt: await writerAction(run_id) });
 });
 
 test("K4: every recorded event carries a writer of a known kind", async () => {
@@ -169,7 +169,7 @@ test("a session secret does not publish into another unit or another run", async
 test("the started report stores the publication secret's hash on the attempt it starts", async () => {
   const run_id = await sessionRun("stored-secret");
   const attempt = await authority.db.selectFrom("authority.attempt").select("publication_secret_hash")
-    .where("run_id", "=", run_id).where("action_id", "=", writerAction(run_id)).executeTakeFirstOrThrow();
+    .where("run_id", "=", run_id).where("action_id", "=", await writerAction(run_id)).executeTakeFirstOrThrow();
   expect(attempt.publication_secret_hash).toBe(sha256("stored-secret"));
 });
 

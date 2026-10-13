@@ -10,3 +10,4 @@ crate-type = ["rlib", "cdylib"]
 workflow-model = { path = "../model" }
 workflow-compiler = { path = "../compiler" }
 serde_json.workspace = true
+sha2.workspace = true
