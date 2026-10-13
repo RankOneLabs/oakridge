@@ -16,8 +16,12 @@ describe("failure detail", () => {
   it("reads the detail off a typed domain result", () => {
     expect(selectFailureDetail(
       { kind: "active_conflict", run_id: "run-1", detail: "run is still active; cancel the run before deleting it" },
-      "oakridge DELETE /workflow_runs/run-1: 409",
+      "DELETE /api/runs/run-1: 409",
     )).toBe("run is still active; cancel the run before deleting it");
+  });
+
+  it("reads the reason off a rejected ingress, not its kind", () => {
+    expect(selectFailureDetail({ kind: "rejected", reason: "review is not open" }, "fallback")).toBe("review is not open");
   });
 
   it("falls back to the result kind when there is no prose", () => {

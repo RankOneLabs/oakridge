@@ -59,54 +59,10 @@ impl ResourceLimits {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReferenceRoot {
-    Input,
-    State,
-    Trigger,
-    Output {
-        key: SymbolKey,
-    },
-    Result {
-        worker: WorkerKey,
-    },
-    Resource {
-        key: SymbolKey,
-    },
-    Child {
-        key: SymbolKey,
-        export: SymbolKey,
-    },
-    OutputCollection {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    OutputRevision {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    OutputRevisions {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    OptionalOutputRevision {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    Children {
-        key: SymbolKey,
-        export: SymbolKey,
-        schema: SchemaId,
-    },
-    ChildrenOutcomes {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    ChildrenComplete {
-        key: SymbolKey,
-        schema: SchemaId,
-    },
-    Item, // lexically bound by finite list transforms
     // The §2.2 stage scope. The compiler resolves stage expression text to
     // these roots so nothing re-parses the source at evaluation time.
+    /// The element a finite list transform binds.
+    Item,
     UnitInput,
     EachMember,
     ValidationBody {
@@ -153,11 +109,6 @@ pub enum Expression {
         schema: SchemaId,
         items: Vec<Expression>,
     },
-    Variant {
-        schema: SchemaId,
-        variant: String,
-        value: Box<Expression>,
-    },
     Equals {
         left: Box<Expression>,
         right: Box<Expression>,
@@ -181,10 +132,6 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
-    IsVariant {
-        value: Box<Expression>,
-        variant: String,
-    },
     All {
         items: Vec<Expression>,
     },
@@ -199,18 +146,9 @@ pub enum Expression {
         schema: SchemaId,
         value: Box<Expression>,
     },
-    Optional {
-        schema: SchemaId,
-        value: Option<Box<Expression>>,
-    },
     Field {
         value: Box<Expression>,
         key: String,
-    },
-    FilterBy {
-        source: Box<Expression>,
-        key_field: String,
-        key: Box<Expression>,
     },
     Contains {
         source: Box<Expression>,
@@ -224,10 +162,6 @@ pub enum Expression {
     Filter {
         source: Box<Expression>,
         predicate: Box<Expression>,
-    },
-    UniqueBy {
-        source: Box<Expression>,
-        key_field: String,
     },
     CheckCollection {
         source: Box<Expression>,
@@ -245,7 +179,7 @@ pub struct FieldExpression {
     pub key: String,
     pub value: Expression,
 }
-// The v2 authoring model mirrors sections 2.1–2.3 of the core specification.
+// The workflow source model mirrors sections 2.1–2.3 of the core specification.
 // Expressions are source text here; the compiler resolves them to Expression.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

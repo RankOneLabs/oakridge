@@ -1,34 +1,20 @@
-import type { WorkflowAuthoring } from "../../../../../workflow-config/src/authoring";
-import type { OperatorDefinitionSummary } from "../operator-contracts";
+import type { Result } from "../../lib/result";
+import type { OperatorDefinitionSummary, OperatorWorkflow } from "../operator-contracts";
+import { decodeWorkflowSource } from "../workflow-definition-types";
 
-export const EMPTY_AUTHORING: WorkflowAuthoring = {
-  authoring_version: 1,
-  template: "development",
-  key: "development",
-  implementation_capacity: 2,
-  sibling_failure: "cancel",
-  wire_field_order: "canonical",
-  stage_layout: "standard",
-};
-
-/** The detail endpoint carries the exact authoring choices used to build a bundle. */
-export function selectStoredAuthoring(detail: unknown): WorkflowAuthoring | null {
-  if (typeof detail !== "object" || detail === null || !("authoring" in detail)) return null;
-  const value = detail.authoring;
-  if (typeof value !== "object" || value === null) return null;
-  if (!("authoring_version" in value) || value.authoring_version !== 1
-    || !("template" in value) || value.template !== "development"
-    || !("key" in value) || typeof value.key !== "string"
-    || !("implementation_capacity" in value) || typeof value.implementation_capacity !== "number"
-    || !("sibling_failure" in value) || (value.sibling_failure !== "cancel" && value.sibling_failure !== "continue_independent")
-    || !("wire_field_order" in value) || (value.wire_field_order !== "canonical" && value.wire_field_order !== "alternate")
-    || !("stage_layout" in value) || (value.stage_layout !== "standard" && value.stage_layout !== "verification")) return null;
-  return value as WorkflowAuthoring;
+/** The editor's text as a workflow source: JSON in the core's workflow shape, which the authority then compiles. */
+export function parseWorkflowText(text: string): Result<OperatorWorkflow, string> {
+  let value: unknown;
+  try { value = JSON.parse(text); }
+  catch { return { ok: false, error: "Enter the workflow as valid JSON." }; }
+  const workflow = decodeWorkflowSource(value);
+  return workflow ? { ok: true, value: workflow } : { ok: false, error: "This is not a workflow: it needs workflow, input, run and stages." };
 }
 
-export function selectCloneAuthoring(authoring: WorkflowAuthoring): WorkflowAuthoring {
-  return { ...authoring, key: `${authoring.key}-copy` };
-}
+export const formatWorkflowText = (workflow: OperatorWorkflow): string => JSON.stringify(workflow, null, 2);
+
+/** A clone is renamed, so pinning it leaves its source's definition as it is. */
+export const selectCloneWorkflow = (workflow: OperatorWorkflow): OperatorWorkflow => ({ ...workflow, workflow: `${workflow.workflow}_copy` });
 
 export function selectDefinitionSummary(active: readonly OperatorDefinitionSummary[] | undefined,
   archived: readonly OperatorDefinitionSummary[] | undefined, bundleId: string): OperatorDefinitionSummary | null {

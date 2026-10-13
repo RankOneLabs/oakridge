@@ -1,6 +1,6 @@
 import type { WorkerResult } from "../core-client/core-types";
 import type { EffectInstruction } from "../domain/effect-instruction";
-import type { INPUT_CONTRACTS } from "./provider-catalog";
+import type { HANDLE_KINDS } from "./provider-catalog";
 
 export interface ProviderCallOptions { readonly signal?: AbortSignal }
 
@@ -11,7 +11,7 @@ export type ProviderResult<Value> =
   | { readonly kind: "uncertain"; readonly detail: string };
 
 /** A live agent session an attempt runs in. */
-export type ExternalHandle = { readonly kind: typeof INPUT_CONTRACTS.session; readonly session_id: string };
+export type ExternalHandle = { readonly kind: typeof HANDLE_KINDS.session; readonly session_id: string };
 /** What a session start produced: the session, and the hash of the publication secret its preamble carries. */
 export interface StartedSession { readonly handle: ExternalHandle; readonly publication_secret_hash: string }
 export type TerminalObservation = { readonly kind: "running" } | { readonly kind: "terminal"; readonly result: WorkerResult };

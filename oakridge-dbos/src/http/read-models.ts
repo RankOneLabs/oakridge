@@ -5,14 +5,14 @@ import { selectDefinitionDetail, selectDefinitionSummary, selectPinnedDefinition
 import { selectUnitDiagnostics, selectUnitHistory } from "../projections/history-view";
 import { selectInboxPage } from "../projections/inbox";
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
-import { selectDecision } from "../projections/unit-view";
 import type { Database } from "../storage/database";
-import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readUnitDiagnostics,
-  type HistoryCursor } from "../storage/read-store";
+import type { SessionHoldResponse } from "../projections/session-hold";
+import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold,
+  readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
- * The operator read models (rescue spec R4): each route reads authority rows
+ * The operator read models: each route reads authority rows
  * from the read store and answers with its projection.
  */
 export interface ReadModelDependencies { readonly db: Database }
@@ -75,12 +75,6 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     return found(c, read && selectRunUnitView(read, c.req.param("unit_id")), "unit");
   } catch (cause) { return fault(cause); } });
 
-  app.get("/api/runs/:run_id/units/:unit_id/decision", async (c) => { try {
-    const read = await readRun(db, c.req.param("run_id"));
-    const view = read && selectRunUnitView(read, c.req.param("unit_id"));
-    return found(c, view && selectDecision(view), "unit");
-  } catch (cause) { return fault(cause); } });
-
   app.get("/api/runs/:run_id/units/:unit_id/artifacts/:artifact", async (c) => { try {
     const read = await readRun(db, c.req.param("run_id"));
     return found(c, read && selectArtifactDetail(read, { unit_id: c.req.param("unit_id"), artifact: c.req.param("artifact") }), "artifact");
@@ -128,6 +122,10 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
     const page = await listDefinitions(db, { after, limit, is_archived });
     return c.json({ items: page.items.map(selectDefinitionSummary), next_cursor: page.next === null ? null : encodeCursor(page.next) });
+  } catch (cause) { return fault(cause); } });
+
+  app.get("/session_holds/:session_id", async (c) => { try {
+    return c.json({ hold: await readSessionHold(db, c.req.param("session_id")) } satisfies SessionHoldResponse);
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/definitions/:bundle_id", async (c) => { try {

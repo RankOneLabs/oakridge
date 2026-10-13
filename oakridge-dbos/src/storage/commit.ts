@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted } from "../core-client/client";
-import type { Event, Incoming, ResolvedRunWorker, ScopedSnapshot, StepResult, Writer } from "../core-client/core-types";
+import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
+import type { RunConfig } from "../domain/run-config";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
 import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompts } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
-import { readScopedSnapshot } from "./snapshot-store";
+import { readStepSnapshot } from "./snapshot-store";
 
 /** An event as ingress hands it over: the writer is resolved from the credential, never the body. */
 export interface CommitRequest {
@@ -18,7 +19,7 @@ export interface CommitRequest {
   readonly event: Event;
   readonly writer: Writer;
   /** Required with `launched`: the run is created pinned to this definition. */
-  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null };
+  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
    * Only with `worker_started`: the sha256 hex of the publication secret minted
    * for the attempt's session. Commit stores it on the attempt, and publish
@@ -63,7 +64,7 @@ export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | 
 /**
  * The single writer of workflow state (part 1 §6.2). Under the run row lock it
  * answers a replayed ingress id from its receipt, steps the core over the
- * scoped snapshot, and writes the event with its writer, the state delta, the
+ * step snapshot, and writes the event with its writer, the state delta, the
  * effect instructions for newly wanted workers, the wanted log, the receipt
  * and the operator event, in one transaction. A step rejection is stored, not
  * rolled back. The executor is woken after commit.
@@ -94,9 +95,10 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   if (request.event.kind === "launched") {
     if (!request.launch) return { kind: "missing", detail: "a launch names its pinned definition" };
     await trx.insertInto("authority.run").values({ id: run_id, definition_bundle_id: request.launch.definition_bundle_id,
-      project_id: request.launch.project_id }).onConflict((conflict) => conflict.column("id").doNothing()).execute();
+      project_id: request.launch.project_id, config: request.launch.config === null ? null : jsonText(request.launch.config) })
+      .onConflict((conflict) => conflict.column("id").doNothing()).execute();
   }
-  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id"])
+  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config"])
     .where("id", "=", run_id).forUpdate().executeTakeFirst();
   if (!run) return { kind: "missing", detail: "run not found" };
   if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
@@ -117,7 +119,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "prompts"])
     .where("id", "=", run.definition_bundle_id).executeTakeFirst();
   if (!definition) throw fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`);
-  const snapshot = await readScopedSnapshot(trx, run_id, unit_id.value);
+  const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`);
   const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
@@ -129,7 +131,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   const event = await trx.insertInto("authority.event").values({ id: crypto.randomUUID(), run_id, unit_id: unit_id.value,
     ingress_id: request.ingress_id, payload: jsonText(request.event), writer: jsonText(request.writer) })
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
-  await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
+  await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, config: run.config, step });
   const newly_awaiting = await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
   for (const { unit_id: unit, actions } of selectWanted(step))
     await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
@@ -165,7 +167,7 @@ async function affectedUnit(trx: DatabaseTransaction, run_id: string, event: Eve
 interface StepInput {
   readonly run_id: string;
   readonly definition: { readonly digest: string; readonly source: import("../core-client/core-types").Workflow; readonly prompts: { readonly [path: string]: string } };
-  readonly snapshot: ScopedSnapshot;
+  readonly snapshot: StepSnapshot;
   readonly incoming: Incoming;
 }
 type Stepped = { readonly kind: "stepped"; readonly step: StepResult } | { readonly kind: "rejected"; readonly reason: string };
@@ -185,7 +187,7 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
     response = await step();
   }
   if (!response.ok) {
-    if (response.error.kind === "domain" && response.error.detail.kind === "invalid_assignment")
+    if (response.error.kind === "domain" && response.error.detail.kind === "rejected_event")
       return { kind: "rejected", reason: response.error.detail.detail };
     throw fault(input.run_id, `core step failed: ${JSON.stringify(response.error)}`);
   }
@@ -194,14 +196,14 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
 }
 
 /** A collection member's key is its id below its parent; a fixed unit has none. */
-function collectionKey(unit: ScopedSnapshot["units"][number]): string | null {
+function collectionKey(unit: StepSnapshot["units"][number]): string | null {
   if (unit.parent == null) return null;
   const member = unit.id.slice(unit.parent.length + 1);
   return member === unit.declaration ? null : member;
 }
 
 /** Write what step changed: run, new units and edges, unit statuses, attempts, revisions and decisions. */
-async function writeDelta(trx: DatabaseTransaction, run_id: string, before: ScopedSnapshot, after: ScopedSnapshot): Promise<void> {
+async function writeDelta(trx: DatabaseTransaction, run_id: string, before: StepSnapshot, after: StepSnapshot): Promise<void> {
   await trx.updateTable("authority.run").set((eb) => ({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
     status: jsonText(after.run.status), version: eb("version", "+", 1) })).where("id", "=", run_id).execute();
   const known = new Map(before.units.map((unit) => [unit.id, unit]));
@@ -238,11 +240,11 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, before: Scop
       decision: decision.decision, effect: decision.effect, target_revision_id: decision.target, payload: jsonText(decision.payload) }).execute();
 }
 
-interface PublicationSecret { readonly run_id: string; readonly action_id: string; readonly hash: string; readonly after: ScopedSnapshot }
+interface PublicationSecret { readonly run_id: string; readonly action_id: string; readonly hash: string; readonly after: StepSnapshot }
 /** The started attempt is the action's latest; a periodic worker's start may have opened a new seq. */
 async function storePublicationSecret(trx: DatabaseTransaction, input: PublicationSecret): Promise<void> {
   const started = input.after.attempts.filter((attempt) => attempt.action_id === input.action_id)
-    .reduce<ScopedSnapshot["attempts"][number] | null>((latest, attempt) => latest && latest.seq > attempt.seq ? latest : attempt, null);
+    .reduce<StepSnapshot["attempts"][number] | null>((latest, attempt) => latest && latest.seq > attempt.seq ? latest : attempt, null);
   if (!started) throw fault(input.run_id, `started action ${input.action_id} has no attempt`);
   await trx.updateTable("authority.attempt").set({ publication_secret_hash: input.hash })
     .where("run_id", "=", input.run_id).where("action_id", "=", started.action_id).where("seq", "=", started.seq).execute();
@@ -252,6 +254,7 @@ interface Reconcile {
   readonly run_id: string;
   readonly source: import("../core-client/core-types").Workflow;
   readonly prompts: { readonly [path: string]: string };
+  readonly config: RunConfig | null;
   readonly step: StepResult;
 }
 /**
@@ -281,7 +284,8 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     if (existing.has(inputs.action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === action.unit);
     if (!unit?.stage) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, action, seq: attempt.seq, resolved: inputs });
+    const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, config: input.config,
+      action, seq: attempt.seq, resolved: inputs });
     if (!instruction.ok) throw fault(run_id, instruction.error.detail);
     await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
       action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
@@ -299,7 +303,7 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
  * decided, or that is no longer active, keeps none. Only a changed set is
  * written. Returns, per unit, the reviews that began awaiting with this event.
  */
-async function writeReviewPrompts(trx: DatabaseTransaction, input: Reconcile): Promise<ReadonlyMap<string, readonly string[]>> {
+async function writeReviewPrompts(trx: DatabaseTransaction, input: Omit<Reconcile, "config">): Promise<ReadonlyMap<string, readonly string[]>> {
   const { run_id, step, source } = input;
   const newly_awaiting = new Map<string, readonly string[]>();
   const stage_units = step.snapshot.units.filter((unit) => unit.stage != null);

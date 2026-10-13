@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow, WorkerRuntime } from "../core-client/core-types";
+import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
+import { selectSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { Result } from "./primitives";
 
 /** Provider start attempts an instruction may claim until the YAML carries a budget. */
@@ -18,7 +19,8 @@ export type WorkerInstruction =
   | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
       readonly handoff: PinnedPrompt | null;
-      readonly runtime: WorkerRuntime | null; readonly creates: readonly CreatedArtifact[];
+      /** What the session starts with: the run's settings for the stage, else the worker's declared runtime; null for kbbl's default. */
+      readonly settings: SessionSettings | null; readonly creates: readonly CreatedArtifact[];
       /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
       readonly schemas: { readonly [name: string]: TypeExpression } }
   | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
@@ -75,6 +77,7 @@ export interface InstructionSource {
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
   readonly stage: string;
+  readonly config: RunConfig | null;
   readonly action: RunWorkerAction;
   readonly seq: number;
   readonly resolved: ResolvedRunWorker;
@@ -140,7 +143,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
-      prompt: prompt.value, handoff: handoff?.value ?? null, runtime: declared.runtime ?? null, creates,
+      prompt: prompt.value, handoff: handoff?.value ?? null, settings: selectSessionSettings(source.config, source.stage, declared.runtime ?? null), creates,
       schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
   } else {
     const artifact = declared.creates[0];
@@ -197,10 +200,10 @@ function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   if (!isFields(value)) return false;
   if (value.kind === "code") return isString(value.operation) && isNullableString(value.every) && isString(value.artifact);
   if (value.kind !== "agent") return false;
-  const runtime = value.runtime;
+  const settings = value.settings;
   return isString(value.session_key) && (value.session === "resume" || value.session === "fresh")
     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
-    && (runtime === null || isFields(runtime) && isString(runtime.harness) && isString(runtime.model))
+    && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort))
     && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)
     && isFields(value.schemas) && Object.values(value.schemas).every((schema) => isTypeExpression(schema));
 }
@@ -208,7 +211,7 @@ function isEngineInputs(value: unknown): value is EngineInputs {
   return isFields(value) && isNullableRevision(value.previous) && "feedback" in value && isNullableRevision(value.subject);
 }
 
-/** The executor's only way in: an `effect_intent.payload` that is not a v1 instruction is refused. */
+/** The executor's only way in: an `effect_intent.payload` that is not a version-1 instruction is refused. */
 export function decodeEffectInstruction(value: unknown): Result<EffectInstruction, InstructionError> {
   const refuse = (detail: string): Result<never, InstructionError> =>
     ({ ok: false, error: { operation: "decode_effect_instruction", entity_id: isFields(value) && isFields(value.attempt) && isString(value.attempt.action_id) ? value.attempt.action_id : "unknown", detail } });

@@ -15,39 +15,20 @@ pub type CoreResult<T> = Result<T, DomainError>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainErrorKind {
-    MissingSymbol,
-    DuplicateSymbol,
-    UnsupportedVersion,
-    UnresolvedContent,
-    InvalidSchema,
-    RecursiveSchema,
-    IncompatiblePort,
-    WrongBrand,
-    MissingBinding,
-    UnguardedOptional,
-    PrivateRead,
-    UndeclaredTrigger,
-    NonExhaustiveMatch,
-    ConflictingWrite,
-    InvalidAssignment,
-    DuplicateLaunch,
-    CyclicPrerequisite,
-    InvalidTemplate,
-    UnreachableDeclaration,
-    DeadRegion,
-    UnhandledCommand,
-    UnsupportedProvider,
-    UnavailableOperation,
-    UnsupportedAuthorization,
-    UnsupportedPublication,
-    UnsupportedPresentation,
-    InvalidPayload,
-    InvalidSnapshot,
-    ResourceLimit,
-    LimitExceedsHost,
-    UnknownBundle,
-    MalformedBundle,
+    /// A JSON object repeats a key.
+    DuplicateKey,
+    /// A field or construct the wire contract does not define.
     UnknownConstruct,
+    /// A workflow fails a compile check; the entity names the check.
+    InvalidWorkflow,
+    /// `step` refused the event against the snapshot.
+    RejectedEvent,
+    /// The snapshot is inconsistent with the workflow.
+    InvalidSnapshot,
+    /// A value or evaluation exceeds a resource limit.
+    ResourceLimit,
+    /// The workflow digest is not compiled in this core.
+    UnknownBundle,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -94,13 +75,9 @@ macro_rules! id {
 }
 id!(
     SchemaId,
-    ScopeKey,
     WorkerKey,
     ActionKey,
     SymbolKey,
-    NodeId,
-    InstanceId,
-    TriggerId,
     BundleDigest,
     UnitId,
     RevisionId,

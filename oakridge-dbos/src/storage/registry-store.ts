@@ -27,8 +27,8 @@ export async function listProjects(db: Reader): Promise<readonly ProjectRecord[]
   return await db.selectFrom("authority.project").selectAll().orderBy("name").orderBy("id").execute() as ProjectRecord[];
 }
 
-/** A project id is supplied so an import keeps the identity it had before cutover. */
-export async function createProject(db: Database, id: ProjectId, draft: ProjectDraft): Promise<Result<ProjectRecord, ProjectWriteError>> {
+export async function createProject(db: Database, draft: ProjectDraft): Promise<Result<ProjectRecord, ProjectWriteError>> {
+  const id = crypto.randomUUID() as ProjectId;
   try {
     return await db.transaction().execute(async (trx) => {
       const row = await trx.insertInto("authority.project").values({ id, name: draft.name, repo_dir: draft.repo_dir,

@@ -102,22 +102,13 @@ export type AcpSessionStatus =
   | "unknown";
 
 /**
- * The workflow identity a v2 delegated session was launched for (migration
- * 029). Absence is the nullable throughout: a hand-started POST /sessions
- * session, and every session predating this migration, carries none.
- * `workflow_run_id`, `stage_instance_id` and `unit_id` are required together
- * — the row reader yields `null` unless all three stored columns are
- * non-null.
+ * The Oakridge attempt a delegated session serves: its run, unit and worker.
+ * Absence is the nullable: a hand-started POST /sessions session carries none.
  */
 export interface AcpSessionWorkflowIdentity {
-  workflow_run_id: string;
-  stage_instance_id: string;
+  run_id: string;
   unit_id: string;
-  /** Durable v15 cohort id. Null for sessions launched outside a cohort. */
-  cohort_id?: string | null;
-  operator_role: string | null;
-  cohort_title: string | null;
-  repository_key: string | null;
+  worker: string;
 }
 
 export interface AcpSessionRow {
@@ -192,7 +183,7 @@ export interface AcpSessionStartSpec {
   readonly workdir: string;
   readonly name?: string;
   readonly artifact_id?: string;
-  /** Agent profile id. Property named for DBOS wire compatibility (§11.1). */
+  /** Agent profile id: the harness of the worker's `runtime` (§11.1). */
   readonly runtime?: string;
   readonly model?: string;
   readonly effort?: string;

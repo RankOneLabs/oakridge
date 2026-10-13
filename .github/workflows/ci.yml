@@ -88,6 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       # --frozen-lockfile fails fast if bun.lock has drifted from
       # package.json — keeps CI builds reproducible against the
@@ -96,16 +98,18 @@ jobs:
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
       - run: bunx tsc --noEmit -p lbc-dashboard/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
-      # kbbl's typecheck includes the Oakridge PWA, which still reads the v1
-      # operator contract. The PWA port (rescue spec R6) owns it and removes this gate.
-      - if: github.base_ref != 'epic/core-v2'
-        run: bunx tsc --noEmit -p kbbl/tsconfig.json
+      - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
+      - run: bunx tsc --noEmit -p kbbl/tsconfig.json
+      # The PWA keeps its 9b12e34c test ids and stylesheet and reads only the v2 contract.
+      - run: bun kbbl/scripts/check-pwa-port.ts
 
   kbbl-tests:
     name: kbbl backend tests (bun)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --filter kbbl test
@@ -122,6 +126,23 @@ jobs:
   kbbl-browser-tests:
     name: kbbl browser tests (Chromium)
     runs-on: ubuntu-latest
+    # The decide scenario serves the authority's own API over a scratch database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oakridge
+          POSTGRES_PASSWORD: oakridge
+          POSTGRES_DB: oakridge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

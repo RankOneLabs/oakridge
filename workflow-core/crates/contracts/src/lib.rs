@@ -166,7 +166,7 @@ pub fn generate() -> String {
     output
 }
 
-/// Source-only descriptors for the authoring UI, generated from the compiler's model.
+/// Source-only descriptors for the definition editor, generated from the compiler's model.
 pub fn generate_source() -> String {
     let schema =
         serde_json::to_value(schema_for!(workflow_model::Workflow)).expect("source schema is JSON");

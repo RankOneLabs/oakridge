@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { OperatorSchema, OperatorScopeDefinition, OperatorScopeView } from "../../operator-contracts";
-import { selectArtifactInScopes, selectScopeDetail } from "../../lib/run-overview";
+import type { OperatorSchema, OperatorUnitView } from "../../operator-contracts";
+import { selectArtifactInUnits, selectUnitDetail } from "../../lib/run-overview";
 import { resolveViewer } from "../../artifactRegistry";
 import { createOperatorThread } from "../../client";
 import { queryKeys } from "../../queryKeys";
@@ -15,12 +15,11 @@ import { ArtifactReviewShell } from "./ArtifactReviewShell";
 import { ArtifactEditForm } from "./ArtifactEditForm";
 import { GateDecisionActions } from "./GateDecisionActions";
 
-interface Props { readonly revisionId: string; readonly scopes: readonly OperatorScopeView[]; readonly schemas: readonly OperatorSchema[];
-  readonly scopeDefinitions: readonly OperatorScopeDefinition[];
+interface Props { readonly revisionId: string; readonly units: readonly OperatorUnitView[]; readonly schemas: readonly OperatorSchema[];
   readonly onBack: () => void; readonly onRefresh: () => void; readonly onRevised?: (revisionId: string) => void }
-export function ArtifactReview({ revisionId, scopes, schemas, scopeDefinitions, onBack, onRefresh, onRevised }: Props) {
-  const artifact = selectArtifactInScopes(scopes, revisionId);
-  const successor = scopes.flatMap((scope) => scope.outputs).map((output) => output.current_revision)
+export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, onRevised }: Props) {
+  const selected = selectArtifactInUnits(units, revisionId);
+  const successor = units.flatMap((unit) => unit.artifacts).map((artifact) => artifact.latest_revision)
     .find((revision) => revision?.predecessor_id === revisionId);
   useEffect(() => { if (successor) onRevised?.(successor.id); }, [successor, onRevised]);
   const [title, setTitle] = useState("");
@@ -29,21 +28,16 @@ export function ArtifactReview({ revisionId, scopes, schemas, scopeDefinitions, 
   const [isPing, setIsPing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const client = useQueryClient();
-  const threads = useThreads(artifact?.revision.run_id ?? "", artifact?.scope_id ?? "", revisionId, artifact !== null);
-  const message = usePingThread(artifact?.revision.run_id ?? "", artifact?.scope_id ?? "", revisionId);
-  if (!artifact) return <ArtifactReviewShell title="Artifact" onBack={onBack}><p role="status">This revision is unavailable in the current scope projection.</p></ArtifactReviewShell>;
-  const Viewer = resolveViewer(artifact.revision.body.schema);
-  const scope = selectScopeDetail(scopes, artifact.scope_id);
-  const outputDefinition = scopeDefinitions.find((definition) => definition.key === scope?.scope_key)?.outputs
-    .find((output) => output.key === artifact.output.output_key);
-  const editCommand = scope?.commands.find((command) => command.key === outputDefinition?.edit_trigger);
-  return <ArtifactReviewShell title={artifact.output.output_key} onBack={onBack}>
-    <ArtifactRevisionNavigation revision={artifact.revision} />
-    <Viewer body={artifact.revision.body} schemas={schemas} />
-    {scope && outputDefinition && editCommand && <ArtifactEditForm key={revisionId} scope={scope} output={artifact.output}
-      outputDefinition={outputDefinition}
-      revision={artifact.revision} command={editCommand} schemas={schemas} onEdited={onRefresh} />}
-    {scope && <GateDecisionActions scope={scope} revisionId={revisionId} schemas={schemas} onRefresh={onRefresh} />}
+  const threads = useThreads(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId, selected !== null);
+  const message = usePingThread(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId);
+  if (!selected) return <ArtifactReviewShell title="Artifact" onBack={onBack}><p role="status">This revision is no longer among the unit's latest revisions.</p></ArtifactReviewShell>;
+  const Viewer = resolveViewer(selected.artifact.schema);
+  const unit = selectUnitDetail(units, selected.unit_id);
+  return <ArtifactReviewShell title={selected.artifact.artifact_key} onBack={onBack}>
+    <ArtifactRevisionNavigation revision={selected.revision} />
+    <Viewer body={selected.revision.body} />
+    {selected.artifact.is_editable && <ArtifactEditForm key={revisionId} revision={selected.revision} onEdited={onRefresh} />}
+    {unit && <GateDecisionActions unit={unit} revisionId={revisionId} schemas={schemas} onRefresh={onRefresh} />}
     <section data-testid="or-artifact-threads"><h3>Discussion</h3>
       {threads.isPending && <p role="status">Loading threads…</p>}
       {threads.isError && <p role="alert">Could not load threads: {String(threads.error)}</p>}
@@ -54,14 +48,14 @@ export function ArtifactReview({ revisionId, scopes, schemas, scopeDefinitions, 
         {thread.capabilities.can_write && <Button variant="secondary" onClick={() => setSelectedThreadId(thread.id)}>Reply</Button>}
       </article>)}
       <form onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return;
-        void createOperatorThread({ run_id: artifact.revision.run_id, scope_id: artifact.scope_id, revision_id: revisionId,
+        void createOperatorThread({ run_id: selected.revision.run_id, unit_id: selected.unit_id, revision_id: revisionId,
           title: title.trim(), anchor: null, request_key: randomUuid() }).then(() => {
-          setTitle(""); void client.invalidateQueries({ queryKey: queryKeys.threads(artifact.revision.run_id, artifact.scope_id, revisionId) });
+          setTitle(""); void client.invalidateQueries({ queryKey: queryKeys.threads(selected.revision.run_id, selected.unit_id, revisionId) });
         }).catch((cause: unknown) => setError(String(cause)));
       }}><label>New thread title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
         <Button type="submit">Start thread</Button></form>
       {selectedThreadId && <form onSubmit={(event) => { event.preventDefault(); if (!text.trim()) return;
-        void message.mutateAsync({ run_id: artifact.revision.run_id, scope_id: artifact.scope_id, thread_id: selectedThreadId,
+        void message.mutateAsync({ run_id: selected.revision.run_id, unit_id: selected.unit_id, thread_id: selectedThreadId,
           request_key: randomUuid(), text: text.trim(), author: "operator", ping: isPing }).then(() => { setText(""); setSelectedThreadId(null); })
           .catch((cause: unknown) => setError(String(cause)));
       }}><label>Reply<textarea value={text} onChange={(event) => setText(event.target.value)} /></label>

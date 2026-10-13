@@ -8,11 +8,11 @@ import { WorkItem } from "../components/organisms/WorkItem";
 import { selectStableOperatorDecisionQueue, type OperatorDecisionQueueEntry } from "../lib/decision-queue";
 
 interface ReviewInboxViewProps {
-  /** Opens the run at the scope that needs attention, not at its root. */
-  readonly onSelectScope: (runId: string, scopeId: string) => void;
+  /** Opens the run at the unit that needs attention, not at its root. */
+  readonly onSelectUnit: (runId: string, unitId: string) => void;
 }
 
-export function ReviewInboxView({ onSelectScope }: ReviewInboxViewProps) {
+export function ReviewInboxView({ onSelectUnit }: ReviewInboxViewProps) {
   const query = useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox });
   const [queue, setQueue] = useState<readonly OperatorDecisionQueueEntry[]>([]);
   useEffect(() => {
@@ -26,7 +26,7 @@ export function ReviewInboxView({ onSelectScope }: ReviewInboxViewProps) {
     <h1>Work requiring your attention</h1>
     <Button variant="secondary" onClick={() => { void query.refetch(); }}>Refresh</Button>
     {query.data.items.length === 0 && <FeedbackMessage tone="empty" testId="or-review-inbox-empty">Nothing needs attention.</FeedbackMessage>}
-    {queue.map((entry, index) => <WorkItem key={`${entry.item.scope_id}:${entry.item.kind}:${index}`}
-      item={entry.item} isSettled={entry.kind === "settled"} onOpen={onSelectScope} />)}
+    {queue.map((entry, index) => <WorkItem key={`${entry.item.unit_id}:${entry.item.kind}:${index}`}
+      item={entry.item} isSettled={entry.kind === "settled"} onOpen={onSelectUnit} />)}
   </main>;
 }

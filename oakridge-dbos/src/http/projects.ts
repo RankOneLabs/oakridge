@@ -3,12 +3,20 @@ import { err, ok, type Result } from "../domain/primitives";
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
 import type { Database } from "../storage/database";
 import { createProject, listProjects, updateProject } from "../storage/registry-store";
-import type { ProjectId, ProjectRecord } from "../storage/schema-records";
+import type { ForgeRepository } from "../storage/json-column-types";
+import type { ProjectId } from "../storage/schema-records";
 import { ConflictError, errorResponse, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type RequestError } from "./errors";
 
 export type { ProjectDraft } from "../domain/projects";
 /** A saved project as the operator API returns it. */
-export type ProjectView = ProjectRecord;
+export interface ProjectView {
+  readonly id: string;
+  readonly name: string;
+  readonly repo_dir: string;
+  readonly forge_repository: ForgeRepository | null;
+  readonly integration_branch: string | null;
+  readonly created_at: Date;
+}
 export interface ProjectList { readonly items: readonly ProjectView[] }
 
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
@@ -47,7 +55,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: Database }): v
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const created = await createProject(deps.db, crypto.randomUUID() as ProjectId, draft.value);
+      const created = await createProject(deps.db, draft.value);
       return created.ok ? Response.json(created.value, { status: 201 }) : writeFailure(created.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });

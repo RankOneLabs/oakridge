@@ -68,15 +68,7 @@ test("startSpecHash over a fixed spec is pinned to a literal digest", () => {
   );
 });
 
-const WORKFLOW: AcpSessionWorkflowIdentity = {
-  workflow_run_id: "run-1",
-  stage_instance_id: "stage-1",
-  unit_id: "cohort-a",
-  cohort_id: null,
-  operator_role: "build",
-  cohort_title: "Targets spec contract",
-  repository_key: "pipefitter",
-};
+const WORKFLOW: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
 
 test("a session claimed with an identity stores and reads it back", () => {
   const store = makeStore();
@@ -95,7 +87,7 @@ test("a session claimed with no identity reads back null", () => {
 test("re-claiming an already-identified key leaves its identity untouched", () => {
   const store = makeStore();
   claim(store, "sid-1", startSpecHash(SPEC), WORKFLOW);
-  const differing: AcpSessionWorkflowIdentity = { ...WORKFLOW, cohort_title: "Different title" };
+  const differing: AcpSessionWorkflowIdentity = { ...WORKFLOW, worker: "assessor" };
   const reclaimed = claim(store, "sid-2", startSpecHash(SPEC), differing);
   expect(reclaimed.kind).toBe("existing");
   expect(reclaimed.row.workflow).toEqual(WORKFLOW);
@@ -250,15 +242,7 @@ test("boot sweep recovers resumable initial turns while preserving unknown follo
 
 test("listByArtifact reads back the stored workflow identity, not a raw undefined field", () => {
   const store = makeStore();
-  const workflow: AcpSessionWorkflowIdentity = {
-    workflow_run_id: "run-1",
-    stage_instance_id: "stage-1",
-    unit_id: "cohort-a",
-    cohort_id: null,
-    operator_role: "build",
-    cohort_title: "Targets spec contract",
-    repository_key: "pipefitter",
-  };
+  const workflow: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
   store.insertSession({
     sid: "sid-1" as KbblSessionId,
     resumable_key: null,

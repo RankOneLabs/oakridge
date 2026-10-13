@@ -19,11 +19,10 @@ export interface UnitAttention {
   readonly blocked: BlockedReason | null;
 }
 /**
- * The unit view's one-line attention, served under the v1 field name
- * `decision` the PWA reads: `wait` while the unit is parked (a review awaits,
- * or it is blocked), `reject` while a worker is stalled.
+ * The unit's one-line attention: `waiting` while it is parked (a review
+ * awaits, or it is blocked), `stalled` while a worker's last attempt failed.
  */
-export type Attention = { readonly kind: "wait"; readonly reason: string } | { readonly kind: "reject"; readonly error: string };
+export type Attention = { readonly kind: "waiting"; readonly reason: string } | { readonly kind: "stalled"; readonly detail: string };
 
 /**
  * The attempt a worker is judged by: a retry the operator requested last wins
@@ -89,9 +88,9 @@ function blockedReason(reason: BlockedReason, read: RunRead): string {
 /** The one line the unit view shows: a stall first, then an awaiting review, then a block. */
 export function selectAttention(attention: UnitAttention, read: RunRead): Attention | null {
   const [stalled] = attention.stalled;
-  if (stalled) return { kind: "reject", error: `${stalled.worker} failed: ${stalled.detail}` };
+  if (stalled) return { kind: "stalled", detail: `${stalled.worker} failed: ${stalled.detail}` };
   const [awaiting] = attention.awaiting;
-  if (awaiting) return { kind: "wait", reason: `awaiting ${awaiting.review} review` };
-  if (attention.blocked) return { kind: "wait", reason: blockedReason(attention.blocked, read) };
+  if (awaiting) return { kind: "waiting", reason: `awaiting ${awaiting.review} review` };
+  if (attention.blocked) return { kind: "waiting", reason: blockedReason(attention.blocked, read) };
   return null;
 }

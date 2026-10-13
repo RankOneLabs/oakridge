@@ -8,60 +8,47 @@
 import type { AcpFailureCode, AcpSessionStartSpec, AcpSessionWorkflowIdentity } from "./types";
 
 /** Session status in the resumable vocabulary. */
-export type ResumableSessionStatus = "starting" | "live" | "compacting" | "ended";
-/** "user_closed" means cancelled; "subprocess_exited" means the session failed. */
-export type ResumableEndReason = "user_closed" | "subprocess_exited";
+export type ResumableSessionStatus = "starting" | "live" | "ended";
 
-/**
- * Session snapshot on the resumable routes. Fields the ACP world deliberately
- * lacks (runtime session ids, yolo mode, compaction chains) are pinned to
- * their empty values.
- */
+/** A session as the resumable routes report it. */
 export interface ResumableSessionSnapshot {
   sid: string;
   name: string;
-  workdir: string;
   status: ResumableSessionStatus;
   createdAt: string;
   lastActivityTs: string;
   runtimeId: string;
-  runtimeSid: string | null;
-  ccSid: null;
-  parentCcSid: null;
-  parentOakridgeSid: null;
-  artifactId: string | null;
-  pendingCount: number;
-  yoloMode: boolean;
-  allowedTools: string[];
-  lastResultUsage: null;
-  worktreePath: string | null;
-  worktreeBranch: string | null;
-  worktreeBaseRef: string | null;
-  projectWorkdir: string | null;
   model: string | null;
   effort: string | null;
-  initialObservedModel: null;
-  observedModel: null;
-  endReason: ResumableEndReason | null;
-  exitCode: null;
-  successorSid: null;
+  artifactId: string | null;
+  projectWorkdir: string;
+  worktreePath: string;
+  worktreeBranch: string | null;
+  worktreeBaseRef: string | null;
 }
 
-/** Workflow identity a run attaches to its session, as sent on the wire. */
-export type ResumableWorkflowIdentity = Pick<AcpSessionWorkflowIdentity, "workflow_run_id" | "stage_instance_id" | "unit_id">
-  & { readonly [Field in "cohort_id" | "operator_role" | "cohort_title" | "repository_key"]?: string };
+/**
+ * How a session's initial turn ended: it succeeded, someone closed the
+ * session (an operator, or the attempt that holds it), or it failed with an
+ * ACP failure code.
+ */
+export type ResumableEnd =
+  | { readonly kind: "succeeded" }
+  | { readonly kind: "closed" }
+  | { readonly kind: "failed"; readonly code: AcpFailureCode; readonly detail: string };
+
+/** The Oakridge attempt a session serves, as sent on the wire. */
+export type ResumableWorkflowIdentity = AcpSessionWorkflowIdentity;
 
 /** PUT /sessions/resumable/:sessionKey body. */
 export interface ResumableEnsureRequest extends AcpSessionStartSpec { readonly workflow?: ResumableWorkflowIdentity }
 /** PUT /sessions/resumable/:sessionKey response (201 when started). */
 export interface ResumableEnsureResponse { readonly kind: "attached" | "started" | "terminal"; readonly session: ResumableSessionSnapshot }
 
-/** Present on a failed terminal body; the actual reason, since exit_code is always 1. */
-export interface ResumableTerminalFailure { readonly code: AcpFailureCode; readonly detail: string }
 /** GET /sessions/resumable/:sid/terminal, 202 while the initial turn runs. */
 export interface ResumablePendingBody { readonly pending: true; readonly session: ResumableSessionSnapshot }
 /** GET /sessions/resumable/:sid/terminal, 200 once the initial turn ended. */
-export interface ResumableTerminalBody { readonly session: ResumableSessionSnapshot; readonly exit_code: number; readonly failure?: ResumableTerminalFailure }
+export interface ResumableTerminalBody { readonly session: ResumableSessionSnapshot; readonly end: ResumableEnd }
 
 /** PUT /sessions/resumable/:sid/input/:deliveryKey body. */
 export interface ResumableInputRequest { readonly text: string }

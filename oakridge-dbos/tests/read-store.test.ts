@@ -6,7 +6,7 @@ import { selectDefinitionGraph } from "../src/projections/definition-view";
 import { listDefinitions, listLiveRuns, listRuns, listRunsNeedingWork, readDefinition, readEventStreamBoundary, readHistory, readOperatorEventsAfter,
   readPinnedDefinition, readRun, readRunInspect, readRunStanding, readUnitDiagnostics } from "../src/storage/read-store";
 import { setRunArchived } from "../src/storage/registry-store";
-import { readScopedSnapshot } from "../src/storage/snapshot-store";
+import { readStepSnapshot } from "../src/storage/snapshot-store";
 import { actionOf, executor, launch, openAuthority, pinSample, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -25,22 +25,22 @@ async function launched(): Promise<RunId> {
 }
 const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 
-test("a scoped snapshot holds the unit, its ancestors and their children; with no unit, the whole run", async () => {
+test("a step snapshot holds the unit, its ancestors and their children; with no unit, the whole run", async () => {
   const run_id = await launched();
-  const scoped = await readScopedSnapshot(authority.db, run_id, unitOf(run_id, "document"));
-  const whole = await readScopedSnapshot(authority.db, run_id, null);
-  const missing = await readScopedSnapshot(authority.db, run_id, unitOf(run_id, "missing"));
+  const scoped = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "document"));
+  const whole = await readStepSnapshot(authority.db, run_id, null);
+  const missing = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "missing"));
   expect({ scoped: scoped?.units.map((unit) => unit.id), whole: whole?.units.length, attempts: scoped?.attempts.map((attempt) => attempt.worker), missing })
     .toEqual({ scoped: [run_id, unitOf(run_id, "document")], whole: 2, attempts: ["writer"], missing: null });
 });
 
-test("a scoped snapshot carries retry events for the units it holds", async () => {
+test("a step snapshot carries retry events for the units it holds", async () => {
   const run_id = await launched();
   const submit = submitter(authority);
   const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "failed" } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
-  const snapshot = await readScopedSnapshot(authority.db, run_id, unitOf(run_id, "document"));
+  const snapshot = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "document"));
   expect(snapshot?.retry_events.map(([unit, worker]) => [unit, worker])).toEqual([[unitOf(run_id, "document"), "writer"]]);
 });
 
@@ -182,7 +182,7 @@ test("live runs are launched, unfinished and unarchived, paged by id", async () 
 
 test("a definition graph lists each declared unit with its dependencies as edges", () => {
   const graph = selectDefinitionGraph(sampleWorkflow("fan-out"));
-  expect({ nodes: graph.nodes.map((node) => [node.key, node.scope, node.depends_on]), edges: graph.edges }).toEqual({
+  expect({ nodes: graph.nodes.map((node) => [node.key, node.stage, node.depends_on]), edges: graph.edges }).toEqual({
     nodes: [["prepare", "prepare", []], ["work", "work", ["prepare"]], ["work/item", "item", []]],
     edges: [{ from: "prepare", to: "work" }] });
 });

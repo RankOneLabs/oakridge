@@ -2,7 +2,7 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// A v2 workflow after all names, scopes and expressions have been checked.
+/// A workflow after all names, types and expressions have been checked.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedWorkflow {

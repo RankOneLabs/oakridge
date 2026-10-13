@@ -4,7 +4,7 @@ import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { useRemoveSession } from "../../hooks/useRemoveSession";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
-import { resumeTitle, selectSessionCohortLabel } from "../../lib/session";
+import { resumeTitle } from "../../lib/session";
 import { Button } from "../atoms/Button";
 
 export function SessionRow({
@@ -19,10 +19,8 @@ export function SessionRow({
   resumeDisabled: boolean;
 }) {
   const relative = useRelativeTime(snapshot.lastActivityTs);
-  // Resume = new session inheriting this one's worktree — only meaningful
-  // for a closed ACP session (pre-ACP archives can't inherit).
+  // Resume = a new session inheriting this closed one's worktree.
   const canResume =
-    snapshot.source === "acp" &&
     (snapshot.status === "ended" ||
       snapshot.status === "fenced" ||
       snapshot.status === "failed");
@@ -71,23 +69,14 @@ export function SessionRow({
             <span className={`session-row-status session-row-status-${snapshot.status}`}>
               {snapshot.status}
             </span>
-            {snapshot.workflow ? (
-              <>
-                <span
-                  className="session-row-role"
-                  title={`operator role: ${snapshot.workflow.operatorRole ?? "unknown"}`}
-                >
-                  {snapshot.workflow.operatorRole ?? "session"}
-                </span>
-                <span className="session-row-name" title={snapshot.sid}>
-                  {selectSessionCohortLabel(snapshot.workflow)}
-                </span>
-              </>
-            ) : (
-              <span className="session-row-name" title={snapshot.sid}>
-                {snapshot.name || snapshot.sid.slice(0, 8)}
+            {snapshot.workflow && (
+              <span className="session-row-role" title={`worker: ${snapshot.workflow.worker}`}>
+                {snapshot.workflow.worker}
               </span>
             )}
+            <span className="session-row-name" title={snapshot.sid}>
+              {snapshot.name || snapshot.sid.slice(0, 8)}
+            </span>
             <span className="session-row-model" title={`agent: ${snapshot.agentProfile}`}>
               {snapshot.agentProfile}
             </span>
@@ -168,13 +157,13 @@ export function SessionRow({
           <span className="session-row-remove-error__message">{removeError}</span>
           {/* Only a hold is overridable, and only once the operator has read
               why — which is exactly the authority the server grants ?force=1. */}
-          {refusal?.kind === "held_by_execution" && (
+          {refusal?.kind === "held_by_attempt" && (
             <Button
               type="button"
               variant="danger-strong"
               className="min-h-11 shrink-0 whitespace-nowrap text-xs!"
               disabled={removeMutation.isPending}
-              title="Removes the session anyway, abandoning the unit this run is waiting on."
+              title="Removes the session anyway, stranding the attempt that is using it."
               onClick={(e) => {
                 e.stopPropagation();
                 void remove(true);

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { GitProjectRepositoryIdentityResolver, githubIdentityFromRemote } from "../src/runtime/project-identity";
 
-test("GitHub identity parser accepts the remote forms supported by Rust v2", () => {
+test("GitHub identity parser accepts the supported remote forms", () => {
   for (const remote of ["git@github.com:RankOneLabs/oakridge.git", "ssh://git@github.com/RankOneLabs/oakridge.git", "https://github.com/RankOneLabs/oakridge.git"]) {
     expect(githubIdentityFromRemote(remote)).toEqual({ provider: "github", owner: "RankOneLabs", name: "oakridge" });
   }

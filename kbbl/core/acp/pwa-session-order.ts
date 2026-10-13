@@ -14,28 +14,16 @@ export type SessionActivityComparator = (
   right: PwaSessionSnapshot,
 ) => number;
 
-export interface SessionCohortGroup {
-  kind: "cohort";
+/** The sessions one unit of a run started, newest activity first. */
+export interface SessionUnitGroup {
   key: string;
-  cohortId: string;
-  title: string | null;
-  repositoryKey: string | null;
+  unitId: string;
   sessions: PwaSessionSnapshot[];
 }
-
-export interface SessionStageGroup {
-  kind: "stage";
-  key: string;
-  stageInstanceId: string;
-  repositoryKey: string | null;
-  sessions: PwaSessionSnapshot[];
-}
-
-export type SessionRunSubgroup = SessionCohortGroup | SessionStageGroup;
 
 export interface SessionRunGroup {
   runId: string;
-  groups: SessionRunSubgroup[];
+  units: SessionUnitGroup[];
 }
 
 export interface SessionRunGrouping {
@@ -86,21 +74,7 @@ export function selectNextJustNowExpiryDelay(
   return nextDelay;
 }
 
-function firstNonNull(
-  sessions: readonly PwaSessionSnapshot[],
-  select: (session: PwaSessionSnapshot) => string | null,
-): string | null {
-  for (const session of sessions) {
-    const value = select(session);
-    if (value !== null) return value;
-  }
-  return null;
-}
-
-/**
- * Groups workflow-owned sessions by run, then by durable cohort id. A session
- * without a cohort belongs to its stage-instance group.
- */
+/** Groups workflow-owned sessions by run, then by the unit whose attempts started them. */
 export function groupSessionsByRun(
   sessions: readonly PwaSessionSnapshot[],
   compare_activity: SessionActivityComparator = compareSessionsByActivity,
@@ -114,51 +88,21 @@ export function groupSessionsByRun(
       unattached.push(session);
       continue;
     }
-    const runGroups = byRun.get(workflow.runId) ?? new Map<string, PwaSessionSnapshot[]>();
-    byRun.set(workflow.runId, runGroups);
-    const key = workflow.cohortId == null
-      ? `stage:${workflow.stageInstanceId}`
-      : `cohort:${workflow.cohortId}`;
-    const existing = runGroups.get(key);
-    if (existing === undefined) runGroups.set(key, [session]);
+    const runUnits = byRun.get(workflow.runId) ?? new Map<string, PwaSessionSnapshot[]>();
+    byRun.set(workflow.runId, runUnits);
+    const existing = runUnits.get(workflow.unitId);
+    if (existing === undefined) runUnits.set(workflow.unitId, [session]);
     else existing.push(session);
   }
 
-  const runs: SessionRunGroup[] = [...byRun.entries()].map(([runId, runGroups]) => {
-    const groups: SessionRunSubgroup[] = [...runGroups.entries()].map(([key, members]) => {
-      const sorted = [...members].sort(compare_activity);
-      // Every member here has a workflow identity and shares the key selected
-      // above, so the first member carries the group's stable identifiers.
-      const workflow = sorted[0].workflow as NonNullable<PwaSessionSnapshot["workflow"]>;
-      const repositoryKey = firstNonNull(sorted, (session) => session.workflow?.repositoryKey ?? null);
-      if (workflow.cohortId == null) {
-        return {
-          kind: "stage",
-          key,
-          stageInstanceId: workflow.stageInstanceId,
-          repositoryKey,
-          sessions: sorted,
-        };
-      }
-      const title = firstNonNull(sorted, (session) => session.workflow?.cohortTitle ?? null)
-        ?? workflow.unitId;
-      return {
-        kind: "cohort",
-        key,
-        cohortId: workflow.cohortId,
-        title,
-        repositoryKey,
-        sessions: sorted,
-      };
-    });
-    groups.sort((left, right) => compare_activity(left.sessions[0], right.sessions[0]));
-    return { runId, groups };
+  const runs: SessionRunGroup[] = [...byRun.entries()].map(([runId, runUnits]) => {
+    const units = [...runUnits.entries()].map(([unitId, members]): SessionUnitGroup =>
+      ({ key: `unit:${unitId}`, unitId, sessions: [...members].sort(compare_activity) }));
+    units.sort((left, right) => compare_activity(left.sessions[0], right.sessions[0]));
+    return { runId, units };
   });
 
-  runs.sort((left, right) => compare_activity(
-    left.groups[0].sessions[0],
-    right.groups[0].sessions[0],
-  ));
+  runs.sort((left, right) => compare_activity(left.units[0].sessions[0], right.units[0].sessions[0]));
   unattached.sort(compare_activity);
 
   return { runs, unattached };

@@ -1,13 +1,13 @@
-import type { OperatorRunScopeSummary } from "../../operator-contracts";
-import { selectScopeStatus } from "../../lib/run-overview";
+import type { OperatorRunUnitSummary } from "../../operator-contracts";
+import { selectUnitStatus } from "../../lib/run-overview";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 
-interface Props { readonly scope: OperatorRunScopeSummary; readonly onOpen: (scopeId: string) => void }
-export function RunStageRow({ scope, onOpen }: Props) {
+interface Props { readonly unit: OperatorRunUnitSummary; readonly onOpen: (unitId: string) => void }
+export function RunStageRow({ unit, onOpen }: Props) {
   return <li className="flex items-center gap-3 border-b border-[var(--border-subtle)] py-2" data-testid="or-stage-row">
-    <Button variant="secondary" onClick={() => onOpen(scope.scope_id)}>{scope.label}</Button>
-    <StatusBadge status={selectScopeStatus(scope)} />
-    {scope.available_commands.length > 0 && <span className="text-xs">{scope.available_commands.length} actions</span>}
+    <Button variant="secondary" onClick={() => onOpen(unit.unit_id)}>{unit.label}</Button>
+    <StatusBadge status={selectUnitStatus(unit)} />
+    {unit.asks.length > 0 && <span className="text-xs">{unit.asks.length} actions</span>}
   </li>;
 }

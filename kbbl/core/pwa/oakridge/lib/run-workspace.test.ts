@@ -11,20 +11,20 @@ describe("single route pane replacing twin workspace state", () => {
 
   it("opens a bare run at its overview", () => {
     expect(readHashRoute(`#${formatRunWorkspaceHash(run.run_id, null)}`)).toEqual({
-      view: "oakridge", route: { sub: "run", id: run.run_id, pane: null, scope_id: null },
+      view: "oakridge", route: { sub: "run", id: run.run_id, pane: null, unit_id: null },
     });
   });
 
   it("addresses a session as the selected pane", () => {
     expect(readHashRoute(`#${formatRunWorkspaceHash(run.run_id, { kind: "session", session_id: session.sid as Sid })}`))
       .toEqual({ view: "oakridge", route: { sub: "run", id: run.run_id,
-        pane: { kind: "session", session_id: session.sid }, scope_id: null } });
+        pane: { kind: "session", session_id: session.sid }, unit_id: null } });
   });
 
   it("addresses an artifact as the selected pane", () => {
     expect(readHashRoute(`#${formatRunWorkspaceHash(run.run_id, { kind: "artifact", artifact_id: revision.id as ArtifactId })}`))
       .toEqual({ view: "oakridge", route: { sub: "run", id: run.run_id,
-        pane: { kind: "artifact", artifact_id: revision.id }, scope_id: null } });
+        pane: { kind: "artifact", artifact_id: revision.id }, unit_id: null } });
   });
 
   it("keeps artifact and session targets distinct even when their IDs match", () => {

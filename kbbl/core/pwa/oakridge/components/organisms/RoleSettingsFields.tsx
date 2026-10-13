@@ -1,13 +1,13 @@
-import type { RuntimeModelSelection } from "../../../types";
+import type { RoleSelection } from "../../lib/runtime-selection";
 import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, type ServerConfig } from "../../../hooks/useServerConfig";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 
 interface Props {
   readonly serverConfig: ServerConfig;
-  readonly planner: RuntimeModelSelection;
-  readonly worker: RuntimeModelSelection;
-  readonly onPlannerChange: (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => void;
-  readonly onWorkerChange: (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => void;
+  readonly planner: RoleSelection;
+  readonly worker: RoleSelection;
+  readonly onPlannerChange: (value: RoleSelection | ((current: RoleSelection) => RoleSelection)) => void;
+  readonly onWorkerChange: (value: RoleSelection | ((current: RoleSelection) => RoleSelection)) => void;
   readonly onPlannerRuntimeTouched: (isTouched: boolean) => void;
   readonly onWorkerRuntimeTouched: (isTouched: boolean) => void;
   readonly isPending: boolean;

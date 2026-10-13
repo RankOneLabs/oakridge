@@ -1,35 +1,28 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { OperatorLaunchView } from "../views/OperatorLaunchView";
 import { OperatorHistoryPane } from "../views/OperatorHistoryPane";
 import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
-import type { WorkflowDefinitionDescriptor } from "../workflow-definition-types";
+import type { OperatorDefinitionBundle } from "../operator-contracts";
+import { makeDevelopmentBundle, makeWorkflowSource } from "../__fixtures__/read-models";
+import { formatWorkflowText } from "../lib/workflow-definition-form";
 
-function shippedBundle(name: string): unknown {
-  // The pinned development definition is the only one committed; the
-  // verification variant is derived from it below.
-  const path = resolve(import.meta.dirname, "../__fixtures__/development-definition.json");
-  if (name === "development" && existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
-  // PR 4's third bundle is absent at the integration baseline. Keep its extra
-  // root field represented there so the test fails for the missing form behavior.
-  if (name !== "development-verification") throw new Error(`Missing shipped bundle: ${name}`);
-  const source = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  const root = source.scopes.find((scope) => scope.key === source.root);
+/** The development bundle with one more root input field, which the form can only take as JSON. */
+function extendedBundle(): OperatorDefinitionBundle {
+  const source = makeDevelopmentBundle();
+  const root = source.units.find((unit) => unit.key === source.root);
   const input = source.schemas.find((schema) => schema.key === root?.input_schema);
-  if (!root || input?.shape.kind !== "record" || !root.commands[0]) throw new Error("Invalid baseline bundle");
-  return { ...source, key: name, schemas: [...source.schemas, { key: "test_extended_root", shape: { ...input.shape,
-    fields: [...input.shape.fields, { key: "verification_note", schema: "optional_text", required: true }] } }],
-    scopes: source.scopes.map((scope) => scope.key === root.key ? { ...scope, input_schema: "test_extended_root",
-      commands: [...scope.commands, { ...root.commands[0], key: "test_extra", label: "Additional action" }] } : scope) };
+  if (!root || input?.shape.kind !== "record") throw new Error("Invalid development bundle");
+  return { ...source, key: "development-verification", schemas: [...source.schemas, { key: "test_extended_root", shape: { ...input.shape,
+    fields: [...input.shape.fields, { key: "verification_notes", schema: "list(text)" }] } }],
+    units: source.units.map((unit) => unit.key === root.key ? { ...unit, input_schema: "test_extended_root" } : unit) };
 }
 
 /** Field kinds the launch form renders as a plain control; every other kind gets a JSON entry. */
 const DIRECT_ENTRY_KINDS: readonly string[] = ["string", "integer", "boolean", "enum"];
 
-function sampleSchemaValue(bundle: WorkflowDefinitionDescriptor, key: string): unknown {
+function sampleSchemaValue(bundle: OperatorDefinitionBundle, key: string): unknown {
   const shape = bundle.schemas.find((schema) => schema.key === key)?.shape;
   if (!shape) throw new Error(`Unknown schema: ${key}`);
   if (shape.kind === "string") return "sample";
@@ -42,16 +35,14 @@ function sampleSchemaValue(bundle: WorkflowDefinitionDescriptor, key: string): u
   }
   if (shape.kind === "list") return [];
   if (shape.kind === "optional") return null;
-  if (shape.kind === "record") return Object.fromEntries(shape.fields.filter((field) => field.required)
-    .map((field) => [field.key, sampleSchemaValue(bundle, field.schema)]));
-  throw new Error(`No sample value for schema kind: ${shape.kind}`);
+  return Object.fromEntries(shape.fields.map((field) => [field.key, sampleSchemaValue(bundle, field.schema)]));
 }
 
 interface SampledRootField { readonly key: string; readonly label: string; readonly draft: string; readonly value: unknown }
 
 /** Every root input field a bundle declares, with the label and entry text the form expects for it. */
-function sampleRootFields(bundle: WorkflowDefinitionDescriptor): readonly SampledRootField[] {
-  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+function sampleRootFields(bundle: OperatorDefinitionBundle): readonly SampledRootField[] {
+  const root = bundle.units.find((unit) => unit.key === bundle.root);
   const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
   if (shape?.kind !== "record") throw new Error("root input is not a record");
   return shape.fields.map((field) => {
@@ -66,19 +57,16 @@ function sampleRootFields(bundle: WorkflowDefinitionDescriptor): readonly Sample
 const rootInputRecord = (fields: readonly SampledRootField[]): unknown =>
   Object.fromEntries(fields.map((field) => [field.key, field.value]));
 
-/**
- * The root field the bundle declares as a required string whose schema admits "",
- * so a blank entry is a value the authority accepts rather than a missing input.
- */
-function requiredEmptyStringField(bundle: WorkflowDefinitionDescriptor): SampledRootField {
-  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
+/** The root text field whose schema admits "", so a blank entry is a value the authority accepts rather than a missing input. */
+function emptyAdmittingStringField(bundle: OperatorDefinitionBundle): SampledRootField {
+  const root = bundle.units.find((unit) => unit.key === bundle.root);
   const shape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
   if (shape?.kind !== "record") throw new Error("root input is not a record");
   const declared = shape.fields.find((field) => {
     const fieldShape = bundle.schemas.find((schema) => schema.key === field.schema)?.shape;
-    return field.required && fieldShape?.kind === "string" && fieldShape.min_length === 0;
+    return fieldShape?.kind === "string" && fieldShape.min_length === 0;
   });
-  if (!declared) throw new Error("no required root string admits an empty value");
+  if (!declared) throw new Error("no root string admits an empty value");
   const sampled = sampleRootFields(bundle).find((field) => field.key === declared.key);
   if (!sampled) throw new Error(`${declared.key} is not a sampled root field`);
   return sampled;
@@ -91,16 +79,21 @@ function requiredEmptyStringField(bundle: WorkflowDefinitionDescriptor): Sampled
  * than in the view under test.
  */
 const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
+const committed = (run_id: string): Response => Response.json({ kind: "committed", run_id, event_id: "event-1" }, { status: 201 });
+/** A pinned definition whose root input is untyped here, so the launch form offers raw JSON. */
+const demo = (digest = "sha-1", key = "demo") => ({ bundle_id: `bundle-${digest}`, digest, archived_at: null, bundle: { key, version: 1, root: "$root",
+  schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } });
+const isLaunch = (url: string, init?: RequestInit): boolean => url === "/oakridge/api/api/runs" && init?.method === "POST";
 
 /** Serves one pinned bundle and accepts the launch it produces. */
-const launchFetch = (bundle: WorkflowDefinitionDescriptor, runtimes: readonly unknown[] = []) => vi.fn(async (url: string, init?: RequestInit) => {
-  if (url === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "claude-code", runtimes });
-  if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
-  if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
+const launchFetch = (bundle: OperatorDefinitionBundle) => vi.fn(async (url: string, init?: RequestInit) => {
+  if (url === "/config") return Response.json({ defaultWorkdir: null, defaultRuntimeId: "claude-code", runtimes: [] });
+  if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", bundle }]);
+  if (isLaunch(url, init)) return committed("new-run");
   throw new Error(url);
 });
 const postedLaunch = (fetch: ReturnType<typeof launchFetch>) => {
-  const call = fetch.mock.calls.find(([url, init]) => url.endsWith("/runs") && init?.method === "POST");
+  const call = fetch.mock.calls.find(([url, init]) => isLaunch(url, init));
   return call ? JSON.parse(String(call[1]?.body)) : null;
 };
 
@@ -119,10 +112,8 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 
 test("with several pinned definitions the operator must choose one before launching", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/definitions")) return cursorPage([
-      { bundle_id: "b1", digest: "sha-1", source: { key: "alpha", version: 1 } },
-      { bundle_id: "b2", digest: "sha-2", source: { key: "beta", version: 1 } }]);
-    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "run-1" }, { status: 201 });
+    if (url.endsWith("/definitions")) return cursorPage([demo("sha-1", "alpha"), demo("sha-2", "beta")]);
+    if (isLaunch(url, init)) return committed("run-1");
     throw new Error(url);
   });
   vi.stubGlobal("fetch", fetch);
@@ -137,8 +128,8 @@ test("with several pinned definitions the operator must choose one before launch
   expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).digest).toBe("sha-2");
 });
 
-test("the third bundle renders its extra root input as JSON and round-trips the raw editor", async () => {
-  const bundle = shippedBundle("development-verification") as WorkflowDefinitionDescriptor;
+test("an extra structured root input renders as JSON and round-trips the raw editor", async () => {
+  const bundle = extendedBundle();
   const fields = sampleRootFields(bundle);
   const extra = fields[fields.length - 1];
   if (!extra) throw new Error("root input has no fields");
@@ -154,72 +145,38 @@ test("the third bundle renders its extra root input as JSON and round-trips the 
   expect(JSON.parse(screen.getByLabelText<HTMLTextAreaElement>(extra.label).value)).toEqual(extra.value);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
-  const root = rootInputRecord(fields) as { readonly [key: string]: unknown; readonly sessions: object };
-  expect(postedLaunch(fetch).input).toEqual({ ...root, sessions: {
-    ...root.sessions,
-    planner: { runtime: "claude-code", model: "opus", effort: null },
-    worker: { runtime: "claude-code", model: "opus", effort: null },
-  } });
+  expect(postedLaunch(fetch).input).toEqual(rootInputRecord(fields));
 });
 
-test("planner and worker choices are retained in the pinned launch input", async () => {
-  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  const fetch = launchFetch(bundle, [
-    { id: "claude-code", label: "Claude Code", models: [{ value: "opus", label: "Opus" }], efforts: [{ value: "high", label: "high" }] },
-    { id: "codex", label: "Codex", models: [
-      { value: "gpt-5.6-sol", label: "5.6 sol" }, { value: "gpt-6-astra", label: "6 astra" }, { value: "gpt-6-luna", label: "6 luna" },
-    ], efforts: [{ value: "high", label: "high" }, { value: "low", label: "low" }] },
-  ]);
+test("the development launch sends every root field the operator entered", async () => {
+  const bundle = makeDevelopmentBundle();
+  const fetch = launchFetch(bundle);
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   await screen.findByLabelText("spec");
   for (const field of sampleRootFields(bundle)) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
-  await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Planner runtime").options.length).toBe(2));
-  fireEvent.change(screen.getByLabelText("Planner runtime"), { target: { value: "codex" } });
-  fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "gpt-6-astra" } });
-  fireEvent.change(screen.getByLabelText("Planner effort"), { target: { value: "high" } });
-  fireEvent.change(screen.getByLabelText("Worker runtime"), { target: { value: "codex" } });
-  fireEvent.change(screen.getByLabelText("Worker model"), { target: { value: "gpt-6-luna" } });
-  fireEvent.change(screen.getByLabelText("Worker effort"), { target: { value: "low" } });
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
-  expect(postedLaunch(fetch).input.sessions).toMatchObject({
-    planner: { runtime: "codex", model: "gpt-6-astra", effort: "high" },
-    worker: { runtime: "codex", model: "gpt-6-luna", effort: "low" },
-  });
+  expect(postedLaunch(fetch).input).toEqual(rootInputRecord(sampleRootFields(bundle)));
 });
 
-test("launch waits for advertised model settings and pins the advertised default runtime", async () => {
-  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  let resolveConfig: (response: Response) => void = () => undefined;
-  const config = new Promise<Response>((resolve) => { resolveConfig = resolve; });
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === "/config") return config;
-    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "pinned", digest: "pinned-digest", source: bundle }]);
-    if (url.endsWith("/runs") && init?.method === "POST") return Response.json({ run_id: "new-run" }, { status: 201 });
-    throw new Error(url);
-  });
+test("the development launch carries the planner and worker settings as each stage's session settings", async () => {
+  const bundle = makeDevelopmentBundle();
+  const fetch = launchFetch(bundle);
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
-  await screen.findByLabelText("spec");
+  await screen.findByTestId("or-role-settings");
   for (const field of sampleRootFields(bundle)) fireEvent.change(screen.getByLabelText(field.label), { target: { value: field.draft } });
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(true);
-  resolveConfig(Response.json({ defaultWorkdir: null, defaultRuntimeId: "codex", runtimes: [
-    { id: "codex", label: "Codex", models: [{ value: "gpt-5.6-sol", label: "5.6 sol" }], efforts: [] },
-  ] }));
-  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(postedLaunch(fetch)).not.toBeNull());
-  expect(postedLaunch(fetch).input.sessions).toMatchObject({
-    planner: { runtime: "codex", model: "gpt-5.6-sol" },
-    worker: { runtime: "codex", model: "gpt-5.6-sol" },
-  });
+  const sessions = postedLaunch(fetch).config.sessions as { readonly [stage: string]: { readonly harness: string } };
+  expect(Object.keys(sessions).sort()).toEqual([...new Set(bundle.units.flatMap((unit) => unit.stage ?? []))].sort());
 });
 
 test("launches a run using the pinned digest and entered root input", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === "/oakridge/api/api/definitions") return cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
-    if (url === "/oakridge/api/runs" && init?.method === "POST") return Response.json({ run_id: "run-1" }, { status: 201 });
+    if (url === "/oakridge/api/api/definitions") return cursorPage([demo()]);
+    if (isLaunch(url, init)) return committed("run-1");
     throw new Error(`Unexpected request: ${url}`);
   });
   vi.stubGlobal("fetch", fetch);
@@ -229,27 +186,24 @@ test("launches a run using the pinned digest and entered root input", async () =
   fireEvent.change(screen.getByLabelText("Root input JSON"), { target: { value: '{"request":"hello"}' } });
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
-  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ digest: "sha-1", input: { request: "hello" }, request_id: expect.any(String) });
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ digest: "sha-1", input: { request: "hello" }, project_id: null, request_id: expect.any(String) });
 });
 
-test("history shows transitions and facts without exposing execution secrets", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ scope_id: "scope-1",
-    transitions: [{ id: "transition-1", trigger_id: "trigger-1", version: 2, created_at: "2026-01-01T00:00:00Z", decision: { kind: "apply", publication_secret: "hidden" } }],
-    facts: [{ id: "fact-1", fact_key: "reviewed", payload: { schema: "text", data: { kind: "string", value: "approved" } } }] })));
-  renderWithQuery(<OperatorHistoryPane runId="run-1" scopeId="scope-1" schemas={[]} />);
-  expect(await screen.findByText(/Version 2 · apply/)).toBeTruthy();
-  expect(screen.getByText("reviewed")).toBeTruthy();
-  expect(screen.getByText("approved")).toBeTruthy();
+test("history shows each event with its writer, without exposing secrets", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ unit_id: "unit-1", next_cursor: null,
+    events: [{ id: "event-1", ingress_id: "ingress-1", created_at: "2026-01-01T00:00:00Z", writer: { kind: "operator", subject: "operator" },
+      event: { kind: "retry_requested", unit: "unit-1", worker: "writer", publication_secret: "hidden" } }] })));
+  renderWithQuery(<OperatorHistoryPane runId="run-1" unitId="unit-1" />);
+  expect(await screen.findByText(/retry_requested · operator · ingress-1/)).toBeTruthy();
   expect(screen.queryByText("hidden")).toBeNull();
 });
-
 
 test.each([503, 408, 429])("a %s launch response retains the original request for retry", async (status) => {
   const requests: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/definitions")) return cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]);
+    if (url.endsWith("/definitions")) return cursorPage([demo()]);
     requests.push(JSON.parse(String(init?.body)));
-    return requests.length === 1 ? Response.json({ error: "uncertain" }, { status }) : Response.json({ run_id: "run-1" }, { status: 201 });
+    return requests.length === 1 ? Response.json({ error: "uncertain" }, { status }) : committed("run-1");
   }));
   const onCreated = vi.fn();
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
@@ -263,7 +217,7 @@ test.each([503, 408, 429])("a %s launch response retains the original request fo
 
 test("a rejected launch unlocks the form for a corrected input", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/definitions")
-    ? cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }])
+    ? cursorPage([demo()])
     : Response.json({ error: "invalid root input" }, { status: 422 })));
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   await screen.findByText(/demo v1/);
@@ -274,7 +228,7 @@ test("a rejected launch unlocks the form for a corrected input", async () => {
 });
 
 test("launch is not sent when its request identity cannot be persisted", async () => {
-  const fetch = vi.fn(async () => cursorPage([{ bundle_id: "bundle-1", digest: "sha-1", source: { key: "demo", version: 1 } }]));
+  const fetch = vi.fn(async () => cursorPage([demo()]));
   vi.stubGlobal("fetch", fetch);
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
@@ -284,9 +238,9 @@ test("launch is not sent when its request identity cannot be persisted", async (
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-test("a required root string that admits an empty value launches without ever being entered", async () => {
-  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  const admitsEmpty = requiredEmptyStringField(bundle);
+test("a root string that admits an empty value launches without ever being entered", async () => {
+  const bundle = makeDevelopmentBundle();
+  const admitsEmpty = emptyAdmittingStringField(bundle);
   const fetch = launchFetch(bundle);
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
@@ -297,9 +251,9 @@ test("a required root string that admits an empty value launches without ever be
   expect(postedLaunch(fetch).input[admitsEmpty.key]).toBe("");
 });
 
-test("clearing a required root string that admits an empty value submits the empty string", async () => {
-  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  const admitsEmpty = requiredEmptyStringField(bundle);
+test("clearing a root string that admits an empty value submits the empty string", async () => {
+  const bundle = makeDevelopmentBundle();
+  const admitsEmpty = emptyAdmittingStringField(bundle);
   const fetch = launchFetch(bundle);
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
@@ -312,9 +266,9 @@ test("clearing a required root string that admits an empty value submits the emp
   expect(postedLaunch(fetch).input[admitsEmpty.key]).toBe("");
 });
 
-test("a required root string that admits an empty value is not marked required in the browser", async () => {
-  const bundle = shippedBundle("development") as WorkflowDefinitionDescriptor;
-  const admitsEmpty = requiredEmptyStringField(bundle);
+test("a root string that admits an empty value is not marked required in the browser", async () => {
+  const bundle = makeDevelopmentBundle();
+  const admitsEmpty = emptyAdmittingStringField(bundle);
   vi.stubGlobal("fetch", launchFetch(bundle));
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
   expect(await screen.findByLabelText<HTMLInputElement>(admitsEmpty.label)).toHaveProperty("required", false);
@@ -330,8 +284,7 @@ const expectInvalidated = (spy: ReturnType<typeof invalidatedKeys>, ...keys: rea
 
 test("launching a run refreshes the run list and the inbox", async () => {
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
-    ? Response.json({ run_id: "run-1" }, { status: 201 })
-    : cursorPage([{ bundle_id: "b", digest: "sha-1", source: { key: "demo", version: 1 } }])));
+    ? committed("run-1") : cursorPage([demo()])));
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = invalidatedKeys(cache);
   const onCreated = vi.fn();
@@ -342,17 +295,19 @@ test("launching a run refreshes the run list and the inbox", async () => {
   expectInvalidated(spy, ["operator", "runs"], ["operator", "inbox"]);
 });
 
-test("the authoring editor compiles its choices before pinning", async () => {
+const enterWorkflow = (text = formatWorkflowText(makeWorkflowSource())) =>
+  fireEvent.change(screen.getByLabelText("Workflow JSON"), { target: { value: text } });
+
+test("the editor compiles the workflow before pinning exactly what compiled", async () => {
   const requests: { readonly path: string; readonly body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     requests.push({ path: url, body: JSON.parse(String(init?.body)) });
-    return url.endsWith("/compile") ? Response.json({ digest: "compiled" })
+    return url.endsWith("/compile") ? Response.json({ digest: "compiled", stages: ["document"] })
       : Response.json({ bundle_id: "bundle-1", digest: "compiled" }, { status: 201 });
   }));
   const onPinned = vi.fn();
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={onPinned} />);
-  expect(screen.queryByLabelText("Source bundle")).toBeNull();
-  fireEvent.change(screen.getByLabelText("Key"), { target: { value: "tailored-flow" } });
+  enterWorkflow();
   fireEvent.click(screen.getByRole("button", { name: "Compile definition" }));
   await screen.findByText(/Compiled successfully/);
   expect(requests.map((request) => request.path)).toEqual(["/oakridge/api/api/definitions/compile"]);
@@ -365,11 +320,12 @@ test("the authoring editor compiles its choices before pinning", async () => {
 });
 
 test("a failed compile leaves pinning unavailable", async () => {
-  const fetch = vi.fn(async () => Response.json({ error: "invalid capacity" }, { status: 422 }));
+  const fetch = vi.fn(async () => Response.json({ error: "unknown prompt write.md" }, { status: 422 }));
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
+  enterWorkflow();
   fireEvent.click(screen.getByRole("button", { name: "Compile definition" }));
-  expect((await screen.findByRole("alert")).textContent).toMatch(/invalid capacity/);
+  expect((await screen.findByRole("alert")).textContent).toMatch(/unknown prompt write\.md/);
   expect(screen.queryByRole("button", { name: "Pin definition" })).toBeNull();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -379,9 +335,10 @@ test("editing while compilation is in flight requires another compile", async ()
   const response = new Promise<Response>((resolve) => { finish = resolve; });
   vi.stubGlobal("fetch", vi.fn(() => response));
   renderWithQuery(<OperatorDefinitionEditorView cloneFromId={null} onBack={() => undefined} onPinned={() => undefined} />);
+  enterWorkflow();
   fireEvent.click(screen.getByRole("button", { name: "Compile definition" }));
-  fireEvent.change(screen.getByLabelText("Key"), { target: { value: "changed-key" } });
-  finish(Response.json({ digest: "old-choices" }));
+  enterWorkflow(formatWorkflowText(makeWorkflowSource({ workflow: "changed" })));
+  finish(Response.json({ digest: "old-text", stages: [] }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Compile definition" })).toBeTruthy());
   expect(screen.queryByRole("button", { name: "Pin definition" })).toBeNull();
 });

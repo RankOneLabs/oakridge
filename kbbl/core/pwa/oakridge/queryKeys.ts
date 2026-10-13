@@ -11,7 +11,7 @@ export const queryKeys = {
   projects: ["operator", "projects"] as const,
   run: (runId: string) => ["operator", runId] as const,
   definition: (runId: string) => ["operator", runId, "definition"] as const,
-  scope: (runId: string, scopeId: string | null) => ["operator", runId, "scope", scopeId] as const,
-  history: (runId: string, scopeId: string) => ["operator", runId, "scope", scopeId, "history"] as const,
-  threads: (runId: string, scopeId: string, revisionId: string) => ["operator", runId, "scope", scopeId, "revision", revisionId, "threads"] as const,
+  unit: (runId: string, unitId: string | null) => ["operator", runId, "unit", unitId] as const,
+  history: (runId: string, unitId: string) => ["operator", runId, "unit", unitId, "history"] as const,
+  threads: (runId: string, unitId: string, revisionId: string) => ["operator", runId, "unit", unitId, "revision", revisionId, "threads"] as const,
 };

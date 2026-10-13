@@ -19,7 +19,7 @@ export function invalidateOperatorEvent(client: QueryClient, frame: OperatorInva
   if (frame.target === "projects") void client.invalidateQueries({ queryKey: queryKeys.projects });
 }
 
-/** A launch or accepted command changes what the run list and the inbox show. */
+/** A launch or accepted decision changes what the run list and the inbox show. */
 export function invalidateRunLists(client: QueryClient): void {
   void client.invalidateQueries({ queryKey: queryKeys.runs });
   void client.invalidateQueries({ queryKey: queryKeys.inbox });

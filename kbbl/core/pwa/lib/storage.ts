@@ -4,12 +4,6 @@ import { defaultModelForRuntime, withoutContextHint } from "../../runtime";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
 /**
- * @deprecated Use runtimeId-namespaced keys via newSessionModelKey().
- * Kept for the migration read path so existing stored values are preserved.
- */
-export const NEW_SESSION_MODEL_STORAGE_KEY = "oakridge.newSessionModel";
-
-/**
  * Returns the localStorage key for per-runtime model preference.
  * Format: `kbbl.newSession.model.<runtimeId>` (e.g.
  * `kbbl.newSession.model.claude-code`).
@@ -62,26 +56,12 @@ export function normalizeNewSessionModelForRuntime(
   );
 }
 
-/**
- * Read the stored model for the given runtime. Falls back to the legacy
- * un-namespaced key so existing stored values are preserved on first access
- * after the migration.
- */
+/** Read the stored model for the given runtime. */
 export function readStoredNewSessionModel(runtime: RuntimeDescriptor): string {
   try {
-    const namespacedKey = newSessionModelKey(runtime.id);
-    const namespaced = localStorage.getItem(namespacedKey);
-    const stored =
-      namespaced === null ? null : matchStoredNewSessionModel(namespaced, runtime);
-    if (stored !== null) return stored;
-    // Migration: read legacy key once, migrate to namespaced key.
-    const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
-    const migrated =
-      legacy === null ? null : matchStoredNewSessionModel(legacy, runtime);
-    if (migrated !== null) {
-      try { localStorage.setItem(namespacedKey, migrated); } catch {}
-      return migrated;
-    }
+    const stored = localStorage.getItem(newSessionModelKey(runtime.id));
+    const matched = stored === null ? null : matchStoredNewSessionModel(stored, runtime);
+    if (matched !== null) return matched;
   } catch {}
   return defaultNewSessionModelForRuntime(runtime);
 }
@@ -102,8 +82,7 @@ export function writeStoredNewSessionModel(value: string, runtime: RuntimeDescri
 
 /**
  * Returns the localStorage key for per-runtime effort preference.
- * Format: `kbbl.newSession.effort.<runtimeId>`. No legacy un-namespaced key
- * exists (effort is a newer control), so there's no migration read path.
+ * Format: `kbbl.newSession.effort.<runtimeId>`.
  */
 export function newSessionEffortKey(runtimeId: string): string {
   return `kbbl.newSession.effort.${runtimeId}`;

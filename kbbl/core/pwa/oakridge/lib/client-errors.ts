@@ -1,16 +1,18 @@
 /**
  * The reason a request failed, in whichever field the route used to say it.
  *
- * The `/api/*` routes answer `{ error: <kind>, detail: <text> }` and the typed
- * domain results answer `{ kind, detail }`: the kind ("conflict",
- * "invalid_payload") only classifies the failure, and the detail says what
- * actually went wrong, so the detail wins and the kind is the fallback.
- * `{ error: { ... } }` nests either shape.
+ * The `/api/*` routes answer `{ error: <kind>, detail: <text> }`, the typed
+ * domain results answer `{ kind, detail }`, and a rejected ingress answers
+ * `{ kind: "rejected", reason }`: the kind ("conflict", "rejected") only
+ * classifies the failure, and the detail or reason says what actually went
+ * wrong, so they win and the kind is the fallback. `{ error: { ... } }` nests
+ * any of these.
  */
 export function selectFailureDetail(body: unknown, fallback: string): string {
   if (typeof body !== "object" || body === null) return fallback;
-  const candidate = body as { readonly error?: unknown; readonly detail?: unknown; readonly kind?: unknown };
+  const candidate = body as { readonly error?: unknown; readonly detail?: unknown; readonly reason?: unknown; readonly kind?: unknown };
   if (typeof candidate.detail === "string" && candidate.detail.length > 0) return candidate.detail;
+  if (typeof candidate.reason === "string" && candidate.reason.length > 0) return candidate.reason;
   if (typeof candidate.error === "object" && candidate.error !== null)
     return selectFailureDetail(candidate.error, fallback);
   if (typeof candidate.error === "string" && candidate.error.length > 0) return candidate.error;

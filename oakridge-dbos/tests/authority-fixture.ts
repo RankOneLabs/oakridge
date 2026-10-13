@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { RunConfig } from "../src/domain/run-config";
 import { resolve } from "node:path";
 import { createScratchDatabase, type ScratchDatabase } from "../scripts/scratch-database";
 import { CoreClient, compileWorkflow } from "../src/core-client/client";
@@ -72,11 +73,12 @@ export function submitter(authority: Pick<Authority, "db" | "core">, wakes: RunI
 }
 
 /** Launch a pinned definition as POST /api/runs does. */
-export async function launch(authority: Pick<Authority, "db" | "core">, input: { readonly bundle_id: DefinitionBundleId; readonly request_id: string; readonly input: unknown }):
+export async function launch(authority: Pick<Authority, "db" | "core">,
+  input: { readonly bundle_id: DefinitionBundleId; readonly request_id: string; readonly input: unknown; readonly config?: RunConfig | null }):
   Promise<{ readonly run_id: RunId; readonly result: CommitResult }> {
   const run_id = launchRunId(input.request_id);
   const result = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, { run_id, ingress_id: input.request_id,
-    event: { kind: "launched", input: input.input }, writer: OPERATOR, launch: { definition_bundle_id: input.bundle_id, project_id: null } });
+    event: { kind: "launched", input: input.input }, writer: OPERATOR, launch: { definition_bundle_id: input.bundle_id, project_id: null, config: input.config ?? null } });
   return { run_id, result };
 }
 

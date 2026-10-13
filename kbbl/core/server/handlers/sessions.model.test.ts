@@ -1,9 +1,8 @@
 /**
  * Route-level lifecycle behavior for the ACP-backed session surface:
- * listing in the legacy snapshot projection, resume-as-worktree-inheritance
- * (§17.3), and purge. Static model/effort allowlist tests died with the
- * provider adapters — §12 moved that validation into the session, covered
- * by sessions.contract.test.ts.
+ * listing as PWA session snapshots, resume-as-worktree-inheritance (§17.3),
+ * and purge. Model and effort validation lives in the session, covered by
+ * sessions.contract.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -22,7 +21,6 @@ import {
 } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
 import type { KbblSessionId, TurnKey } from "../../acp/types";
-import type { SessionManager } from "../../session/session-manager";
 
 let tmpRoot: string;
 let repoDir: string;
@@ -44,18 +42,11 @@ async function gitInitRepo(dir: string): Promise<void> {
   }
 }
 
-const stubManager = {
-  listSnapshots: () => [],
-  listArchivedSnapshots: async () => [],
-  listByArtifact: () => [],
-  remove: async () => false,
-} as unknown as SessionManager;
 
 function makeApp(): Hono {
   const app = new Hono();
   mountSessionsRoutes(app, {
     acp: harness.service,
-    manager: stubManager,
     defaultWorkdir: repoDir,
   });
   return app;
@@ -118,7 +109,6 @@ describe("GET /sessions", () => {
     // Native ACP vocabulary on the browser wire: idle stays idle.
     expect(snapshot.status).toBe("idle");
     expect(snapshot.agentProfile).toBe("claude-code");
-    expect(snapshot.source).toBe("acp");
     expect(typeof snapshot.lastActivityTs).toBe("string");
   });
 
@@ -169,7 +159,6 @@ describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
     expect(child.status).toBe(200);
     expect(child.body.worktreePath).not.toBe(parentWorktree);
     expect(child.body.worktreeBranch).toMatch(/-r1$/);
-    expect(child.body.parentOakridgeSid ?? null).toBeNull(); // legacy field stays null
     const childRow = harness.store.getSession(
       child.body.sid as never,
     );

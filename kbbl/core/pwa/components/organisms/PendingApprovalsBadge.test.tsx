@@ -25,7 +25,6 @@ const waitingSession = (): SessionSnapshot => ({
   name: "waiting session",
   agentProfile: "claude-code",
   status: "prompting",
-  source: "acp",
   lastActivityTs: "2026-01-01T00:00:00.000Z",
   createdAt: "2026-01-01T00:00:00.000Z",
   artifactId: null,

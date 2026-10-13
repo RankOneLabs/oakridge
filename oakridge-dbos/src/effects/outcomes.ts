@@ -1,6 +1,6 @@
 import type { WorkerResult } from "../core-client/core-types";
 import type { ExternalHandle, ProviderResult, StartedSession, TerminalObservation } from "./provider";
-import { INPUT_CONTRACTS } from "./provider-catalog";
+import { HANDLE_KINDS } from "./provider-catalog";
 
 /** Provider calls are bounded here; the step that runs them never hangs the workflow. */
 export function bounded<Value>(operation: Promise<ProviderResult<Value>>, timeout_ms: number, controller: AbortController): Promise<ProviderResult<Value>> {
@@ -20,7 +20,7 @@ function isWorkerResult(value: unknown): value is WorkerResult {
   return value.kind === "failed" && "code" in value && typeof value.code === "string" && "detail" in value && typeof value.detail === "string";
 }
 export function isExternalHandle(value: unknown): value is ExternalHandle {
-  return !!value && typeof value === "object" && "kind" in value && value.kind === INPUT_CONTRACTS.session
+  return !!value && typeof value === "object" && "kind" in value && value.kind === HANDLE_KINDS.session
     && "session_id" in value && typeof value.session_id === "string";
 }
 function isStartedSession(value: unknown): value is StartedSession {

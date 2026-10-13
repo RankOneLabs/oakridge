@@ -5,8 +5,8 @@ import type { ReactElement } from "react";
 
 import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRuns } from "../client";
 import {
-  makeCommand, makeInboxCommand, makeOakridgeConfig, makePrSummaryFixture, makeReviewInbox,
-  makeRunDetail, makeRunScopeSummary, makeScopeView, makeScopeWithOutput,
+  makeDecision, makeInboxDecision, makeOakridgeConfig, makePrSummaryFixture, makeInboxPage,
+  makeRunView, makeRunUnitSummary, makeUnitView, makeUnitWithArtifact,
 } from "../__fixtures__/read-models";
 import { RunListView } from "../views/RunListView";
 import { ReviewInboxView } from "../views/ReviewInboxView";
@@ -25,7 +25,7 @@ const list = (onSelectRun = vi.fn(), onDefinitions = vi.fn()) => show(<RunListVi
 
 beforeEach(() => {
   vi.mocked(fetchOperatorRuns).mockResolvedValue([]);
-  vi.mocked(fetchOperatorInbox).mockResolvedValue(makeReviewInbox());
+  vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage());
   vi.mocked(fetchOakridgeConfig).mockResolvedValue(makeOakridgeConfig());
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -45,7 +45,7 @@ describe("generated run catalog", () => {
   });
 
   it("renders one lifecycle card per generated run", async () => {
-    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunDetail(), makeRunDetail({ run_id: "run-2", definition_digest: "digest-2" })]);
+    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView(), makeRunView({ run_id: "run-2", definition_digest: "digest-2" })]);
     list();
     expect(await screen.findAllByTestId("or-cohort-lifecycle-card")).toHaveLength(2);
     expect(screen.getByText("run-1")).toBeTruthy();
@@ -53,8 +53,8 @@ describe("generated run catalog", () => {
   });
 
   it("shows generated inbox attention instead of a parked gate count", async () => {
-    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunDetail({ run_id: "run-2" })]);
-    vi.mocked(fetchOperatorInbox).mockResolvedValue(makeReviewInbox({ items: [makeInboxCommand({ run_id: "run-2" })] }));
+    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView({ run_id: "run-2" })]);
+    vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage({ items: [makeInboxDecision({ run_id: "run-2" })] }));
     list();
     expect((await screen.findByTestId("or-cohort-lifecycle-card")).textContent).toContain("1 need attention");
   });
@@ -66,7 +66,7 @@ describe("generated run catalog", () => {
 
   it("opens a selected run by ID", async () => {
     const onSelectRun = vi.fn();
-    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunDetail()]);
+    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView()]);
     list(onSelectRun);
     fireEvent.click(await screen.findByTestId("or-cohort-lifecycle-card"));
     expect(onSelectRun).toHaveBeenCalledWith("run-1");
@@ -79,35 +79,35 @@ describe("generated run catalog", () => {
   });
 });
 
-describe("scope overview and review work", () => {
-  it("lists generated scopes and their live decisions", () => {
-    const run = makeRunDetail({ scopes: [makeRunScopeSummary({ scope_id: "build", label: "Build", available_commands: ["approve"] })] });
-    const scope = makeScopeView({ scope_id: "build", label: "Build", commands: [makeCommand()] });
-    show(<RunOverviewPane run={run} scopes={[scope]} schemas={[]} onOpenScope={() => undefined} />);
+describe("unit overview and review work", () => {
+  it("lists generated units and their live decisions", () => {
+    const run = makeRunView({ units: [makeRunUnitSummary({ unit_id: "build", label: "Build", asks: ["approve"] })] });
+    const unit = makeUnitView({ unit_id: "build", label: "Build", decisions: [makeDecision()] });
+    show(<RunOverviewPane run={run} units={[unit]} onOpenUnit={() => undefined} />);
     expect(screen.getAllByTestId("or-stage-row")).toHaveLength(1);
     expect(screen.getByTestId("or-gate-card").textContent).toContain("Approve");
   });
 
   it("shows the checked final integration output", () => {
     const summary = makePrSummaryFixture();
-    const scope = makeScopeWithOutput({ body: summary.body, output_key: "final_pr_summary",
-      scope: { scope_key: "final_integration", label: "Final integration" } });
-    show(<FinalIntegrationPanel scope={scope} schemas={summary.schemas} />);
+    const unit = makeUnitWithArtifact({ body: summary.body, artifact_key: "final_pr_summary",
+      unit: { unit_key: "final_integration", label: "Final integration" } });
+    show(<FinalIntegrationPanel unit={unit} />);
     expect(screen.getByTestId("or-final-integration").textContent).toContain("final_pr_summary");
   });
 
-  it("routes an inbox command to its run and scope", async () => {
-    const onSelectScope = vi.fn();
-    vi.mocked(fetchOperatorInbox).mockResolvedValue(makeReviewInbox({ items: [makeInboxCommand({
-      run_id: "run-2", scope_id: "build", label: "Approve build",
+  it("routes an inbox decision to its run and unit", async () => {
+    const onSelectUnit = vi.fn();
+    vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage({ items: [makeInboxDecision({
+      run_id: "run-2", unit_id: "build", label: "Approve build",
     })] }));
-    show(<ReviewInboxView onSelectScope={onSelectScope} />);
+    show(<ReviewInboxView onSelectUnit={onSelectUnit} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open work" }));
-    expect(onSelectScope).toHaveBeenCalledWith("run-2", "build");
+    expect(onSelectUnit).toHaveBeenCalledWith("run-2", "build");
   });
 
   it("shows an empty global review inbox", async () => {
-    show(<ReviewInboxView onSelectScope={() => undefined} />);
+    show(<ReviewInboxView onSelectUnit={() => undefined} />);
     expect(await screen.findByTestId("or-review-inbox-empty")).toBeTruthy();
   });
 });

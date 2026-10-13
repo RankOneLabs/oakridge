@@ -1,22 +1,8 @@
 {
-  "compact": {
-    "soft_threshold_tokens": 25000,
-    "hard_threshold_tokens": 70000,
-    "compact_call_timeout_seconds": 90,
-    "max_consecutive_failures_before_force": 3
-  },
-  "retention": {
-    "session_events_full_days": 14
-  },
   "sessions": {
     "worktree_dir_name": "worktrees"
   },
-  "runtime": {
-    "default": "claude-code",
-    "codex": {
-      "enabled": false,
-      "bin": "codex",
-      "listen": "stdio://"
-    }
+  "acp": {
+    "default_agent": "claude-code"
   }
 }

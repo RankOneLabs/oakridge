@@ -53,7 +53,7 @@ mod v2_step {
         }
     }
     fn latest<'a>(
-        state: &'a ScopedSnapshot,
+        state: &'a StepSnapshot,
         unit: &UnitId,
         artifact: &SymbolKey,
     ) -> Option<&'a RevisionState> {
@@ -100,7 +100,7 @@ mod v2_step {
         }
     }
     fn attempt<'a>(
-        state: &'a ScopedSnapshot,
+        state: &'a StepSnapshot,
         unit: &UnitId,
         worker: &WorkerKey,
     ) -> Option<&'a AttemptState> {
@@ -113,7 +113,7 @@ mod v2_step {
     /// Revision and decision ids are prefixed with their unit, which is already
     /// run-scoped, so they are unique across units and runs. A unit's snapshot
     /// always carries all of that unit's revisions and decisions.
-    fn revision_id(state: &ScopedSnapshot, unit: &UnitId, artifact: &SymbolKey) -> RevisionId {
+    fn revision_id(state: &StepSnapshot, unit: &UnitId, artifact: &SymbolKey) -> RevisionId {
         let seq = state
             .revisions
             .iter()
@@ -122,7 +122,7 @@ mod v2_step {
             + 1;
         RevisionId(format!("{}:{}:{seq}", unit.0, artifact.0))
     }
-    fn decision_id(state: &ScopedSnapshot, unit: &UnitId) -> DecisionId {
+    fn decision_id(state: &StepSnapshot, unit: &UnitId) -> DecisionId {
         let seq = state
             .decisions
             .iter()
@@ -152,7 +152,7 @@ mod v2_step {
     fn eval_expression(
         expression: &Expression,
         unit: &UnitState,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         each: Option<&Value>,
         own_body: Option<(&str, &Value)>,
         context: &EvaluationContext<'_>,
@@ -250,7 +250,7 @@ mod v2_step {
     fn eval_expression_inner(
         expression: &Expression,
         unit: &UnitState,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         bindings: Bindings<'_>,
         context: &EvaluationContext<'_>,
     ) -> Option<Value> {
@@ -258,7 +258,7 @@ mod v2_step {
             return None;
         }
         fn decided(
-            state: &ScopedSnapshot,
+            state: &StepSnapshot,
             unit: &UnitState,
             artifact: &SymbolKey,
             effect: DecisionEffect,
@@ -471,16 +471,14 @@ mod v2_step {
                         };
                         read(outcome)
                     }
-                    _ => None,
                 }
             }
-            _ => None,
         }
     }
     fn eval_fields(
         fields: &[CheckedNamedExpression],
         unit: &UnitState,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         each: Option<&Value>,
         context: &EvaluationContext<'_>,
     ) -> Result<Option<Value>, StepError> {
@@ -496,7 +494,7 @@ mod v2_step {
         Ok(Some(Value::Object(result)))
     }
     fn latest_retry<'a>(
-        state: &'a ScopedSnapshot,
+        state: &'a StepSnapshot,
         unit: &UnitId,
         worker: &WorkerKey,
     ) -> Option<&'a EventId> {
@@ -507,7 +505,7 @@ mod v2_step {
             .find(|(u, w, _)| u == unit && w == worker)
             .map(|(_, _, id)| id)
     }
-    fn can_run(state: &ScopedSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
+    fn can_run(state: &StepSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
         let Some(previous) = attempt(state, unit, worker) else {
             return Some(None);
         };
@@ -531,7 +529,7 @@ mod v2_step {
     fn holds(
         guard: Option<&CheckedStageExpression>,
         unit: &UnitState,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         context: &EvaluationContext<'_>,
     ) -> Result<bool, StepError> {
         let Some(guard) = guard else {
@@ -544,7 +542,7 @@ mod v2_step {
     }
     fn stage_actions(
         program: &CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
         context: &EvaluationContext<'_>,
     ) -> Result<Vec<Action>, StepError> {
@@ -660,7 +658,7 @@ mod v2_step {
     /// inputs evaluated against the stepped state (an unresolved read as null).
     fn resolve_reviews(
         program: &CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
         context: &EvaluationContext<'_>,
     ) -> Result<Vec<ResolvedReview>, StepError> {
@@ -703,7 +701,7 @@ mod v2_step {
     /// Evaluate what a wanted `RunWorker` runs with against the stepped state.
     fn resolve_run_worker(
         program: &CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
         action: &RunWorkerAction<'_>,
         context: &EvaluationContext<'_>,
@@ -756,7 +754,7 @@ mod v2_step {
     /// The newest request_changes decision on the latest revision of one of
     /// `artifacts`, with that revision: what a revise attempt revises.
     fn changes_requested_on<'a>(
-        state: &'a ScopedSnapshot,
+        state: &'a StepSnapshot,
         unit: &UnitId,
         artifacts: &[SymbolKey],
     ) -> Option<(&'a RevisionState, &'a DecisionState)> {
@@ -778,7 +776,7 @@ mod v2_step {
     }
     fn group_for<'a>(
         program: &'a CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
     ) -> Result<&'a Group, StepError> {
         if unit.id == state.run.root {
@@ -804,7 +802,7 @@ mod v2_step {
     /// unit expressions instead of the source text beside them.
     fn checked_group_for<'a>(
         program: &'a CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
     ) -> Result<&'a CheckedGroup, StepError> {
         if unit.id == state.run.root {
@@ -936,7 +934,7 @@ mod v2_step {
     }
     fn materialize_group(
         program: &CheckedWorkflow,
-        state: &mut ScopedSnapshot,
+        state: &mut StepSnapshot,
         group_id: &UnitId,
         context: &EvaluationContext<'_>,
     ) -> Result<(), StepError> {
@@ -1083,7 +1081,7 @@ mod v2_step {
     }
     fn reduce(
         program: &CheckedWorkflow,
-        state: &mut ScopedSnapshot,
+        state: &mut StepSnapshot,
         incoming: &Incoming,
         context: &EvaluationContext<'_>,
     ) -> Result<(), StepError> {
@@ -1457,7 +1455,7 @@ mod v2_step {
     /// once per target revision, with the review's fixed feedback.
     fn engine_decision(
         program: &CheckedWorkflow,
-        state: &ScopedSnapshot,
+        state: &StepSnapshot,
         unit: &UnitState,
         context: &EvaluationContext<'_>,
     ) -> Result<Option<DecisionState>, StepError> {
@@ -1518,7 +1516,7 @@ mod v2_step {
     }
     fn advance(
         program: &CheckedWorkflow,
-        state: &mut ScopedSnapshot,
+        state: &mut StepSnapshot,
         context: &EvaluationContext<'_>,
     ) -> Result<bool, StepError> {
         for index in 0..state.units.len() {
@@ -1656,14 +1654,14 @@ mod v2_step {
     /// the affected unit, its ancestors, and the evidence required by those units.
     pub fn step(
         program: &CheckedWorkflow,
-        snapshot: &ScopedSnapshot,
+        snapshot: &StepSnapshot,
         incoming: &Incoming,
     ) -> Result<StepResult, StepError> {
         step_with_limits(program, snapshot, incoming, &ResourceLimits::default())
     }
     pub fn step_with_limits(
         program: &CheckedWorkflow,
-        snapshot: &ScopedSnapshot,
+        snapshot: &StepSnapshot,
         incoming: &Incoming,
         limits: &ResourceLimits,
     ) -> Result<StepResult, StepError> {
@@ -1787,8 +1785,8 @@ mod v2_step {
             assert!(is_valid_graph(&chain(false), "id", "after"));
             assert!(!is_valid_graph(&chain(true), "id", "after"));
         }
-        fn snapshot() -> ScopedSnapshot {
-            ScopedSnapshot {
+        fn snapshot() -> StepSnapshot {
+            StepSnapshot {
                 run: RunState {
                     id: "run".into(),
                     root: UnitId::from("run"),
@@ -1875,7 +1873,7 @@ mod v2_step {
             }];
             compile_workflow(&source, &operations, &prompts).unwrap()
         }
-        fn event(spec: &Value, state: &ScopedSnapshot) -> Event {
+        fn event(spec: &Value, state: &StepSnapshot) -> Event {
             let unit = spec["unit"].as_str().unwrap_or("");
             let worker = spec["worker"].as_str().unwrap_or("");
             let action = || {
@@ -1945,7 +1943,7 @@ mod v2_step {
                 UnitStatus::Done { .. } | UnitStatus::Cancelled => 2,
             }
         }
-        fn assert_never_regresses(before: &ScopedSnapshot, after: &ScopedSnapshot) {
+        fn assert_never_regresses(before: &StepSnapshot, after: &StepSnapshot) {
             for old in &before.units {
                 let current = after.units.iter().find(|unit| unit.id == old.id).unwrap();
                 assert!(
@@ -1955,7 +1953,7 @@ mod v2_step {
                 );
             }
         }
-        fn assert_one_live_attempt_per_worker(state: &ScopedSnapshot) {
+        fn assert_one_live_attempt_per_worker(state: &StepSnapshot) {
             let mut live = BTreeSet::new();
             for attempt in &state.attempts {
                 if matches!(
@@ -2265,10 +2263,10 @@ mod v2_step {
         }
         fn apply_row(
             program: &CheckedWorkflow,
-            state: &ScopedSnapshot,
+            state: &StepSnapshot,
             row: &Value,
             row_number: usize,
-        ) -> ScopedSnapshot {
+        ) -> StepSnapshot {
             let mut state = state.clone();
             let before = state.attempts.len();
             for (index, spec) in row["events"].as_array().unwrap().iter().enumerate() {
@@ -2308,7 +2306,7 @@ mod v2_step {
         /// Steps each event spec in order; returns the last step's result.
         fn step_specs(
             program: &CheckedWorkflow,
-            state: &ScopedSnapshot,
+            state: &StepSnapshot,
             specs: &[Value],
         ) -> StepResult {
             let mut state = state.clone();

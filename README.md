@@ -1,9 +1,9 @@
 # oakridge
 
-Oakridge runs pinned scope definitions for agent-driven software work. The
-Rust `workflow-core/` library compiles and evaluates definitions without
-external IO. `oakridge-dbos/` owns durable command and publication ingress,
-mutation receipts, effect dispatch, recovery and read projections. DBOS
+Oakridge runs pinned workflow definitions for agent-driven software work. The
+Rust `workflow-core/` library compiles workflows and steps runs without
+external IO. `oakridge-dbos/` is the single writer: it owns durable event
+ingress, effect dispatch, recovery and read projections. DBOS
 persists the workflow runtime. `kbbl/` provides the operator PWA and ACP
 session adapter; its separate SQLite ledger owns only local sessions, turns
 and process observations.
@@ -11,16 +11,16 @@ and process observations.
 ## Layout
 
 - `workflow-core/` — Rust model, compiler, evaluator and CLI.
-- `oakridge-dbos/` — TypeScript durable scope authority and HTTP API.
-- `workflow-config/` — example bundles and prompts.
+- `oakridge-dbos/` — TypeScript durable run authority and HTTP API.
+- `workflow-config/` — the development workflow, samples and prompts.
 - `kbbl/` — operator PWA and interactive ACP sessions.
 - `legit-biz-club/` — independent workspace collaboration library.
 - `lbc-dashboard/` — read-only dashboard for the workspace library.
 
-Workflow names, stages, commands and review paths come from the pinned bundle.
-The interpreter has no workflow-specific branch. A successful command or
-publication response includes a durable receipt; an unsupported legacy
-workspace event returns an explicit failure.
+Workflow names, stages, workers and reviews come from the pinned definition.
+The evaluator has no workflow-specific branch. A successful decision or
+publication response is the committed event: `{kind: "committed", run_id,
+event_id}`.
 
 ## Development
 
@@ -62,13 +62,11 @@ spawns (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
-Edit the v2 examples in `workflow-config/samples/`. Their YAML is parsed into
+Edit the examples in `workflow-config/samples/`. Their YAML is parsed into
 the Rust test fixtures by `workflow-config/src/generate.ts`; CI checks that
-the committed JSON matches. The v1 template authoring surface is retired: the
-three bundles under `workflow-config/definitions/` are now committed as pinned
-test inputs for the DBOS and PWA suites still on the v1 runtime, and nothing
-regenerates them. `POST /api/definitions/compile` reports that authoring is
-retired until c3 reinstates it over the v2 compiler.
+the committed JSON matches. Definitions are authored as workflow JSON in the
+PWA's definition editor; `POST /api/definitions/compile` checks a draft against
+the Rust compiler before it is saved.
 
 Each selected action has a pinned `deadline_ms` that bounds an individual
 provider call. A DBOS execution timeout also bounds the entire start and
@@ -86,7 +84,8 @@ become declared evidence and follow the pinned bundle's failure policy.
 4. Deploy the new stack: Rust CLI, DBOS backend and kbbl PWA.
 5. Admit traffic after the new stack is healthy.
 
-The kbbl SQLite ACP ledger is separate and remains in place.
+The kbbl SQLite ACP ledger is separate. It is also created fresh at cutover:
+its schema is a single baseline migration with workflow identity columns.
 
 ## Agent context
 

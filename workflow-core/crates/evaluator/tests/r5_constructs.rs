@@ -50,7 +50,7 @@ const PR_URL: &str = "https://forge/pr/1";
 /// A run driven event by event, each event attested by its writer.
 struct Run {
     program: CheckedWorkflow,
-    state: ScopedSnapshot,
+    state: StepSnapshot,
     last: Option<StepResult>,
     count: usize,
 }
@@ -58,7 +58,7 @@ impl Run {
     fn launch(admission: bool) -> Self {
         let mut run = Self {
             program: program(),
-            state: ScopedSnapshot {
+            state: StepSnapshot {
                 run: RunState {
                     id: "run".into(),
                     root: UnitId::from("run"),

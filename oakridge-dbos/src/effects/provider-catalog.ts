@@ -4,7 +4,7 @@
  * attempt. This and `operations/registry.ts` are the only declaration sites
  * for these literals.
  */
-export const INPUT_CONTRACTS = {
+export const HANDLE_KINDS = {
   session: "kbbl_session",
 } as const;
 
@@ -28,5 +28,5 @@ export const PROVIDER_ERROR_CODES = {
   attempt_stopped: "attempt_stopped",
 } as const;
 
-export type InputContract = typeof INPUT_CONTRACTS[keyof typeof INPUT_CONTRACTS];
+export type HandleKind = typeof HANDLE_KINDS[keyof typeof HANDLE_KINDS];
 export type ProviderErrorCode = typeof PROVIDER_ERROR_CODES[keyof typeof PROVIDER_ERROR_CODES];

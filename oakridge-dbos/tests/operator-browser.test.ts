@@ -69,9 +69,7 @@ function clientRoutes(): readonly SourceRoute[] {
   return sourceFiles(pwaPath).flatMap((path) => sourceRoutes(path, readFileSync(path, "utf8")));
 }
 
-// The PWA still calls the v1 routes this cohort removed; the PWA port (rescue
-// spec R6) re-points it, and this check holds again from then on.
-test.skip("every Oakridge PWA module route resolves to an authority table row", () => {
+test("every Oakridge PWA module route resolves to an authority table row", () => {
   const routes = clientRoutes();
   expect(routes.some((route) => route.path === "/api/inbox")).toBe(true);
   expect(routes.filter(({ method, path }) => !matchRoute(method, path))).toEqual([]);

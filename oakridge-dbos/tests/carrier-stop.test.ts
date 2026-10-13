@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { EffectInstruction } from "../src/domain/effect-instruction";
 import type { EffectProvider, ExternalHandle, ProviderResult, TerminalObservation } from "../src/effects/provider";
-import { INPUT_CONTRACTS } from "../src/effects/provider-catalog";
+import { HANDLE_KINDS } from "../src/effects/provider-catalog";
 import { createProductionComposition } from "../src/runtime/compose";
 import { launchRunId } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
@@ -16,7 +16,7 @@ interface Script {
   /** Stop answers in order; the last repeats. */
   readonly stops: readonly ProviderResult<{ readonly stopped: true }>[];
 }
-const session = (session_id: string): ExternalHandle => ({ kind: INPUT_CONTRACTS.session, session_id });
+const session = (session_id: string): ExternalHandle => ({ kind: HANDLE_KINDS.session, session_id });
 const STOPPED = { kind: "acknowledged", value: { stopped: true } } as const;
 const scripts = new Map<string, Script>();
 const stop_calls = new Map<string, (ExternalHandle | null)[]>();

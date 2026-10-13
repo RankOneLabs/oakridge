@@ -1,7 +1,6 @@
 import type { JsonValue } from "../domain/primitives";
 import type { ProviderResult } from "../effects/provider";
-import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
-import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableTerminalFailure } from "../../../kbbl/core/acp/resumable-wire";
+import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionStatus } from "../../../kbbl/core/acp/resumable-wire";
 
 /**
  * kbbl's resumable session routes (§11 of the kbbl contract), as the agent
@@ -37,7 +36,7 @@ export interface KbblClientOptions {
 /** The part of a resumable session snapshot the provider reads. */
 export interface KbblSession {
   readonly sid: string;
-  readonly status: "starting" | "live" | "compacting" | "ended";
+  readonly status: ResumableSessionStatus;
   readonly last_activity_ts: string | null;
 }
 export interface EnsuredSession { readonly kind: ResumableEnsureResponse["kind"]; readonly session: KbblSession }
@@ -55,7 +54,7 @@ export type SessionEnd =
 
 type Fields = { readonly [key: string]: unknown };
 const isFields = (value: unknown): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);
-const SESSION_STATUSES = ["starting", "live", "compacting", "ended"] as const;
+const SESSION_STATUSES: readonly ResumableSessionStatus[] = ["starting", "live", "ended"];
 const TURN_STATUSES = ["accepted", "prompting", "succeeded", "cancelled", "failed", "unknown"] as const;
 
 function parseSession(value: unknown): KbblSession | null {
@@ -66,22 +65,20 @@ function parseSession(value: unknown): KbblSession | null {
 }
 
 /**
- * kbbl's `failure` sidecar on a terminal body: the only place the reason
- * survives, since the exit code is always 1. Any non-empty code is kept, so a
- * code a newer kbbl adds still reaches the attempt.
+ * How a terminal body says the session ended. Any non-empty failure code is
+ * kept, so a code a newer kbbl adds still reaches the attempt.
  */
-type KbblTerminalFailure = Omit<ResumableTerminalFailure, "code"> & { readonly code: string };
-function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
-  if (!isFields(raw) || !isFields(raw.failure)) return null;
-  const { code, detail } = raw.failure;
-  if (typeof code !== "string" || code === "") return null;
-  return { code, detail: typeof detail === "string" && detail !== "" ? detail : code };
+function parseEnd(raw: unknown): SessionEnd | null {
+  if (!isFields(raw)) return null;
+  if (raw.kind === "succeeded") return { kind: "succeeded" };
+  if (raw.kind === "closed") return { kind: "closed" };
+  if (raw.kind !== "failed" || typeof raw.code !== "string" || raw.code === "") return null;
+  return { kind: "failed", code: raw.code, detail: typeof raw.detail === "string" && raw.detail !== "" ? raw.detail : raw.code };
 }
 
 /**
- * How long a session has been silent, or null when kbbl did not say. Absent
- * or unparseable activity is not silence: an older kbbl that omits it would
- * otherwise have every session failed at the first poll.
+ * How long a session has been silent, or null when the reading carries no
+ * parseable activity time: an unknown time is not silence.
  */
 export const silentDurationMs = (pending: JsonValue, now: number): number | null => {
   if (!isFields(pending) || !isFields(pending.session)) return null;
@@ -90,6 +87,9 @@ export const silentDurationMs = (pending: JsonValue, now: number): number | null
   const observed_at = Date.parse(last_activity);
   return Number.isNaN(observed_at) ? null : Math.max(0, now - observed_at);
 };
+
+/** The attempt closing its own session, and whether the session ends for good. */
+export interface SessionCloser { readonly action_id: string; readonly is_fence: boolean }
 
 export class KbblClient {
   private readonly fetch: FetchLike;
@@ -150,21 +150,18 @@ export class KbblClient {
       const session = parseSession(raw.session);
       if (!session) return null;
       if (response.status === 202) return { kind: "pending", session };
-      if (isFields(raw.session) && raw.session.endReason === "user_closed") return { kind: "ended", session, end: { kind: "closed" } };
-      if (raw.exit_code === 0) return { kind: "ended", session, end: { kind: "succeeded" } };
-      const failure = parseTerminalFailure(raw);
-      return { kind: "ended", session, end: { kind: "failed", code: failure?.code ?? PROVIDER_ERROR_CODES.session_failed,
-        detail: failure?.detail ?? `kbbl session ${sid} exited with code ${String(raw.exit_code)}` } };
+      const end = parseEnd(raw.end);
+      return end ? { kind: "ended", session, end } : null;
     }, signal);
   }
 
   /**
-   * DELETE /sessions/:sid. A fence (`fenced_by`) ends the session for good; a
-   * plain close leaves it revivable under its key. An unknown session is
-   * already stopped.
+   * DELETE /sessions/:sid, as the attempt that holds the session, so kbbl's
+   * hold guard lets it through. A fence ends the session for good; otherwise
+   * it stays revivable under its key. An unknown session is already stopped.
    */
-  async close(sid: string, fenced_by: string | null, signal?: AbortSignal): Promise<ProviderResult<{ readonly stopped: true }>> {
-    const query = fenced_by === null ? "" : `?fenced_by=${encodeURIComponent(fenced_by)}`;
+  async close(sid: string, closer: SessionCloser, signal?: AbortSignal): Promise<ProviderResult<{ readonly stopped: true }>> {
+    const query = `?${closer.is_fence ? "fenced_by" : "closed_by"}=${encodeURIComponent(closer.action_id)}`;
     let response: Response;
     try { response = await this.fetch(`${this.base_url}/sessions/${encodeURIComponent(sid)}${query}`, { method: "DELETE", ...(signal ? { signal } : {}) }); }
     catch (error) { return { kind: "uncertain", detail: `kbbl close: ${String(error)}` }; }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import ts from "typescript";
-import { INPUT_CONTRACTS, PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
+import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
 
 interface LiteralViolation { readonly file: string; readonly line: number; readonly value: string }
@@ -10,7 +10,7 @@ const DECLARATIONS = new Set(["effects/provider-catalog.ts", "operations/registr
 /** The executor's own code; an operation's module may name its reader's error kinds (`auth`), which are not attempt codes. */
 const SCANNED = ["effects", "workflows", "adapters"];
 const restricted = new Set<string>([
-  ...Object.values(INPUT_CONTRACTS), ...Object.values(PROVIDER_ERROR_CODES), ...OPERATION_REGISTRY.map((operation) => operation.key),
+  ...Object.values(HANDLE_KINDS), ...Object.values(PROVIDER_ERROR_CODES), ...OPERATION_REGISTRY.map((operation) => operation.key),
 ]);
 
 function literalViolations(file: string, source: string): LiteralViolation[] {
@@ -37,6 +37,6 @@ test("handle, operation and failure-code literals live only in their declaration
 });
 
 test("the lint detects each forbidden literal class", () => {
-  const examples = [INPUT_CONTRACTS.session, OPERATION_REGISTRY[0].key, PROVIDER_ERROR_CODES.head_changed];
+  const examples = [HANDLE_KINDS.session, OPERATION_REGISTRY[0].key, PROVIDER_ERROR_CODES.head_changed];
   expect(examples.map((value) => literalViolations("other.ts", `const value = ${JSON.stringify(value)};`).length)).toEqual([1, 1, 1]);
 });

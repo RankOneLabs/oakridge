@@ -187,7 +187,7 @@ export async function readCollaborationThreads(db: Reader, input: { readonly run
       .selectAll("delivery").select("message.thread_id").where("message.thread_id", "=", anyOf(thread_ids))
       .orderBy("message.thread_id").orderBy("delivery.created_at", "desc").orderBy("delivery.id", "desc").execute(),
   ]);
-  return threads.map((thread) => selectCollaborationThreadView({ ...thread, current_revision_id: latest?.id ?? null },
+  return threads.map((thread) => selectCollaborationThreadView({ ...thread, latest_revision_id: latest?.id ?? null },
     messages.filter((row) => row.thread_id === thread.id).map((row) => ({ ...row, created_at: createdAt(row.created_at) })),
     review_items.flatMap((row) => { const item = row.thread_id === thread.id ? reviewItemRow(row) : null; return item ? [item] : []; }),
     deliveries.filter((row) => row.thread_id === thread.id).map(({ thread_id: _thread, ...row }) => ({ ...row, created_at: createdAt(row.created_at) }))));

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { selectFieldItems, selectFieldText, selectCheckedText } from "../artifact-types";
+import { selectFieldItems, selectFieldText, selectBodyText } from "../artifact-types";
 import {
-  makeBuildBriefFixture, makeBuildResultFixture, makeOutputSlot, makeScopeView, makeScopeWithOutput,
+  makeBuildBriefFixture, makeBuildResultFixture, makeArtifact, makeUnitView, makeUnitWithArtifact,
 } from "../__fixtures__/read-models";
 import { selectRunArtifacts } from "./run-overview";
 
@@ -14,32 +14,32 @@ const brief = makeBuildBriefFixture({
   depends_on: ["review-cli", "frontend-bundle"],
 });
 
-describe("build brief in generated scope outputs", () => {
-  it("exposes the populated brief from its checked revision", () => {
-    const artifact = selectRunArtifacts([makeScopeWithOutput({ body: brief.body, output_key: "brief" })])[0];
-    expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "title"))
+describe("build brief among a unit's artifacts", () => {
+  it("exposes the populated brief from its latest revision", () => {
+    const artifact = selectRunArtifacts([makeUnitWithArtifact({ body: brief.body, artifact_key: "brief" })])[0];
+    expect(artifact && selectFieldText(artifact.revision.body, "title"))
       .toBe("End-to-end, browser, offline and packaging acceptance");
-    expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "repository_key")).toBe("assay");
-    expect(artifact && selectFieldText(artifact.revision.body, brief.schemas, "goal")).toContain("Close out the required cases");
-    expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "files_in_scope").map(selectCheckedText))
+    expect(artifact && selectFieldText(artifact.revision.body, "repository_key")).toBe("assay");
+    expect(artifact && selectFieldText(artifact.revision.body, "goal")).toContain("Close out the required cases");
+    expect(artifact && selectFieldItems(artifact.revision.body, "files_in_scope").map(selectBodyText))
       .toContain("tests/test_review_acceptance.py");
-    expect(artifact && selectFieldItems(artifact.revision.body, brief.schemas, "depends_on").map(selectCheckedText))
+    expect(artifact && selectFieldItems(artifact.revision.body, "depends_on").map(selectBodyText))
       .toEqual(["review-cli", "frontend-bundle"]);
   });
 
-  it("finds no brief for a scope with no output", () => {
-    expect(selectRunArtifacts([makeScopeView({ outputs: [] })]).find((artifact) => artifact.output.output_key === "brief"))
+  it("finds no brief for a unit with no artifact", () => {
+    expect(selectRunArtifacts([makeUnitView({ artifacts: [] })]).find((artifact) => artifact.artifact.artifact_key === "brief"))
       .toBeUndefined();
   });
 
   it("does not mistake a build result for a brief", () => {
     const result = makeBuildResultFixture();
-    expect(selectRunArtifacts([makeScopeWithOutput({ body: result.body, output_key: "build_result" })]).find((artifact) => artifact.revision.body.schema === "brief_body"))
+    expect(selectRunArtifacts([makeUnitWithArtifact({ body: result.body, artifact_key: "build", schema: "build_body" })]).find((artifact) => artifact.artifact.schema === "brief_body"))
       .toBeUndefined();
   });
 
   it("finds no brief when the revision is absent", () => {
-    const scope = makeScopeView({ outputs: [makeOutputSlot({ output_key: "brief", current_revision: null, current_revision_id: null })] });
-    expect(selectRunArtifacts([scope]).find((artifact) => artifact.output.output_key === "brief")).toBeUndefined();
+    const unit = makeUnitView({ artifacts: [makeArtifact({ artifact_key: "brief", latest_revision: null, revision_count: 0 })] });
+    expect(selectRunArtifacts([unit]).find((artifact) => artifact.artifact.artifact_key === "brief")).toBeUndefined();
   });
 });

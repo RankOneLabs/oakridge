@@ -27,7 +27,7 @@ export function OperatorRunListView({ onSelectRun, onNewRun, onDefinitions, onPr
     <ul>{runs.data?.map((run) => <li key={run.run_id}>
       <Button variant="secondary" onClick={() => onSelectRun(run.run_id)}>{run.run_id}</Button>
       <span> {new Date(run.created_at).toLocaleString()}</span>
-      <span> {run.scopes.filter((scope) => scope.is_terminal).length}/{run.scopes.length} scopes complete</span>{" "}
+      <span> {run.units.filter((unit) => unit.is_terminal).length}/{run.units.length} units complete</span>{" "}
       <Button variant="secondary" onClick={() => void toggleArchive(run.run_id)}>{isShowingArchived ? "Unarchive" : "Archive"}</Button>
     </li>)}</ul>
   </main>;

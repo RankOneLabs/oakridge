@@ -54,7 +54,7 @@ fn v2_rejection_manifest_names_every_section_three_class() {
         let expected = case["reason"].as_str().unwrap();
         if let Some(raw) = case.get("raw") {
             let error = decode_workflow(raw.as_str().unwrap().as_bytes()).unwrap_err();
-            assert_eq!(error.kind, DomainErrorKind::DuplicateSymbol, "{name}");
+            assert_eq!(error.kind, DomainErrorKind::DuplicateKey, "{name}");
             continue;
         }
         let mut value: Value = serde_json::from_str(match case["base"].as_str().unwrap() {

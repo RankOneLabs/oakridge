@@ -4,29 +4,18 @@ import type { Sid } from "../lib/ids";
 import type { SessionSnapshot, Status } from "../types";
 
 export interface AppState {
-  /**
-   * Session map: ACP sessions come from the /inbox snapshot stream (the
-   * authority); archived pre-ACP sessions come from the one-shot
-   * /sessions?include=archived seed and are kept across snapshot frames
-   * (the stream never carries them).
-   */
+  /** Session map, from the /inbox snapshot stream (the authority). */
   sessions: Map<Sid, SessionSnapshot>;
-  /** False until /inbox supplies a complete ACP inventory, including an empty one. */
-  hasInboxSnapshot: boolean;
-  /** True only after the archive seed succeeds, including an empty response. */
-  hasSessionSeed: boolean;
   inboxStatus: Status;
   currentSid: Sid | null;
-  /** Sids removed server-side; blocks a late seed from resurrecting them. */
+  /** Sids removed server-side; blocks a late hydrate from resurrecting them. */
   removedSids: Set<Sid>;
 
   hydrateSession: (snapshot: SessionSnapshot) => void;
-  seedSessions: (snapshots: SessionSnapshot[]) => void;
   /**
-   * Fold one authoritative /inbox snapshot frame: replaces every
-   * ACP-sourced entry wholesale, keeps archived-legacy entries, and
-   * returns the sids that disappeared so the caller can navigate away
-   * from a purged session.
+   * Fold one authoritative /inbox snapshot frame: replaces every entry
+   * wholesale and returns the sids that disappeared so the caller can
+   * navigate away from a purged session.
    */
   applySnapshot: (snapshots: SessionSnapshot[]) => Sid[];
   setInboxStatus: (status: Status) => void;
@@ -35,8 +24,6 @@ export interface AppState {
 
 export const useStore = create<AppState>()((set) => ({
   sessions: new Map(),
-  hasInboxSnapshot: false,
-  hasSessionSeed: false,
   inboxStatus: "connecting",
   currentSid: null,
   removedSids: new Set(),
@@ -60,22 +47,6 @@ export const useStore = create<AppState>()((set) => ({
       return { sessions, removedSids };
     }),
 
-  // Seed from /sessions?include=archived: entries the stream hasn't (or
-  // won't ever) deliver are folded in without overwriting fresher ones.
-  seedSessions: (snapshots) =>
-    set((state) => {
-      const sessions = new Map(state.sessions);
-      for (const snapshot of snapshots) {
-        const sid = snapshot.sid as Sid;
-        // Once the live inventory has arrived, this older request may only
-        // supply legacy sessions (which are not part of the inbox stream).
-        if (state.hasInboxSnapshot && snapshot.source !== "legacy_archive") continue;
-        if (state.removedSids.has(sid)) continue;
-        if (!sessions.has(sid)) sessions.set(sid, snapshot);
-      }
-      return { sessions, hasSessionSeed: true };
-    }),
-
   applySnapshot: (snapshots) => {
     const removed: Sid[] = [];
     set((state) => {
@@ -87,17 +58,13 @@ export const useStore = create<AppState>()((set) => ({
       // each frame by exact timestamps, but the UI deliberately treats two
       // "just now" rows as tied; rebuilding in server order would defeat
       // that stable tie every time either session emitted an event.
-      for (const [sid, existing] of state.sessions) {
+      for (const sid of state.sessions.keys()) {
         const replacement = incoming.get(sid);
         if (replacement !== undefined) {
           sessions.set(sid, replacement);
           continue;
         }
-        if (existing.source === "legacy_archive") {
-          sessions.set(sid, existing);
-        } else {
-          removed.push(sid);
-        }
+        removed.push(sid);
       }
       // Truly new sessions have no prior position and follow the frame's
       // authoritative order until subsequent snapshots preserve it.
@@ -107,7 +74,7 @@ export const useStore = create<AppState>()((set) => ({
       const removedSids = new Set(state.removedSids);
       for (const sid of incoming.keys()) removedSids.delete(sid);
       for (const sid of removed) removedSids.add(sid);
-      return { sessions, removedSids, hasInboxSnapshot: true };
+      return { sessions, removedSids };
     });
     return removed;
   },

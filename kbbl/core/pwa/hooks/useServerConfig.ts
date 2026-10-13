@@ -6,14 +6,12 @@ import { PWA_MODEL_OPTIONS } from "../lib/format";
 
 interface ServerConfigResponse {
   defaultWorkdir: string | null;
-  softThresholdTokens?: number;
   defaultRuntimeId?: string;
   runtimes?: unknown;
 }
 
 export interface ServerConfig {
   defaultWorkdir: string | null;
-  softThresholdTokens?: number;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
 }
@@ -49,7 +47,6 @@ function fallbackClaudeDescriptor(): RuntimeDescriptor {
     // backend rejects for CC. Leave empty until /config supplies the real
     // per-runtime effort set; the picker simply doesn't render meanwhile.
     efforts: [],
-    supportsCompaction: true,
   };
 }
 
@@ -77,7 +74,6 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       label?: unknown;
       models?: unknown;
       efforts?: unknown;
-      supportsCompaction?: unknown;
     };
     if (!isRuntimeId(runtime.id)) return [];
     return [{
@@ -85,7 +81,6 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       label: typeof runtime.label === "string" ? runtime.label : runtime.id,
       models: coerceRuntimeModels(runtime.models),
       efforts: coerceRuntimeModels(runtime.efforts),
-      supportsCompaction: runtime.supportsCompaction === true,
     }];
   });
   if (runtimes.length === 0) return [fallbackClaudeDescriptor()];
@@ -96,9 +91,8 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
 /**
  * Fetches the server's /config once. Returns null until the fetch resolves
  * so callers can render a "loading" placeholder rather than racing forms
- * with empty defaults. Cached indefinitely — the server's config doesn't
- * change mid-session, and SessionTopBar's PATCH /config invalidates this
- * query so the next read reflects the server response.
+ * with empty defaults. Cached indefinitely: the server's config doesn't
+ * change mid-session.
  */
 export function useServerConfigState(enabled = true): { readonly config: ServerConfig | null; readonly error: Error | null } {
   const query = useQuery({
@@ -116,13 +110,8 @@ export function useServerConfigState(enabled = true): { readonly config: ServerC
     const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
     return { config: {
       defaultWorkdir: query.data.defaultWorkdir,
-      softThresholdTokens:
-        typeof query.data.softThresholdTokens === "number"
-          ? query.data.softThresholdTokens
-          : undefined,
       defaultRuntimeId: defaultRuntimeIdForConfig({
         defaultWorkdir: query.data.defaultWorkdir,
-        softThresholdTokens: query.data.softThresholdTokens,
         defaultRuntimeId: isRuntimeId(query.data.defaultRuntimeId)
           ? query.data.defaultRuntimeId
           : "claude-code",

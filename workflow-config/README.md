@@ -22,13 +22,5 @@ sample tests load those exact files.
 SHA-256 digest; the authority serves it at `/api/prompts` and resolves a pinned
 bundle's prompt keys through it.
 
-The v1 template authoring surface and its bundle builder are retired, along
-with the per-stage scope and schema modules they composed. The bundles under
-`definitions/` are the last of its output and are now committed as pinned test
-inputs for the DBOS and PWA suites that have not been cut over yet. Nothing
-regenerates them, and nothing should: whichever cohort moves those consumers
-onto the v2 compiler and the YAML samples above deletes the bundles with them.
-`prompts/templates/` and `prompts/dev-flow/` are frozen for the same reason
--- the renderer that composed `dev-flow/v3/` from the templates is retired,
-and `prompts/development/` replaces them for the v2 workflow. They go with
-the PWA fixtures that still read them (rescue spec R6).
+The PWA's definition editor authors a workflow source as JSON; the authority
+compiles it against these prompts and pins it.

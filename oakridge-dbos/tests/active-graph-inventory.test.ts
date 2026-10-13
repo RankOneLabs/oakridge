@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { buildGraph, reachable, declarations, evaluatorViolations, evaluationCallSites, labels } from "./dependency-graph";
 
@@ -8,11 +8,6 @@ const entry = resolve(root, "oakridge-dbos/src/main.ts");
 const graph = buildGraph([entry]);
 const nodes = reachable(graph, entry);
 const files = nodes.map((node) => relative(root, node.path));
-const deleted = [
-  "kbbl/core/pwa/oakridge/review-command-types.ts", "kbbl/core/pwa/oakridge/lib/worker-review-actions.ts",
-  "kbbl/core/acp/legacy-wire.ts", "oakridge-dbos/src/compiler/compile-v15.ts", "oakridge-dbos/src/decision",
-  "oakridge-dbos/src/validation", "oakridge-dbos/src/adapters/dev-flow.ts",
-];
 test("production entry reaches one core bridge and one writer", () => {
   expect(files).toContain("oakridge-dbos/src/core-client/client.ts");
   const commit = resolve(root, "oakridge-dbos/src/storage/commit.ts");
@@ -20,13 +15,11 @@ test("production entry reaches one core bridge and one writer", () => {
   expect(declarations(nodes, "CoreClient")).toEqual([resolve(root, "oakridge-dbos/src/core-client/client.ts")]);
   expect(declarations(nodes, "commitEvent")).toEqual([commit]);
   expect(labels(root, evaluatorViolations(nodes, new Set([commit, resolve(root, "oakridge-dbos/src/core-client/client.ts")])))).toEqual([]);
-  expect(files.filter((path) => /(?:legacy-wire|compile-v15|\/decision\/|\/validation\/|dev-flow\.ts|mutation-service|sql-executor)/.test(path))).toEqual([]);
 });
-test("deleted modules and legacy schema authority are absent from the active graph", () => {
-  expect(deleted.filter((path) => existsSync(resolve(root, path)))).toEqual([]);
+test("the kbbl ledger and other schemas are absent from the authority's graph", () => {
   expect(files.filter((path) => path.startsWith("kbbl/core/db/") || path.includes("/migrations/") && !path.startsWith("oakridge-dbos/src/storage/migrations/"))).toEqual([]);
 });
-test("active schema and symbols reflect the scope authority", () => {
+test("active schema and symbols reflect the authority", () => {
   const sql = readFileSync(resolve(root, "oakridge-dbos/src/storage/migrations/0001_core.sql"), "utf8");
   const tables = [...sql.matchAll(/CREATE TABLE\s+([\w.]+)/g)].map((match) => match[1]);
   expect(tables).toEqual([

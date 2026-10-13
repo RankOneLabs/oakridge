@@ -7,11 +7,11 @@ const cohorts = [
   { id: "core", title: "Core", depends_on: [] },
 ];
 const ids = (order: readonly string[]) => {
-  const { body, schemas } = makePlanGraphFixture(cohorts, order);
-  return selectPlanGraph(body, schemas).nodes.map((node) => node.id);
+  const { body } = makePlanGraphFixture(cohorts, order);
+  return selectPlanGraph(body).nodes.map((node) => node.id);
 };
 
-describe("checked plan ordering", () => {
+describe("plan ordering", () => {
   test("follows dependency_order rather than body order", () => {
     expect(ids(["core", "api"])).toEqual(["core", "api"]);
   });

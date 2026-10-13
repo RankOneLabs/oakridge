@@ -7,7 +7,7 @@ const fixture = makePlanGraphFixture([
   { id: "core", title: "Core", depends_on: [] },
   { id: "api", title: "API", depends_on: ["core"] },
 ], ["core", "api", "ui"]);
-const layout = selectPlanGraph(fixture.body, fixture.schemas);
+const layout = selectPlanGraph(fixture.body);
 
 describe("selectPlanGraph", () => {
   test("draws one edge per dependency", () => {
@@ -27,7 +27,7 @@ describe("selectPlanGraph", () => {
 
   test("ignores a dependency on a cohort the plan does not contain", () => {
     const orphan = makePlanGraphFixture([{ id: "api", title: "API", depends_on: ["missing"] }]);
-    const graph = selectPlanGraph(orphan.body, orphan.schemas);
+    const graph = selectPlanGraph(orphan.body);
     expect([graph.nodes.length, graph.edges.length]).toEqual([1, 0]);
   });
 

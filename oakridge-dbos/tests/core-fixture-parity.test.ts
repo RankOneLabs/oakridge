@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { CoreClient, MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
-import type { ScopedSnapshot, Workflow } from "../src/core-client/core-types";
+import type { StepSnapshot, Workflow } from "../src/core-client/core-types";
 
 const workflow = {
   workflow: "simple", input: {},
@@ -31,7 +31,7 @@ test("step evaluates a workflow compiled by the same WASM instance", async () =>
     const compiled = await started.value.request("compile", { workflow, prompts: { "write.md": "write" } });
     expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled" } });
     if (!compiled.ok || compiled.value.kind !== "compiled") return;
-    const snapshot: ScopedSnapshot = {
+    const snapshot: StepSnapshot = {
       run: { id: "run", root: "run", status: { kind: "not_started" }, input: null },
       units: [], attempts: [], revisions: [], decisions: [], retry_events: [],
     };
@@ -50,7 +50,7 @@ test("an oversized in-process snapshot has a clear error", async () => {
   const started = CoreClient.start();
   expect(started.ok).toBe(true);
   if (!started.ok) return;
-  const snapshot = { body: "x".repeat(MAX_SNAPSHOT_BYTES + 1) } as unknown as ScopedSnapshot;
+  const snapshot = { body: "x".repeat(MAX_SNAPSHOT_BYTES + 1) } as unknown as StepSnapshot;
   const result = await started.value.request("step", { workflow_digest: "unused", snapshot,
     incoming: { kind: "start", value: {} } as never });
   expect(result).toMatchObject({ ok: false, error: { kind: "transport",

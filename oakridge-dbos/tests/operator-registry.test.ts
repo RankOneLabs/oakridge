@@ -1,22 +1,17 @@
 import { expect, test } from "bun:test";
 import { Hono } from "hono";
-import { sql } from "kysely";
-import { importProjects } from "../scripts/import-projects";
 import { installDefinitionApi } from "../src/http/app";
-import { openDatabase } from "../src/storage/database";
 import { launch, openAuthority, pinSample, sampleWorkflow, type Authority } from "./authority-fixture";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 
 const readModelFields = [
-  ["OperatorRunDetail", ["run_id", "definition_bundle_id", "definition_digest", "version", "created_at", "archived_at", "cursor", "scopes"]],
-  ["OperatorRunSummary", ["run_id", "definition_bundle_id", "definition_digest", "version", "created_at", "archived_at"]],
-  ["OperatorRunSessionAttempt", ["location", "worker_key", "generation", "status", "result"]],
-  ["OperatorSessionLocation", ["run_id", "scope_id", "execution_id"]],
-  ["OperatorArtifactDetail", ["run_id", "scope_id", "output_key", "collection_key", "slot_version", "revision_id", "predecessor_id", "body", "status", "presentation"]],
-  ["OperatorDecision", ["decision", "cursor"]],
-  ["OperatorReviewInbox", ["cursor", "items", "next_cursor"]],
+  ["OperatorRunView", ["run_id", "definition_bundle_id", "definition_digest", "created_at", "archived_at", "status", "units"]],
+  ["OperatorRunSummary", ["run_id", "definition_bundle_id", "definition_digest", "created_at", "archived_at", "status"]],
+  ["OperatorUnitView", ["unit_id", "run_id", "unit_key", "status", "attention", "decisions", "attempts", "artifacts"]],
+  ["OperatorArtifactDetail", ["run_id", "unit_id", "artifact_key", "schema", "status", "revisions", "decisions"]],
+  ["OperatorInboxPage", ["items", "next_cursor"]],
 ] as const;
 
 function inlineReadModel(node: ts.ObjectLiteralExpression): string | null {
@@ -26,13 +21,6 @@ function inlineReadModel(node: ts.ObjectLiteralExpression): string | null {
   }));
   return readModelFields.find(([, required]) => required.every((field) => fields.has(field)))?.[0] ?? null;
 }
-
-// R4 rebuilt these seven read models in the v1 shape, renamed per rescue spec §2.3.
-test("all seven operator read models are reachable in generated PWA contracts", () => {
-  const contracts = readFileSync(resolve(import.meta.dir, "../../kbbl/core/pwa/oakridge/operator-contracts.ts"), "utf8");
-  for (const name of ["RunSummary", "RunDetail", "RunSessionAttempt", "SessionLocation", "ArtifactDetail", "Decision", "ReviewInbox"])
-    expect(contracts).toMatch(new RegExp(`export (?:interface|type) Operator${name}\\b`));
-});
 
 test("PWA read-model fixtures are constructed only in the shared factory", () => {
   const root = resolve(import.meta.dir, "../../kbbl/core/pwa");
@@ -122,22 +110,4 @@ test("an archived run and definition leave the active listings and return when u
   await app.request(`/api/definitions/${bundle_id}/unarchive`, { method: "POST" });
   expect({ runs: await runs(false), definitions: await definitions(false) }).toEqual({ runs: [run_id], definitions: [bundle_id] });
   expect((await app.request("/api/runs/missing/archive", { method: "POST" })).status).toBe(404);
-}));
-
-test("the cutover import copies previous projects by id and is safe to repeat", async () => withApi(async ({ authority }) => {
-  // A previous Oakridge database names the merge branch base_branch.
-  await sql`CREATE SCHEMA oakridge; CREATE TABLE oakridge.project (id uuid PRIMARY KEY, name text NOT NULL, repo_dir text NOT NULL,
-    forge_repository jsonb, base_branch text, created_at timestamptz NOT NULL)`.execute(authority.db);
-  await sql`INSERT INTO oakridge.project VALUES
-    ('14632ba6-c2f1-4035-bd23-6021d6af17d2','scout','/home/steve/codes/rol/scout','{"name":"scout","owner":"RankOneLabs","provider":"github"}','main','2026-08-29'),
-    ('7cc7ae17-bd4c-438f-892a-bee89eea32d6','safir','/home/steve/codes/personal/safir',NULL,NULL,'2026-08-30')`.execute(authority.db);
-  const source = openDatabase<Parameters<typeof importProjects>[0] extends import("kysely").Kysely<infer S> ? S : never>(authority.url);
-  try {
-    expect((await importProjects(source, authority.db)).map((outcome) => outcome.kind)).toEqual(["imported", "imported"]);
-    expect((await importProjects(source, authority.db)).map((outcome) => outcome.kind)).toEqual(["present", "present"]);
-  } finally { await source.destroy(); }
-  expect(await authority.db.selectFrom("authority.project").select(["id", "name", "integration_branch", "forge_repository"]).orderBy("name").execute()).toEqual([
-    { id: "7cc7ae17-bd4c-438f-892a-bee89eea32d6", name: "safir", integration_branch: null, forge_repository: null },
-    { id: "14632ba6-c2f1-4035-bd23-6021d6af17d2", name: "scout", integration_branch: "main", forge_repository: { name: "scout", owner: "RankOneLabs", provider: "github" } },
-  ]);
 }));

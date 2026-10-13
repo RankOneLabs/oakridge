@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useState } from "react";
 
 import {
-  makeBuildResultFixture, makeCommand, makeDefinitionSummary, makeRunDetail, makeRunScopeSummary, makeScopeWithOutput, makeSessionSnapshot,
+  makeBuildResultFixture, makeDecision, makeDefinitionSummary, makeRunView, makeRunUnitSummary, makeUnitWithArtifact, makeSessionSnapshot,
 } from "../__fixtures__/read-models";
 import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import { RunSessionPane } from "../components/organisms/RunSessionPane";
@@ -27,17 +27,17 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); useStore.setState(useStore.g
 
 it("an artifact route mounts the checked review renderer in the workspace", async () => {
   const result = makeBuildResultFixture({ summary: "Two panes, one renderer" });
-  const scope = makeScopeWithOutput({ body: result.body, output_key: "build_result", revision_id: "revision-1",
-    scope: { commands: [makeCommand({ label: "Approve the build", targets: [{ kind: "reference", root: { kind: "output", key: "build_result" }, path: [] }] })] } });
+  const unit = makeUnitWithArtifact({ body: result.body, artifact_key: "build_result", revision_id: "revision-1",
+    schema: "build_body", unit: { decisions: [makeDecision({ label: "Approve the build" })] } });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/runs/run-1")) return Response.json(makeRunDetail({ scopes: [makeRunScopeSummary()] }));
+    if (url.endsWith("/runs/run-1")) return Response.json(makeRunView({ units: [makeRunUnitSummary()] }));
     if (url.endsWith("/definition")) return Response.json(makeDefinitionSummary());
-    if (url.endsWith("/scopes/scope-1")) return Response.json(scope);
+    if (url.endsWith("/units/unit-1")) return Response.json(unit);
     if (url.endsWith("/threads")) return Response.json([]);
     throw new Error(url);
   }));
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <RunWorkspace runId="run-1" routePane={{ kind: "artifact", artifact_id: revisionId }} scopeId="scope-1" onBack={() => undefined} />
+    <RunWorkspace runId="run-1" routePane={{ kind: "artifact", artifact_id: revisionId }} unitId="unit-1" onBack={() => undefined} />
   </QueryClientProvider>);
   expect((await screen.findByTestId("or-artifact-review")).textContent).toContain("Two panes, one renderer");
   expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();

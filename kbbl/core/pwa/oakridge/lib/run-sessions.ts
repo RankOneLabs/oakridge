@@ -1,5 +1,5 @@
-import type { OperatorExecutionView, OperatorScopeView } from "../operator-contracts";
+import type { OperatorAttemptView, OperatorUnitView } from "../operator-contracts";
 
-export interface RunExecution { readonly scope_id: string; readonly execution: OperatorExecutionView }
-export const selectRunExecutions = (scopes: readonly OperatorScopeView[]): readonly RunExecution[] =>
-  scopes.flatMap((scope) => scope.executions.map((execution) => ({ scope_id: scope.scope_id, execution })));
+export interface RunAttempt { readonly unit_id: string; readonly attempt: OperatorAttemptView }
+export const selectRunAttempts = (units: readonly OperatorUnitView[]): readonly RunAttempt[] =>
+  units.flatMap((unit) => unit.attempts.map((attempt) => ({ unit_id: unit.unit_id, attempt })));

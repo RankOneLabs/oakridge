@@ -1,34 +1,20 @@
-import type { RuntimeModelSelection } from "../../types";
-import type { OperatorDefinitionBundle, OperatorSessionSettings } from "../operator-contracts";
+import type { OperatorDefinitionBundle, OperatorRunConfig, OperatorSessionSettings } from "../operator-contracts";
+import type { RoleSelection } from "./runtime-selection";
 
-export interface RoleSelections {
-  readonly planner: RuntimeModelSelection;
-  readonly worker: RuntimeModelSelection;
-}
+export interface RoleSelections { readonly planner: RoleSelection; readonly worker: RoleSelection }
 
-const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
+/** The stages the planner settings drive; every other stage takes the worker settings. */
+export const PLANNER_STAGES: ReadonlySet<string> = new Set(["analysis", "planning", "briefs"]);
 
-/** A bundle opts into the shared planner/worker controls through its pinned root schema. */
-export function supportsRoleSessionInput(bundle: OperatorDefinitionBundle | undefined): boolean {
-  if (!bundle || !Array.isArray(bundle.scopes) || !Array.isArray(bundle.schemas)) return false;
-  const root = bundle.scopes.find((scope) => scope.key === bundle.root);
-  const rootShape = bundle.schemas.find((schema) => schema.key === root?.input_schema)?.shape;
-  if (rootShape?.kind !== "record") return false;
-  const sessionsField = rootShape.fields.find((field) => field.key === "sessions");
-  const sessionsShape = bundle.schemas.find((schema) => schema.key === sessionsField?.schema)?.shape;
-  return sessionsShape?.kind === "record" && ["planner", "worker"].every((key) =>
-    sessionsShape.fields.some((field) => field.key === key && field.schema === "session_settings"));
-}
+/** The stages a definition's units run, each once. */
+export const selectDefinitionStages = (bundle: OperatorDefinitionBundle | undefined): readonly string[] =>
+  [...new Set((bundle?.units ?? []).flatMap((unit) => unit.stage === null ? [] : [unit.stage]))];
 
-function sessionSettings(selection: RuntimeModelSelection): OperatorSessionSettings {
-  return { runtime: selection.runtime, model: selection.model, effort: selection.effort ?? null };
-}
+const sessionSettings = (selection: RoleSelection): OperatorSessionSettings =>
+  ({ harness: selection.runtime, model: selection.model, effort: selection.effort ?? null });
 
-/** Preserve any stage-specific settings while setting the two launch-wide roles. */
-export function withRoleSessionInput(input: unknown, selections: RoleSelections): unknown {
-  if (!isRecord(input)) return input;
-  const sessions = isRecord(input.sessions) ? input.sessions : {};
-  return { ...input, sessions: { ...sessions,
-    planner: sessionSettings(selections.planner), worker: sessionSettings(selections.worker) } };
+/** The launch config: each stage's sessions start with its role's runtime, model and effort. */
+export function selectRunConfig(stages: readonly string[], selections: RoleSelections): OperatorRunConfig {
+  return { sessions: Object.fromEntries(stages.map((stage) =>
+    [stage, sessionSettings(PLANNER_STAGES.has(stage) ? selections.planner : selections.worker)])) };
 }

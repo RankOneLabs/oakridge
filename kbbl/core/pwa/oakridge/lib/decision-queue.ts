@@ -1,19 +1,24 @@
-import type { OperatorCommandDefinition, OperatorInboxItem, OperatorScopeView } from "../operator-contracts";
-import { selectCommandTargets } from "./operator-selectors";
+import type { OperatorDecisionDefinition, OperatorInboxItem, OperatorUnitView } from "../operator-contracts";
+import { selectTargetRevisionId } from "./operator-selectors";
 
-export const selectActionableScopes = (scopes: readonly OperatorScopeView[]): readonly OperatorScopeView[] =>
-  scopes.filter((scope) => scope.commands.length > 0 && !scope.is_terminal);
+/** The decisions that ask for the operator: every one but the run's own cancel, which a live root always offers. */
+export const selectUnitAsks = (unit: OperatorUnitView): readonly OperatorDecisionDefinition[] =>
+  unit.decisions.filter((decision) => decision.submit.kind !== "cancel");
 
-export const selectArtifactCommands = (scope: OperatorScopeView, revisionId: string): readonly OperatorCommandDefinition[] =>
-  scope.commands.filter((command) => selectCommandTargets(scope, command)?.some((target) => target.identity === revisionId));
+export const selectActionableUnits = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
+  units.filter((unit) => selectUnitAsks(unit).length > 0 && !unit.is_terminal);
+
+/** The decisions made on one revision. */
+export const selectArtifactDecisions = (unit: OperatorUnitView, revisionId: string): readonly OperatorDecisionDefinition[] =>
+  unit.decisions.filter((decision) => selectTargetRevisionId(decision) === revisionId);
 
 export type OperatorDecisionQueueEntry =
   | { readonly kind: "live"; readonly item: OperatorInboxItem }
   | { readonly kind: "settled"; readonly item: OperatorInboxItem };
 
 const itemKey = (item: OperatorInboxItem): string => JSON.stringify([
-  item.run_id, item.scope_id, item.kind,
-  item.kind === "command" ? item.key : item.kind === "wait" ? item.reason : item.detail,
+  item.run_id, item.unit_id, item.kind,
+  item.kind === "decision" ? item.key : item.kind === "waiting" ? item.reason : item.detail,
 ]);
 
 /** Preserve row position across refreshes so disappearing work cannot move another action beneath the pointer. */

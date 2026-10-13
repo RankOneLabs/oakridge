@@ -49,7 +49,7 @@ export interface StubKbbl {
 
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const snapshot = (session: StubSession) => ({ sid: session.sid, status: session.status === "live" ? "live" : "ended",
-  lastActivityTs: new Date().toISOString(), endReason: session.status === "live" ? null : "user_closed" });
+  lastActivityTs: new Date().toISOString() });
 
 export function startStubKbbl(script: AgentScript): StubKbbl {
   const sessions = new Map<string, StubSession>();
@@ -122,7 +122,7 @@ export function startStubKbbl(script: AgentScript): StubKbbl {
     if (request.method === "GET" && parts[0] === "sessions" && parts[1] === "resumable" && parts[3] === "terminal") {
       const session = sessions.get(parts[2]!);
       if (!session) return Response.json({ error: "no session", code: "session_not_found" }, { status: 404 });
-      return Response.json({ session: snapshot(session), exit_code: session.status === "live" ? 0 : 1 });
+      return Response.json({ session: snapshot(session), end: session.status === "live" ? { kind: "succeeded" } : { kind: "closed" } });
     }
     if (request.method === "DELETE" && parts[0] === "sessions" && parts.length === 2) {
       const session = sessions.get(parts[1]!);

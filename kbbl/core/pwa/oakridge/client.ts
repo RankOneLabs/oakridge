@@ -2,9 +2,8 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorStartPinnedRunRequest, OperatorStartedRun, OperatorRunView, OperatorDefinitionSummary, OperatorScopeHistory, OperatorPinnedDefinition, OperatorScopeView, OperatorCommandReceipt, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow } from "./operator-contracts";
-import type { WorkflowAuthoring } from "../../../../workflow-config/src/authoring";
-import type { OperatorCommandSubmission } from "./lib/operator-drafts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
+import type { OperatorDecisionSubmission } from "./lib/operator-drafts";
 
 export { selectFailureDetail } from "./lib/client-errors";
 const API = "/oakridge/api";
@@ -42,24 +41,24 @@ export const fetchOperatorInbox = () => readAllInboxPages(get);
 export const fetchOperatorRuns = (is_archived = false): Promise<OperatorRunView[]> => readAllPages(is_archived ? "/api/runs?archived=true" : "/api/runs");
 export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get(`/api/runs/${encodeURIComponent(runId)}`);
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
-export const fetchOperatorScope = (runId: string, scopeId: string): Promise<OperatorScopeView> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}`);
-export const fetchOperatorScopeHistory = (runId: string, scopeId: string): Promise<OperatorScopeHistory> => get(`/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/history`);
+export const fetchOperatorUnit = (runId: string, unitId: string): Promise<OperatorUnitView> => get(`/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}`);
+export const fetchOperatorUnitHistory = (runId: string, unitId: string): Promise<OperatorUnitHistory> => get(`/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}/history`);
 
-const revisionThreadsPath = (runId: string, scopeId: string, revisionId: string): string =>
-  `/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/revisions/${encodeURIComponent(revisionId)}/threads`;
-const scopeThreadPath = (runId: string, scopeId: string, threadId: string): string =>
-  `/api/runs/${encodeURIComponent(runId)}/scopes/${encodeURIComponent(scopeId)}/threads/${encodeURIComponent(threadId)}`;
+const revisionThreadsPath = (runId: string, unitId: string, revisionId: string): string =>
+  `/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}/revisions/${encodeURIComponent(revisionId)}/threads`;
+const unitThreadPath = (runId: string, unitId: string, threadId: string): string =>
+  `/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}/threads/${encodeURIComponent(threadId)}`;
 
-export const fetchOperatorThreads = (runId: string, scopeId: string, revisionId: string): Promise<readonly OperatorCollaborationThreadView[]> =>
-  get(revisionThreadsPath(runId, scopeId, revisionId));
-export const createOperatorThread = (input: { readonly run_id: string; readonly scope_id: string; readonly revision_id: string; readonly request_key: string; readonly title: string; readonly anchor: string | null }): Promise<OperatorCollaborationThreadRow> =>
-  post(revisionThreadsPath(input.run_id, input.scope_id, input.revision_id), { request_key: input.request_key, title: input.title, anchor: input.anchor });
-export const addOperatorMessage = (input: { readonly run_id: string; readonly scope_id: string; readonly thread_id: string; readonly request_key: string; readonly text: string; readonly author: string; readonly ping: boolean }): Promise<{ readonly message: OperatorCollaborationMessageRow }> =>
-  post(`${scopeThreadPath(input.run_id, input.scope_id, input.thread_id)}/messages`, { request_key: input.request_key, text: input.text, author: input.author, ping: input.ping });
-export const addOperatorReviewItem = (input: { readonly run_id: string; readonly scope_id: string; readonly thread_id: string; readonly request_key: string; readonly title: string; readonly detail: string; readonly status: string }): Promise<OperatorReviewItemRow> =>
-  post(`${scopeThreadPath(input.run_id, input.scope_id, input.thread_id)}/review-items`, { request_key: input.request_key, title: input.title, detail: input.detail, status: input.status });
+export const fetchOperatorThreads = (runId: string, unitId: string, revisionId: string): Promise<readonly OperatorCollaborationThreadView[]> =>
+  get(revisionThreadsPath(runId, unitId, revisionId));
+export const createOperatorThread = (input: { readonly run_id: string; readonly unit_id: string; readonly revision_id: string; readonly request_key: string; readonly title: string; readonly anchor: string | null }): Promise<OperatorCollaborationThreadRow> =>
+  post(revisionThreadsPath(input.run_id, input.unit_id, input.revision_id), { request_key: input.request_key, title: input.title, anchor: input.anchor });
+export const addOperatorMessage = (input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string; readonly request_key: string; readonly text: string; readonly author: string; readonly ping: boolean }): Promise<{ readonly message: OperatorCollaborationMessageRow }> =>
+  post(`${unitThreadPath(input.run_id, input.unit_id, input.thread_id)}/messages`, { request_key: input.request_key, text: input.text, author: input.author, ping: input.ping });
+export const addOperatorReviewItem = (input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string; readonly request_key: string; readonly title: string; readonly detail: string; readonly status: string }): Promise<OperatorReviewItemRow> =>
+  post(`${unitThreadPath(input.run_id, input.unit_id, input.thread_id)}/review-items`, { request_key: input.request_key, title: input.title, detail: input.detail, status: input.status });
 export const fetchOperatorDefinitions = (is_archived = false): Promise<OperatorDefinitionSummary[]> => readAllPages(is_archived ? "/api/definitions?archived=true" : "/api/definitions");
-export const fetchOperatorDefinitionDetail = (bundleId: string): Promise<unknown> => get(`/api/definitions/${encodeURIComponent(bundleId)}`);
+export const fetchOperatorDefinitionDetail = (bundleId: string): Promise<OperatorDefinitionDetail> => get(`/api/definitions/${encodeURIComponent(bundleId)}`);
 export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> => is_archived
   ? post(`/api/runs/${encodeURIComponent(runId)}/archive`, {}) : post(`/api/runs/${encodeURIComponent(runId)}/unarchive`, {});
 export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boolean): Promise<unknown> => is_archived
@@ -67,27 +66,39 @@ export const setOperatorDefinitionArchived = (bundleId: string, is_archived: boo
 export const fetchOperatorProjects = async (): Promise<readonly OperatorProjectView[]> => (await get<OperatorProjectList>("/api/projects")).items;
 export const createOperatorProject = (draft: OperatorProjectDraft): Promise<OperatorProjectView> => post("/api/projects", draft);
 export const updateOperatorProject = (projectId: string, draft: OperatorProjectDraft): Promise<OperatorProjectView> => put(`/api/projects/${encodeURIComponent(projectId)}`, draft);
-/** Compilation is a separate authority check before the UI enables pinning. */
-export const compileOperatorDefinition = (authoring: WorkflowAuthoring): Promise<unknown> => post("/api/definitions/compile", { authoring });
-export const pinOperatorDefinition = (authoring: WorkflowAuthoring): Promise<OperatorDefinitionSummary> => post("/api/definitions", { authoring });
-export const launchOperatorRun = (request: OperatorStartPinnedRunRequest): Promise<OperatorStartedRun> => post("/runs", request);
-const inFlightCommands = new Map<string, Promise<OperatorCommandReceipt>>();
-/**
- * The authority scopes command idempotency by (run_id, scope_id, request_id).
- * This dedup shares that identity rather than a prefix of it, so an id reused
- * across scopes cannot hand one scope's receipt to another scope's caller.
- */
-const commandIdentity = (input: OperatorCommandSubmission): string =>
-  JSON.stringify([input.run_id, input.scope_id, input.request_id]);
-export function submitOperatorCommand(input: OperatorCommandSubmission): Promise<OperatorCommandReceipt> {
-  const identity = commandIdentity(input);
-  const active = inFlightCommands.get(identity);
+/** Compiling is the authority's check before the editor offers to pin. */
+export const compileOperatorDefinition = (workflow: OperatorWorkflow): Promise<OperatorCompiledWorkflow> => post("/api/definitions/compile", workflow);
+export const pinOperatorDefinition = (workflow: OperatorWorkflow): Promise<OperatorDefinitionSummary> => post("/api/definitions", workflow);
+export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorIngressCommitted> => post("/api/runs", request);
+
+const runPath = (runId: string): string => `/api/runs/${encodeURIComponent(runId)}`;
+const unitPath = (runId: string, unitId: string): string => `${runPath(runId)}/units/${encodeURIComponent(unitId)}`;
+
+/** An operator's edit of an agent's artifact: a new revision after the one the operator edited. */
+export interface OperatorArtifactEdit extends OperatorPublishRequest { readonly run_id: string; readonly unit_id: string; readonly artifact_key: string }
+export const publishOperatorEdit = ({ run_id, unit_id, artifact_key, ...request }: OperatorArtifactEdit): Promise<OperatorIngressCommitted> =>
+  put(`${unitPath(run_id, unit_id)}/artifacts/${encodeURIComponent(artifact_key)}`, request);
+
+/** Each decision goes to the route its `submit` names. */
+function deliverDecision(input: OperatorDecisionSubmission): Promise<OperatorIngressCommitted> {
+  const { submit } = input;
+  if (submit.kind === "review") {
+    const request: OperatorDecideRequest = { request_id: input.request_id, decision: submit.decision, target: submit.target_revision_id, payload: input.payload };
+    return post(`${unitPath(input.run_id, input.unit_id)}/reviews/${encodeURIComponent(submit.review)}/decide`, request);
+  }
+  const request: OperatorIngressRequest = { request_id: input.request_id };
+  if (submit.kind === "retry") return post(`${unitPath(input.run_id, input.unit_id)}/workers/${encodeURIComponent(submit.worker)}/retry`, request);
+  return post(`${runPath(input.run_id)}/cancel`, request);
+}
+
+const inFlightDecisions = new Map<string, Promise<OperatorIngressCommitted>>();
+/** One delivery per request id in flight; a resubmission after it settles is answered by the authority's replay. */
+export function submitOperatorDecision(input: OperatorDecisionSubmission): Promise<OperatorIngressCommitted> {
+  const identity = JSON.stringify([input.run_id, input.request_id]);
+  const active = inFlightDecisions.get(identity);
   if (active) return active;
-  const delivery = post<OperatorCommandReceipt>(`/api/runs/${encodeURIComponent(input.run_id)}/scopes/${encodeURIComponent(input.scope_id)}/commands`, {
-    scope_id: input.scope_id, command_key: input.command_key, expected_scope_version: input.owner_version,
-    targets: input.targets, payload: input.payload, request_id: input.request_id,
-  });
-  inFlightCommands.set(identity, delivery);
-  void delivery.finally(() => { if (inFlightCommands.get(identity) === delivery) inFlightCommands.delete(identity); }).catch(() => undefined);
+  const delivery = deliverDecision(input);
+  inFlightDecisions.set(identity, delivery);
+  void delivery.finally(() => { if (inFlightDecisions.get(identity) === delivery) inFlightDecisions.delete(identity); }).catch(() => undefined);
   return delivery;
 }

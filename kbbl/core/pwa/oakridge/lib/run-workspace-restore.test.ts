@@ -3,58 +3,58 @@ import { describe, expect, it } from "vitest";
 import type { Sid } from "../../lib/ids";
 import { formatRunWorkspaceHash, readHashRoute } from "../../lib/hash";
 import {
-  makeBuildBriefFixture, makeBuildResultFixture, makeRunDetail, makeRunScopeSummary, makeScopeView, makeScopeWithOutput,
+  makeBuildBriefFixture, makeBuildResultFixture, makeRunView, makeRunUnitSummary, makeUnitView, makeUnitWithArtifact,
   makeSessionSnapshot,
 } from "../__fixtures__/read-models";
 import {
-  selectArtifactInScopes, selectLoadedScopes, selectRunArtifacts, selectRunScope, selectScopeDetail,
+  selectArtifactInUnits, selectLoadedUnits, selectRunArtifacts, selectRunUnit, selectUnitDetail,
 } from "./run-overview";
 
 describe("generated workspace route resolution", () => {
   const brief = makeBuildBriefFixture();
   const result = makeBuildResultFixture();
-  const scopes = [
-    makeScopeWithOutput({ body: brief.body, output_key: "brief", revision_id: "brief-revision",
-      scope: { scope_id: "brief-scope" } }),
-    makeScopeWithOutput({ body: result.body, output_key: "build_result", revision_id: "result-revision",
-      scope: { scope_id: "build-scope" } }),
+  const units = [
+    makeUnitWithArtifact({ body: brief.body, artifact_key: "brief", revision_id: "brief-revision",
+      unit: { unit_id: "brief-unit" } }),
+    makeUnitWithArtifact({ body: result.body, artifact_key: "build_result", revision_id: "result-revision",
+      unit: { unit_id: "build-unit" } }),
   ];
 
-  it("indexes the current artifact revisions from all loaded scopes", () => {
-    expect(selectRunArtifacts(scopes).map((entry) => entry.revision.id)).toEqual(["brief-revision", "result-revision"]);
+  it("indexes the current artifact revisions from all loaded units", () => {
+    expect(selectRunArtifacts(units).map((entry) => entry.revision.id)).toEqual(["brief-revision", "result-revision"]);
   });
 
-  it("does not resolve an artifact revision absent from current scope projections", () => {
-    expect(selectArtifactInScopes(scopes, "deleted-revision")).toBeNull();
-    expect(selectArtifactInScopes(scopes, "result-revision")?.scope_id).toBe("build-scope");
+  it("does not resolve an artifact revision absent from current unit projections", () => {
+    expect(selectArtifactInUnits(units, "deleted-revision")).toBeNull();
+    expect(selectArtifactInUnits(units, "result-revision")?.unit_id).toBe("build-unit");
   });
 
-  it("uses an explicit scope route before the root fallback", () => {
-    const run = makeRunDetail({ scopes: [
-      makeRunScopeSummary({ scope_id: "root", scope_key: "development" }),
-      makeRunScopeSummary({ scope_id: "build", scope_key: "build" }),
+  it("uses an explicit unit route before the root fallback", () => {
+    const run = makeRunView({ units: [
+      makeRunUnitSummary({ unit_id: "root", unit_key: "development" }),
+      makeRunUnitSummary({ unit_id: "build", unit_key: "build" }),
     ] });
-    expect(selectRunScope(run, "build", "development")?.scope_id).toBe("build");
-    expect(selectRunScope(run, "missing", "development")?.scope_id).toBe("root");
+    expect(selectRunUnit(run, "build", "development")?.unit_id).toBe("build");
+    expect(selectRunUnit(run, "missing", "development")?.unit_id).toBe("root");
   });
 
-  it("does not display a deleted scope detail from a stale route ID", () => {
-    expect(selectScopeDetail(scopes, "deleted-scope")).toBeNull();
-    expect(selectScopeDetail(scopes, "brief-scope")?.scope_id).toBe("brief-scope");
+  it("does not display a deleted unit detail from a stale route ID", () => {
+    expect(selectUnitDetail(units, "deleted-unit")).toBeNull();
+    expect(selectUnitDetail(units, "brief-unit")?.unit_id).toBe("brief-unit");
   });
 
-  it("keeps successfully loaded scopes when another scope read is unavailable", () => {
-    expect(selectLoadedScopes([scopes[0], undefined, scopes[1]])).toEqual(scopes);
-    expect(selectLoadedScopes([undefined])).toEqual([]);
+  it("keeps successfully loaded units when another unit read is unavailable", () => {
+    expect(selectLoadedUnits([units[0], undefined, units[1]])).toEqual(units);
+    expect(selectLoadedUnits([undefined])).toEqual([]);
   });
 
   it("retains an explicit session route without a separate attempt-list read", () => {
     const sid = makeSessionSnapshot("sid-prior").sid as Sid;
-    const route = formatRunWorkspaceHash(makeRunDetail().run_id, { kind: "session", session_id: sid });
+    const route = formatRunWorkspaceHash(makeRunView().run_id, { kind: "session", session_id: sid });
     expect(readHashRoute(`#${route}`)).toMatchObject({ route: { pane: { kind: "session", session_id: "sid-prior" } } });
   });
 
-  it("defaults to the first generated scope only when no scope route was supplied", () => {
-    expect(selectScopeDetail([makeScopeView({ scope_id: "root" })], null)?.scope_id).toBe("root");
+  it("defaults to the first generated unit only when no unit route was supplied", () => {
+    expect(selectUnitDetail([makeUnitView({ unit_id: "root" })], null)?.unit_id).toBe("root");
   });
 });

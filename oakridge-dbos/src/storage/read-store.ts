@@ -1,8 +1,9 @@
 import { sql, type Kysely } from "kysely";
 import type { UnitStatus, Workflow } from "../core-client/core-types";
-import type { RunId } from "../domain/primitives";
+import type { RunId, UnitId } from "../domain/primitives";
 import type { OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
+import type { SessionHold } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 import type { CompiledWorkflow, WantedActions } from "./json-column-types";
@@ -224,6 +225,14 @@ export async function readSessionAttempt(db: Kysely<DB>, input: { readonly run_i
       .orderBy("seq", "desc").executeTakeFirst();
     return running ? { ...running, kbbl_session_id: minted.kbbl_session_id } : null;
   });
+}
+
+/** The running attempt using a kbbl session, in any run, or null when none is. */
+export async function readSessionHold(db: Kysely<DB>, session_id: string): Promise<SessionHold | null> {
+  const running = await db.selectFrom("authority.attempt").select(["run_id", "unit_id", "worker", "action_id"])
+    .where("kbbl_session_id", "=", session_id).where((eb) => eb(eb.ref("status", "->>").key("kind"), "=", "running"))
+    .orderBy("created_at", "desc").executeTakeFirst();
+  return running ? { session_id, run_id: running.run_id as RunId, unit_id: running.unit_id as UnitId, worker: running.worker, action_id: running.action_id } : null;
 }
 
 /** Events newest first: a run's, or one unit's. A launch or cancel names no unit, so it is in the run's history only. */

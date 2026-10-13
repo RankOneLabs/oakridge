@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, Cause, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RuntimeValue, SessionPolicy, UnitStatus, WantedActions, Writer } from "./json-column-types";
+import type { AttemptStatus, Cause, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedActions, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "stop_requested" | "stopped";
@@ -176,10 +176,6 @@ export interface AuthorityProject {
   integration_branch: string | null;
   name: string;
   repo_dir: string;
-  /**
-   * @type {SessionPolicy}
-   */
-  session_policy: NullableJsonColumn<SessionPolicy>;
 }
 
 export interface AuthorityPromptContent {
@@ -217,6 +213,10 @@ export interface AuthorityReviewItem {
 
 export interface AuthorityRun {
   archived_at: Timestamp | null;
+  /**
+   * @type {RunConfig}
+   */
+  config: NullableJsonColumn<RunConfig>;
   created_at: Generated<Timestamp>;
   definition_bundle_id: string;
   id: string;

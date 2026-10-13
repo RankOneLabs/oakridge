@@ -5,7 +5,7 @@
 //! Precedence, loosest first: `or`, `and`, `not`, a comparison (`==`, `!=`,
 //! `>`, `>=`, `<`, `<=`), then an atom: a call, a record literal, a literal or
 //! a read. Inside `every`, `any`, `filter` and `map`, `item` is the element.
-use crate::scopes::{field_type, item_type, parse_type, reject, render_type, resolve_type};
+use crate::workflow::{field_type, item_type, parse_type, reject, render_type, resolve_type};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 

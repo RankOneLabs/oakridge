@@ -54,19 +54,6 @@ export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): strin
   return lines.join("\n");
 }
 
-/**
- * A cohort session's row label once it has a workflow identity: role and
- * unit id, with none of the stage-instance uuid the raw `session_name`
- * template embeds. The operator role is also rendered as its own element
- * beside this label — the two are complementary, not duplicates: the badge
- * is a quick visual scan target, this is the identifying text.
- */
-export function selectSessionCohortLabel(
-  workflow: NonNullable<SessionSnapshot["workflow"]>,
-): string {
-  return `${workflow.operatorRole ?? "session"}-${workflow.unitId}`;
-}
-
 export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSnapshot[] {
   // Sort by last activity, newest first. Pending-approval sessions don't
   // float — the pending badge is visible enough, and operators told us
@@ -81,11 +68,11 @@ export function selectSessionRunLabel(
   return runs.find((run) => run.run_id === runId)?.run_id ?? null;
 }
 
-export function selectSessionScopeLabel(
-  scopeId: string,
+export function selectSessionUnitLabel(
+  unitId: string,
   run: OperatorRunView | undefined,
 ): string | null {
-  return run?.scopes.find((scope) => scope.scope_id === scopeId)?.label
+  return run?.units.find((unit) => unit.unit_id === unitId)?.label
     ?? null;
 }
 

@@ -1,16 +1,19 @@
 import { describe, expect, test } from "vitest";
-import { makeDefinitionSummary, makeWorkflowAuthoring } from "../__fixtures__/read-models";
-import { selectCloneAuthoring, selectDefinitionSummary, selectStoredAuthoring } from "./workflow-definition-form";
+import { makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
+import { formatWorkflowText, parseWorkflowText, selectCloneWorkflow, selectDefinitionSummary } from "./workflow-definition-form";
 
-describe("pinned workflow definition authoring", () => {
-  test("rejects authoring details whose version the editor cannot understand", () => {
-    expect(selectStoredAuthoring({ authoring: { ...makeWorkflowAuthoring(), authoring_version: 2 } })).toBeNull();
+describe("workflow definition editing", () => {
+  test("reads the editor's text back as the workflow it formats", () => {
+    const workflow = makeWorkflowSource();
+    expect(parseWorkflowText(formatWorkflowText(workflow))).toEqual({ ok: true, value: workflow });
   });
 
-  test("reads and clones valid stored authoring", () => {
-    const authoring = makeWorkflowAuthoring({ key: "workflow" });
-    expect(selectStoredAuthoring({ authoring })).toEqual(authoring);
-    expect(selectCloneAuthoring(authoring).key).toBe("workflow-copy");
+  test("refuses text that is not JSON, or JSON that is not a workflow", () => {
+    expect([parseWorkflowText("{").ok, parseWorkflowText('{"workflow": "x"}').ok]).toEqual([false, false]);
+  });
+
+  test("renames a clone so pinning it leaves its source as it is", () => {
+    expect(selectCloneWorkflow(makeWorkflowSource({ workflow: "development" })).workflow).toBe("development_copy");
   });
 
   test("finds a pinned definition in the archived catalog when absent from active definitions", () => {

@@ -16,9 +16,10 @@ const draft = (name: string) => ({ name, repo_dir: `/repos/${name}`, forge_repos
 const announcements = (key: string) => authority.db.selectFrom("authority.operator_event").select("payload").where("run_key", "=", key).execute();
 
 test("projects are created, listed and edited, with names kept unique", async () => {
-  const id = crypto.randomUUID() as ProjectId;
-  const created = await createProject(authority.db, id, draft("alpha"));
-  const duplicate = await createProject(authority.db, crypto.randomUUID() as ProjectId, draft("alpha"));
+  const created = await createProject(authority.db, draft("alpha"));
+  if (!created.ok) throw new Error("project not created");
+  const id = created.value.id;
+  const duplicate = await createProject(authority.db, draft("alpha"));
   const renamed = await updateProject(authority.db, id, { ...draft("beta"), forge_repository: { provider: "github", owner: "o", name: "n" } });
   const missing = await updateProject(authority.db, crypto.randomUUID() as ProjectId, draft("gamma"));
   const listed = await listProjects(authority.db);

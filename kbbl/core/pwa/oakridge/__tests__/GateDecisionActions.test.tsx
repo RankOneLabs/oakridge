@@ -1,67 +1,58 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { makeCommand, makeCommandReceipt, makeDevelopmentSchemas, makeScopeView } from "../__fixtures__/read-models";
+import { makeDecision, makeIngressCommitted, makeDevelopmentSchemas, makeUnitView } from "../__fixtures__/read-models";
 import { GateDecisionActions } from "../components/organisms/GateDecisionActions";
 
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 
-const approve = makeCommand({ payload_schema: "text" });
+const approveOn = (target_revision_id: string) => makeDecision({ payload_schema: "{}",
+  submit: { kind: "review", review: "analysis_review", decision: "approve", effect: "approve", target_revision_id } });
 
-describe("GateDecisionActions on generated scope targets", () => {
-  test("submits the selected edited revision as the observed command target", async () => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(makeCommandReceipt()));
+describe("GateDecisionActions on a revision", () => {
+  test("submits the decision on the revision it targets", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(makeIngressCommitted()));
     vi.stubGlobal("fetch", fetch);
-    const scope = makeScopeView({ commands: [approve], command_targets: {
-      approve: [{ identity: "revision-edited", version: 2 }],
-    } });
-    render(<GateDecisionActions scope={scope} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
+    const unit = makeUnitView({ decisions: [approveOn("revision-edited")] });
+    render(<GateDecisionActions unit={unit} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Submit Approve" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     const request = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-    expect(request.targets).toEqual([{ identity: "revision-edited", version: 2 }]);
+    expect([request.decision, request.target]).toEqual(["approve", "revision-edited"]);
   });
 
-  test("shows a decision only for its observed revision after a revision switch", () => {
-    const scope = makeScopeView({ commands: [approve], command_targets: {
-      approve: [{ identity: "revision-edited", version: 2 }],
-    } });
-    const view = render(<GateDecisionActions scope={scope} revisionId="revision-root" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
+  test("shows a decision only on its target revision after a revision switch", () => {
+    const unit = makeUnitView({ decisions: [approveOn("revision-edited")] });
+    const view = render(<GateDecisionActions unit={unit} revisionId="revision-root" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
     expect(screen.queryByTestId("or-gate-actions")).toBeNull();
-    view.rerender(<GateDecisionActions scope={scope} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
+    view.rerender(<GateDecisionActions unit={unit} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
     expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
   });
 
-  test("ignores completion of a previous revision's command after switching revisions", async () => {
+  test("ignores completion of a previous revision's decision after switching revisions", async () => {
     let resolvePrevious: ((response: Response) => void) | undefined;
     const fetch = vi.fn(async () => new Promise<Response>((resolve) => { resolvePrevious = resolve; }));
     vi.stubGlobal("fetch", fetch);
     const onRefresh = vi.fn();
-    const first = makeScopeView({ commands: [approve], command_targets: {
-      approve: [{ identity: "revision-a", version: 1 }],
-    } });
-    const next = makeScopeView({ commands: [approve], command_targets: {
-      approve: [{ identity: "revision-b", version: 2 }],
-    } });
-    const view = render(<GateDecisionActions scope={first} revisionId="revision-a" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
+    const first = makeUnitView({ decisions: [approveOn("revision-a")] });
+    const next = makeUnitView({ decisions: [approveOn("revision-b")] });
+    const view = render(<GateDecisionActions unit={first} revisionId="revision-a" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
     fireEvent.click(screen.getByRole("button", { name: "Submit Approve" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    view.rerender(<GateDecisionActions scope={next} revisionId="revision-b" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
-    await act(async () => { resolvePrevious?.(Response.json(makeCommandReceipt())); });
+    view.rerender(<GateDecisionActions unit={next} revisionId="revision-b" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
+    await act(async () => { resolvePrevious?.(Response.json(makeIngressCommitted())); });
     expect(onRefresh).not.toHaveBeenCalled();
-    expect(screen.queryByText("Command accepted.")).toBeNull();
+    expect(screen.queryByText("Decision accepted.")).toBeNull();
     expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
   });
 
-  test("removes decision controls when the scope no longer offers a command", () => {
-    const fetch = vi.fn(async () => Response.json(makeCommandReceipt()));
+  test("removes decision controls when the unit no longer offers a decision", () => {
+    const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
     vi.stubGlobal("fetch", fetch);
-    const actionable = makeScopeView({ commands: [approve], command_targets: {
-      approve: [{ identity: "revision-1", version: 1 }],
-    } });
-    const view = render(<GateDecisionActions scope={actionable} revisionId="revision-1" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
+    const actionable = makeUnitView({ decisions: [approveOn("revision-1")] });
+    const view = render(<GateDecisionActions unit={actionable} revisionId="revision-1" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
     expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
-    view.rerender(<GateDecisionActions scope={makeScopeView({ is_terminal: true, commands: [] })}
+    view.rerender(<GateDecisionActions unit={makeUnitView({ is_terminal: true, decisions: [] })}
       revisionId="revision-1" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
     expect(screen.queryByTestId("or-gate-actions")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();

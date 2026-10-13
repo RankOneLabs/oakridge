@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { RunConfig } from "../src/domain/run-config";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -26,14 +27,15 @@ const snapshot = (status = "live", extra: object = {}) => ({ sid: "sid-1", statu
 const run_id = "run-1";
 const unit = "run-1/document";
 const writer: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
-function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean } = {}): EffectInstruction {
+function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean;
+  readonly config?: RunConfig } = {}): EffectInstruction {
   const workflow = sampleWorkflow("review-loop");
   const declared = workflow.stages.document!.workers.writer!;
   const fresh = overrides.fresh && declared.kind === "agent"
     ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...declared, session: "fresh" as const } } } } }
     : workflow;
   const action = overrides.action ?? writer;
-  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", action, seq: 0,
+  const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", config: overrides.config ?? null, action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
     resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, ...overrides.resolved } });
   if (!selected.ok) throw new Error(selected.error.detail);
@@ -79,9 +81,9 @@ test("a delivered input's receipt reports its turn", async () => {
 
 test("a session reading names how it ended: closed, failed with kbbl's code, or succeeded", async () => {
   const bodies = [
-    Response.json({ session: { ...snapshot("ended"), endReason: "user_closed" }, exit_code: 1 }),
-    Response.json({ session: { ...snapshot("ended"), endReason: "subprocess_exited" }, exit_code: 1, failure: { code: "requested_model_unsupported", detail: "no such model" } }),
-    Response.json({ session: snapshot(), exit_code: 0 }),
+    Response.json({ session: snapshot("ended"), end: { kind: "closed" } }),
+    Response.json({ session: snapshot("ended"), end: { kind: "failed", code: "requested_model_unsupported", detail: "no such model" } }),
+    Response.json({ session: snapshot(), end: { kind: "succeeded" } }),
     Response.json({ pending: true, session: snapshot() }, { status: 202 }),
   ];
   const client = new KbblClient({ base_url: "http://kbbl.test", fetch: async () => bodies.shift()! });
@@ -93,13 +95,15 @@ test("a session reading names how it ended: closed, failed with kbbl's code, or 
   expect(ends).toEqual([{ kind: "closed" }, { kind: "failed", code: "requested_model_unsupported", detail: "no such model" }, { kind: "succeeded" }, "pending"]);
 });
 
-test("a close fences only when asked, and an unknown session is already stopped", async () => {
+test("a close names its attempt, fencing only when asked, and an unknown session is already stopped", async () => {
   const { calls, fetch } = recording((call) => new Response(null, { status: call.url.includes("gone") ? 404 : 200 }));
   const client = new KbblClient({ base_url: "http://kbbl.test", fetch });
-  const results = [await client.close("sid-1", "action-1"), await client.close("sid-1", null), await client.close("gone", null)];
+  const results = [await client.close("sid-1", { action_id: "action-1", is_fence: true }),
+    await client.close("sid-1", { action_id: "action-2", is_fence: false }), await client.close("gone", { action_id: "action-3", is_fence: false })];
   expect({ kinds: results.map((result) => result.kind), urls: calls.map((call) => call.url) }).toEqual({
     kinds: ["acknowledged", "acknowledged", "acknowledged"],
-    urls: ["http://kbbl.test/sessions/sid-1?fenced_by=action-1", "http://kbbl.test/sessions/sid-1", "http://kbbl.test/sessions/gone"] });
+    urls: ["http://kbbl.test/sessions/sid-1?fenced_by=action-1", "http://kbbl.test/sessions/sid-1?closed_by=action-2",
+      "http://kbbl.test/sessions/gone?closed_by=action-3"] });
 });
 
 test("silence is measured from kbbl's last activity, and absent activity is not silence", () => {
@@ -150,10 +154,16 @@ test("a repository workspace runs in a worktree branched from the prepared head;
     .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "abc123", true] });
 });
 
+test("a session starts with the runtime, model and effort the run chose for its stage", () => {
+  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } }),
+    { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  expect([start.runtime, start.model, start.effort]).toEqual(["codex", "gpt-6-sol", "high"]);
+});
+
 test("observing delivers the task under the action's key and reads its turn", async () => {
   const statuses = ["accepted", "succeeded", "failed"];
   const { calls, fetch } = recording((call) => call.method === "GET"
-    ? Response.json({ session: snapshot(), exit_code: 0 })
+    ? Response.json({ session: snapshot(), end: { kind: "succeeded" } })
     : Response.json({ accepted: true, status: statuses.shift() }));
   const provider = createAgentProvider(config(fetch, { now: () => Date.parse("2026-10-12T12:00:01.000Z") }));
   const results = [];
@@ -167,7 +177,7 @@ test("observing delivers the task under the action's key and reads its turn", as
 
 test("a session closed under a running task fails the attempt as closed", async () => {
   const { fetch } = recording((call) => call.method === "GET"
-    ? Response.json({ session: { ...snapshot("ended"), endReason: "user_closed" }, exit_code: 1 })
+    ? Response.json({ session: snapshot("ended"), end: { kind: "closed" } })
     : Response.json({ error: "session is ended", code: "session_not_found" }, { status: 404 }));
   const observed = await createAgentProvider(config(fetch)).observe(instructionFor(), { task: "t" }, session);
   expect(observed.kind === "acknowledged" && observed.value.kind === "terminal" && observed.value.result.kind === "failed" ? observed.value.result.code : null)
@@ -184,7 +194,7 @@ test("a task silent past the bound fails as executor_silent_timeout", async () =
     .toBe("executor_silent_timeout");
 });
 
-test("a stop fences a fresh session, closes a resumed one revivably, and finds a lost start by its ensure", async () => {
+test("a stop fences a fresh session, closes a resumed one revivably as its attempt, and finds a lost start by its ensure", async () => {
   const { calls, fetch } = recording((call) => call.method === "PUT"
     ? Response.json({ kind: "attached", session: snapshot() }) : new Response(null, { status: 200 }));
   const provider = createAgentProvider(config(fetch));
@@ -193,9 +203,9 @@ test("a stop fences a fresh session, closes a resumed one revivably, and finds a
   await provider.stop(instructionFor(), null);
   expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
     "DELETE http://kbbl.test/sessions/sid-1?fenced_by=action-initial",
-    "DELETE http://kbbl.test/sessions/sid-1",
+    "DELETE http://kbbl.test/sessions/sid-1?closed_by=action-initial",
     `PUT http://kbbl.test/sessions/resumable/${sessionKeyOf(instructionFor())}`,
-    "DELETE http://kbbl.test/sessions/sid-1",
+    "DELETE http://kbbl.test/sessions/sid-1?closed_by=action-initial",
   ]);
 });
 

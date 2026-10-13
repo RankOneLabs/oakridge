@@ -1,21 +1,21 @@
 import type { Kysely } from "kysely";
-import type { ScopedSnapshot } from "../core-client/core-types";
+import type { StepSnapshot } from "../core-client/core-types";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
 
 /**
- * The scoped snapshot `step` needs for one event: the affected unit, its
+ * The step snapshot `step` needs for one event: the affected unit, its
  * ancestors and every direct child of an ancestor (so each ancestor can be
  * recomputed), with the attempts, revisions, decisions and retries of those
  * units. With no affected unit (launch, cancel) it is the whole run.
  */
-export async function readScopedSnapshot(db: Reader, run_id: string, unit_id: string | null): Promise<ScopedSnapshot | null> {
+export async function readStepSnapshot(db: Reader, run_id: string, unit_id: string | null): Promise<StepSnapshot | null> {
   const run = await db.selectFrom("authority.run").select(["id", "root_unit_id", "input", "status"])
     .where("id", "=", run_id).executeTakeFirst();
   if (!run) return null;
-  const units = await readScopedUnits(db, run_id, unit_id);
+  const units = await readStepUnits(db, run_id, unit_id);
   if (unit_id !== null && !units.some((unit) => unit.id === unit_id)) return null;
   const ids = units.map((unit) => unit.id);
   const [dependencies, attempts, revisions, decisions, retries] = ids.length === 0 ? [[], [], [], [], []] : await Promise.all([
@@ -50,7 +50,7 @@ export async function readScopedSnapshot(db: Reader, run_id: string, unit_id: st
   };
 }
 
-async function readScopedUnits(db: Reader, run_id: string, unit_id: string | null) {
+async function readStepUnits(db: Reader, run_id: string, unit_id: string | null) {
   const columns = ["id", "parent_id", "declaration", "stage", "pool", "input", "status"] as const;
   if (unit_id === null) return db.selectFrom("authority.unit").select(columns).where("run_id", "=", run_id).orderBy("id").execute();
   return db.withRecursive("ancestors(id, parent_id)", (recursive) => recursive.selectFrom("authority.unit")

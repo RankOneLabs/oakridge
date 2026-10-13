@@ -1,22 +1,22 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { makeExecutionView, makeScopeView } from "../__fixtures__/read-models";
+import { makeAttemptView, makeUnitView } from "../__fixtures__/read-models";
 import { RunSidebarSessions } from "../components/molecules/RunSidebarSessions";
-import { selectRunExecutions } from "../lib/run-sessions";
+import { selectRunAttempts } from "../lib/run-sessions";
 
 afterEach(cleanup);
 
-it("the generated execution row opens its owning scope", () => {
+it("an attempt row opens its unit", () => {
   const onOpen = vi.fn();
-  const scope = makeScopeView({ scope_id: "build-1", executions: [makeExecutionView({ id: "execution-1", status: "terminal" })] });
-  render(<RunSidebarSessions executions={selectRunExecutions([scope])} onOpen={onOpen} />);
+  const unit = makeUnitView({ unit_id: "build-1", attempts: [makeAttemptView({ id: "attempt-1", status: "succeeded" })] });
+  render(<RunSidebarSessions attempts={selectRunAttempts([unit])} onOpen={onOpen} />);
   fireEvent.click(screen.getByRole("button", { name: "author #1" }));
   expect(onOpen).toHaveBeenCalledWith("build-1");
-  expect(screen.getByText("terminal")).toBeTruthy();
+  expect(screen.getByText("succeeded")).toBeTruthy();
 });
 
-it("a scope with no executions renders an explicit empty state", () => {
-  render(<RunSidebarSessions executions={selectRunExecutions([makeScopeView({ executions: [] })])} onOpen={() => undefined} />);
-  expect(screen.getByText("No executions yet.")).toBeTruthy();
+it("a unit with no attempts renders an explicit empty state", () => {
+  render(<RunSidebarSessions attempts={selectRunAttempts([makeUnitView({ attempts: [] })])} onOpen={() => undefined} />);
+  expect(screen.getByText("No attempts yet.")).toBeTruthy();
 });
