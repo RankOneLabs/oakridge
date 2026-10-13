@@ -188,6 +188,7 @@ export interface AuthorityPromptContent {
 }
 
 export interface AuthorityReviewDecision {
+  created_at: Generated<Timestamp>;
   decision: string;
   effect: string;
   id: string;

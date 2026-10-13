@@ -669,6 +669,7 @@ mod v2_step {
             }
             TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(|text| {
                 !text.is_empty()
+                    && text.chars().count() <= MAX_IDENT_CHARS
                     && !text
                         .chars()
                         .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
@@ -723,8 +724,25 @@ mod v2_step {
         }
         TypeExpression::Record(fields)
     }
+    /// The longest `ident`. Collection keys are idents taken from runtime data
+    /// and every id under a member embeds its key, so an unbounded ident would
+    /// make unbounded ids. 100 fits a GitHub repository or owner name, which
+    /// `pull_request.observe` carries as idents.
+    pub const MAX_IDENT_CHARS: usize = 100;
+    /// `hash(unit, worker, mode, cause)` (part 1 §4): 32 hex characters, so an
+    /// action's id is bounded however long its unit's path. The parts are
+    /// hashed as their wire JSON, which their schemas fix, not as Rust's
+    /// `Debug` output, which a refactor could change.
     fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
-        ActionKey(format!("{}:{}:{mode:?}:{cause:?}", unit.0, worker.0))
+        use sha2::{Digest, Sha256};
+        let parts = serde_json::json!([unit, worker, mode, cause]);
+        let digest = Sha256::digest(parts.to_string().as_bytes());
+        ActionKey(
+            digest[..16]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
     }
     fn materialize_group(
         program: &CheckedWorkflow,
@@ -2021,6 +2039,62 @@ mod v2_step {
                     "decision":"request_changes","target":"run/document:draft:1","payload":{"feedback":"shorter"}})],
             ].concat());
             assert!(decided.reviews.is_empty());
+        }
+
+        #[test]
+        fn an_action_id_is_a_fixed_length_hash_of_its_parts() {
+            let short = action_id(
+                &UnitId::from("run/document"),
+                &WorkerKey::from("writer"),
+                &Mode::Revise,
+                &Cause::ChangesRequested {
+                    decision: DecisionId::from("run/document:d1"),
+                },
+            );
+            let long_unit = UnitId::from(format!("run/work/{}", "k".repeat(400)).as_str());
+            let long = action_id(
+                &long_unit,
+                &WorkerKey::from("writer"),
+                &Mode::Initial,
+                &Cause::Missing,
+            );
+            let again = action_id(
+                &long_unit,
+                &WorkerKey::from("writer"),
+                &Mode::Initial,
+                &Cause::Missing,
+            );
+            assert_eq!(
+                (short.0.len(), long.0.len(), long == again, short == long),
+                (32, 32, true, false)
+            );
+        }
+
+        #[test]
+        fn a_collection_key_longer_than_an_ident_is_refused_at_launch() {
+            let program = sample("fan-out");
+            let input = |key: String| {
+                serde_json::json!({"repository":{"repository_path":"/tmp/repo","expected_head":null},
+                "items":[{"key":key,"text":"t","after":[]}]})
+            };
+            let launch = |key: String| {
+                step(
+                    &program,
+                    &snapshot(),
+                    &incoming(
+                        event(
+                            &serde_json::json!({"op":"launch","input":input(key)}),
+                            &snapshot(),
+                        ),
+                        "launch",
+                    ),
+                )
+            };
+            assert!(launch("k".repeat(MAX_IDENT_CHARS)).is_ok());
+            assert!(matches!(
+                launch("k".repeat(MAX_IDENT_CHARS + 1)),
+                Err(StepError::Rejected { .. })
+            ));
         }
 
         #[test]

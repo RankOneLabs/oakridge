@@ -5,7 +5,7 @@ import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { executor, launch, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -15,7 +15,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await authority.close(); });
 
-const writerAction = (run_id: RunId): string => `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 async function launched(request_id = crypto.randomUUID()): Promise<RunId> {
   const { run_id, result } = await launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error(`launch failed: ${JSON.stringify(result)}`);
@@ -26,7 +26,7 @@ const intents = (run_id: RunId) => authority.db.selectFrom("authority.effect_int
 test("a launch commits the run, its units, the event with its writer, the receipt and a decodable instruction", async () => {
   const wakes: RunId[] = [];
   const run_id = await launched();
-  await submitter(authority, wakes)({ run_id, event: { kind: "worker_started", action: writerAction(run_id), kbbl_session_id: "sid-1" }, writer: executor(writerAction(run_id)) });
+  await submitter(authority, wakes)({ run_id, event: { kind: "worker_started", action: await writerAction(run_id), kbbl_session_id: "sid-1" }, writer: executor(await writerAction(run_id)) });
   const [run, events, receipts, intent_rows, operator_events] = await Promise.all([
     authority.db.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
     authority.db.selectFrom("authority.event").select(["payload", "writer"]).where("run_id", "=", run_id).orderBy("created_at").execute(),
@@ -56,7 +56,7 @@ test("a revise instruction carries the requested revision and the decision paylo
   const run_id = await launched();
   const submit = submitter(authority);
   const unit = unitOf(run_id, "document");
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: action }, writer: executor(action) });
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "succeeded" } }, writer: executor(action) });
@@ -103,7 +103,7 @@ test("C4: a decision on a non-latest revision is refused at commit", async () =>
   const run_id = await launched();
   const submit = submitter(authority);
   const unit = unitOf(run_id, "document");
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "one" }, by: action }, writer: executor(action) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "two" },
@@ -122,7 +122,7 @@ test("C4: a revision published by an attempt that is not current is refused at c
   const run_id = await launched();
   const unit = unitOf(run_id, "document");
   const published = await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft",
-    body: { title: "T", body: "B" }, by: `${unit}:critic:Review:Missing` }, writer: executor(writerAction(run_id)) });
+    body: { title: "T", body: "B" }, by: `${unit}:critic:Review:Missing` }, writer: executor(await writerAction(run_id)) });
   expect(published.ok && published.value.kind).toBe("rejected");
 });
 
@@ -192,7 +192,7 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
   const run_id = await launched();
   const unit = unitOf(run_id, "document");
   const submit = submitter(authority);
-  const writer = writerAction(run_id);
+  const writer = await writerAction(run_id);
   const prompts = async () => (await authority.db.selectFrom("authority.unit").select("review_prompts").where("run_id", "=", run_id)
     .where("id", "=", unit).executeTakeFirstOrThrow()).review_prompts;
   await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-w" }, writer: executor(writer) });

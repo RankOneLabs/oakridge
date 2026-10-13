@@ -6,7 +6,7 @@ import type { OperatorEventPayload } from "../src/projections/operator-event";
 import type { RunEvent } from "../src/projections/run-event";
 import { jsonText, openDatabase, type DatabaseTransaction } from "../src/storage/database";
 import { setRunArchived } from "../src/storage/registry-store";
-import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -56,7 +56,7 @@ test("the stream delivers events committed after subscribing and resumes from a 
   const run_id = await launched();
   const live = await app.request("/events");
   await Bun.sleep(50); // the subscriber starts from now
-  const action = `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+  const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   const [started] = await readFrames(live, 1);
   const fresh = await app.request("/events");

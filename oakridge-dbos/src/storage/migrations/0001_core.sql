@@ -136,6 +136,9 @@ CREATE TABLE authority.review_decision (
   effect text NOT NULL CHECK (effect IN ('approve', 'request_changes')),
   target_revision_id text NOT NULL,
   payload jsonb NOT NULL,
+  -- The order commit wrote it, stamped under the run row lock. The core reads
+  -- a unit's decisions in this order; the id (`<unit>:d<n>`) does not sort.
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, target_revision_id) REFERENCES authority.artifact_revision(run_id, id)
 );

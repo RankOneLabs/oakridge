@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent } from "../src/storage/executor-store";
-import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -72,7 +72,7 @@ test("abandoning a settled intent leaves it settled", async () => {
 test("an attempt's session is the one it reported at start", async () => {
   const { run_id, intent_id } = await launchedIntent();
   const intent = await readIntent(authority.db, intent_id);
-  const action = `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+  const action = await actionOf(authority, run_id, "writer");
   const before = await readAttemptSession(authority.db, { action_id: action, seq: intent!.seq });
   await submitter(authority)({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid-42" }, writer: executor(action) });
   expect([before, await readAttemptSession(authority.db, { action_id: action, seq: intent!.seq })]).toEqual([null, "sid-42"]);

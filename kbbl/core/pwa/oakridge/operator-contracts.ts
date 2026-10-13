@@ -365,6 +365,7 @@ export interface OperatorAuthorityPromptContent {
 }
 
 export interface OperatorAuthorityReviewDecision {
+  created_at: OperatorGenerated<OperatorTimestamp>;
   decision: string;
   effect: string;
   id: string;

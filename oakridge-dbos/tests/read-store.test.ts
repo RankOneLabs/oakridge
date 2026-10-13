@@ -7,7 +7,7 @@ import { listDefinitions, listReviewCandidates, listRunAttempts, listRuns, listR
   readUnitDiagnostics, selectDefinitionGraph } from "../src/storage/read-store";
 import { setRunArchived } from "../src/storage/registry-store";
 import { readScopedSnapshot } from "../src/storage/snapshot-store";
-import { executor, launch, openAuthority, pinSample, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -23,7 +23,7 @@ async function launched(): Promise<RunId> {
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }
-const writerAction = (run_id: RunId): string => `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 
 test("a scoped snapshot holds the unit, its ancestors and their children; with no unit, the whole run", async () => {
   const run_id = await launched();
@@ -37,7 +37,7 @@ test("a scoped snapshot holds the unit, its ancestors and their children; with n
 test("a scoped snapshot carries retry events for the units it holds", async () => {
   const run_id = await launched();
   const submit = submitter(authority);
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "failed" } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
   const snapshot = await readScopedSnapshot(authority.db, run_id, unitOf(run_id, "document"));
@@ -58,7 +58,7 @@ test("the run view lists the run's units; listings page newest first and split a
 
 test("inspect names a worker stalled on a failed attempt", async () => {
   const run_id = await launched();
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submitter(authority)({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "it broke" } }, writer: executor(action) });
   const inspect = await readRunInspect(authority.db, run_id);
   expect(inspect?.attention.map((item) => [item.worker, item.detail])).toEqual([["writer", "it broke"]]);
@@ -107,7 +107,7 @@ async function reviewedRun(): Promise<{ readonly run_id: RunId; readonly unit: s
   const run_id = await launched();
   const submit = submitter(authority);
   const unit = unitOf(run_id, "document");
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: action }, writer: executor(action) });
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "succeeded" } }, writer: executor(action) });
@@ -122,7 +122,7 @@ test("a unit reads with its dependencies, attempts, revisions, decisions and int
   expect({ unit: String(read?.unit.id), depends_on: read?.depends_on, attempts: read?.attempts.map((attempt) => [attempt.worker, attempt.mode.kind, attempt.status.kind]),
     revisions: read?.revisions.map((revision) => String(revision.id)), decisions: read?.decisions.map((decision) => decision.decision),
     intents: read?.intents.map((intent) => intent.status), missing: await readUnit(authority.db, { run_id, unit_id: `${run_id}/missing` }) })
-    .toEqual({ unit, depends_on: [], attempts: [["critic", "review", "pending"], ["writer", "initial", "succeeded"], ["writer", "revise", "pending"]],
+    .toEqual({ unit, depends_on: [], attempts: [["writer", "initial", "succeeded"], ["critic", "review", "pending"], ["writer", "revise", "pending"]],
       revisions: [`${unit}:draft:1`], decisions: ["request_changes"], intents: ["pending", "pending", "pending"], missing: null });
 });
 

@@ -330,7 +330,12 @@ async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Prom
     ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) }).execute();
 }
 
-/** The one run id derivation (D8): a launch's request id names its run, so a replayed launch finds its receipt. */
+/**
+ * The one run id derivation (D8): a launch's request id names its run, so a
+ * replayed launch finds its receipt. Sixteen hex characters (64 bits) of the
+ * digest: every id in a run is prefixed by its run id, and 64 bits keep two
+ * launches from colliding.
+ */
 export function launchRunId(request_id: string): RunId {
-  return `run-${createHash("sha256").update(request_id).digest("hex")}` as RunId;
+  return `run-${createHash("sha256").update(request_id).digest("hex").slice(0, 16)}` as RunId;
 }

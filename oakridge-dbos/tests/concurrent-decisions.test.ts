@@ -3,7 +3,7 @@ import type { CoreClient } from "../src/core-client/client";
 import type { Event } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { commitEvent } from "../src/storage/commit";
-import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -18,7 +18,7 @@ async function launched(): Promise<RunId> {
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }
-const writerAction = (run_id: RunId): string => `${unitOf(run_id, "document")}:writer:Initial:Missing`;
+const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 
 test("a second event on a run waits for the first to commit before it reaches step", async () => {
   const run_id = await launched();
@@ -32,7 +32,7 @@ test("a second event on a run waits for the first to commit before it reaches st
     if (operation === "step" && ++steps === 1) { signal_first(); await held; }
     return authority.core.request(operation, input);
   } } as unknown as CoreClient;
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   const commit = (ingress_id: string, event: Event) => commitEvent({ db: authority.db, core: gated, wake: () => undefined },
     { run_id, ingress_id, event, writer: executor(action) });
   const first = commit("started", { kind: "worker_started", action, kbbl_session_id: "sid" });
@@ -52,7 +52,7 @@ test("concurrent events on one run serialize on the run row", async () => {
   const run_id = await launched();
   const submit = submitter(authority);
   const unit = unitOf(run_id, "document");
-  const action = writerAction(run_id);
+  const action = await writerAction(run_id);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   // Each publication names no predecessor: under the run lock exactly one sees none and the rest see a stale one.
   const results = await Promise.all(Array.from({ length: 8 }, (_, index) => submit({ run_id, event: { kind: "revision_published", unit,

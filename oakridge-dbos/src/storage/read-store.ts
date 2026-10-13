@@ -118,12 +118,13 @@ export async function readUnit(db: Kysely<DB>, location: UnitLocation): Promise<
     const [dependencies, attempts, revisions, decisions, intents] = await Promise.all([
       trx.selectFrom("authority.unit_dependency").select("depends_on_id").where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("depends_on_id").execute(),
+      // Action ids are hashes: attempts read in the order commit opened them.
       trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
-        .orderBy("action_id").orderBy("seq").execute(),
+        .orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
       trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("created_at").orderBy("id").execute(),
       trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
-        .orderBy("id").execute(),
+        .orderBy("created_at").orderBy("id").execute(),
       trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .orderBy("action_id").orderBy("seq").execute(),
     ]);
@@ -137,7 +138,7 @@ export interface AttemptRead { readonly attempt: AttemptRecord; readonly intent:
 export async function listRunAttempts(db: Kysely<DB>, run_id: string): Promise<readonly AttemptRead[]> {
   return consistent(db, async (trx) => {
     const [attempts, intents] = await Promise.all([
-      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("action_id").orderBy("seq").execute(),
+      trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
       trx.selectFrom("authority.effect_intent").select(INTENT_STANDING).where("run_id", "=", run_id).execute(),
     ]);
     const by_action = new Map(intents.map((intent) => [intent.action_id, intent as IntentStanding]));
@@ -221,7 +222,7 @@ export async function readArtifactHistory(db: Kysely<DB>, input: UnitLocation & 
       .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact).orderBy("created_at").orderBy("id").execute();
     const revision_ids = revisions.map((revision) => revision.id);
     const decisions = revision_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
-      .where("run_id", "=", input.run_id).where("target_revision_id", "=", anyOf(revision_ids)).orderBy("id").execute();
+      .where("run_id", "=", input.run_id).where("target_revision_id", "=", anyOf(revision_ids)).orderBy("created_at").orderBy("id").execute();
     return { revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[] };
   });
 }
@@ -298,7 +299,7 @@ export async function listReviewCandidates(db: Kysely<DB>, query: ReviewCandidat
       .orderBy("run_id").orderBy("unit_id").orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute();
     const latest_ids = latest.map((revision) => revision.id);
     const decisions = latest_ids.length === 0 ? [] : await trx.selectFrom("authority.review_decision").selectAll()
-      .where("target_revision_id", "=", anyOf(latest_ids)).orderBy("id").execute();
+      .where("target_revision_id", "=", anyOf(latest_ids)).orderBy("created_at").orderBy("id").execute();
     const last = selected.at(-1);
     return {
       items: reviewed.map(({ source, ...unit }) => ({ unit: unit as UnitRecord, workflow: source,

@@ -284,6 +284,7 @@ name = "workflow-evaluator"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "sha2",
  "workflow-compiler",
  "workflow-model",
 ]

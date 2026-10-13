@@ -82,3 +82,11 @@ export async function launch(authority: Pick<Authority, "db" | "core">, input: {
 
 /** The unit id of a top-level unit of a run. */
 export const unitOf = (run_id: RunId, key: string): string => `${run_id}/${key}`;
+
+/** The action id the core gave a worker's latest attempt in a run: action ids are hashes, so tests read them, never build them. */
+export async function actionOf(authority: Pick<Authority, "db">, run_id: RunId, worker: string): Promise<string> {
+  const attempt = await authority.db.selectFrom("authority.attempt").select("action_id").where("run_id", "=", run_id)
+    .where("worker", "=", worker).orderBy("created_at", "desc").executeTakeFirst();
+  if (!attempt) throw new Error(`${worker} has no attempt in ${run_id}`);
+  return attempt.action_id;
+}

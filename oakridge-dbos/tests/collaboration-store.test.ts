@@ -5,7 +5,7 @@ import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCo
   readThreadRevision, recordCollaborationDelivery } from "../src/storage/collaboration-store";
 import { listOwedIntents, settleIntent } from "../src/storage/executor-store";
 import { deleteRun } from "../src/storage/run-deletion";
-import { executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -19,7 +19,7 @@ afterAll(async () => { await authority.close(); });
 async function drafted(count: number): Promise<{ readonly run_id: RunId; readonly unit: string; readonly revisions: readonly string[] }> {
   const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   const unit = unitOf(run_id, "document");
-  const action = `${unit}:writer:Initial:Missing`;
+  const action = await actionOf(authority, run_id, "writer");
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
   const revisions: string[] = [];
@@ -47,7 +47,7 @@ test("a superseded revision refuses new threads, messages and review items", asy
   const { run_id, unit, revisions } = await drafted(1);
   const opened = await thread(run_id, unit, revisions[0]!);
   if (opened.kind !== "written") throw new Error("thread not written");
-  const action = `${unit}:writer:Initial:Missing`;
+  const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "v2" },
     predecessor: revisions[0]!, by: action }, writer: executor(action) });
   const late_thread = await thread(run_id, unit, revisions[0]!, "late");
@@ -78,7 +78,7 @@ test("the thread view spans the revision chain, with write capability only on th
     payload: { status: "failed", session_id: null, reason: "no session", request_key: "k" } });
   const repeat = await recordCollaborationDelivery(authority.db, { id: "d-old", run_id, unit_id: unit, message_id: "m-old",
     payload: { status: "delivered", session_id: "sid", reason: null, request_key: "k" } });
-  const action = `${unit}:writer:Initial:Missing`;
+  const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "v2" },
     predecessor: revisions[0]!, by: action }, writer: executor(action) });
   const latest = `${unit}:draft:2`;
