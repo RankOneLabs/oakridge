@@ -61,10 +61,27 @@ test("a finished run has no stall", () => {
   expect(selectRunStalls(stallSources({ run }))).toEqual([]);
 });
 
+const refusedAt = (minute: number) => `2026-10-13T00:0${minute}:00.000Z`;
+const fault = (fields: Partial<CommitFaultNotice>, minute: number) => ({ recorded_at: new Date(refusedAt(minute)),
+  notice: { run_id: "run", unit_id: null, at_unit: null, ingress_id: "f1", event: { kind: "cancel_requested" }, detail: "checked stage absent",
+    after_event: "e1", ...fields } as CommitFaultNotice });
+
 test("refusals repeating one stall show once, and a fault on a whole-run event shows on the root", () => {
   const [stall] = stallSources().stalls;
-  const fault = { run_id: "run", unit_id: null, ingress_id: "i3", event: { kind: "cancel_requested" }, detail: "checked stage absent",
-    after_event: "e1" } as CommitFaultNotice;
-  expect(selectRunStalls(stallSources({ stalls: [stall!, { ...stall!, ingress_id: "i2" }], faults: [fault] }))
+  const again = { ...stall!, ingress_id: "i2", stall: { ...stall!.stall, refused_at: refusedAt(1) } };
+  expect(selectRunStalls(stallSources({ stalls: [stall!, again], faults: [fault({ ingress_id: "i3" }, 2)] }))
     .map((item) => [item.kind, item.unit_id, item.ingress_id])).toEqual([["stalled", "run/work", "i2"], ["faulted", "run", "i3"]]);
+});
+
+test("a stall repeated after another moves to the end, so the newest is last", () => {
+  const [stall] = stallSources().stalls;
+  const at = (minute: number, ingress_id: string) => ({ ...stall!, ingress_id, stall: { ...stall!.stall, refused_at: refusedAt(minute) } });
+  const between = fault({ ingress_id: "f1", unit_id: "run/plan" as CommitFaultNotice["unit_id"] }, 1);
+  expect(selectRunStalls(stallSources({ stalls: [at(0, "i1"), at(2, "i2")], faults: [between] })).map((item) => item.ingress_id))
+    .toEqual(["f1", "i2"]);
+});
+
+test("a fault the core found advancing another unit shows on that unit", () => {
+  const found = fault({ unit_id: "run/plan" as CommitFaultNotice["unit_id"], at_unit: "run/work" as CommitFaultNotice["at_unit"] }, 1);
+  expect(selectRunStalls(stallSources({ stalls: [], faults: [found] })).map((item) => [item.kind, item.unit_id])).toEqual([["faulted", "run/work"]]);
 });

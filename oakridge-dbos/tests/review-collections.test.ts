@@ -179,3 +179,25 @@ test("a commit fault on a worker report names its unit", async () => {
   expect(fault.payload.kind === "commit_fault" && { unit: fault.payload.data.unit_id as string | null, event: fault.payload.data.event.kind })
     .toEqual({ unit, event: "worker_started" });
 });
+
+test("a fault the core found advancing another unit shows on that unit", async () => {
+  const { bundle_id } = await pinSample(authority, "fan-out");
+  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { repository: REPOSITORY, items: [] } });
+  const work = unitOf(run_id, "work");
+  await authority.db.updateTable("authority.unit").set({ stage: "absent" }).where("run_id", "=", run_id).where("id", "=", work).execute();
+  const git = await actionOf(authority, run_id, "git");
+  await report(run_id, git, { kind: "started", session_id: null, publication_secret_hash: null });
+  const published = await reportWorker(deps(), { run_id, attempt: { action_id: git, seq: 1 },
+    report: { kind: "published", unit: unitOf(run_id, "prepare"), artifact: "workspace", body: WORKSPACE, predecessor: null } });
+  expect({ faulted: !published.ok, stalled: (await inboxOf(run_id)).map((item): string[] => [item.kind, item.unit_id]) })
+    .toEqual({ faulted: true, stalled: [["stalled", work]] });
+});
+
+test("a retried request whose fault still stands records it once", async () => {
+  const { run_id, writer } = await inconsistent();
+  for (let retry = 0; retry < 3; retry += 1)
+    await reportWorker(deps(), { run_id, attempt: { action_id: writer, seq: 1 }, report: { kind: "started", session_id: null, publication_secret_hash: null } });
+  const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
+    .where("event_key", "=", "commit_fault").execute();
+  expect(faults.length).toBe(1);
+});

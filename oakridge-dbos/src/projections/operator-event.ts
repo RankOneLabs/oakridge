@@ -12,6 +12,8 @@ export interface CommitFaultNotice {
   readonly run_id: RunId;
   /** The unit the event addressed; null for a launch or a cancel, which address the run. */
   readonly unit_id: UnitId | null;
+  /** The unit the core was advancing when it found the fault, when it names one: where the fault is shown. */
+  readonly at_unit: UnitId | null;
   readonly ingress_id: string | null;
   readonly event: Event;
   readonly detail: string;

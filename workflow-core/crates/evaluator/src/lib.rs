@@ -13,6 +13,7 @@ mod v2_step {
     fn invalid(detail: impl Into<String>) -> StepError {
         StepError::Invalid {
             detail: detail.into(),
+            unit: None,
         }
     }
     /// Attribute an error raised while advancing `unit` to it (D-V4): a
@@ -24,10 +25,11 @@ mod v2_step {
                 unit: unit.clone(),
                 reason,
             },
-            StepError::Invalid { detail } => StepError::Invalid {
-                detail: format!("advancing {unit}: {detail}"),
+            StepError::Invalid { detail, unit: None } => StepError::Invalid {
+                detail,
+                unit: Some(unit.clone()),
             },
-            stalled @ StepError::Stalled { .. } => stalled,
+            attributed => attributed,
         }
     }
     struct EvaluationContext<'a> {
@@ -3675,6 +3677,21 @@ mod v2_step {
                 step(&program, &launched, &publish),
                 Err(StepError::Stalled { unit, reason })
                     if unit.0 == "run/work" && reason.contains("duplicate key")
+            ));
+        }
+        #[test]
+        fn an_inconsistency_found_advancing_another_unit_names_that_unit() {
+            let (program, mut launched, publish) =
+                fan_out_preparing(serde_json::json!([{"key":"a","text":"t","after":[]}]));
+            let work = launched
+                .units
+                .iter_mut()
+                .find(|unit| unit.id.0 == "run/work")
+                .unwrap();
+            work.stage = Some(SymbolKey::from("absent"));
+            assert!(matches!(
+                step(&program, &launched, &publish),
+                Err(StepError::Invalid { unit: Some(unit), .. }) if unit.0 == "run/work"
             ));
         }
         /// The review-loop trace played to its end: the run is done.

@@ -23,6 +23,8 @@ export interface RunStall {
   /** The event it refused or faulted on. */
   readonly event: Event;
   readonly ingress_id: string | null;
+  /** When it was refused or recorded (ISO-8601). */
+  readonly at: string;
 }
 export interface UnitAttention {
   readonly unit_id: string;
@@ -93,7 +95,8 @@ function latestEventOn(read: Pick<RunRead, "latest_events">, unit_id: string | n
 type RunStallSources = Pick<RunRead, "run" | "units" | "stalls" | "faults" | "latest_events">;
 /**
  * The stalls and faults that stand: the run is live, and nothing has committed
- * on the refused event's unit since. One per unit and reason, the latest.
+ * on the refused event's unit since. Oldest first; a repeat of one unit and
+ * reason keeps only its latest occurrence, in that occurrence's place.
  */
 export function selectRunStalls(read: RunStallSources): readonly RunStall[] {
   if (read.run.status.kind === "done" || read.run.status.kind === "cancelled") return [];
@@ -101,10 +104,17 @@ export function selectRunStalls(read: RunStallSources): readonly RunStall[] {
   const shownOn = (unit_id: string | null): string => unit_id !== null && read.units.some((unit) => unit.id === unit_id) ? unit_id : root;
   const stalls = read.stalls.filter((refusal) => latestEventOn(read, refusal.unit_id) === refusal.stall.after_event)
     .map((refusal): RunStall => ({ kind: "stalled", unit_id: shownOn(refusal.stall.unit_id), reason: refusal.reason, event: refusal.stall.event,
-      ingress_id: refusal.ingress_id }));
-  const faults = read.faults.filter((fault) => latestEventOn(read, fault.unit_id) === fault.after_event)
-    .map((fault): RunStall => ({ kind: "faulted", unit_id: shownOn(fault.unit_id), reason: fault.detail, event: fault.event, ingress_id: fault.ingress_id }));
-  const latest = new Map([...stalls, ...faults].map((stall) => [`${stall.kind}\u0000${stall.unit_id}\u0000${stall.reason}`, stall]));
+      ingress_id: refusal.ingress_id, at: refusal.stall.refused_at }));
+  const faults = read.faults.filter(({ notice }) => latestEventOn(read, notice.unit_id) === notice.after_event)
+    .map(({ notice, recorded_at }): RunStall => ({ kind: "faulted", unit_id: shownOn(notice.at_unit ?? notice.unit_id), reason: notice.detail,
+      event: notice.event, ingress_id: notice.ingress_id, at: recorded_at.toISOString() }));
+  const latest = new Map<string, RunStall>();
+  for (const stall of [...stalls, ...faults].sort((left, right) => left.at.localeCompare(right.at))) {
+    const key = `${stall.kind}\u0000${stall.unit_id}\u0000${stall.reason}`;
+    // Delete first: a Map keeps a replaced key where it was first inserted.
+    latest.delete(key);
+    latest.set(key, stall);
+  }
   return [...latest.values()];
 }
 

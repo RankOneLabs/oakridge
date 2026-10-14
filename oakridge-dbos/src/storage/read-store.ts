@@ -32,6 +32,8 @@ export interface RetryRequest { readonly unit_id: string; readonly worker: strin
 export interface UnitWanted { readonly unit_id: string; readonly actions: WantedActions }
 /** An event step refused because the run could not advance past it; `unit_id` is the unit the event addressed. */
 export interface StallRefusal { readonly unit_id: string | null; readonly ingress_id: string; readonly reason: string; readonly stall: StallRecord }
+/** A faulted commit recorded against a run, and when it was recorded. */
+export interface RecordedFault { readonly notice: CommitFaultNotice; readonly recorded_at: Date }
 /** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
 export interface LatestUnitEvent { readonly unit_id: string | null; readonly event_id: string; readonly created_at: Date }
 /**
@@ -51,7 +53,7 @@ export interface RunRead {
   /** Refusals that recorded where the run stopped advancing, in the order they were refused. */
   readonly stalls: readonly StallRefusal[];
   /** Faulted commits recorded against the run, in the order they faulted. */
-  readonly faults: readonly CommitFaultNotice[];
+  readonly faults: readonly RecordedFault[];
   readonly latest_events: readonly LatestUnitEvent[];
 }
 
@@ -82,7 +84,7 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
     trx.selectFrom("authority.ingress_receipt").select(["run_id", "unit_id", "ingress_id", "result"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("result", "->>").key("kind"), "=", "rejected"))
       .where((eb) => eb(eb.ref("result", "->").key("stall"), "is not", null)).execute(),
-    trx.selectFrom("authority.operator_event").select(["run_id", "payload"]).where("run_id", "=", ids).where("event_key", "=", "commit_fault")
+    trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where("event_key", "=", "commit_fault")
       .orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"]).select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
       .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
@@ -102,7 +104,8 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       stalls: of(stalls, run_id).flatMap(({ unit_id, ingress_id, result }) => result.kind === "rejected" && result.stall
         ? [{ unit_id, ingress_id, reason: result.reason, stall: result.stall }] : [])
         .sort((left, right) => left.stall.refused_at.localeCompare(right.stall.refused_at)),
-      faults: faults.flatMap((row) => row.run_id === run_id && row.payload.kind === "commit_fault" ? [row.payload.data] : []),
+      faults: faults.flatMap((row) => row.run_id === run_id && row.payload.kind === "commit_fault"
+        ? [{ notice: row.payload.data, recorded_at: row.created_at }] : []),
       latest_events: of(latest_events, run_id).map(({ unit_id, id, created_at }) => ({ unit_id, event_id: id, created_at })) }];
   });
 }

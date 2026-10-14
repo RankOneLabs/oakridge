@@ -304,18 +304,16 @@ pub struct ResolvedRunWorker {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StepError {
     /// The event itself is refused against the snapshot.
-    Rejected {
-        reason: String,
-    },
+    Rejected { reason: String },
     /// The event was accepted, but advancing the run past it was refused at
     /// `unit` (a group whose members cannot be made, a limit hit while
     /// evaluating it), so the event is refused with it (D-V4).
-    Stalled {
-        unit: UnitId,
-        reason: String,
-    },
+    Stalled { unit: UnitId, reason: String },
+    /// The snapshot is inconsistent with the workflow; `unit` names the unit
+    /// being advanced when it was found there.
     Invalid {
         detail: String,
+        unit: Option<UnitId>,
     },
 }
 
