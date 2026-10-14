@@ -14,7 +14,7 @@ function writerInstruction(input: { readonly action: RunWorkerAction; readonly f
     ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "fresh" as const } } } } }
     : workflow;
   const is_revise = input.action.mode.kind === "revise";
-  const selected = selectEffectInstruction({ run_id: "run-1", workflow: source, stage: "document", config: null, action: input.action, seq: 0,
+  const selected = selectEffectInstruction({ run_id: "run-1" as import("../src/domain/primitives").RunId, workflow: source, stage: "document", config: null, action: input.action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
     resolved: { action_id: "a2", inputs: { topic: "Oakridge", critique: null },
       ...(is_revise ? { previous: r1, feedback: { feedback: "shorter" } } : {}) } });

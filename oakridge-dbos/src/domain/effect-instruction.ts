@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
 import { selectSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
-import type { Result } from "./primitives";
+import type { ActionId, Result, RunId } from "./primitives";
 
 /** Provider start attempts an instruction may claim until the YAML carries a budget. */
 export const DEFAULT_MAX_START_ATTEMPTS = 3;
@@ -39,9 +39,9 @@ export interface EngineInputs {
  */
 export interface EffectInstruction {
   readonly version: 1;
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly action: RunWorkerAction;
-  readonly attempt: { readonly action_id: string; readonly seq: number };
+  readonly attempt: { readonly action_id: ActionId; readonly seq: number };
   readonly worker: WorkerInstruction;
   readonly inputs: unknown;
   readonly engine_inputs: EngineInputs;
@@ -72,7 +72,7 @@ export function selectSessionKey(action: RunWorkerAction, action_id: string, ses
 }
 
 export interface InstructionSource {
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly workflow: Workflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
@@ -153,7 +153,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const every = action.cause.kind === "periodic" ? declared.every ?? null : null;
     worker = { kind: "code", operation: declared.operation, every, artifact };
   }
-  return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id, seq: source.seq }, worker,
+  return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
     engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? null, subject: resolved.subject ?? null },
     workspace: resolved.workspace ?? null,
