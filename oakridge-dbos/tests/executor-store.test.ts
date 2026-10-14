@@ -68,7 +68,7 @@ test("abandoning a live intent requests its stop and keeps it owed until a stop 
   await markAcknowledged(authority.db, intent_id);
   const abandoned = await abandonIntent(authority.db, { intent_id, last_error: "observation_unavailable: lost" });
   const owed = await listOwedIntents(authority.db, run_id);
-  expect({ abandoned, owed, last_error: (await readIntent(authority.db, intent_id))?.last_error })
+  expect({ abandoned, owed: owed.map(({ id, status }) => ({ id: String(id), status })), last_error: (await readIntent(authority.db, intent_id))?.last_error })
     .toEqual({ abandoned: "stop_requested", owed: [{ id: intent_id, status: "stop_requested" }], last_error: "observation_unavailable: lost" });
 });
 

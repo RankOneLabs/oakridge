@@ -25,7 +25,7 @@ function recording(respond: (call: Call) => Response | Promise<Response>) {
 }
 const snapshot = (status = "live", extra: object = {}) => ({ sid: "sid-1", status, lastActivityTs: "2026-10-12T12:00:00.000Z", ...extra });
 
-const run_id = "run-1";
+const run_id = "run-1" as import("../src/domain/primitives").RunId;
 const unit = "run-1/document";
 const writer: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
 function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly resolved?: Partial<ResolvedRunWorker>; readonly fresh?: boolean;

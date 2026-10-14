@@ -4,17 +4,19 @@ import { decodeEffectInstruction, DEFAULT_MAX_START_ATTEMPTS, DEFAULT_PROVIDER_D
   selectReferencedSchemas, selectResolvedSchema, selectSessionKey, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { bounded, resolveObserve, resolveStart, resolveStop } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
+import type { ActionId, RunId } from "../src/domain/primitives";
 
 const unit = "run-1/document";
 const action: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
 const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null } };
 const prompts = { "review-loop/write.md": "a".repeat(64) };
 const select = (overrides: Partial<Parameters<typeof selectEffectInstruction>[0]> = {}) =>
-  selectEffectInstruction({ run_id: "run-1", workflow: sampleWorkflow("review-loop"), prompts, stage: "document", config: null, action, seq: 1, resolved, ...overrides });
+  selectEffectInstruction({ run_id: "run-1" as RunId, workflow: sampleWorkflow("review-loop"), prompts, stage: "document", config: null, action, seq: 1, resolved, ...overrides });
 
 test("an agent instruction carries its pinned prompt, session key, inputs and default budgets", () => {
   const instruction = select();
-  expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1", action, attempt: { action_id: resolved.action_id, seq: 1 },
+  expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1" as RunId, action,
+    attempt: { action_id: resolved.action_id as ActionId, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
       prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
       creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },

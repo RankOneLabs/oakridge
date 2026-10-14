@@ -1,6 +1,6 @@
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus, Workflow } from "../core-client/core-types";
-import type { RunId, UnitId } from "../domain/primitives";
+import type { ActionId, DecisionId, DefinitionBundleId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
@@ -13,6 +13,33 @@ import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRe
   UnitDependencyRecord, UnitRecord } from "./schema-records";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
+type Row<Table extends keyof DB> = Selectable<DB[Table]>;
+/** Brand the identity columns once as rows cross from SQL into projections. */
+const runRecord = (row: Row<"authority.run">): RunRecord => ({ ...row, id: row.id as RunId,
+  definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
+  root_unit_id: row.root_unit_id as UnitId | null });
+const summaryRun = (row: Omit<Row<"authority.run">, "input" | "config">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
+  definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
+  root_unit_id: row.root_unit_id as UnitId | null });
+const unitRecord = (row: Row<"authority.unit">): UnitRecord => ({ ...row, id: row.id as UnitId,
+  run_id: row.run_id as RunId, parent_id: row.parent_id as UnitId | null });
+const summaryUnit = (row: Omit<Row<"authority.unit">, "input">): UnitSummaryRecord => ({ ...row, id: row.id as UnitId,
+  run_id: row.run_id as RunId, parent_id: row.parent_id as UnitId | null });
+const attemptRecord = (row: Row<"authority.attempt">): AttemptRecord => ({ ...row, action_id: row.action_id as ActionId,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
+const revisionRecord = (row: Row<"authority.artifact_revision">): ArtifactRevisionRecord => ({ ...row, id: row.id as RevisionId,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, by_id: row.by_id as ActionId | null,
+  predecessor_id: row.predecessor_id as RevisionId | null, subject: row.subject as RevisionId | null });
+const revisionRef = (row: Pick<Row<"authority.artifact_revision">, "id" | "run_id" | "unit_id" | "artifact" | "created_at">): RevisionRef =>
+  ({ ...row, id: row.id as RevisionId, run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
+const decisionRecord = (row: Row<"authority.review_decision">): ReviewDecisionRecord => ({ ...row, id: row.id as DecisionId,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, target_revision_id: row.target_revision_id as RevisionId });
+const eventRecord = (row: Row<"authority.event">): EventRecord => ({ ...row, id: row.id as EventId,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId | null });
+const dependencyRecord = (row: Row<"authority.unit_dependency">): UnitDependencyRecord => ({ ...row,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, depends_on_id: row.depends_on_id as UnitId });
+const receiptRecord = (row: Row<"authority.ingress_receipt">): IngressReceiptRecord => ({ ...row,
+  run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId | null });
 
 /**
  * Every projection read. Reads of more than one table run in one
@@ -29,9 +56,9 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 export interface PinnedSource { readonly digest: string; readonly workflow: Workflow; readonly parsed_workflow: ParsedWorkflow }
 /** An operator retry, in the order it was requested. */
 /** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
-export interface RetryRequest { readonly unit_id: string; readonly worker: string; readonly retry_id: string }
+export interface RetryRequest { readonly unit_id: UnitId; readonly worker: string; readonly retry_id: IngressId }
 /** An event step refused because the run could not advance past it; `unit_id` is the unit the event addressed. */
-export interface StallRefusal { readonly unit_id: string | null; readonly ingress_id: string; readonly reason: string; readonly stall: StallRecord }
+export interface StallRefusal { readonly unit_id: UnitId | null; readonly ingress_id: IngressId; readonly reason: string; readonly stall: StallRecord }
 /** A faulted commit recorded against a run, and when it was recorded. */
 export interface RecordedFault { readonly notice: CommitFaultNotice; readonly recorded_at: Date }
 /** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
@@ -112,12 +139,12 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
     const found = runs.find((run) => run.id === run_id);
     if (!found) return [];
     const { digest, source, checked_program, ...run } = found;
-    return [{ run: run as RunSummaryRecord, definition: { digest, workflow: source, parsed_workflow: checked_program.workflow },
-      units: of(units, run_id) as UnitSummaryRecord[], attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as RevisionRef[],
+    return [{ run: summaryRun(run), definition: { digest, workflow: source, parsed_workflow: checked_program.workflow },
+      units: of(units, run_id).map(summaryUnit), attempts: of(attempts, run_id).map(attemptRecord), revisions: of(revisions, run_id).map(revisionRef),
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
-        ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, retry_id: retry.ingress_id }] : []),
+        ? [{ unit_id: retry.unit_id as UnitId, worker: retry.payload.worker, retry_id: retry.ingress_id as IngressId }] : []),
       stalls: of(stalls, run_id).flatMap(({ unit_id, ingress_id, result }) => result.kind === "rejected" && result.stall
-        ? [{ unit_id, ingress_id, reason: result.reason, stall: result.stall }] : [])
+        ? [{ unit_id: unit_id as UnitId | null, ingress_id: ingress_id as IngressId, reason: result.reason, stall: result.stall }] : [])
         .sort((left, right) => left.stall.refused_at.localeCompare(right.stall.refused_at)),
       faults: faults.flatMap((row) => row.run_id === run_id && row.payload.kind === "commit_fault"
         ? [{ notice: row.payload.data, recorded_at: row.created_at }] : []),
@@ -136,8 +163,8 @@ async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRea
     trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
   ]);
-  return { ...summary, run: run as RunRecord, units: units as UnitRecord[], dependencies: dependencies as UnitDependencyRecord[],
-    revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[] };
+  return { ...summary, run: runRecord(run), units: units.map(unitRecord), dependencies: dependencies.map(dependencyRecord),
+    revisions: revisions.map(revisionRecord), decisions: decisions.map(decisionRecord) };
 }
 
 export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead | null> {
@@ -180,7 +207,7 @@ export async function readRunInspect(db: Kysely<DB>, run_id: string): Promise<Ru
     if (!run) return null;
     const events = await trx.selectFrom("authority.event").selectAll().where("run_id", "=", run_id)
       .orderBy("created_at", "desc").orderBy("id", "desc").limit(INSPECT_EVENTS).execute();
-    return { run, events: events as EventRecord[] };
+    return { run, events: events.map(eventRecord) };
   });
 }
 
@@ -260,7 +287,7 @@ export async function readSessionHistory(db: Kysely<DB>, query: SessionHistoryQu
         .where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id).where("artifact", "=", anyOf(query.artifacts))
         .where("created_at", "<=", opened_at).orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
     ]);
-    return { earlier_attempts: earlier_attempts as AttemptRecord[], latest: latest as ArtifactRevisionRecord[] };
+    return { earlier_attempts: earlier_attempts.map(attemptRecord), latest: latest.map(revisionRecord) };
   });
 }
 
@@ -316,7 +343,7 @@ export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<
     const after = query.after;
     if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(after.created_at, after.id)));
     const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
-    const events = rows.slice(0, query.limit) as EventRecord[];
+    const events = rows.slice(0, query.limit).map(eventRecord);
     const event_ids = events.map((event) => event.id);
     const wanted = event_ids.length === 0 ? [] : await trx.selectFrom("authority.wanted_log").select(["event_id", "unit_id", "actions"])
       .where("run_id", "=", query.run_id).where("event_id", "=", anyOf(event_ids)).orderBy("unit_id").execute();
@@ -346,7 +373,9 @@ export async function readUnitDiagnostics(db: Kysely<DB>, location: UnitLocation
       trx.selectFrom("authority.ingress_receipt").selectAll().where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id)
         .where((eb) => eb(eb.ref("result", "->>").key("kind"), "=", "rejected")).orderBy("id").execute(),
     ]);
-    return { unit: unit as UnitRecord, attempts: attempts as AttemptRecord[], intents: intents as IntentStanding[], rejected: rejected as IngressReceiptRecord[] };
+    return { unit: unitRecord(unit), attempts: attempts.map(attemptRecord),
+      intents: intents.map((row) => ({ ...row, id: row.id as IntentId, action_id: row.action_id as ActionId })),
+      rejected: rejected.map(receiptRecord) };
   });
 }
 

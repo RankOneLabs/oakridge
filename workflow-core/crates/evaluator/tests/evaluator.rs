@@ -88,7 +88,6 @@ fn sample(name: &str) -> CheckedWorkflow {
     .collect();
     let operations = vec![CodeOperation {
         key: SymbolKey::from("repository.prepare"),
-        version: 1,
         input_schema: TypeExpression::Record(
             [
                 (
@@ -508,7 +507,6 @@ fn failed_code_validation_does_not_publish_a_revision() {
     let original = sample("fan-out");
     let operations = [CodeOperation {
         key: SymbolKey::from("repository.prepare"),
-        version: 1,
         input_schema: TypeExpression::Record(BTreeMap::from([
             (
                 "repository_path".into(),
@@ -1373,7 +1371,6 @@ fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {
         })).unwrap();
     let observe = vec![CodeOperation {
         key: SymbolKey::from("observe"),
-        version: 1,
         input_schema: TypeExpression::Record(BTreeMap::new()),
         output_schema: TypeExpression::Name("text".into()),
         error_codes: vec![],
@@ -1449,7 +1446,6 @@ fn watch_program() -> CheckedWorkflow {
         })).unwrap();
     let observe = vec![CodeOperation {
         key: SymbolKey::from("observe"),
-        version: 1,
         input_schema: TypeExpression::Record(BTreeMap::from([(
             "branch".to_owned(),
             TypeExpression::Name("text".into()),

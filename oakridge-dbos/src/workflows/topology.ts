@@ -155,6 +155,7 @@ interface CarriedIntent {
   /** Provider starts claimed so far; none means no execution can exist. */
   readonly tries: number;
   readonly last_error: string | null;
+  readonly stop_error: string | null;
   /** Who requested the intent's stop, once one was requested. */
   readonly stop_origin: StopOrigin | null;
   readonly instruction: EffectInstruction;
@@ -172,7 +173,7 @@ const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<Load
   if (!decoded.ok) return { kind: "invalid", id: intent.id, run_id: intent.run_id, attempt: { action_id: intent.action_id, seq: intent.seq }, detail: decoded.error.detail };
   const session_id = await readAttemptSession(db, decoded.value.attempt);
   return { kind: "carried", intent: { id: intent.id, run_id: intent.run_id, status: intent.status, tries: intent.tries,
-    last_error: intent.last_error, stop_origin: intent.stop_origin, instruction: decoded.value,
+    last_error: intent.last_error, stop_error: intent.stop_error, stop_origin: intent.stop_origin, instruction: decoded.value,
     handle: session_id === null ? null : { kind: HANDLE_KINDS.session, session_id } } };
 }, { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
@@ -337,13 +338,13 @@ export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => until
  * successor resumes from the authority rows. False when this workflow is not
  * one of the intent's generations (an operator's recovery fork): it keeps looping.
  */
-async function rollOver(kind: CarrierKind, intent_id: string, carried: CarriedStop = { reason: null }): Promise<boolean> {
+async function rollOver(kind: CarrierKind, intent_id: string): Promise<boolean> {
   const generation = generationOf(carrierWorkflowId(kind, intent_id), DBOS.workflowID ?? "");
   if (generation === null) return false;
   const workflowID = carrierWorkflowId(kind, intent_id, generation + 1);
   // A successor inherits this carrier's deadline: DBOS propagates it to a workflow started without its own timeout.
   if (kind === "start") await DBOS.startWorkflow(effectWorkflow, { workflowID })(intent_id);
-  else await DBOS.startWorkflow(cleanupWorkflow, { workflowID })(intent_id, carried);
+  else await DBOS.startWorkflow(cleanupWorkflow, { workflowID })(intent_id);
   return true;
 }
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
@@ -506,24 +507,22 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
 }
 
 /** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`, then its successors'. */
-export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string, carried?: CarriedStop) =>
-  untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id, carried)), { name: CLEANUP_WORKFLOW_NAME });
-/** What a rolled-over stop carrier hands its successor: the reason it loaded, before its own stop tries overwrote `last_error`. */
-interface CarriedStop { readonly reason: string | null }
-async function carryStop(intent_id: string, carried?: CarriedStop): Promise<EffectStatus | null> {
+export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) =>
+  untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: CLEANUP_WORKFLOW_NAME });
+async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind !== "carried") return loaded.kind === "invalid" ? settleStep({ intent_id, status: "stopped", last_error: loaded.detail }) : null;
   const intent = loaded.intent;
   if (intent.status !== "stop_requested") return intent.status;
   // Why the attempt failed, when the executor requested the stop; kept past the stop's own retries, across generations.
-  const reason = carried === undefined ? intent.last_error : carried.reason;
+  const reason = intent.stop_error;
   if (intent.instruction.worker.kind === "code") return carryCodeStop(intent, reason);
   // A start never claimed never reached kbbl, so nothing can be running; ensuring the session only to close it would spawn the agent.
   if (intent.tries === 0 && intent.handle === null) return confirmStop(intent, reason);
   let handle = intent.handle;
   for (let attempt = 0; ; attempt++) {
-    if (attempt >= timing.carrier_max_iterations && await rollOver("stop", intent_id, { reason })) return intent.status;
+    if (attempt >= timing.carrier_max_iterations && await rollOver("stop", intent_id)) return intent.status;
     const outcome = resolveStop(await stopStep(intent.instruction, handle));
     if (outcome.kind === "confirmed") return confirmStop(intent, reason);
     const retry_in = backoff(attempt, timing);
@@ -551,7 +550,7 @@ async function carryCodeStop(intent: CarriedIntent, reason: string | null): Prom
     const latest = await latestAttemptStep(action_id);
     const open = latest !== null && !selectIsAttemptEnded(latest, latest.seq) ? { action_id, seq: latest.seq } : null;
     if (open === null || !await isStartCarrierLive(intent.id)) return confirmStop(intent, reason, open ?? intent.instruction.attempt);
-    if (polls >= timing.carrier_max_iterations && await rollOver("stop", intent.id, { reason })) return intent.status;
+    if (polls >= timing.carrier_max_iterations && await rollOver("stop", intent.id)) return intent.status;
     await DBOS.sleepSeconds(timing.observe_interval_seconds);
     const reloaded = await loadIntentStep(intent.id);
     if (reloaded.kind !== "carried") return null;

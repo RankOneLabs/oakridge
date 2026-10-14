@@ -183,6 +183,7 @@ CREATE TABLE authority.effect_intent (
   tries integer NOT NULL DEFAULT 0 CHECK (tries >= 0),
   next_try_at timestamptz,
   last_error text,
+  stop_error text,
   -- Set with the stop request, and kept once it settles; null while none was requested.
   stop_origin authority.stop_origin CHECK (status <> 'stop_requested' OR stop_origin IS NOT NULL),
   updated_at timestamptz NOT NULL DEFAULT now(),

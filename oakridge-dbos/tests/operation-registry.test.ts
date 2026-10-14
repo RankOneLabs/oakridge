@@ -9,7 +9,7 @@ import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 test("the registry declares the in-process operations, and session.run is not one", () => {
   expect(OPERATION_REGISTRY.map((operation) => operation.key)).toEqual(["repository.prepare", "pull_request.observe", "value.publish"]);
   for (const operation of OPERATION_REGISTRY)
-    expect(Object.keys(operation).sort()).toEqual(["error_codes", "input_schema", "key", "output_schema", "version"]);
+    expect(Object.keys(operation).sort()).toEqual(["error_codes", "input_schema", "key", "output_schema"]);
 });
 
 test("the checked-in registry data is the registry the compiler is given", async () => {

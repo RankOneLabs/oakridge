@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
@@ -144,6 +145,36 @@ test("an event that leaves a unit's wanted set unchanged logs nothing for the un
     .orderBy("event.created_at").orderBy("event.id").execute();
   const repeats = logged.filter((row, index) => index > 0 && JSON.stringify(row.actions) === JSON.stringify(logged[index - 1]!.actions));
   expect({ logged: logged.length > 0, repeats: repeats.length }).toEqual({ logged: true, repeats: 0 });
+});
+
+test("the operator event uses the timestamp returned by the event insert", async () => {
+  const run_id = await launched();
+  await sql`CREATE FUNCTION authority.override_event_time() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.payload->>'kind' = 'cancel_requested' THEN
+        NEW.created_at := TIMESTAMPTZ '2001-02-03 04:05:06.123+00';
+      END IF;
+      RETURN NEW;
+    END
+  $$`.execute(authority.db);
+  await sql`CREATE TRIGGER override_event_time BEFORE INSERT ON authority.event
+    FOR EACH ROW EXECUTE FUNCTION authority.override_event_time()`.execute(authority.db);
+  try {
+    const committed = await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
+    if (!committed.ok || committed.value.kind !== "committed") throw new Error("cancel did not commit");
+    const event_id = committed.value.event_id;
+    const [event, operator_events] = await Promise.all([
+      authority.db.selectFrom("authority.event").select("created_at").where("id", "=", event_id).executeTakeFirstOrThrow(),
+      authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
+        .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "run_event")).execute(),
+    ]);
+    const operator = operator_events.find((row) => row.payload.kind === "run_event" && row.payload.data.event_id === event_id);
+    expect({ stored: event.created_at.toISOString(), delivered: operator?.payload.kind === "run_event" ? operator.payload.data.occurred_at : null })
+      .toEqual({ stored: "2001-02-03T04:05:06.123Z", delivered: "2001-02-03T04:05:06.123Z" });
+  } finally {
+    await sql`DROP TRIGGER override_event_time ON authority.event`.execute(authority.db);
+    await sql`DROP FUNCTION authority.override_event_time()`.execute(authority.db);
+  }
 });
 
 test("C4: a decision on a non-latest revision is refused at commit", async () => {
