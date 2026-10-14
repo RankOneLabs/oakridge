@@ -7,7 +7,7 @@
 export type { RunPage, RunView, RunSummary, RunUnitSummary, RunInspectView, InspectAttention } from "../projections/run-view";
 export type { DefinitionPage, DefinitionSummary, DefinitionDetail, PinnedDefinition } from "../projections/definition-view";
 export type { UnitView } from "../projections/unit-view";
-export type { InboxItem, InboxPage } from "../projections/inbox";
+export type { InboxItem, InboxPage, RunInboxBatch, RunInboxBatchEntry } from "../projections/inbox";
 export type { ArtifactDetail, ArtifactRevisionStatus } from "../projections/artifact-view";
 export type { UnitHistory, UnitDiagnostics } from "../projections/history-view";
 export type { CollaborationThreadView } from "../projections/collaboration-view";

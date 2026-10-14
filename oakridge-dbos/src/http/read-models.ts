@@ -3,12 +3,12 @@ import type { UnitId } from "../domain/primitives";
 import { selectArtifactDetail } from "../projections/artifact-view";
 import { selectDefinitionDetail, selectDefinitionSummary, selectPinnedDefinition } from "../projections/definition-view";
 import { selectUnitDiagnostics, selectUnitHistory } from "../projections/history-view";
-import { selectInboxPage, selectRunInboxItems } from "../projections/inbox";
+import { selectInboxPage, selectRunInboxBatch, selectRunInboxItems } from "../projections/inbox";
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
 import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold,
-  readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
+  readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
@@ -106,6 +106,14 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (after instanceof MalformedRequestError) return errorResponse(after);
     const page = await listLiveRuns(db, { after, limit });
     return c.json(selectInboxPage(page.items, page.next === null ? null : encodeCursor(page.next)));
+  } catch (cause) { return fault(cause); } });
+
+  /** A bounded read for the run list; it also includes archived and completed runs. */
+  app.get("/api/run-inboxes", async (c) => { try {
+    const ids = c.req.query("ids")?.split(",") ?? [];
+    if (ids.length < 1 || ids.length > DEFAULT_PAGE_LIMIT || ids.some((id) => id === ""))
+      return errorResponse(new MalformedRequestError("invalid run ids"));
+    return c.json(selectRunInboxBatch(await readRunSummaries(db, ids)));
   } catch (cause) { return fault(cause); } });
 
   /** One run's attention, including archived and runs outside the global inbox page. */

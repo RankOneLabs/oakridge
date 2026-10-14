@@ -149,6 +149,11 @@ export async function readRunSummary(db: Kysely<DB>, run_id: string): Promise<Ru
   return consistent(db, async (trx) => (await runSummaryReads(trx, [run_id]))[0] ?? null);
 }
 
+/** Summaries for the named runs in one snapshot, with the same rows as a run-list page. */
+export async function readRunSummaries(db: Kysely<DB>, run_ids: readonly string[]): Promise<readonly RunSummaryRead[]> {
+  return consistent(db, (trx) => runSummaryReads(trx, run_ids));
+}
+
 export interface RunPageQuery { readonly after: { readonly created_at: string; readonly id: string } | null; readonly limit: number; readonly is_archived: boolean }
 export interface RunReadPage { readonly items: readonly RunSummaryRead[]; readonly next: { readonly created_at: Date; readonly id: string } | null }
 /** Newest first; one listing is either the archived runs or the active ones. */

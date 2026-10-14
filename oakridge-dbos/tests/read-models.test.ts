@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
-import { installDefinitionApi } from "../src/http/app";
-import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInspectView, RunPage, RunView,
+import { createHttpApp, installDefinitionApi } from "../src/http/app";
+import { browserWritePolicy } from "../src/http/browser-write-policy";
+import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInboxBatch, RunInspectView, RunPage, RunView,
   UnitDiagnostics, UnitHistory, UnitView } from "../src/http/operator-api";
 import type { RunEvent } from "../src/projections/run-event";
 import type { SessionHoldResponse } from "../src/projections/session-hold";
@@ -294,6 +295,8 @@ describe("derived fields", () => {
 
     await app.request(`/api/runs/${segment(run.run_id)}/archive`, { method: "POST" });
     expect((await get<InboxPage>(scoped)).items.filter((item) => item.kind === "decision")).toHaveLength(2);
+    const batch = await get<RunInboxBatch>(`/api/run-inboxes?ids=${segment(run.run_id)}`);
+    expect(batch.items[0]?.items).toEqual((await get<InboxPage>(scoped)).items);
     await app.request(`/api/runs/${segment(run.run_id)}/unarchive`, { method: "POST" });
 
     const fillers = Array.from({ length: 110 }, (_, index) => ({ id: `00000000-w9-${String(index).padStart(3, "0")}`,
@@ -315,6 +318,19 @@ describe("derived fields", () => {
         await trx.deleteFrom("authority.run").where("id", "in", fillers.map((row) => row.id)).execute();
       });
     }
+  });
+
+  test("scoped and batched attention plus units pass the production route and token guards", async () => {
+    const run = await drafted();
+    const guarded = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined,
+      application_version: "test", access: { kind: "token_required", token: "secret" }, write_policy: browserWritePolicy([]) });
+    const paths = [`/api/runs/${segment(run.run_id)}/inbox`, `/api/runs/${segment(run.run_id)}/units`,
+      `/api/run-inboxes?ids=${segment(run.run_id)}`];
+    const statuses = await Promise.all(paths.map(async (path) => ({
+      unauthorized: (await guarded.request(path)).status,
+      authorized: (await guarded.request(path, { headers: { authorization: "Bearer secret" } })).status,
+    })));
+    expect(statuses).toEqual(paths.map(() => ({ unauthorized: 401, authorized: 200 })));
   });
 
   test("history is the unit's events newest first, each with its ingress id and writer", async () => {

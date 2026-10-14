@@ -18,6 +18,8 @@ export type InboxItem =
   | { readonly kind: "stalled"; readonly run_id: RunId; readonly unit_id: UnitId; readonly detail: string };
 
 export interface InboxPage { readonly items: readonly InboxItem[]; readonly next_cursor: string | null }
+export interface RunInboxBatchEntry { readonly run_id: RunId; readonly items: readonly InboxItem[] }
+export interface RunInboxBatch { readonly items: readonly RunInboxBatchEntry[] }
 
 /** A run's inbox items, unit by unit: the run's stalls, each decision that asks for the operator, each stalled worker, and the unit's wait. */
 export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] {
@@ -40,3 +42,6 @@ export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] 
 
 export const selectInboxPage = (runs: readonly RunSummaryRead[], next_cursor: string | null): InboxPage =>
   ({ items: runs.flatMap(selectRunInboxItems), next_cursor });
+
+export const selectRunInboxBatch = (runs: readonly RunSummaryRead[]): RunInboxBatch =>
+  ({ items: runs.map((read) => ({ run_id: read.run.id, items: selectRunInboxItems(read) })) });
