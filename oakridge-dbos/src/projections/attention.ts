@@ -2,7 +2,7 @@ import type { BlockedReason, Event, ResolvedDecision } from "../core-client/core
 import type { RetryRequest, RunSummaryRead } from "../storage/read-store";
 import { isTerminalStatus } from "../domain/unit-status";
 import type { AttemptRecord, UnitRecord } from "../storage/schema-records";
-import { selectUnitLabel } from "./unit-label";
+import { selectUnitLabel, selectUnitTree } from "./unit-label";
 
 /**
  * What needs the operator, derived from state (part 1 §12: there is no
@@ -154,9 +154,10 @@ export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention
 /** A blocked unit's reason, naming the units it waits on by their labels. */
 function blockedReason(reason: BlockedReason, read: RunSummaryRead): string {
   if (reason.kind === "capacity") return `waiting for capacity in ${reason.pool}`;
+  const tree = selectUnitTree(read.units, read.definition.workflow);
   const labels = reason.units.map((id) => {
     const unit = read.units.find((candidate) => candidate.id === id);
-    return unit ? selectUnitLabel(unit, read.definition.workflow) : id;
+    return unit ? selectUnitLabel(unit, tree) : id;
   });
   return `waiting on ${labels.join(", ")}`;
 }

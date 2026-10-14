@@ -5,7 +5,7 @@ import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "..
 import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
 import { EMPTY_PAYLOAD, schemaKey, selectDecisionPayloadType, typeSchemaKey } from "./schema-view";
-import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, titleCase } from "./unit-label";
+import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, selectUnitTree, titleCase } from "./unit-label";
 
 /** Artifact bodies, unit inputs and outcomes, and decision payloads are plain JSON. */
 export type BodyValue = JsonValue;
@@ -178,8 +178,9 @@ export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummary
 export const isAsk = (decision: DecisionDefinition): boolean => decision.submit.kind !== "cancel";
 
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
-  return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, read.definition.workflow),
-    stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
+  const tree = selectUnitTree(read.units, read.definition.workflow);
+  return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
+    stage: unit.stage, collection_key: selectCollectionKey(unit, tree), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),

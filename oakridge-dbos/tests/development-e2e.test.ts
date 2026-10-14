@@ -8,7 +8,7 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { launchRunId } from "../src/storage/commit";
-import { selectCollectionKey } from "../src/projections/unit-label";
+import { selectCollectionKey, selectUnitTree, type UnitTree } from "../src/projections/unit-label";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { scratchDatabase } from "./authority-fixture";
@@ -159,14 +159,23 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
   fetch(`${base_url}${path}`, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 const segment = encodeURIComponent;
 
+/** The run's unit tree, membership read from its pinned definition as the operator API reads it. */
+async function unitTreeOf(run_id: string): Promise<UnitTree> {
+  const rows = await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration"]).where("run_id", "=", run_id).execute();
+  const { source } = await db.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
+    .select("bundle.source").where("run.id", "=", run_id).executeTakeFirstOrThrow();
+  return selectUnitTree(rows, source);
+}
+
 /** The decision the scripted operator makes on each review, and what it does after. */
 const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", plan_review: "accept", brief_review: "accept",
   admission: "admit", assessment_review: "accept", integration_review: "accept" };
 
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
 async function operate(run_id: string, decided: Set<string>, admitted: string[]): Promise<void> {
+  const tree = await unitTreeOf(run_id);
   const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "review_prompts"]).where("run_id", "=", run_id).execute())
-    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
+    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit, tree) }));
   for (const unit of units) {
     for (const [review, awaiting] of Object.entries(unit.review_prompts)) {
       const key = `${unit.id}:${review}:${awaiting.target}`;
@@ -204,8 +213,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     return row.status.kind === "done" ? row.status : null;
   }, 120_000);
 
+  const tree = await unitTreeOf(run_id);
   const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage"]).where("run_id", "=", run_id).execute())
-    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
+    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit, tree) }));
   const unitOf = (stage: string, member?: string) => units.find((unit) => unit.stage === stage && (member === undefined || unit.collection_key === member))?.id ?? "";
   const schemaOf = async (unit: string, artifact: string): Promise<string> =>
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;

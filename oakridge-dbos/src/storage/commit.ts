@@ -9,6 +9,7 @@ import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
 import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEvent } from "../projections/run-event";
+import { selectUnitTree } from "../projections/unit-label";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedActions } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
@@ -262,7 +263,8 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   const addressed = step.snapshot.units.find((unit) => unit.id === (unit_id.value ?? step.snapshot.run.root));
   if (!addressed) throw fault(run_id, `event ${event.id} addresses no unit of the run`);
   const run_event = selectRunEvent({ event_id: event.id, run_id, kind: request.event.kind, occurred_at: new Date(event.created_at),
-    run_status: step.snapshot.run.status, workflow: definition.source,
+    run_status: step.snapshot.run.status,
+    tree: selectUnitTree(step.snapshot.units.map((unit) => ({ id: unit.id, parent_id: unit.parent ?? null, declaration: unit.declaration })), definition.source),
     unit: { id: addressed.id as UnitId, parent_id: addressed.parent ?? null, declaration: addressed.declaration, stage: addressed.stage ?? null,
       status: addressed.status },
     newly_awaiting: newly_awaiting.get(addressed.id) ?? [] });

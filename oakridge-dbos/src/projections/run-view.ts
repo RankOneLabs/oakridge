@@ -4,7 +4,7 @@ import { isTerminalStatus } from "../domain/unit-status";
 import type { RunRead, RunSummaryRead } from "../storage/read-store";
 import type { EventRecord } from "../storage/schema-records";
 import { selectRunAttention, type RunStall, type UnitAttention } from "./attention";
-import { selectUnitKey, selectUnitLabel } from "./unit-label";
+import { selectUnitKey, selectUnitLabel, selectUnitTree } from "./unit-label";
 import { isAsk, selectAttemptViews, selectAvailableDecisions, selectUnitView, type AttemptView, type ArtifactView, type DecisionDefinition, type DecisionSubmit, type UnitView } from "./unit-view";
 
 /** One unit as the run lists it. */
@@ -32,9 +32,10 @@ const attentionOf = (attention: readonly UnitAttention[], unit_id: string): Unit
 
 export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
+  const tree = selectUnitTree(read.units, read.definition.workflow);
   return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
     created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,
-    units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, read.definition.workflow),
+    units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
       stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),
       asks: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).filter(isAsk).map((decision) => decision.key) })) };
 }
