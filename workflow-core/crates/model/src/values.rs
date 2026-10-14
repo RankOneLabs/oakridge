@@ -242,10 +242,7 @@ pub struct StepSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
     pub snapshot: StepSnapshot,
-    pub wanted: Vec<(UnitId, Vec<Action>)>,
-    /// What each wanted `RunWorker` runs with, evaluated against the stepped
-    /// state, so the run layer can pin it without evaluating expressions.
-    pub resolved: Vec<ResolvedRunWorker>,
+    pub wanted: Vec<crate::protocol::WantedWorker>,
     /// Each operator review awaiting a decision, with its `inputs` evaluated
     /// against the stepped state, so the run layer can render its prompt.
     pub reviews: Vec<ResolvedReview>,

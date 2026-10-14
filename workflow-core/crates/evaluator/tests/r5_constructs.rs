@@ -111,9 +111,10 @@ impl Run {
             .unwrap()
             .wanted
             .iter()
-            .filter(|(id, _)| id.0 == unit)
-            .flat_map(|(_, actions)| actions.iter())
-            .map(|Action::RunWorker { worker, mode, .. }| (worker.0.clone(), mode.clone()))
+            .filter(|wanted| wanted.unit.0 == unit)
+            .map(|wanted| match &wanted.action {
+                Action::RunWorker { worker, mode, .. } => (worker.0.clone(), mode.clone()),
+            })
             .collect()
     }
     fn wants(&self, unit: &str, worker: &str) -> bool {
@@ -388,11 +389,11 @@ fn a_periodic_observer_waits_until_its_guard_and_inputs_resolve() {
         .last
         .as_ref()
         .unwrap()
-        .resolved
+        .wanted
         .iter()
         .find(|r| r.action_id == run.action(COHORT, "pr_watch"))
         .unwrap();
-    assert_eq!(resolved.inputs, json!({ "url": PR_URL }));
+    assert_eq!(resolved.resolved.inputs, json!({ "url": PR_URL }));
 }
 
 #[test]

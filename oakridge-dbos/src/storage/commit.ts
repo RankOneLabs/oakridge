@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
+import type { Event, Incoming, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -11,7 +11,7 @@ import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEvent } from "../projections/run-event";
 import { selectUnitTree } from "../projections/unit-label";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedActions } from "./json-column-types";
+import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWorkers } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
 import { START_OWED_STATUSES } from "./executor-store";
 import { readStepSnapshot } from "./snapshot-store";
@@ -427,28 +427,22 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
   const { run_id, step } = input;
   const unit_ids = step.snapshot.units.map((unit) => unit.id);
   if (unit_ids.length === 0) return;
-  const wanted = selectWanted(step)
-    .flatMap(({ actions }) => actions.filter((action): action is RunWorkerAction => action.kind === "run_worker"));
-  const resolved = new Map<string, ResolvedRunWorker>(step.resolved.map((item) => [item.action_id, item]));
+  const wanted = step.wanted;
   // One intent per action: a watch's later attempts reuse its action id, and its carrier
   // starts each one (WorkerStarted on an ended periodic attempt opens the next seq).
   const existing = new Set((await trx.selectFrom("authority.effect_intent").select("action_id")
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(unit_ids)).execute()).map((row) => row.action_id));
-  for (const action of wanted) {
-    // step adds the attempt for a newly wanted action; its key names the resolved inputs.
-    const attempt = step.snapshot.attempts.filter((candidate) => candidate.unit === action.unit && candidate.worker === action.worker
-      && canonical(candidate.mode) === canonical(action.mode) && canonical(candidate.cause) === canonical(action.cause)).at(-1);
-    const inputs = attempt ? resolved.get(attempt.action_id) : undefined;
-    if (!attempt || !inputs) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} has no attempt or resolved inputs`);
-    if (existing.has(inputs.action_id)) continue;
-    const unit = step.snapshot.units.find((candidate) => candidate.id === action.unit);
-    if (!unit?.stage) throw fault(run_id, `wanted worker ${action.unit}/${action.worker} is not on a stage`);
+  for (const worker of wanted) {
+    const { action_id, attempt_seq, action, resolved } = worker;
+    if (existing.has(action_id)) continue;
+    const unit = step.snapshot.units.find((candidate) => candidate.id === worker.unit);
+    if (!unit?.stage) throw fault(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
     const instruction = selectEffectInstruction({ run_id, workflow: input.source, prompts: input.prompts, stage: unit.stage, config: input.config,
-      action, seq: attempt.seq, resolved: inputs });
+      action, seq: attempt_seq, resolved });
     if (!instruction.ok) throw fault(run_id, instruction.error.detail);
-    await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
-      action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
-    existing.add(inputs.action_id);
+    await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: worker.unit,
+      action_id, seq: attempt_seq, payload: jsonText(instruction.value) }).execute();
+    existing.add(action_id);
     // A new watch replaces the worker's previous action (D-V1): its carrier stops repeating.
     const replaced = selectReplacedAction(action);
     if (replaced !== null) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
@@ -526,7 +520,7 @@ async function writeWantedLog(trx: DatabaseTransaction, input: WantedLogInput): 
 }
 
 /** The units whose wanted set differs from the one last logged for them; a unit never logged has changed. */
-export function selectChangedWanted(wanted: readonly WantedForUnit[], logged: ReadonlyMap<string, WantedActions>): readonly WantedForUnit[] {
+export function selectChangedWanted(wanted: readonly WantedForUnit[], logged: ReadonlyMap<string, WantedWorkers>): readonly WantedForUnit[] {
   return wanted.filter(({ unit_id, actions }) => {
     const prior = logged.get(unit_id);
     return prior === undefined || canonical(prior) !== canonical(actions);

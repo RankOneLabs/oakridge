@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
-import type { Action, CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, Workflow } from "./core-types";
+import type { CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
 import { OPERATION_REGISTRY } from "../operations/registry";
 
@@ -93,8 +93,9 @@ export async function compileWorkflow(core: CoreClient, input: CompileInput): Pr
   return { ok: true, value: response.value.value };
 }
 
-/** Each active stage's wanted actions. The response decoder already checked the tuple shape; the generated type does not carry it. */
-export interface WantedForUnit { readonly unit_id: string; readonly actions: readonly Action[] }
+/** Each active stage's wanted workers, including an empty set when none are wanted. */
+export interface WantedForUnit { readonly unit_id: string; readonly actions: readonly WantedWorker[] }
 export function selectWanted(step: StepResult): readonly WantedForUnit[] {
-  return (step.wanted as unknown as readonly (readonly [string, readonly Action[]])[]).map(([unit_id, actions]) => ({ unit_id, actions }));
+  return step.snapshot.units.filter((unit) => unit.stage !== null && unit.status.kind === "active")
+    .map((unit) => ({ unit_id: unit.id, actions: step.wanted.filter((wanted) => wanted.unit === unit.id) }));
 }

@@ -1873,7 +1873,6 @@ fn advance_reduced(
         }
     }
     let mut wanted = Vec::new();
-    let mut resolved = Vec::new();
     let mut reviews = Vec::new();
     let active: Vec<_> = state
         .units
@@ -1884,22 +1883,19 @@ fn advance_reduced(
     for unit in active {
         let wants =
             stage_wants(program, &mut state, &unit, context).map_err(advancing(&unit.id))?;
-        resolved.extend(wants.resolved);
         reviews.extend(wants.reviews);
-        wanted.push((unit.id, wants.actions));
+        wanted.extend(wants.workers);
     }
     Ok(StepResult {
         snapshot: state,
         wanted,
-        resolved,
         reviews,
     })
 }
 /// What one active stage wants after the step, each wanted worker with
 /// what it runs with, and the operator reviews open on it.
 struct StageWants {
-    actions: Vec<Action>,
-    resolved: Vec<ResolvedRunWorker>,
+    workers: Vec<workflow_model::protocol::WantedWorker>,
     reviews: Vec<ResolvedReview>,
 }
 /// A wanted worker with no attempt yet gets its pending one.
@@ -1910,7 +1906,7 @@ fn stage_wants(
     context: &EvaluationContext<'_>,
 ) -> Result<StageWants, StepError> {
     let actions = stage_actions(program, state, stage_unit, context)?;
-    let mut resolved = Vec::new();
+    let mut workers = Vec::new();
     for action in &actions {
         let Action::RunWorker {
             unit,
@@ -1919,7 +1915,7 @@ fn stage_wants(
             cause,
         } = action;
         let id = action_id(unit, worker, mode, cause);
-        resolved.push(resolve_run_worker(
+        let resolved = resolve_run_worker(
             program,
             state,
             stage_unit,
@@ -1929,10 +1925,10 @@ fn stage_wants(
                 cause,
             },
             context,
-        )?);
+        )?;
         if !state.attempts.iter().any(|a| a.action_id == id) {
             state.attempts.push(AttemptState {
-                action_id: id,
+                action_id: id.clone(),
                 seq: 1,
                 unit: unit.clone(),
                 worker: worker.clone(),
@@ -1943,13 +1939,24 @@ fn stage_wants(
                 ended_at: None,
             });
         }
+        let attempt_seq = state
+            .attempts
+            .iter()
+            .rev()
+            .find(|a| a.action_id == id)
+            .expect("wanted worker has an attempt")
+            .seq;
+        workers.push(workflow_model::protocol::WantedWorker {
+            unit: unit.clone(),
+            worker: worker.clone(),
+            action_id: id,
+            attempt_seq,
+            action: action.clone(),
+            resolved,
+        });
     }
     let reviews = resolve_reviews(program, state, stage_unit, context)?;
-    Ok(StageWants {
-        actions,
-        resolved,
-        reviews,
-    })
+    Ok(StageWants { workers, reviews })
 }
 #[cfg(test)]
 mod tests {
@@ -2616,11 +2623,12 @@ mod tests {
             .rev()
             .find(|attempt| attempt.worker.0 == worker)
             .unwrap();
-        result
-            .resolved
+        &result
+            .wanted
             .iter()
-            .find(|resolved| resolved.action_id == attempt.action_id)
+            .find(|wanted| wanted.action_id == attempt.action_id)
             .unwrap()
+            .resolved
     }
     #[test]
     fn an_awaiting_review_resolves_its_inputs_and_a_decided_one_drops_out() {
@@ -2749,9 +2757,10 @@ mod tests {
                     "artifact":"draft","body":{"title":"First","body":"Long"}}),
         ];
         let wants_critic = |result: &StepResult| {
-            result.wanted.iter().flat_map(|(_, actions)| actions).any(
-                |action| matches!(action, Action::RunWorker { worker, .. } if worker.0 == "critic"),
-            )
+            result
+                .wanted
+                .iter()
+                .any(|wanted| wanted.worker.0 == "critic")
         };
         let writing = step_specs(&program, &snapshot(), &published);
         let ended = step_specs(
@@ -3142,7 +3151,7 @@ mod tests {
             ),
         )
         .unwrap();
-        assert!(ended.wanted[0].1.is_empty());
+        assert!(ended.wanted.is_empty());
         let duplicate = step(
             &program,
             &ended.snapshot,
@@ -3171,7 +3180,7 @@ mod tests {
             ),
         )
         .unwrap();
-        assert_eq!(retry.wanted[0].1.len(), 1);
+        assert_eq!(retry.wanted.len(), 1);
         assert_eq!(retry.snapshot.attempts.len(), 2);
     }
     #[test]
@@ -3237,7 +3246,7 @@ mod tests {
         assert!(failed_again
             .wanted
             .iter()
-            .all(|(_, actions)| actions.is_empty()));
+            .all(|wanted| wanted.worker.0 != "writer"));
         assert_eq!(failed_again.snapshot.attempts.len(), 2);
     }
     #[test]

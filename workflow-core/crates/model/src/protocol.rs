@@ -1,9 +1,23 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-/// Bumped whenever the request or response shape changes. v4 uses compile and
-/// step over the section 2 workflow model.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Bumped whenever the request or response shape changes. v5 carries each
+/// wanted worker's identity and resolved inputs in one step response entry.
+pub const PROTOCOL_VERSION: u32 = 5;
+
+/// One wanted worker and the identity of the attempt that runs it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WantedWorker {
+    pub unit: UnitId,
+    pub worker: WorkerKey,
+    pub action_id: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub attempt_seq: u32,
+    pub action: Action,
+    pub resolved: ResolvedRunWorker,
+}
 
 /// Deepest container nesting serde_json accepts.
 pub const WIRE_MAX_JSON_DEPTH: usize = 127;

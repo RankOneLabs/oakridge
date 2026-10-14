@@ -8,7 +8,7 @@ import type { SessionHold } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
-import type { CompiledWorkflow, StallRecord, WantedActions } from "./json-column-types";
+import type { CompiledWorkflow, StallRecord, WantedWorkers } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
 
@@ -292,7 +292,7 @@ export async function readSessionHold(db: Kysely<DB>, session_id: string): Promi
 /** Events newest first: a run's, or one unit's. A launch or cancel names no unit, so it is in the run's history only. */
 export interface HistoryQuery { readonly run_id: string; readonly unit_id: string | null; readonly after: HistoryCursor | null; readonly limit: number }
 export interface HistoryCursor { readonly created_at: Date; readonly id: string }
-export interface HistoryEntry { readonly event: EventRecord; readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedActions }[] }
+export interface HistoryEntry { readonly event: EventRecord; readonly wanted: readonly { readonly unit_id: string; readonly actions: WantedWorkers }[] }
 export interface HistoryPage { readonly items: readonly HistoryEntry[]; readonly next: HistoryCursor | null }
 /** Null when the named unit is not part of the run. */
 export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<HistoryPage | null> {

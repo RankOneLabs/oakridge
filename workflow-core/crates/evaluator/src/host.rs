@@ -241,14 +241,38 @@ mod tests {
     #[test]
     fn unknown_operation_returns_a_typed_error() {
         let mut state = CoreState::new();
-        let response = handle_request(
-            &mut state,
-            br#"{"version":4,"request_id":"one","operation":"unknown","input":{}}"#,
-        );
+        let request = serde_json::to_vec(&serde_json::json!({
+            "version": PROTOCOL_VERSION,
+            "request_id": "one",
+            "operation": "unknown",
+            "input": {},
+        }))
+        .unwrap();
+        let response = handle_request(&mut state, &request);
         assert!(matches!(
             response.result,
             ResponseResult::TransportError(TransportError {
                 kind: TransportErrorKind::UnknownOperation,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn previous_wire_version_is_rejected_before_dispatch() {
+        let mut state = CoreState::new();
+        let request = serde_json::to_vec(&serde_json::json!({
+            "version": PROTOCOL_VERSION - 1,
+            "request_id": "one",
+            "operation": "step",
+            "input": {},
+        }))
+        .unwrap();
+        let response = handle_request(&mut state, &request);
+        assert!(matches!(
+            response.result,
+            ResponseResult::TransportError(TransportError {
+                kind: TransportErrorKind::UnsupportedVersion,
                 ..
             })
         ));
