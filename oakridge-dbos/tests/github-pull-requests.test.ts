@@ -9,11 +9,11 @@ const githubPayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const readerReturning = (status: number, payload: unknown) => {
+const readerReturning = (status: number, payload: unknown, headers: Record<string, string> = {}) => {
   const calls: string[] = [];
   const http = (async (url: string | URL | Request) => {
     calls.push(String(url));
-    return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", ...headers } });
   }) as unknown as typeof fetch;
   return { reader: new GithubPullRequestReader({ token: "test-token" }, http), calls };
 };
@@ -70,14 +70,34 @@ test("a GitHub 503 is distinguishable from a missing pull request", async () => 
   } });
 });
 
+/** GitHub answers a primary or secondary rate limit with 403; it passes, so the observation is retried, not failed as auth. */
+for (const [limit, headers] of [["primary", { "x-ratelimit-remaining": "0" }], ["secondary", { "retry-after": "60" }]] as const) {
+  test(`a 403 for a ${limit} rate limit is unavailable, not an auth failure`, async () => {
+    const { reader } = readerReturning(403, { message: "API rate limit exceeded" }, headers);
+    const read = await reader.read("RankOneLabs", "oakridge", 440);
+    expect(read.ok ? null : read.error.kind).toBe("unavailable");
+  });
+}
+
+test("a 403 that is not a rate limit is an auth failure", async () => {
+  const { reader } = readerReturning(403, { message: "Resource not accessible by integration" }, { "x-ratelimit-remaining": "4999" });
+  const read = await reader.read("RankOneLabs", "oakridge", 440);
+  expect(read.ok ? null : read.error.kind).toBe("auth");
+});
+
+test("a rate-limited discovery is unavailable", async () => {
+  const { reader } = readerReturning(403, { message: "secondary rate limit" }, { "retry-after": "60" });
+  const found = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs", head_branch: "cohort/foundation", base_branch: "epic/tiers" });
+  expect(found.ok ? null : found.error.kind).toBe("unavailable");
+});
+
 for (const [head_owner, head_repository] of [["RankOneLabs", "RankOneLabs/oakridge"], ["fork-owner", "fork-owner/oakridge"], ["fork-owner", "Fork-Owner/oakridge-renamed"]] as const) {
   test(`discovery pages through the list and filters the ${head_repository} head repository`, async () => {
     const calls: string[] = [];
-    const candidate = { number: 440, head: { ref: "cohort/foundation", repo: { full_name: head_repository } }, base: { ref: "epic/tiers" } };
+    const candidate = githubPayload({ head: { ref: "cohort/foundation", sha: "abc123", repo: { full_name: head_repository } } });
     const http = (async (input: string | URL | Request) => {
       const url = new URL(String(input));
       calls.push(url.toString());
-      if (url.pathname.endsWith("/pulls/440")) return Response.json(githubPayload({ head: candidate.head }));
       if (url.searchParams.get("page") === "1") return Response.json(Array.from({ length: 100 }, (_, number) => ({ ...candidate, number: number + 1, head: { ...candidate.head, repo: { full_name: "other/oakridge" } } })));
       return Response.json([candidate]);
     }) as unknown as typeof fetch;
@@ -87,3 +107,22 @@ for (const [head_owner, head_repository] of [["RankOneLabs", "RankOneLabs/oakrid
     expect(calls.some((url) => url.includes(`head=${encodeURIComponent(`${head_owner}:cohort/foundation`)}`) && url.includes("page=2"))).toBe(true);
   });
 }
+
+/** The list carries each pull request's state and merge time: reading each again would spend the rate limit on every poll. */
+test("discovery reads a merge from the list without reading the pull request again", async () => {
+  const calls: string[] = [];
+  const merged = githubPayload({ state: "closed", merged_at: "2026-08-18T11:00:00Z",
+    head: { ref: "cohort/foundation", sha: "abc123", repo: { full_name: "RankOneLabs/oakridge" } } });
+  delete (merged as { merged?: unknown }).merged;
+  const http = (async (input: string | URL | Request) => { calls.push(String(input)); return Response.json([merged]); }) as unknown as typeof fetch;
+  const reader = new GithubPullRequestReader({ token: "test-token" }, http);
+  const result = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs", head_branch: "cohort/foundation", base_branch: "epic/tiers" });
+  expect({ states: result.ok && result.value.map((item) => item.state), calls: calls.length }).toEqual({ states: ["merged"], calls: 1 });
+});
+
+test("an observation carries no read time, so the same pull request read twice is the same observation", async () => {
+  const { reader } = readerReturning(200, githubPayload());
+  const first = await reader.read("RankOneLabs", "oakridge", 440);
+  await Bun.sleep(5);
+  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual(first);
+});

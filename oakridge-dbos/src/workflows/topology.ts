@@ -373,9 +373,10 @@ async function runOperation(intent: CarriedIntent): Promise<OperationResult> {
 /**
  * A code worker (part 1 §7.2): report WorkerStarted, run the operation,
  * publish its value as the revision of the worker's artifact by the action,
- * report WorkerEnded. With `every` it repeats while the intent is live, each
+ * report WorkerEnded. A watch (`every`) repeats while the intent is live, each
  * run a later attempt of the same action; step leaves an unchanged value
- * unpublished. A stop needs nothing outside: the loop ends when it sees one.
+ * unpublished, and a watch replaced by new inputs is stopped by commit. A stop
+ * needs nothing outside: the loop ends when it sees one.
  */
 async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
   const worker = intent.instruction.worker;
@@ -397,7 +398,12 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
   for (;;) {
     const attempt = { action_id: intent.instruction.attempt.action_id, seq };
     const refused_start = await report({ run_id: intent.run_id, attempt, report: { kind: "started", session_id: null, publication_secret_hash: null } });
-    if (refused_start) return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
+    if (refused_start) {
+      // A watch replaced while it slept is refused its next start; the stop commit requested settles it.
+      const reloaded = await loadIntentStep(intent.id);
+      if (reloaded.kind === "carried" && reloaded.intent.status === "stop_requested") return reloaded.intent.status;
+      return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
+    }
     if (status === "pending") status = await markAcknowledgedStep(intent.id);
     const outcome = await runOperation(intent);
     let result: WorkerResult = outcome.kind === "succeeded" ? { kind: "succeeded" } : { kind: "failed", code: outcome.code, detail: outcome.detail };

@@ -11,6 +11,7 @@ export type AgentProfileId = "claude-code" | "codex" | (string & {});
 export interface AgentProfileEnvPolicy {
   readonly inherit: boolean;
   readonly include?: readonly string[];
+  /** Names to drop; one ending in `*` drops every name with that prefix. */
   readonly exclude?: readonly string[];
   readonly set?: Readonly<Record<string, string>>;
 }
@@ -92,6 +93,13 @@ export function resolveProfile(
   return ok(profile);
 }
 
+/** Whether `key` matches an exclude entry: exactly, or by prefix for an entry ending in `*`. */
+export function isExcluded(key: string, exclude: readonly string[]): boolean {
+  return exclude.some((pattern) =>
+    pattern.endsWith("*") ? key.startsWith(pattern.slice(0, -1)) : key === pattern,
+  );
+}
+
 /**
  * Pure transform from the policy plus a base environment to the child's
  * environment. `exclude` wins over `include`; `set` wins over both. The
@@ -110,8 +118,8 @@ export function buildAgentEnv(
       env[key] = value;
     }
   }
-  for (const key of policy.exclude ?? []) {
-    delete env[key];
+  for (const key of Object.keys(env)) {
+    if (isExcluded(key, policy.exclude ?? [])) delete env[key];
   }
   for (const [key, value] of Object.entries(policy.set ?? {})) {
     env[key] = value;

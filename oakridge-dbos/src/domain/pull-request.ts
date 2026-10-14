@@ -14,6 +14,5 @@ export interface PullRequestObservation {
   readonly head_sha: string | null;
   readonly state: ObservedPullRequestState;
   readonly source: PullRequestObservationSource;
-  readonly observed_at: string;
   readonly merged_at: string | null;
 }

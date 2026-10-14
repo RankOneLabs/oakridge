@@ -70,6 +70,7 @@ const AcpEnvPolicySchema = z
   .object({
     inherit: z.boolean().default(true),
     include: z.array(z.string().min(1)).nullable().optional(),
+    // A name ending in `*` excludes every variable with that prefix.
     exclude: z.array(z.string().min(1)).default([]),
     set: z.record(z.string(), z.string()).default({}),
   })

@@ -312,9 +312,10 @@ interface Reconcile {
 /**
  * Diff the external actions step wants against effect_intent. The core wants a
  * RunWorker until its attempt exists, so a wanted action with no intent gets
- * one, carrying its effect instruction. An intent whose unit is no longer
- * active (done or cancelled) is still in effect but no longer wanted, so its
- * stop is requested. An intent the executor has settled is left alone.
+ * one, carrying its effect instruction. A periodic worker's new watch
+ * requests the stop of the action it replaces. An intent whose unit is no
+ * longer active (done or cancelled) is still in effect but no longer wanted,
+ * so its stop is requested. An intent the executor has settled is left alone.
  */
 async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Promise<void> {
   const { run_id, step } = input;
@@ -323,8 +324,8 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
   const wanted = selectWanted(step)
     .flatMap(({ actions }) => actions.filter((action): action is RunWorkerAction => action.kind === "run_worker"));
   const resolved = new Map<string, ResolvedRunWorker>(step.resolved.map((item) => [item.action_id, item]));
-  // One intent per action: a periodic worker's later attempts reuse its action id, and its
-  // carrier starts each one (WorkerStarted on an ended periodic attempt opens the next seq).
+  // One intent per action: a watch's later attempts reuse its action id, and its carrier
+  // starts each one (WorkerStarted on an ended periodic attempt opens the next seq).
   const existing = new Set((await trx.selectFrom("authority.effect_intent").select("action_id")
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(unit_ids)).execute()).map((row) => row.action_id));
   for (const action of wanted) {
@@ -342,10 +343,19 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id, unit_id: action.unit,
       action_id: inputs.action_id, seq: attempt.seq, payload: jsonText(instruction.value) }).execute();
     existing.add(inputs.action_id);
+    // A new watch replaces the worker's previous action (D-V1): its carrier stops repeating.
+    const replaced = selectReplacedAction(action);
+    if (replaced !== null) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", updated_at: new Date() })
+      .where("run_id", "=", run_id).where("action_id", "=", replaced).where("status", "in", ["pending", "acknowledged"]).execute();
   }
   const inactive = step.snapshot.units.filter((unit) => unit.status.kind === "done" || unit.status.kind === "cancelled").map((unit) => unit.id);
   if (inactive.length) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", updated_at: new Date() })
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", ["pending", "acknowledged"]).execute();
+}
+
+/** The action a periodic worker's new watch replaces; null for any other action, or a first watch. */
+export function selectReplacedAction(action: RunWorkerAction): string | null {
+  return action.cause.kind === "periodic" ? action.cause.replaces ?? null : null;
 }
 
 /**

@@ -353,6 +353,41 @@ test("a periodic code worker repeats under one intent, publishes only a changed 
   } finally { repo.remove(); }
 }, 90_000);
 
+test("a watch whose input changes is carried by a new intent on the new input, and the replaced one stops", async () => {
+  // The shape of pr_watch: a builder publishes `pr`, a watch observes `latest(pr)`; a replacement PR moves its input.
+  const watch_pr: Workflow = {
+    workflow: "watch_pr", input: {},
+    run: { units: { watch: { stage: "watch", input: {} } }, outcome: {} },
+    stages: { watch: { input: {}, artifacts: { pr: { schema: "text" }, observation: { schema: "text" } },
+      workers: {
+        builder: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs: { topic: "\"pr\"" }, creates: ["pr"] },
+        observer: { kind: "code", operation: "value.publish", when: "published(pr)", inputs: { value: "latest(pr)" }, every: "1s", creates: ["observation"] },
+      },
+      reviews: { editor: { of: "pr", by: "operator", prompt: "review-loop/editor.md", inputs: { topic: "\"pr\"", draft: "latest(pr)", critique: "latest(pr)" },
+        decisions: { request_changes: { effect: "request_changes", label: "Replace the PR", fields: { feedback: "Why?" } } } } },
+      done_when: "false", outcome: {} } },
+  };
+  const run_id = await launch(watch_pr, {}, async (turn) => {
+    const published = await turn.publish("pr", turn.predecessor("pr") === null ? "one" : "two", { predecessor: turn.predecessor("pr") });
+    return published.ok ? "succeeded" : "failed";
+  });
+  const unit = `${run_id}/watch`;
+  await eventually("the first PR observed", async () => (await attempts(run_id, "observer")).some((attempt) => attempt.status.kind === "succeeded"), 20_000);
+  expect((await decide(run_id, unit, "request_changes", `${unit}:pr:1`, { feedback: "Open a new PR." })).status).toBe(201);
+  const observed = await eventually("the new PR observed", async () => {
+    const bodies = (await revisions(run_id, "observation")).map((revision) => revision.body);
+    return bodies.length === 2 ? bodies : null;
+  }, 20_000);
+  const watches = await eventually("the replaced watch to stop", async () => {
+    const rows = await db.selectFrom("authority.effect_intent").select(["action_id", "status"]).where("run_id", "=", run_id).execute();
+    const actions = [...new Set((await attempts(run_id, "observer")).map((attempt) => attempt.action_id))];
+    const statuses = actions.map((action) => rows.find((row) => row.action_id === action)?.status);
+    return statuses[0] === "stopped" ? statuses : null;
+  }, 20_000);
+  expect((await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() })).status).toBe(201);
+  expect({ observed, watches }).toEqual({ observed: ["one", "two"], watches: ["stopped", "acknowledged"] });
+}, 90_000);
+
 test("a revise under session: resume revives its ended session and continues it", async () => {
   const run_id = await launch(sampleWorkflow("review-loop"), { topic: "Oakridge" }, async (turn) => {
     if (workerOf(turn) === "critic") { await turn.publish("critique", { notes: ["ok"] }, { subject: turn.subject(), predecessor: turn.predecessor("critique") }); return "succeeded"; }
