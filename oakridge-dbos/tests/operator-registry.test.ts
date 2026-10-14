@@ -96,6 +96,18 @@ test("a prompt map with a non-string path is a 422, not a fault", async () => wi
   expect(statuses).toEqual([422, 422]);
 }));
 
+test("an unused null worker prompt compiles and pins through both definition endpoints", async () => withApi(async ({ app }) => {
+  const workflow = sampleWorkflow("review-loop");
+  const [stage_key, stage] = Object.entries(workflow.stages)[0]!;
+  const [worker_key, worker] = Object.entries(stage.workers).find(([, candidate]) => candidate.kind === "agent")!;
+  if (worker.kind !== "agent") throw new Error("fixture needs an agent worker");
+  const with_null = { ...workflow, stages: { ...workflow.stages, [stage_key]: { ...stage,
+    workers: { ...stage.workers, [worker_key]: { ...worker, prompts: { ...worker.prompts, review: null } } } } } };
+  const compile = await app.request("/api/definitions/compile", json("POST", with_null));
+  const pin = await app.request("/api/definitions", json("POST", with_null));
+  expect([compile.status, pin.status]).toEqual([200, 201]);
+}));
+
 test("an archived run and definition leave the active listings and return when unarchived", async () => withApi(async ({ authority, app }) => {
   const { bundle_id } = await pinSample(authority);
   const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
