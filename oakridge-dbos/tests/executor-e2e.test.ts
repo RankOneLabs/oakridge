@@ -8,7 +8,7 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { intentWorkflowId } from "../src/workflows/topology";
 import { openDatabase, type Database } from "../src/storage/database";
 import { launchRunId } from "../src/storage/commit";
-import { selectCollectionKey, selectUnitKey, selectUnitTree, type UnitTree } from "../src/projections/unit-label";
+import { selectCollectionKey, selectUnitKey } from "../src/projections/unit-label";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
 import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTurn } from "./stub-kbbl";
@@ -79,22 +79,14 @@ const retry = (run_id: string, unit: string, worker: string) =>
   api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit)}/workers/${worker}/retry`, { request_id: crypto.randomUUID() });
 
 const runStatus = async (run_id: string): Promise<string> =>
-  (await db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow()).status.kind;
+  (await db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow()).status.kind;
 const revisions = (run_id: string, artifact: string) => db.selectFrom("authority.artifact_revision").select(["id", "body", "subject", "unit_id"])
   .where("run_id", "=", run_id).where("artifact", "=", artifact).orderBy("created_at").orderBy("id").execute();
 const attempts = (run_id: string, worker: string) => db.selectFrom("authority.attempt").select(["action_id", "seq", "status", "kbbl_session_id", "unit_id"])
   .where("run_id", "=", run_id).where("worker", "=", worker).orderBy("created_at").orderBy("action_id").execute();
-/** The run's unit tree, membership read from its pinned definition as the operator API reads it. */
-async function unitTreeOf(run_id: string): Promise<UnitTree> {
-  const rows = await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration"]).where("run_id", "=", run_id).execute();
-  const { source } = await db.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
-    .select("bundle.source").where("run.id", "=", run_id).executeTakeFirstOrThrow();
-  return selectUnitTree(rows, source);
-}
 const units = async (run_id: string) => {
-  const tree = await unitTreeOf(run_id);
-  return (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "status"]).where("run_id", "=", run_id).execute())
-    .map((unit) => ({ ...unit, unit_key: selectUnitKey(unit), collection_key: selectCollectionKey(unit, tree) }));
+  return (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "status", "collection_key"]).where("run_id", "=", run_id).execute())
+    .map((unit) => ({ ...unit, unit_key: selectUnitKey(unit), collection_key: selectCollectionKey(unit) }));
 };
 const sessionsOfRun = (run_id: string, worker?: string) =>
   stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``) && (worker === undefined || session.spec.initial_prompt.includes(`worker \`${worker}\``)));

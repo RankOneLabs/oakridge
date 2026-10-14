@@ -136,16 +136,16 @@ pub fn latest<'a>(
     state
         .revisions
         .iter()
-        .rev()
-        .find(|r| r.unit == *unit && r.artifact == *artifact)
+        .filter(|r| r.unit == *unit && r.artifact == *artifact)
+        .max_by_key(|r| r.seq)
 }
 pub(super) fn checked_stage<'a>(
     program: &'a CheckedWorkflow,
     unit: &UnitState,
 ) -> Result<&'a CheckedStage, StepError> {
     let key = unit
-        .stage
-        .as_ref()
+        .kind
+        .stage()
         .ok_or_else(|| invalid("unit is a group"))?;
     program
         .stages
@@ -182,7 +182,9 @@ pub(super) fn revision_id(state: &StepSnapshot, unit: &UnitId, artifact: &Symbol
         .revisions
         .iter()
         .filter(|revision| revision.unit == *unit && revision.artifact == *artifact)
-        .count()
+        .map(|revision| revision.seq as usize)
+        .max()
+        .unwrap_or(0)
         + 1;
     RevisionId(format!("{}:{}:{seq}", unit.0, artifact.0))
 }
@@ -190,7 +192,7 @@ pub(super) fn decision_id(state: &StepSnapshot, unit: &UnitId) -> DecisionId {
     let seq = state
         .decisions
         .iter()
-        .filter(|decision| decision.unit == *unit)
+        .filter(|decision| decision.unit() == unit)
         .count()
         + 1;
     DecisionId(format!("{}:d{seq}", unit.0))
@@ -204,8 +206,8 @@ pub(super) fn latest_retry<'a>(
         .retry_events
         .iter()
         .rev()
-        .find(|(u, w, _)| u == unit && w == worker)
-        .map(|(_, _, id)| id)
+        .find(|retry| &retry.unit == unit && &retry.worker == worker)
+        .map(|retry| &retry.event)
 }
 /// A retry authorizes exactly one attempt: once any attempt of the worker
 /// carries it, it is spent.
@@ -218,7 +220,7 @@ pub(super) fn is_retry_spent(
     state.attempts.iter().any(|attempt| {
         attempt.unit == *unit
             && attempt.worker == *worker
-            && matches!(&attempt.cause, Cause::Retry { event } if event == retry)
+            && matches!(&attempt.cause, Cause::Retry { event, .. } if event == retry)
     })
 }
 /// The first 16 bytes of a value's SHA-256 over its wire JSON (object
@@ -337,9 +339,12 @@ pub(super) fn changes_requested<'a>(
     artifacts.iter().find_map(|artifact| {
         let latest = latest(state, unit, artifact)?;
         state.decisions.iter().rev().find(|decision| {
-            decision.unit == *unit
-                && decision.target == latest.id
-                && decision.effect == DecisionEffect::RequestChanges
+            decision.unit() == unit
+                && decision.target() == &latest.id
+                && matches!(
+                    decision.effect(),
+                    Some(DecisionEffect::RequestChanges { .. })
+                )
         })
     })
 }
@@ -356,13 +361,13 @@ pub(super) fn answered_decision<'a>(
         Cause::ChangesRequested { decision } => state
             .decisions
             .iter()
-            .find(|candidate| candidate.id == *decision)?,
+            .find(|candidate| candidate.id() == decision)?,
         _ => changes_requested(state, unit, artifacts)?,
     };
     let revision = state
         .revisions
         .iter()
-        .find(|revision| revision.id == decision.target)?;
+        .find(|revision| &revision.id == decision.target())?;
     Some((revision, decision))
 }
 pub(super) fn group_for<'a>(

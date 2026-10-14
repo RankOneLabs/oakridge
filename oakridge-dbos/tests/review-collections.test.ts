@@ -39,7 +39,7 @@ async function fanOutPrepared(items: unknown): Promise<{ readonly run_id: RunId;
 }
 const statusOf = async (run_id: RunId, unit: string) => (await authority.db.selectFrom("authority.unit").select("status")
   .where("run_id", "=", run_id).where("id", "=", unit).executeTakeFirstOrThrow()).status;
-const runStatus = async (run_id: RunId) => (await authority.db.selectFrom("authority.run").select("status").where("id", "=", run_id)
+const runStatus = async (run_id: RunId) => (await authority.db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id)
   .executeTakeFirstOrThrow()).status;
 const inboxOf = async (run_id: RunId): Promise<readonly InboxItem[]> => {
   const read = await readRun(authority.db, run_id);

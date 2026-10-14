@@ -149,65 +149,34 @@ mod tests {
     use crate::{ActionKey, AttemptState, AttemptStatus, Cause, Mode, UnitId, WorkerKey};
 
     #[test]
-    fn optional_run_input_rejects_wide_wire_numbers() {
+    fn optional_unit_input_rejects_wide_wire_numbers() {
         let input = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
-        let run = crate::RunState {
-            id: "run".into(),
-            root: UnitId::from("run"),
-            status: crate::UnitStatus::NotStarted,
-            input: Some(input),
-        };
-        assert!(serde_json::to_value(&run).is_err());
-        let raw = serde_json::json!({
-            "id": "run", "root": "run", "status": {"kind": "not_started"},
-            "input": {"nested": [MAX_SAFE_INTEGER + 1]}
-        });
-        assert!(serde_json::from_value::<crate::RunState>(raw).is_err());
+        assert!(
+            super::optional_json::serialize(&Some(input), serde_json::value::Serializer).is_err()
+        );
     }
 
-    fn attempt(ended_at: Option<i64>) -> AttemptState {
+    fn attempt(seq: u32) -> AttemptState {
         AttemptState {
             action_id: ActionKey::from("action"),
-            seq: 1,
+            seq,
             unit: UnitId::from("run/unit"),
             worker: WorkerKey::from("worker"),
             mode: Mode::Initial,
             cause: Cause::Missing,
             status: AttemptStatus::Running,
             kbbl_session_id: None,
-            ended_at,
         }
     }
 
     #[test]
-    fn a_logical_end_counter_round_trips_only_at_safe_values() {
-        for value in [MIN_SAFE_INTEGER, 0, MAX_SAFE_INTEGER] {
-            let state = attempt(Some(value));
-            let bytes = serde_json::to_vec(&state).unwrap();
-            assert_eq!(
-                serde_json::from_slice::<AttemptState>(&bytes)
-                    .unwrap()
-                    .ended_at,
-                Some(value)
-            );
-        }
+    fn attempt_sequence_round_trips() {
+        let state = attempt(3);
+        let bytes = serde_json::to_vec(&state).unwrap();
         assert_eq!(
-            serde_json::from_slice::<AttemptState>(&serde_json::to_vec(&attempt(None)).unwrap())
-                .unwrap()
-                .ended_at,
-            None
+            serde_json::from_slice::<AttemptState>(&bytes).unwrap().seq,
+            3
         );
-        for value in [
-            MIN_SAFE_INTEGER - 1,
-            MAX_SAFE_INTEGER + 1,
-            i64::MIN,
-            i64::MAX,
-        ] {
-            assert!(
-                serde_json::to_vec(&attempt(Some(value))).is_err(),
-                "{value}"
-            );
-        }
     }
 
     #[test]

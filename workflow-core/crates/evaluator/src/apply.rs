@@ -4,8 +4,6 @@ use super::*;
 /// worker scheduling. Variants mirror the existing writes in those phases.
 #[derive(Clone)]
 pub(super) enum Delta {
-    RunInput(Value),
-    RunStatus(UnitStatus),
     PushUnit(UnitState),
     UnitInput { index: usize, input: Value },
     UnitStatus { index: usize, status: UnitStatus },
@@ -20,16 +18,18 @@ pub(super) enum Delta {
 /// The sole writer of `StepSnapshot`.
 pub(super) fn apply(state: &mut StepSnapshot, context: &mut EvaluationContext<'_>, delta: Delta) {
     match delta {
-        Delta::RunInput(input) => state.run.input = Some(input),
-        Delta::RunStatus(status) => state.run.status = status,
         Delta::PushUnit(unit) => state.units.push(unit),
-        Delta::UnitInput { index, input } => state.units[index].input = input,
+        Delta::UnitInput { index, input } => state.units[index].input = Some(input),
         Delta::UnitStatus { index, status } => state.units[index].status = status,
         Delta::PushAttempt(attempt) => state.attempts.push(attempt),
         Delta::ReplaceAttempt { index, attempt } => state.attempts[index] = attempt,
         Delta::PushRevision(revision) => state.revisions.push(revision),
         Delta::PushDecision(decision) => state.decisions.push(decision),
-        Delta::PushRetry(unit, worker, id) => state.retry_events.push((unit, worker, id)),
+        Delta::PushRetry(unit, worker, id) => state.retry_events.push(RetryEvent {
+            unit,
+            worker,
+            event: id,
+        }),
         Delta::EvaluationBudget(remaining) => context.remaining = remaining,
     }
 }

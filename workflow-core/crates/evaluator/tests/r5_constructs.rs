@@ -60,8 +60,6 @@ impl Run {
                 run: RunState {
                     id: "run".into(),
                     root: UnitId::from("run"),
-                    status: UnitStatus::NotStarted,
-                    input: None,
                 },
                 units: vec![],
                 attempts: vec![],
@@ -264,9 +262,9 @@ fn feedback_of(run: &Run, unit: &str) -> Vec<String> {
     run.state
         .decisions
         .iter()
-        .filter(|decision| decision.unit.0 == unit)
+        .filter(|decision| decision.unit().0 == unit)
         .map(|decision| {
-            decision.payload["feedback"]
+            decision.payload()["feedback"]
                 .as_str()
                 .unwrap_or("")
                 .to_owned()
@@ -277,8 +275,6 @@ fn feedback_of(run: &Run, unit: &str) -> Vec<String> {
 #[test]
 fn an_enum_input_outside_its_variants_fails_the_launch_schema() {
     let mut state = Run::launch(false).state;
-    state.run.input = None;
-    state.run.status = UnitStatus::NotStarted;
     state.units.clear();
     state.attempts.clear();
     let refused = step(
@@ -403,14 +399,17 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
         .state
         .decisions
         .iter()
-        .filter(|d| d.review.0 == "pr_closed")
+        .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
         .cloned()
         .collect();
     assert_eq!(engine.len(), 1);
-    assert_eq!(engine[0].target, build);
-    assert_eq!(engine[0].effect, DecisionEffect::RequestChanges);
+    assert_eq!(engine[0].target(), &build);
+    assert!(matches!(
+        engine[0].effect(),
+        Some(DecisionEffect::RequestChanges { .. })
+    ));
     assert_eq!(
-        engine[0].payload,
+        engine[0].payload(),
         json!({ "feedback": "The PR was closed without merging. Open a new one." })
     );
     let revise = run
@@ -424,7 +423,7 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
     assert_eq!(
         revise.cause,
         Cause::ChangesRequested {
-            decision: engine[0].id.clone()
+            decision: engine[0].id().clone()
         }
     );
     // Another observation of the same state decides nothing new.
@@ -433,7 +432,7 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
         run.state
             .decisions
             .iter()
-            .filter(|d| d.review.0 == "pr_closed")
+            .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
             .count(),
         1
     );
@@ -487,7 +486,7 @@ fn the_cohort_is_done_once_its_assessment_is_accepted_and_its_pr_is_merged() {
     assert!(matches!(run.status(COHORT), UnitStatus::Active));
     run.observe("merged");
     assert!(matches!(run.status(COHORT), UnitStatus::Done { .. }));
-    assert!(matches!(run.state.run.status, UnitStatus::Done { .. }));
+    assert!(matches!(run.status("run"), UnitStatus::Done { .. }));
 }
 
 #[test]
@@ -634,7 +633,7 @@ fn an_engine_review_waits_for_the_revise_it_asked_for_to_publish_everything() {
         run.state
             .decisions
             .iter()
-            .filter(|d| d.review.0 == "pr_closed")
+            .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
             .count()
     };
     assert_eq!(pr_closed(&run), 1);
@@ -676,8 +675,8 @@ fn pr_closed_targets(run: &Run) -> Vec<RevisionId> {
     run.state
         .decisions
         .iter()
-        .filter(|d| d.review.0 == "pr_closed")
-        .map(|d| d.target.clone())
+        .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
+        .map(|d| d.target().clone())
         .collect()
 }
 
