@@ -2087,3 +2087,41 @@ fn rejected_events_name_the_artifact_or_worker_at_fault() {
         entity: StepEntity::Worker { unit, worker }, ..
     } if unit.0 == "run/document" && worker.0 == "missing"));
 }
+
+#[test]
+fn frozen_trace_replay_is_byte_identical_to_the_base() {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for (name, trace) in [
+        (
+            "review-loop",
+            include_str!("../../../fixtures/traces/review-loop.json"),
+        ),
+        (
+            "fan-out",
+            include_str!("../../../fixtures/traces/fan-out.json"),
+        ),
+        (
+            "fan-out",
+            include_str!("../../../fixtures/traces/fan-out-stall.json"),
+        ),
+    ] {
+        let program = sample(name);
+        let trace: Value = serde_json::from_str(trace).unwrap();
+        let mut state = snapshot();
+        for (row_number, row) in trace["rows"].as_array().unwrap().iter().enumerate() {
+            for (index, spec) in row["events"].as_array().unwrap().iter().enumerate() {
+                let incoming = incoming(event(spec, &state), &format!("{row_number}:{index}"));
+                let result = step(&program, &state, &incoming).unwrap();
+                let bytes = serde_json::to_vec(&result).unwrap();
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(&bytes);
+                state = result.snapshot;
+            }
+        }
+    }
+    assert_eq!(
+        format!("{:x}", digest.finalize()),
+        "e5feb3d95ba092568269a192f2582633111df3b31d629561024836e3e5aceafd"
+    );
+}
