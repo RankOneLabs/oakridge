@@ -102,6 +102,15 @@ fn a_key_read_through_a_nested_path_materializes_every_member() {
 }
 
 #[test]
+fn a_large_fan_out_schedules_workers_within_the_default_evaluation_budget() {
+    let members: Vec<_> = (0..1_500)
+        .map(|index| member(&format!("item-{index:04}"), json!([]), "text"))
+        .collect();
+    let result = launch(Value::Array(members)).unwrap();
+    assert_eq!(result.wanted.len(), 1_500);
+}
+
+#[test]
 fn a_member_input_is_evaluated_against_its_own_each() {
     let result = launch(json!([member("only", json!([]), "text for only")])).unwrap();
     let unit = result
@@ -125,7 +134,7 @@ fn a_key_that_is_not_an_ident_is_rejected() {
     ] {
         let error = launch(json!([member(&key, json!([]), "T")])).unwrap_err();
         assert!(
-            matches!(&error, StepError::Rejected { reason } if reason.contains("illegal or duplicate key")),
+            matches!(&error, StepError::Rejected { reason, .. } if reason.contains("illegal or duplicate key")),
             "{key:?} produced {error:?}"
         );
     }
@@ -139,7 +148,7 @@ fn a_duplicate_member_key_is_rejected() {
     ]))
     .unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("illegal or duplicate key")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("illegal or duplicate key")),
         "{error:?}"
     );
 }
@@ -148,7 +157,7 @@ fn a_duplicate_member_key_is_rejected() {
 fn a_prerequisite_naming_no_member_is_rejected() {
     let error = launch(json!([member("a", json!(["absent"]), "A")])).unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("missing member")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("missing member")),
         "{error:?}"
     );
 }
@@ -161,7 +170,7 @@ fn a_cycle_among_members_is_rejected() {
     ]))
     .unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("cyclic prerequisite")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("cyclic prerequisite")),
         "{error:?}"
     );
 }

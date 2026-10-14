@@ -104,7 +104,8 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!is_pinned) return Response.json(compiled.value);
       const pinned = await pinDefinition(deps.db, { source, compiled: compiled.value, prompts: prompts.value });
       return Response.json(selectDefinitionSummary({ bundle_id: pinned.bundle.id, digest: pinned.bundle.digest,
-        source: pinned.bundle.source, archived_at: pinned.bundle.archived_at }), { status: pinned.kind === "pinned" ? 201 : 200 });
+        source: pinned.bundle.source, checked_program: pinned.bundle.checked_program, archived_at: pinned.bundle.archived_at }),
+        { status: pinned.kind === "pinned" ? 201 : 200 });
     } catch (cause) { return fault(cause); }
   };
   app.post("/api/definitions/compile", compile(false));

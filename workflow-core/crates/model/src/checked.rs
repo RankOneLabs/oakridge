@@ -13,28 +13,8 @@ pub struct CheckedWorkflow {
     pub root: CheckedGroup,
 }
 
-/// A validated schema with aliases and type constructors resolved into nodes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CheckedType {
-    Text,
-    Ident,
-    RepoPath,
-    Integer,
-    Boolean,
-    Enumeration {
-        variants: Vec<String>,
-    },
-    List {
-        item: Box<CheckedType>,
-    },
-    Optional {
-        value: Box<CheckedType>,
-    },
-    Record {
-        fields: BTreeMap<String, CheckedType>,
-    },
-}
+/// Checked positions use the same closed type vocabulary as source positions.
+pub type CheckedType = Type;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

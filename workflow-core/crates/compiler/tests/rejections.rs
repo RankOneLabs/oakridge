@@ -1,6 +1,19 @@
 use serde_json::Value;
 use workflow_model::*;
 
+#[test]
+fn malformed_type_reports_its_config_path() {
+    let mut workflow: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    workflow["schemas"]["pr_status"]["number"] = Value::String("list(integer".into());
+    let error =
+        workflow_compiler::decode_workflow(&serde_json::to_vec(&workflow).unwrap()).unwrap_err();
+    assert!(
+        error.detail.contains("schemas.pr_status.number"),
+        "{error:?}"
+    );
+}
+
 /// `repository.prepare` as the samples' registry declares it.
 fn prepare_operation() -> Vec<CodeOperation> {
     vec![CodeOperation {
@@ -151,6 +164,30 @@ fn compile_fan_out(edit: impl FnOnce(&mut Value)) -> Result<(), DomainError> {
 /// Sample B (fan-out) with `edit` applied to its source: the compile error's detail.
 fn fan_out_compile_error(edit: impl FnOnce(&mut Value)) -> String {
     compile_fan_out(edit).unwrap_err().detail.to_string()
+}
+
+#[test]
+fn an_unused_outcome_type_is_rejected_until_resolution_exists() {
+    let detail = fan_out_compile_error(|value| {
+        value["schemas"]["future"] = "outcome_of(item)".into();
+    });
+    assert!(
+        detail.contains("unresolved type outcome_of(item)"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn a_schema_cannot_shadow_a_primitive_type() {
+    for primitive in ["text", "ident", "repo_path", "integer", "boolean"] {
+        let detail = fan_out_compile_error(|value| {
+            value["schemas"][primitive] = "integer".into();
+        });
+        assert!(
+            detail.contains("shadows a primitive type"),
+            "{primitive}: {detail}"
+        );
+    }
 }
 
 /// A `work` input that reads `prepare`'s outcome inside a list function.

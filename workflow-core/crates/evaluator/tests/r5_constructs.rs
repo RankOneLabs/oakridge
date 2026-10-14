@@ -293,7 +293,7 @@ fn an_enum_input_outside_its_variants_fails_the_launch_schema() {
         },
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "launch input fails schema")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "launch input fails schema")
     );
 }
 
@@ -368,7 +368,7 @@ fn without_admission_the_builder_starts_at_once_and_the_admission_review_stays_c
     assert!(run.last.as_ref().unwrap().reviews.is_empty());
     let refused = run.decide(COHORT, "admission", "admit", "brief", json!({}));
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "review is not open")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "review is not open")
     );
 }
 
@@ -449,7 +449,9 @@ fn an_operator_cannot_decide_an_engine_review() {
         "build",
         json!({ "feedback": "x" }),
     );
-    assert!(matches!(absent, Err(StepError::Rejected { reason }) if reason == "decision absent"));
+    assert!(
+        matches!(absent, Err(StepError::Rejected { reason, .. }) if reason == "decision absent")
+    );
     let refused = run.decide(
         COHORT,
         "pr_closed",
@@ -458,7 +460,7 @@ fn an_operator_cannot_decide_an_engine_review() {
         json!({ "feedback": "x" }),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "the engine decides this review")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "the engine decides this review")
     );
 }
 
@@ -499,7 +501,7 @@ fn an_assessment_outside_its_enum_fails_its_schema() {
         json!({ "verdict": "maybe" }),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "artifact body fails schema")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "artifact body fails schema")
     );
 }
 
@@ -552,7 +554,9 @@ fn a_revision_names_an_attempt_exactly_when_its_writer_is_not_the_operator() {
         ),
     ] {
         let refused = run.apply(event, writer);
-        assert!(matches!(refused, Err(StepError::Rejected { reason: actual }) if actual == reason));
+        assert!(
+            matches!(refused, Err(StepError::Rejected { reason: actual, .. }) if actual == reason)
+        );
     }
 }
 
@@ -574,7 +578,7 @@ fn an_operator_cannot_edit_a_code_workers_artifact() {
         operator(),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason.contains("code worker"))
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason.contains("code worker"))
     );
 }
 

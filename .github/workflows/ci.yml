@@ -67,6 +67,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test oakridge-dbos/tests/core-fixture-parity.test.ts
+      - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
 
   core-contracts:
     name: Generated Rust/TypeScript contracts
@@ -101,7 +102,6 @@ jobs:
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
       - run: bunx tsc --noEmit -p lbc-dashboard/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
-      - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
 
   kbbl-tests:

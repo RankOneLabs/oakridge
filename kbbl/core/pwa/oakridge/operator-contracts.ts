@@ -256,7 +256,7 @@ export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; reado
 
 export interface OperatorDefinitionGraph { readonly nodes: readonly OperatorDefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 
-export type OperatorCompiledWorkflow = { readonly "digest": string; readonly "stages": (string)[] };
+export type OperatorCompiledWorkflow = { readonly "digest": string; readonly "stages": (string)[]; readonly "workflow": OperatorParsedWorkflow };
 
 export type OperatorBodyValue = OperatorJsonValue;
 
@@ -377,6 +377,8 @@ export type OperatorStage = { readonly "artifacts": { readonly [key: string]: Op
 
 export interface OperatorDefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 
+export type OperatorParsedWorkflow = { readonly "input": OperatorType; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorType }; readonly "stages": { readonly [key: string]: OperatorParsedStage }; readonly "workflow": string };
+
 export type OperatorJsonValue = OperatorJsonPrimitive | readonly OperatorJsonValue[] | { readonly [key: string]: OperatorJsonValue };
 
 export type OperatorDecisionEffect = "approve" | "request_changes";
@@ -412,6 +414,10 @@ export type OperatorReview = { readonly "by": OperatorReviewBy; readonly "decisi
 
 export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "agent"; readonly "prompts": { readonly [key: string]: string }; readonly "reviews"?: string | null; readonly "runtime"?: OperatorWorkerRuntime | null; readonly "session"?: OperatorSessionMode | null; readonly "when"?: string | null; readonly "workspace"?: string | null } | { readonly "creates": (string)[]; readonly "every"?: string | null; readonly "inputs": { readonly [key: string]: string }; readonly "kind": "code"; readonly "operation": string; readonly "when"?: string | null };
 
+export type OperatorType = { readonly "kind": "text" } | { readonly "kind": "ident" } | { readonly "kind": "repo_path" } | { readonly "kind": "boolean" } | { readonly "kind": "integer" } | { readonly "kind": "enum"; readonly "variants": (string)[] } | { readonly "kind": "optional"; readonly "value": OperatorType } | { readonly "item": OperatorType; readonly "kind": "list" } | { readonly "fields": { readonly [key: string]: OperatorType }; readonly "kind": "record" } | { readonly "kind": "named"; readonly "schema": string } | { readonly "kind": "outcome_of"; readonly "stage": string };
+
+export type OperatorParsedStage = { readonly "artifacts": { readonly [key: string]: OperatorParsedArtifact }; readonly "done_when"?: string | null; readonly "input": OperatorType; readonly "outcome": { readonly [key: string]: string }; readonly "reviews"?: { readonly [key: string]: OperatorParsedReview }; readonly "workers": { readonly [key: string]: OperatorWorker } };
+
 export type OperatorJsonPrimitive = string | number | boolean | null;
 
 export interface OperatorSchemaField { readonly key: string; readonly schema: string }
@@ -427,3 +433,9 @@ export type OperatorReviewDecision = { readonly "effect": OperatorDecisionEffect
 export type OperatorWorkerRuntime = { readonly "harness": string; readonly "model": string };
 
 export type OperatorSessionMode = "resume" | "fresh";
+
+export type OperatorParsedArtifact = { readonly "schema": OperatorType; readonly "validate"?: (OperatorValidationCheck)[] };
+
+export type OperatorParsedReview = { readonly "by": OperatorReviewBy; readonly "decisions": { readonly [key: string]: OperatorParsedReviewDecision }; readonly "inputs"?: { readonly [key: string]: string }; readonly "of": string; readonly "prompt"?: string | null; readonly "when"?: string | null };
+
+export type OperatorParsedReviewDecision = { readonly "effect": OperatorDecisionEffect; readonly "feedback"?: string | null; readonly "fields"?: { readonly [key: string]: string }; readonly "label": string; readonly "on"?: string | null; readonly "payload"?: OperatorType | null };
