@@ -90,7 +90,7 @@ test("browser recovers a committed launch after losing its response and reloadin
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
     if (url.pathname === "/oakridge/api/api/definitions") return Response.json({ items: [{ bundle_id: "bundle-1", digest: "sha-1", archived_at: null,
-      bundle: { key: "demo", version: 1, root: "$root", schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } }],
+      bundle: { key: "demo", root: "$root", schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } }],
       next_cursor: null });
     if (url.pathname === "/oakridge/api/api/runs") {
       const input = await request.json() as typeof requests[number];
@@ -113,7 +113,7 @@ test("browser recovers a committed launch after losing its response and reloadin
       else await route.fulfill({ response });
     });
     await page.goto(`${server.url.href}?launch`);
-    await page.getByRole("option", { name: /demo v1/ }).waitFor({ state: "attached" });
+    await page.getByRole("option", { name: "demo · sha-1" }).waitFor({ state: "attached" });
     await page.getByLabel("Root input JSON").fill('{"request":"hello"}');
     await page.getByRole("button", { name: "Launch", exact: true }).click();
     await page.getByRole("alert").filter({ hasText: "Launch delivery is uncertain." }).waitFor();
