@@ -3,7 +3,7 @@ pub(super) fn reduce(
     program: &CheckedWorkflow,
     snapshot: &StepSnapshot,
     incoming: &Incoming,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
     let mut deltas = Vec::new();

@@ -125,7 +125,7 @@ fn a_key_that_is_not_an_ident_is_rejected() {
     ] {
         let error = launch(json!([member(&key, json!([]), "T")])).unwrap_err();
         assert!(
-            matches!(&error, StepError::Rejected { reason } if reason.contains("illegal or duplicate key")),
+            matches!(&error, StepError::Rejected { reason, .. } if reason.contains("illegal or duplicate key")),
             "{key:?} produced {error:?}"
         );
     }
@@ -139,7 +139,7 @@ fn a_duplicate_member_key_is_rejected() {
     ]))
     .unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("illegal or duplicate key")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("illegal or duplicate key")),
         "{error:?}"
     );
 }
@@ -148,7 +148,7 @@ fn a_duplicate_member_key_is_rejected() {
 fn a_prerequisite_naming_no_member_is_rejected() {
     let error = launch(json!([member("a", json!(["absent"]), "A")])).unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("missing member")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("missing member")),
         "{error:?}"
     );
 }
@@ -161,7 +161,7 @@ fn a_cycle_among_members_is_rejected() {
     ]))
     .unwrap_err();
     assert!(
-        matches!(&error, StepError::Rejected { reason } if reason.contains("cyclic prerequisite")),
+        matches!(&error, StepError::Rejected { reason, .. } if reason.contains("cyclic prerequisite")),
         "{error:?}"
     );
 }

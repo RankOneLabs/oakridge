@@ -23,19 +23,16 @@ pub fn eval_expression(
     state: &StepSnapshot,
     each: Option<&Value>,
     own_body: Option<(&str, &Value)>,
-    context: &EvaluationContext<'_>,
-) -> Result<Option<Value>, StepError> {
+    context: &mut EvaluationContext<'_>,
+) -> Result<Option<Value>, EvalError> {
     let bindings = Bindings {
         each,
         item: None,
         body: own_body,
     };
     let result = eval_expression_inner(expression, unit, state, bindings, context);
-    if let Some(reason) = context.limit_error.get() {
-        return Err(rejected(reason));
-    }
-    if context.exhausted.get() {
-        return Err(rejected("evaluation_budget exceeded"));
+    if let Some(error) = context.take_error() {
+        return Err(error);
     }
     if let Some(value) = &result {
         context.check_value(value)?;
@@ -50,7 +47,7 @@ pub(super) fn eval_expression_inner(
     unit: &UnitState,
     state: &StepSnapshot,
     bindings: Bindings<'_>,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Option<Value> {
     if !context.charge() {
         return None;
@@ -69,52 +66,66 @@ pub(super) fn eval_expression_inner(
             })
         }))
     }
-    let eval = |inner: &Expression| eval_expression_inner(inner, unit, state, bindings, context);
-    let eval_item = |inner: &Expression, item: &Value| {
-        let bound = Bindings {
-            item: Some(item),
-            ..bindings
+    macro_rules! eval {
+        ($inner:expr) => {
+            eval_expression_inner($inner, unit, state, bindings, context)
         };
-        eval_expression_inner(inner, unit, state, bound, context)
-    };
-    let boolean = |inner: &Expression| eval(inner)?.as_bool();
-    let list = |inner: &Expression| -> Option<Vec<Value>> {
-        let Value::Array(items) = eval(inner)? else {
-            return None;
+    }
+    macro_rules! eval_item {
+        ($inner:expr, $item:expr) => {{
+            let bound = Bindings {
+                item: Some($item),
+                ..bindings
+            };
+            eval_expression_inner($inner, unit, state, bound, context)
+        }};
+    }
+    macro_rules! boolean {
+        ($inner:expr) => {
+            eval!($inner)?.as_bool()
         };
-        context.check_list_len(items.len()).then_some(items)
-    };
-    let integers = |left: &Expression, right: &Expression| -> Option<(i64, i64)> {
-        Some((eval(left)?.as_i64()?, eval(right)?.as_i64()?))
-    };
+    }
+    macro_rules! list {
+        ($inner:expr) => {{
+            let Value::Array(items) = eval!($inner)? else {
+                return None;
+            };
+            context.check_list_len(items.len()).then_some(items)
+        }};
+    }
+    macro_rules! integers {
+        ($left:expr, $right:expr) => {
+            Some((eval!($left)?.as_i64()?, eval!($right)?.as_i64()?))
+        };
+    }
     match expression {
         Expression::Literal { value, .. } => Some(value.clone()),
-        Expression::Len { value } => Some(Value::from(match eval(value)? {
+        Expression::Len { value } => Some(Value::from(match eval!(value)? {
             Value::String(text) => text.chars().count(),
             Value::Array(items) => items.len(),
             _ => return None,
         })),
         Expression::GreaterThan { left, right } => {
-            let (left, right) = integers(left, right)?;
+            let (left, right) = integers!(left, right)?;
             Some(Value::Bool(left > right))
         }
         Expression::GreaterOrEqual { left, right } => {
-            let (left, right) = integers(left, right)?;
+            let (left, right) = integers!(left, right)?;
             Some(Value::Bool(left >= right))
         }
         Expression::LessThan { left, right } => {
-            let (left, right) = integers(left, right)?;
+            let (left, right) = integers!(left, right)?;
             Some(Value::Bool(left < right))
         }
         Expression::LessOrEqual { left, right } => {
-            let (left, right) = integers(left, right)?;
+            let (left, right) = integers!(left, right)?;
             Some(Value::Bool(left <= right))
         }
         // `a and b` reads b only where a holds, so a false a short-circuits
         // and an unresolved a leaves the conjunction unresolved.
         Expression::All { items } => {
             for item in items {
-                if !boolean(item)? {
+                if !boolean!(item)? {
                     return Some(Value::Bool(false));
                 }
             }
@@ -122,17 +133,17 @@ pub(super) fn eval_expression_inner(
         }
         Expression::Any { items } => {
             for item in items {
-                if boolean(item)? {
+                if boolean!(item)? {
                     return Some(Value::Bool(true));
                 }
             }
             Some(Value::Bool(false))
         }
-        Expression::Not { value } => Some(Value::Bool(!boolean(value)?)),
-        Expression::Equals { left, right } => Some(Value::Bool(eval(left)? == eval(right)?)),
+        Expression::Not { value } => Some(Value::Bool(!boolean!(value)?)),
+        Expression::Equals { left, right } => Some(Value::Bool(eval!(left)? == eval!(right)?)),
         Expression::Every { source, predicate } => {
-            for item in list(source)? {
-                if !eval_item(predicate, &item)?.as_bool()? {
+            for item in list!(source)? {
+                if !eval_item!(predicate, &item)?.as_bool()? {
                     return Some(Value::Bool(false));
                 }
             }
@@ -140,44 +151,44 @@ pub(super) fn eval_expression_inner(
         }
         Expression::Filter { source, predicate } => {
             let mut kept = Vec::new();
-            for item in list(source)? {
-                if eval_item(predicate, &item)?.as_bool()? {
+            for item in list!(source)? {
+                if eval_item!(predicate, &item)?.as_bool()? {
                     kept.push(item);
                 }
             }
             Some(Value::Array(kept))
         }
         Expression::Contains { source, value } => {
-            let value = eval(value)?;
-            Some(Value::Bool(list(source)?.contains(&value)))
+            let value = eval!(value)?;
+            Some(Value::Bool(list!(source)?.contains(&value)))
         }
         Expression::Lookup {
             source,
             key_field,
             key,
         } => {
-            let key = eval(key)?;
-            let mut matches = list(source)?
+            let key = eval!(key)?;
+            let mut matches = list!(source)?
                 .into_iter()
                 .filter(|item| item.get(key_field) == Some(&key));
             let found = matches.next()?;
             // Exactly one: an ambiguous key resolves to nothing.
             matches.next().is_none().then_some(found)
         }
-        Expression::Field { value, key } => eval(value)?.get(key).cloned(),
+        Expression::Field { value, key } => eval!(value)?.get(key).cloned(),
         Expression::CheckCollection {
             source,
             key_field,
             dependencies_field,
         } => Some(Value::Bool(is_valid_graph(
-            &list(source)?,
+            &list!(source)?,
             key_field,
             dependencies_field,
         ))),
         Expression::Record { fields, .. } => {
             let mut record = serde_json::Map::new();
             for field in fields {
-                record.insert(field.key.clone(), eval(&field.value)?);
+                record.insert(field.key.clone(), eval!(&field.value)?);
             }
             Some(Value::Object(record))
         }
@@ -187,7 +198,7 @@ pub(super) fn eval_expression_inner(
             }
             items
                 .iter()
-                .map(eval)
+                .map(|item| eval!(item))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::Array)
         }
@@ -195,9 +206,9 @@ pub(super) fn eval_expression_inner(
             source,
             value: projection,
             ..
-        } => list(source)?
+        } => list!(source)?
             .iter()
-            .map(|item| eval_item(projection, item))
+            .map(|item| eval_item!(projection, item))
             .collect::<Option<Vec<_>>>()
             .map(Value::Array),
         Expression::Reference {
@@ -278,7 +289,7 @@ pub(super) fn eval_fields(
     unit: &UnitState,
     state: &StepSnapshot,
     each: Option<&Value>,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Option<Value>, StepError> {
     let mut result = serde_json::Map::new();
     for field in fields {

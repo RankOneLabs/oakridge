@@ -343,19 +343,19 @@ fn host_limits_reject_large_inputs_and_exhausted_expression_budget() {
     };
     assert!(
         matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
-            Err(StepError::Rejected { reason }) if reason == "max_list_items exceeded")
+            Err(StepError::Rejected { reason, .. }) if reason == "max_list_items exceeded")
     );
     limits.max_list_items = 10_000;
     limits.evaluation_budget = 0;
     assert!(
         matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
-            Err(StepError::Rejected { reason }) if reason == "evaluation_budget exceeded")
+            Err(StepError::Rejected { reason, .. }) if reason == "evaluation_budget exceeded")
     );
     limits.evaluation_budget = 1_000_000;
     limits.max_depth = 1;
     assert!(
         matches!(step_with_limits(&program, &snapshot(), &launch, &limits),
-            Err(StepError::Rejected { reason }) if reason == "max_depth exceeded")
+            Err(StepError::Rejected { reason, .. }) if reason == "max_depth exceeded")
     );
 }
 
@@ -403,7 +403,7 @@ fn reviewer_needs_every_output_for_its_subject() {
         &program,
         &state,
         unit,
-        &EvaluationContext::new(&ResourceLimits::default())
+        &mut EvaluationContext::new(&ResourceLimits::default())
     )
     .unwrap()
     .iter()
@@ -478,7 +478,7 @@ fn member_outcomes_are_projected_in_key_order() {
             &state,
             None,
             None,
-            &EvaluationContext::new(&ResourceLimits::default())
+            &mut EvaluationContext::new(&ResourceLimits::default())
         ),
         Ok(Some(serde_json::json!([
             "run/work/a",
@@ -1923,7 +1923,7 @@ fn an_inconsistency_found_advancing_another_unit_names_that_unit() {
     work.stage = Some(SymbolKey::from("absent"));
     assert!(matches!(
         step(&program, &launched, &publish),
-        Err(StepError::Invalid { unit: Some(unit), .. }) if unit.0 == "run/work"
+        Err(StepError::Invalid { entity: StepEntity::Unit { unit }, .. }) if unit.0 == "run/work"
     ));
 }
 /// The review-loop trace played to its end: the run is done.
@@ -1942,7 +1942,7 @@ fn a_done_run_refuses_cancel() {
     let (program, done) = review_loop_done();
     assert!(matches!(
         step(&program, &done, &incoming(Event::CancelRequested, "cancel")),
-        Err(StepError::Rejected { reason }) if reason == "run is done"
+        Err(StepError::Rejected { reason, .. }) if reason == "run is done"
     ));
 }
 #[test]
@@ -1957,7 +1957,7 @@ fn a_done_unit_refuses_a_decision() {
     };
     assert!(matches!(
         step(&program, &done, &incoming(decision, "late")),
-        Err(StepError::Rejected { reason }) if reason == "unit is not active"
+        Err(StepError::Rejected { reason, .. }) if reason == "unit is not active"
     ));
 }
 #[test]
@@ -2000,7 +2000,7 @@ fn a_cancelled_unit_refuses_a_retry_of_its_failed_worker() {
     };
     assert!(matches!(
         step(&program, &cancelled, &incoming(retry, "retry")),
-        Err(StepError::Rejected { reason }) if reason == "unit is not active"
+        Err(StepError::Rejected { reason, .. }) if reason == "unit is not active"
     ));
 }
 #[test]
@@ -2035,4 +2035,55 @@ fn cancel_is_terminal_and_idempotent_across_the_group_tree() {
     )
     .unwrap();
     assert_eq!(duplicate.snapshot, cancelled.snapshot);
+}
+
+#[test]
+fn rejected_events_name_the_artifact_or_worker_at_fault() {
+    let program = program();
+    let launched = step(
+        &program,
+        &snapshot(),
+        &incoming(
+            Event::Launched {
+                input: serde_json::json!({}),
+            },
+            "launch",
+        ),
+    )
+    .unwrap();
+    let artifact_error = step(
+        &program,
+        &launched.snapshot,
+        &incoming(
+            Event::RevisionPublished {
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("missing"),
+                body: Value::Null,
+                predecessor: None,
+                subject: None,
+                by: None,
+            },
+            "publish",
+        ),
+    )
+    .unwrap_err();
+    assert!(matches!(artifact_error, StepError::Rejected {
+        entity: StepEntity::Artifact { unit, artifact }, ..
+    } if unit.0 == "run/document" && artifact.0 == "missing"));
+
+    let worker_error = step(
+        &program,
+        &launched.snapshot,
+        &incoming(
+            Event::RetryRequested {
+                unit: UnitId::from("run/document"),
+                worker: WorkerKey::from("missing"),
+            },
+            "retry",
+        ),
+    )
+    .unwrap_err();
+    assert!(matches!(worker_error, StepError::Rejected {
+        entity: StepEntity::Worker { unit, worker }, ..
+    } if unit.0 == "run/document" && worker.0 == "missing"));
 }

@@ -5,10 +5,21 @@ use workflow_model::protocol::{
     TransportErrorKind, PROTOCOL_VERSION,
 };
 use workflow_model::{
-    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepError,
+    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepEntity,
+    StepError,
 };
 
 const MAX_CACHED_PROGRAMS: usize = 32;
+
+fn entity_id(entity: StepEntity, run_id: &str) -> String {
+    match entity {
+        StepEntity::Run => run_id.to_owned(),
+        StepEntity::Unit { unit } => unit.0,
+        StepEntity::Worker { unit, worker } => format!("{}:{}", unit.0, worker.0),
+        StepEntity::Artifact { unit, artifact } => format!("{}:{}", unit.0, artifact.0),
+        StepEntity::Action { action } => action.0,
+    }
+}
 
 struct CoreState {
     programs: VecDeque<CheckedWorkflow>,
@@ -164,16 +175,17 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             .and_then(|program| {
                 super::step_with_limits(program, &snapshot, &incoming, &limits).map_err(|error| {
                     match error {
-                        StepError::Rejected { reason } => {
-                            DomainError::new(DomainErrorKind::RejectedEvent, "step", reason)
-                        }
+                        StepError::Rejected { reason, entity } => DomainError::new(
+                            DomainErrorKind::RejectedEvent,
+                            entity_id(entity, &snapshot.run.id),
+                            reason,
+                        ),
                         StepError::Stalled { unit, reason } => {
                             DomainError::new(DomainErrorKind::StalledEvent, unit.0, reason)
                         }
-                        // The entity names the unit being advanced, when it is known.
-                        StepError::Invalid { detail, unit } => DomainError::new(
+                        StepError::Invalid { detail, entity } => DomainError::new(
                             DomainErrorKind::InvalidSnapshot,
-                            unit.map_or_else(|| "step".to_owned(), |unit| unit.0),
+                            entity_id(entity, &snapshot.run.id),
                             detail,
                         ),
                     }

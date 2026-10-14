@@ -2,12 +2,13 @@ use super::*;
 pub(super) fn rejected(reason: impl Into<String>) -> StepError {
     StepError::Rejected {
         reason: reason.into(),
+        entity: StepEntity::Run,
     }
 }
 pub(super) fn invalid(detail: impl Into<String>) -> StepError {
     StepError::Invalid {
         detail: detail.into(),
-        unit: None,
+        entity: StepEntity::Run,
     }
 }
 /// Attribute an error raised while advancing `unit` to it (D-V4): a
@@ -15,52 +16,122 @@ pub(super) fn invalid(detail: impl Into<String>) -> StepError {
 /// event for what it is, and an inconsistency names where it was found.
 pub(super) fn advancing(unit: &UnitId) -> impl Fn(StepError) -> StepError + '_ {
     move |error| match error {
-        StepError::Rejected { reason } => StepError::Stalled {
+        StepError::Rejected { reason, .. } => StepError::Stalled {
             unit: unit.clone(),
             reason,
         },
-        StepError::Invalid { detail, unit: None } => StepError::Invalid {
+        StepError::Invalid {
             detail,
-            unit: Some(unit.clone()),
+            entity: StepEntity::Run,
+        } => StepError::Invalid {
+            detail,
+            entity: StepEntity::Unit { unit: unit.clone() },
         },
         attributed => attributed,
     }
 }
+
+pub(super) fn event_entity(snapshot: &StepSnapshot, incoming: &Incoming) -> StepEntity {
+    match &incoming.event {
+        Event::Launched { .. } | Event::CancelRequested => StepEntity::Run,
+        Event::WorkerStarted { action, .. } | Event::WorkerEnded { action, .. } => snapshot
+            .attempts
+            .iter()
+            .rev()
+            .find(|attempt| attempt.action_id == *action)
+            .map(|attempt| StepEntity::Worker {
+                unit: attempt.unit.clone(),
+                worker: attempt.worker.clone(),
+            })
+            .unwrap_or_else(|| StepEntity::Action {
+                action: action.clone(),
+            }),
+        Event::RevisionPublished { unit, artifact, .. } => StepEntity::Artifact {
+            unit: unit.clone(),
+            artifact: artifact.clone(),
+        },
+        Event::OperatorDecided { unit, .. } => StepEntity::Unit { unit: unit.clone() },
+        Event::RetryRequested { unit, worker } => StepEntity::Worker {
+            unit: unit.clone(),
+            worker: worker.clone(),
+        },
+    }
+}
+
+pub(super) fn attribute_event(
+    error: StepError,
+    snapshot: &StepSnapshot,
+    incoming: &Incoming,
+) -> StepError {
+    let entity = event_entity(snapshot, incoming);
+    match error {
+        StepError::Rejected {
+            reason,
+            entity: StepEntity::Run,
+        } => StepError::Rejected { reason, entity },
+        StepError::Invalid {
+            detail,
+            entity: StepEntity::Run,
+        } => StepError::Invalid { detail, entity },
+        other => other,
+    }
+}
 pub struct EvaluationContext<'a> {
     pub(super) limits: &'a ResourceLimits,
-    pub(super) remaining: Cell<usize>,
-    pub(super) exhausted: Cell<bool>,
-    pub(super) limit_error: Cell<Option<&'static str>>,
+    remaining: usize,
+    error: Option<EvalError>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EvalError {
+    BudgetExceeded,
+    ListLimitExceeded,
+    ValueLimit(String),
+}
+
+impl From<EvalError> for StepError {
+    fn from(error: EvalError) -> Self {
+        let reason = match error {
+            EvalError::BudgetExceeded => "evaluation_budget exceeded".to_owned(),
+            EvalError::ListLimitExceeded => "max_list_items exceeded".to_owned(),
+            EvalError::ValueLimit(reason) => reason,
+        };
+        rejected(reason)
+    }
+}
+
 impl<'a> EvaluationContext<'a> {
     pub fn new(limits: &'a ResourceLimits) -> Self {
         Self {
             limits,
-            remaining: Cell::new(limits.evaluation_budget),
-            exhausted: Cell::new(false),
-            limit_error: Cell::new(None),
+            remaining: limits.evaluation_budget,
+            error: None,
         }
     }
-    pub(super) fn charge(&self) -> bool {
-        let remaining = self.remaining.get();
-        if remaining == 0 {
-            self.exhausted.set(true);
+    pub(super) fn charge(&mut self) -> bool {
+        if self.remaining == 0 {
+            self.error.get_or_insert(EvalError::BudgetExceeded);
             false
         } else {
-            self.remaining.set(remaining - 1);
+            self.remaining -= 1;
             true
         }
     }
-    pub(super) fn check_value(&self, value: &Value) -> Result<(), StepError> {
-        self.limits.check_value(value).map_err(rejected)
+    pub(super) fn check_value(&self, value: &Value) -> Result<(), EvalError> {
+        self.limits
+            .check_value(value)
+            .map_err(|reason| EvalError::ValueLimit(reason.to_owned()))
     }
-    pub(super) fn check_list_len(&self, len: usize) -> bool {
+    pub(super) fn check_list_len(&mut self, len: usize) -> bool {
         if len > self.limits.max_list_items {
-            self.limit_error.set(Some("max_list_items exceeded"));
+            self.error = Some(EvalError::ListLimitExceeded);
             false
         } else {
             true
         }
+    }
+    pub(super) fn take_error(&mut self) -> Option<EvalError> {
+        self.error.take()
     }
 }
 pub fn latest<'a>(
@@ -219,7 +290,7 @@ pub(super) fn unobserved_watch_artifacts(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     unit: &UnitState,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<SymbolKey>, StepError> {
     let checked = checked_stage(program, unit)?;
     let mut unobserved = Vec::new();

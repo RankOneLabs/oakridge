@@ -3,7 +3,7 @@ pub(super) fn materialize_group(
     program: &CheckedWorkflow,
     snapshot: &StepSnapshot,
     group_id: &UnitId,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
     let mut deltas = Vec::new();
@@ -131,7 +131,7 @@ pub(super) fn group_outcome(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     unit: &UnitState,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Value, StepError> {
     eval_fields(
         &group_for(program, state, unit)?.outcome,
@@ -149,7 +149,7 @@ pub(super) fn start_group(
     program: &CheckedWorkflow,
     snapshot: &StepSnapshot,
     group_id: &UnitId,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
     let mut deltas = materialize_group(program, &state, group_id, context)?;
@@ -178,7 +178,7 @@ pub(super) fn engine_decision(
     state: &StepSnapshot,
     unit: &UnitState,
     unobserved: &[SymbolKey],
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Option<DecisionState>, StepError> {
     let definition = checked_stage(program, unit)?;
     for review in &definition.reviews {
@@ -223,7 +223,7 @@ pub(super) fn engine_decision(
 pub(super) fn next_move(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Option<Vec<Delta>>, StepError> {
     for (index, unit) in state.units.iter().enumerate() {
         if !matches!(unit.status, UnitStatus::Active) {

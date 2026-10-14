@@ -45,28 +45,33 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
 /// successfully. Such an artifact's latest revision is about inputs the watch
 /// no longer watches (a pull request since replaced), so the stage is not
 /// judged on it until the replacing watch has observed.
-pub(super) fn can_run(
-    state: &StepSnapshot,
-    unit: &UnitId,
-    worker: &WorkerKey,
-) -> Option<Option<Cause>> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Readiness {
+    Blocked,
+    Ready,
+    RetryAuthorized { event: EventId },
+}
+
+pub(super) fn can_run(state: &StepSnapshot, unit: &UnitId, worker: &WorkerKey) -> Readiness {
     let Some(previous) = attempt(state, unit, worker) else {
-        return Some(None);
+        return Readiness::Ready;
     };
     match previous.status {
-        AttemptStatus::Pending | AttemptStatus::Running => None,
+        AttemptStatus::Pending | AttemptStatus::Running => Readiness::Blocked,
         AttemptStatus::Failed { .. } => {
             // A later failure waits for a new retry once the latest is spent.
-            let retry = latest_retry(state, unit, worker)?;
+            let Some(retry) = latest_retry(state, unit, worker) else {
+                return Readiness::Blocked;
+            };
             if is_retry_spent(state, unit, worker, retry) {
-                None
+                Readiness::Blocked
             } else {
-                Some(Some(Cause::Retry {
+                Readiness::RetryAuthorized {
                     event: retry.clone(),
-                }))
+                }
             }
         }
-        AttemptStatus::Succeeded => Some(None),
+        AttemptStatus::Succeeded => Readiness::Ready,
     }
 }
 /// Whether an optional guard holds; no guard always holds, and an
@@ -75,7 +80,7 @@ pub(super) fn holds(
     guard: Option<&CheckedStageExpression>,
     unit: &UnitState,
     state: &StepSnapshot,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<bool, StepError> {
     let Some(guard) = guard else {
         return Ok(true);
@@ -89,15 +94,16 @@ pub fn stage_actions(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     unit: &UnitState,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Action>, StepError> {
     let checked = checked_stage(program, unit)?;
     let mut wanted = Vec::new();
     for checked_worker in &checked.workers {
         let worker_key = checked_worker.key();
-        let Some(retry) = can_run(state, &unit.id, worker_key) else {
+        let readiness = can_run(state, &unit.id, worker_key);
+        if readiness == Readiness::Blocked {
             continue;
-        };
+        }
         if !holds(checked_worker.when(), unit, state, context)? {
             continue;
         }
@@ -180,7 +186,11 @@ pub fn stage_actions(
             }
         };
         if let Some((mode, cause)) = candidate {
-            let cause = retry.unwrap_or(cause);
+            let cause = match readiness {
+                Readiness::RetryAuthorized { event } => Cause::Retry { event },
+                Readiness::Ready => cause,
+                Readiness::Blocked => unreachable!("blocked workers were skipped"),
+            };
             wanted.push(Action::RunWorker {
                 unit: unit.id.clone(),
                 worker: worker_key.clone(),
@@ -197,7 +207,7 @@ pub(super) fn resolve_reviews(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     unit: &UnitState,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<ResolvedReview>, StepError> {
     let mut resolved = Vec::new();
     for review in &checked_stage(program, unit)?.reviews {
@@ -273,7 +283,7 @@ pub(super) fn resolve_run_worker(
     state: &StepSnapshot,
     unit: &UnitState,
     action: &RunWorkerAction<'_>,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<ResolvedRunWorker, StepError> {
     let checked = checked_stage(program, unit)?
         .workers
@@ -347,7 +357,7 @@ pub(super) fn stage_wants(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     stage_unit: &UnitState,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<StageWants, StepError> {
     let actions = stage_actions(program, state, stage_unit, context)?;
     let mut workers = Vec::new();

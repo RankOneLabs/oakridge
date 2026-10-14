@@ -52,7 +52,7 @@ pub fn step_with_limits(
     incoming: &Incoming,
     limits: &ResourceLimits,
 ) -> Result<StepResult, StepError> {
-    let context = EvaluationContext::new(limits);
+    let mut context = EvaluationContext::new(limits);
     if let Some(input) = &snapshot.run.input {
         context.check_value(input)?;
     }
@@ -69,15 +69,19 @@ pub fn step_with_limits(
         context.check_value(&decision.payload)?;
     }
     let mut state = snapshot.clone();
-    let deltas = reduce(program, &state, incoming, &context)?;
+    let deltas = reduce(program, &state, incoming, &mut context)
+        .map_err(|error| attribute_event(error, snapshot, incoming))?;
     apply_all(&mut state, deltas);
-    match advance_reduced(program, state, &context) {
+    match advance_reduced(program, state, &mut context) {
         // A launch that cannot advance never started: it is refused, as a
         // launch whose input fails, not a stall of a run that is going.
-        Err(StepError::Stalled { reason, .. })
+        Err(StepError::Stalled { unit, reason })
             if matches!(incoming.event, Event::Launched { .. }) =>
         {
-            Err(StepError::Rejected { reason })
+            Err(StepError::Rejected {
+                reason,
+                entity: StepEntity::Unit { unit },
+            })
         }
         other => other,
     }
@@ -88,7 +92,7 @@ pub fn step_with_limits(
 pub(super) fn advance_reduced(
     program: &CheckedWorkflow,
     mut state: StepSnapshot,
-    context: &EvaluationContext<'_>,
+    context: &mut EvaluationContext<'_>,
 ) -> Result<StepResult, StepError> {
     if !matches!(state.run.status, UnitStatus::Cancelled) {
         while let Some(deltas) = next_move(program, &state, context)? {
