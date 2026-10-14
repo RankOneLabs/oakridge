@@ -1,7 +1,6 @@
 [
   {
     "key": "repository.prepare",
-    "version": 1,
     "input_schema": {
       "repository_path": "repo_path",
       "expected_head": "optional(text)"
@@ -18,7 +17,6 @@
   },
   {
     "key": "pull_request.observe",
-    "version": 1,
     "input_schema": {
       "query": {
         "owner": "ident",
@@ -45,7 +43,6 @@
   },
   {
     "key": "value.publish",
-    "version": 1,
     "input_schema": {
       "value": "$value"
     },

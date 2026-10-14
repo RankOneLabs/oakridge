@@ -5,7 +5,6 @@ use workflow_model::*;
 fn prepare_operation() -> Vec<CodeOperation> {
     vec![CodeOperation {
         key: SymbolKey::from("repository.prepare"),
-        version: 1,
         input_schema: TypeExpression::Record(
             [
                 (

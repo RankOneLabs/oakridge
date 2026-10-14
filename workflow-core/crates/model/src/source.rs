@@ -342,9 +342,6 @@ pub enum DecisionEffect {
 #[serde(deny_unknown_fields)]
 pub struct CodeOperation {
     pub key: SymbolKey,
-    #[serde(with = "crate::wire_numbers::word")]
-    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
-    pub version: u32,
     pub input_schema: TypeExpression,
     pub output_schema: TypeExpression,
     #[serde(default)]

@@ -24,14 +24,12 @@ fn program() -> CheckedWorkflow {
     let operations = vec![
         CodeOperation {
             key: SymbolKey::from("value.publish"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("value".into(), ty("$value"))])),
             output_schema: ty("$value"),
             error_codes: vec![],
         },
         CodeOperation {
             key: SymbolKey::from("pull.observe"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
             output_schema: TypeExpression::Record(BTreeMap::from([(
                 "state".into(),

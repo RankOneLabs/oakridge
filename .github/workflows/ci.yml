@@ -9,6 +9,7 @@ on:
 jobs:
   workflow-core:
     name: Rust core (fmt, clippy, test)
+    needs: core-contracts
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,6 +26,8 @@ jobs:
           workspaces: workflow-core
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+        working-directory: .
+      - run: bun workflow-config/src/generate.ts --check
         working-directory: .
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings

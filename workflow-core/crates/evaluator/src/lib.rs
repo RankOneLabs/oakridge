@@ -2047,7 +2047,6 @@ mod tests {
         .collect();
         let operations = vec![CodeOperation {
             key: SymbolKey::from("repository.prepare"),
-            version: 1,
             input_schema: TypeExpression::Record(
                 [
                     (
@@ -2469,7 +2468,6 @@ mod tests {
         let original = sample("fan-out");
         let operations = [CodeOperation {
             key: SymbolKey::from("repository.prepare"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([
                 (
                     "repository_path".into(),
@@ -3336,7 +3334,6 @@ mod tests {
             })).unwrap();
         let observe = vec![CodeOperation {
             key: SymbolKey::from("observe"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::new()),
             output_schema: TypeExpression::Name("text".into()),
             error_codes: vec![],
@@ -3413,7 +3410,6 @@ mod tests {
             })).unwrap();
         let observe = vec![CodeOperation {
             key: SymbolKey::from("observe"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([(
                 "branch".to_owned(),
                 TypeExpression::Name("text".into()),

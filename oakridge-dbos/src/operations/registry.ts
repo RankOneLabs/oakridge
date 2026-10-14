@@ -13,14 +13,12 @@ export const TYPE_VARIABLE = "$value";
 export const OPERATION_REGISTRY = [
   {
     key: "repository.prepare",
-    version: 1,
     input_schema: { repository_path: "repo_path", expected_head: "optional(text)" },
     output_schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" },
     error_codes: [PROVIDER_ERROR_CODES.worktree_unrecoverable, PROVIDER_ERROR_CODES.head_changed],
   },
   {
     key: "pull_request.observe",
-    version: 1,
     input_schema: { query: { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text", pr_url: "text" } },
     output_schema: { state: "enum(open, merged, closed_unmerged)", number: "integer", url: "text", head_sha: "optional(text)", merged_at: "optional(text)" },
     error_codes: [PROVIDER_ERROR_CODES.discovery_unsupported, PROVIDER_ERROR_CODES.auth, PROVIDER_ERROR_CODES.provider_rejected,
@@ -31,7 +29,6 @@ export const OPERATION_REGISTRY = [
     // variable `compile` binds to the workflow's type (part 1 §12, R5 E5): it
     // lets an operator review a value that arrived as stage input.
     key: "value.publish",
-    version: 1,
     input_schema: { value: TYPE_VARIABLE },
     output_schema: TYPE_VARIABLE,
     error_codes: [],
