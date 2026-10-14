@@ -1,6 +1,6 @@
 import type { RunId, UnitId } from "../domain/primitives";
 import type { RunRead } from "../storage/read-store";
-import { selectAttention, selectRunAttention } from "./attention";
+import { selectAttention, selectRunAttention, selectRunStallDetail } from "./attention";
 import { selectUnitLabel } from "./unit-label";
 import { isAsk, selectAvailableDecisions, type DecisionSubmit } from "./unit-view";
 
@@ -19,7 +19,7 @@ export type InboxItem =
 
 export interface InboxPage { readonly items: readonly InboxItem[]; readonly next_cursor: string | null }
 
-/** A run's inbox items, unit by unit: each decision that asks for the operator, each stalled worker, and the unit's wait. */
+/** A run's inbox items, unit by unit: the run's stalls, each decision that asks for the operator, each stalled worker, and the unit's wait. */
 export function selectRunInboxItems(read: RunRead): readonly InboxItem[] {
   return selectRunAttention(read).flatMap((attention) => {
     const unit = read.units.find((candidate) => candidate.id === attention.unit_id);
@@ -29,10 +29,11 @@ export function selectRunInboxItems(read: RunRead): readonly InboxItem[] {
       .map((decision): InboxItem => ({ ...base, kind: "decision", key: decision.key, label: decision.label, submit: decision.submit,
         prompt: decision.submit.kind === "review" ? attention.awaiting.find((awaiting) =>
           decision.submit.kind === "review" && awaiting.review === decision.submit.review)?.prompt ?? null : null }));
+    const run_stalls = attention.run_stalls.map((stall): InboxItem => ({ ...base, kind: "stalled", detail: selectRunStallDetail(stall) }));
     const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: `${worker.worker} failed: ${worker.detail}` }));
-    const line = attention.stalled.length === 0 ? selectAttention(attention, read) : null;
+    const line = attention.stalled.length === 0 && attention.run_stalls.length === 0 ? selectAttention(attention, read) : null;
     const waiting: InboxItem[] = line?.kind === "waiting" ? [{ ...base, kind: "waiting", reason: line.reason, label: selectUnitLabel(unit, read.definition.workflow) }] : [];
-    return [...decisions, ...stalled, ...waiting];
+    return [...run_stalls, ...decisions, ...stalled, ...waiting];
   });
 }
 

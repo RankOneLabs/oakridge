@@ -209,6 +209,8 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
   await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "A long draft" }, predecessor: null, subject: null, by: writer },
     writer: { kind: "session", session: "sid-w", attempt: writer } });
   const drafted = await prompts();
+  // The critic reviews the draft once the writer's attempt has ended.
+  await submit({ run_id, event: { kind: "worker_ended", action: writer, result: { kind: "succeeded" } }, writer: executor(writer) });
   const critic = (await authority.db.selectFrom("authority.attempt").select("action_id").where("run_id", "=", run_id).where("worker", "=", "critic")
     .executeTakeFirstOrThrow()).action_id;
   await submit({ run_id, event: { kind: "worker_started", action: critic, kbbl_session_id: "sid-c" }, writer: executor(critic) });

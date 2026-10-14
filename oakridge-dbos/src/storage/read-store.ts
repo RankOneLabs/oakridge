@@ -1,12 +1,12 @@
 import { sql, type Kysely } from "kysely";
 import type { UnitStatus, Workflow } from "../core-client/core-types";
 import type { RunId, UnitId } from "../domain/primitives";
-import type { OperatorEventDeliveryRow } from "../projections/operator-event";
+import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
 import type { SessionHold } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
-import type { CompiledWorkflow, WantedActions } from "./json-column-types";
+import type { CompiledWorkflow, StallRecord, WantedActions } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
 
@@ -30,6 +30,12 @@ export interface PinnedSource { readonly digest: string; readonly version: numbe
 export interface RetryRequest { readonly unit_id: string; readonly worker: string; readonly retry_id: string }
 /** The actions the latest event that stepped a unit left wanted for it. */
 export interface UnitWanted { readonly unit_id: string; readonly actions: WantedActions }
+/** An event step refused because the run could not advance past it; `unit_id` is the unit the event addressed. */
+export interface StallRefusal { readonly unit_id: string | null; readonly ingress_id: string; readonly reason: string; readonly stall: StallRecord }
+/** A faulted commit recorded against a run, and when it was recorded. */
+export interface RecordedFault { readonly notice: CommitFaultNotice; readonly recorded_at: Date }
+/** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
+export interface LatestUnitEvent { readonly unit_id: string | null; readonly event_id: string; readonly created_at: Date }
 /**
  * One launched run and everything recorded against it, each in the order
  * commit wrote it: the source of every run, unit, inbox and inspect projection.
@@ -44,6 +50,11 @@ export interface RunRead {
   readonly decisions: readonly ReviewDecisionRecord[];
   readonly retries: readonly RetryRequest[];
   readonly wanted: readonly UnitWanted[];
+  /** Refusals that recorded where the run stopped advancing, in the order they were refused. */
+  readonly stalls: readonly StallRefusal[];
+  /** Faulted commits recorded against the run, in the order they faulted. */
+  readonly faults: readonly RecordedFault[];
+  readonly latest_events: readonly LatestUnitEvent[];
 }
 
 /**
@@ -55,7 +66,7 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
   if (run_ids.length === 0) return [];
   const ids = anyOf(run_ids);
   // Action ids are hashes: attempts, revisions and decisions read in the order commit wrote them.
-  const [runs, units, dependencies, attempts, revisions, decisions, retries, wanted] = await Promise.all([
+  const [runs, units, dependencies, attempts, revisions, decisions, retries, wanted, stalls, faults, latest_events] = await Promise.all([
     trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
       .selectAll("run").select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
       .where("run.id", "=", ids).where("run.root_unit_id", "is not", null).execute(),
@@ -70,6 +81,13 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
       .distinctOn(["wanted.run_id", "wanted.unit_id"]).select(["wanted.run_id", "wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", ids)
       .orderBy("wanted.run_id").orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute(),
+    trx.selectFrom("authority.ingress_receipt").select(["run_id", "unit_id", "ingress_id", "result"]).where("run_id", "=", ids)
+      .where((eb) => eb(eb.ref("result", "->>").key("kind"), "=", "rejected"))
+      .where((eb) => eb(eb.ref("result", "->").key("stall"), "is not", null)).execute(),
+    trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where("event_key", "=", "commit_fault")
+      .orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"]).select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
+      .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
   ]);
   const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
   return run_ids.flatMap((run_id) => {
@@ -82,7 +100,13 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       decisions: of(decisions, run_id) as ReviewDecisionRecord[],
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, retry_id: retry.ingress_id }] : []),
-      wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })) }];
+      wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })),
+      stalls: of(stalls, run_id).flatMap(({ unit_id, ingress_id, result }) => result.kind === "rejected" && result.stall
+        ? [{ unit_id, ingress_id, reason: result.reason, stall: result.stall }] : [])
+        .sort((left, right) => left.stall.refused_at.localeCompare(right.stall.refused_at)),
+      faults: faults.flatMap((row) => row.run_id === run_id && row.payload.kind === "commit_fault"
+        ? [{ notice: row.payload.data, recorded_at: row.created_at }] : []),
+      latest_events: of(latest_events, run_id).map(({ unit_id, id, created_at }) => ({ unit_id, event_id: id, created_at })) }];
   });
 }
 const runRead = async (trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> => (await runReads(trx, [run_id]))[0] ?? null;

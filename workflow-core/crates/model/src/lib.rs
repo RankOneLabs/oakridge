@@ -23,6 +23,9 @@ pub enum DomainErrorKind {
     InvalidWorkflow,
     /// `step` refused the event against the snapshot.
     RejectedEvent,
+    /// `step` refused the event because advancing the run past it failed;
+    /// the entity names the unit that could not advance.
+    StalledEvent,
     /// The snapshot is inconsistent with the workflow.
     InvalidSnapshot,
     /// A value or evaluation exceeds a resource limit.

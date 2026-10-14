@@ -1,23 +1,9 @@
 use serde_json::Value;
 use workflow_model::*;
 
-#[test]
-fn v2_rejection_manifest_names_every_section_three_class() {
-    use std::collections::BTreeMap;
-    use workflow_compiler::{compile_workflow, decode_workflow};
-    let manifest: Value =
-        serde_json::from_str(include_str!("../../../fixtures/invalid/manifest.json")).unwrap();
-    let prompts: BTreeMap<String, String> = [
-        ("review-loop/write.md", "{{topic}}"),
-        ("review-loop/revise.md", "{{feedback}}"),
-        ("review-loop/critique.md", "{{subject}}"),
-        ("review-loop/editor.md", "{{draft}}"),
-        ("fan-out/item.md", "{{text}}"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    let operations = vec![CodeOperation {
+/// `repository.prepare` as the samples' registry declares it.
+fn prepare_operation() -> Vec<CodeOperation> {
+    vec![CodeOperation {
         key: SymbolKey::from("repository.prepare"),
         version: 1,
         input_schema: TypeExpression::Record(
@@ -48,7 +34,26 @@ fn v2_rejection_manifest_names_every_section_three_class() {
             .into(),
         ),
         error_codes: vec![],
-    }];
+    }]
+}
+
+#[test]
+fn v2_rejection_manifest_names_every_section_three_class() {
+    use std::collections::BTreeMap;
+    use workflow_compiler::{compile_workflow, decode_workflow};
+    let manifest: Value =
+        serde_json::from_str(include_str!("../../../fixtures/invalid/manifest.json")).unwrap();
+    let prompts: BTreeMap<String, String> = [
+        ("review-loop/write.md", "{{topic}}"),
+        ("review-loop/revise.md", "{{feedback}}"),
+        ("review-loop/critique.md", "{{subject}}"),
+        ("review-loop/editor.md", "{{draft}}"),
+        ("fan-out/item.md", "{{text}}"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v.into()))
+    .collect();
+    let operations = prepare_operation();
     for case in manifest["cases"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let expected = case["reason"].as_str().unwrap();
@@ -129,5 +134,67 @@ fn a_handoff_template_cannot_read_a_mode_only_engine_input() {
     for field in ["previous", "subject", "threads"] {
         let error = fresh_writer_with_handoff(&format!("{{{{{field}}}}}")).unwrap_err();
         assert_eq!(&*error.entity_id, "check 10", "{field}");
+    }
+}
+
+/// Sample B (fan-out) with `edit` applied to its source: the compile error's detail.
+fn fan_out_compile_error(edit: impl FnOnce(&mut Value)) -> String {
+    use std::collections::BTreeMap;
+    use workflow_compiler::{compile_workflow, decode_workflow};
+    let mut value: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/fan-out.json")).unwrap();
+    edit(&mut value);
+    let prompts = BTreeMap::from([("fan-out/item.md".to_owned(), "{{text}}".to_owned())]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    compile_workflow(&source, &prepare_operation(), &prompts)
+        .map(|_| ())
+        .unwrap_err()
+        .detail
+        .to_string()
+}
+
+fn tail_unit(after: Value) -> Value {
+    serde_json::json!({ "stage": "item", "after": after,
+        "input": { "text": "\"tail\"", "workspace": "input.workspace" } })
+}
+
+#[test]
+fn a_unit_cannot_wait_on_a_collection() {
+    let detail = fan_out_compile_error(|value| {
+        value["run"]["units"]["work"]["group"]["units"]["tail"] =
+            tail_unit(serde_json::json!(["item"]));
+    });
+    assert_eq!(
+        detail,
+        "unit tail waits on collection item, which is no one unit"
+    );
+}
+
+#[test]
+fn a_collection_cannot_share_its_group() {
+    let detail = fan_out_compile_error(|value| {
+        value["run"]["units"]["work"]["group"]["units"]["tail"] = tail_unit(Value::Null);
+    });
+    assert_eq!(
+        detail,
+        "collection item shares its group, so a member key could collide with a sibling"
+    );
+}
+
+#[test]
+fn a_group_outcome_reads_a_collection_only_through_map() {
+    // `item.` reads a list function's element, so the collection is renamed.
+    for read in ["task.outcome.result", "task.outcome", "len(task.outcome)"] {
+        let detail = fan_out_compile_error(|value| {
+            let group = &mut value["run"]["units"]["work"]["group"];
+            let task = group["units"]["item"].take();
+            group["units"] = serde_json::json!({ "task": task });
+            group["outcome"] =
+                serde_json::json!({ "results": "map(task, task.outcome.result)", "first": read });
+        });
+        assert_eq!(
+            detail, "collection task outcome is read only through map",
+            "{read}"
+        );
     }
 }

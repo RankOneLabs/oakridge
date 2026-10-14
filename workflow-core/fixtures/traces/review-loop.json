@@ -33,6 +33,12 @@
             "title": "First",
             "body": "Long"
           }
+        },
+        {
+          "op": "ended",
+          "unit": "run/document",
+          "worker": "writer",
+          "result": "succeeded"
         }
       ],
       "status": {
@@ -60,12 +66,6 @@
           "op": "ended",
           "unit": "run/document",
           "worker": "critic",
-          "result": "succeeded"
-        },
-        {
-          "op": "ended",
-          "unit": "run/document",
-          "worker": "writer",
           "result": "succeeded"
         }
       ],
@@ -122,7 +122,10 @@
       ],
       "status": {
         "run/document": "active"
-      }
+      },
+      "new_workers": [
+        "run/document:critic"
+      ]
     },
     {
       "events": [
@@ -187,5 +190,5 @@
       }
     }
   ],
-  "section_9_delta": "Row 3 adds terminal WorkerEnded events for critic and writer before the later Revise attempt. The published section 9 row omits them, leaving the original writer live and conflicting with C7 one-live-attempt semantics."
+  "section_9_delta": "Row 2 ends the writer's first attempt before the critic is wanted: a reviewer waits for its subject's creator to finish (V3), so the critic's review of draft 1 starts only then. Row 3 ends the critic before the later Revise attempt; the published section 9 row omits these WorkerEnded events, leaving the original writer live and conflicting with C7 one-live-attempt semantics. Row 6 wants the critic once the failed revise has ended."
 }

@@ -1,8 +1,8 @@
-import type { UnitStatus, Writer } from "../core-client/core-types";
+import type { Event, UnitStatus, Writer } from "../core-client/core-types";
 import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
 import type { RunRead } from "../storage/read-store";
 import type { EventRecord } from "../storage/schema-records";
-import { selectRunAttention, type UnitAttention } from "./attention";
+import { selectRunAttention, type RunStall, type UnitAttention } from "./attention";
 import { selectUnitLabel } from "./unit-label";
 import { isAsk, isTerminalStatus, selectAttemptViews, selectAvailableDecisions, selectUnitView, type AttemptView, type ArtifactView, type DecisionDefinition, type DecisionSubmit, type UnitView } from "./unit-view";
 
@@ -27,7 +27,7 @@ export interface RunView extends RunSummary { readonly units: readonly RunUnitSu
 export interface RunPage { readonly items: readonly RunView[]; readonly next_cursor: string | null }
 
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
-  attention.find((item) => item.unit_id === unit_id) ?? { unit_id, awaiting: [], stalled: [], blocked: null };
+  attention.find((item) => item.unit_id === unit_id) ?? { unit_id, run_stalls: [], awaiting: [], stalled: [], blocked: null };
 
 export function selectRunView(read: RunRead): RunView {
   const attention = selectRunAttention(read);
@@ -48,6 +48,9 @@ export function selectRunUnitView(read: RunRead, unit_id: string): UnitView | nu
 
 /** What needs attention in the minimal inspect view, with what the decide and retry buttons submit. */
 export type InspectAttention =
+  /** The run could not advance past `event` (D-V4); the decisions are the run's cancel. */
+  | { readonly kind: "stalled_run"; readonly unit_id: string; readonly stall: RunStall["kind"]; readonly reason: string; readonly event: Event;
+    readonly decisions: readonly DecisionDefinition[] }
   | { readonly kind: "stalled_worker"; readonly unit_id: string; readonly worker: string; readonly action_id: string; readonly detail: string;
     readonly decisions: readonly DecisionDefinition[] }
   | { readonly kind: "awaiting_review"; readonly unit_id: string; readonly review: string; readonly target: string;
@@ -77,6 +80,8 @@ export function selectRunInspect(read: RunRead, events: readonly EventRecord[]):
   return { run_id: read.run.id, status: read.run.status,
     units: views.map((view) => ({ id: view.unit_id, unit_key: view.unit_key, label: view.label, stage: view.stage, status: view.status })),
     attention: attention.flatMap((unit): InspectAttention[] => [
+      ...unit.run_stalls.map((stall): InspectAttention => ({ kind: "stalled_run", unit_id: stall.unit_id, stall: stall.kind, reason: stall.reason,
+        event: stall.event, decisions: views.flatMap((view) => view.decisions.filter((decision) => decision.submit.kind === "cancel")) })),
       ...unit.stalled.map((stalled): InspectAttention => ({ kind: "stalled_worker", unit_id: stalled.unit_id, worker: stalled.worker,
         action_id: stalled.action_id, detail: stalled.detail, decisions: decisionsOf(stalled.unit_id, (submit) => submit.kind === "retry" && submit.worker === stalled.worker) })),
       ...unit.awaiting.map((awaiting): InspectAttention => ({ kind: "awaiting_review", unit_id: awaiting.unit_id, review: awaiting.review,

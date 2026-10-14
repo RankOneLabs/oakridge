@@ -167,9 +167,15 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                         StepError::Rejected { reason } => {
                             DomainError::new(DomainErrorKind::RejectedEvent, "step", reason)
                         }
-                        StepError::Invalid { detail } => {
-                            DomainError::new(DomainErrorKind::InvalidSnapshot, "step", detail)
+                        StepError::Stalled { unit, reason } => {
+                            DomainError::new(DomainErrorKind::StalledEvent, unit.0, reason)
                         }
+                        // The entity names the unit being advanced, when it is known.
+                        StepError::Invalid { detail, unit } => DomainError::new(
+                            DomainErrorKind::InvalidSnapshot,
+                            unit.map_or_else(|| "step".to_owned(), |unit| unit.0),
+                            detail,
+                        ),
                     }
                 })
             })

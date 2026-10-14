@@ -1,6 +1,7 @@
 //! Collection members are keyed by an expression evaluated against `each`,
 //! not by extracting a record field index. These cover the general case and
-//! the four rejections that survived the rework.
+//! the four rejections that survived the rework. The group here starts at
+//! launch, so each rejection refuses the launch rather than stalling a run.
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use workflow_compiler::compile_workflow;
@@ -157,5 +158,16 @@ fn a_cycle_among_members_is_rejected() {
     assert!(
         matches!(&error, StepError::Rejected { reason } if reason.contains("cyclic prerequisite")),
         "{error:?}"
+    );
+}
+
+#[test]
+fn a_collection_over_an_empty_list_completes_at_launch() {
+    let result = launch(json!([])).unwrap();
+    assert_eq!(
+        result.snapshot.run.status,
+        UnitStatus::Done {
+            outcome: json!({"results": []})
+        }
     );
 }

@@ -6,9 +6,10 @@ import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-
 import type { RunConfig } from "../domain/run-config";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
+import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt, ReviewPrompts } from "./json-column-types";
+import type { CommitReceipt, ReviewPrompts, StallRecord } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
 import { readStepSnapshot } from "./snapshot-store";
 
@@ -45,9 +46,11 @@ export type CommitResult = { readonly ok: true; readonly value: CommitOutcome } 
 
 /** A fault inside the transaction: it rolls back and surfaces as an error, never as a stored outcome. */
 class CommitFault extends Error {
-  constructor(readonly error: TracedError) { super(error.detail); }
+  /** `unit_id` is the unit the core was advancing when it found the fault; null when no unit is named. */
+  constructor(readonly error: TracedError, readonly unit_id: string | null = null) { super(error.detail); }
 }
-const fault = (run_id: string, detail: string): CommitFault => new CommitFault({ operation: "commit_event", entity_id: run_id, detail });
+const fault = (run_id: string, detail: string, unit_id: string | null = null): CommitFault =>
+  new CommitFault({ operation: "commit_event", entity_id: run_id, detail }, unit_id);
 
 /** Canonical JSON: object keys sorted, so a replay matches regardless of key order. */
 function canonical(value: unknown): string {
@@ -76,7 +79,7 @@ export async function commitEvent(deps: CommitDependencies, request: CommitReque
     if (outcome.kind === "committed") deps.wake(request.run_id);
     return { ok: true, value: outcome };
   } catch (error) {
-    if (error instanceof CommitFault) return { ok: false, error: error.error };
+    if (error instanceof CommitFault) return { ok: false, error: await recordCommitFault(deps.db, scoped, error) };
     const conflict = concurrencyConflict(error);
     if (conflict) return { ok: true, value: { kind: "conflict", detail: conflict } };
     return { ok: false, error: { operation: "commit_event", entity_id: request.run_id, detail: String(error) } };
@@ -94,6 +97,52 @@ export function scopeIngressId(writer: Writer, ingress_id: string | null): strin
     case "session": return `session:${writer.session}:${ingress_id}`;
     case "operator": case "executor": case "engine": return `${writer.kind}:${ingress_id}`;
   }
+}
+
+/**
+ * A fault rolled its transaction back, so it is recorded against the run in
+ * a transaction of its own (D-V4): the run's attention shows it until a later
+ * event commits on the unit the event addressed. It is shown on the unit the
+ * core was advancing when it found the fault, else that addressed unit. A
+ * launch that faulted left no run to record it on. A retried request whose
+ * fault still stands is not recorded again: the run row lock serializes the
+ * check. Returns the fault, naming a failure to record it.
+ */
+async function recordCommitFault(db: Database, request: CommitRequest, fault: CommitFault): Promise<TracedError> {
+  try {
+    await db.transaction().execute(async (trx) => {
+      const run = await trx.selectFrom("authority.run").select("id").where("id", "=", request.run_id)
+        .where("root_unit_id", "is not", null).forUpdate().executeTakeFirst();
+      if (!run) return;
+      const affected = await affectedUnit(trx, request.run_id, request.event);
+      const addressed = affected.ok ? affected.value : null;
+      const after_event = await readLatestEventId(trx, request.run_id, addressed);
+      if (request.ingress_id !== null && await isFaultStanding(trx, { run_id: request.run_id, ingress_id: request.ingress_id, after_event })) return;
+      const notice: CommitFaultNotice = { run_id: request.run_id, unit_id: addressed as UnitId | null, at_unit: fault.unit_id as UnitId | null,
+        ingress_id: request.ingress_id, event: request.event, detail: fault.error.detail, after_event };
+      await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: request.run_id, run_key: request.run_id,
+        event_key: "commit_fault", payload: jsonText({ kind: "commit_fault", data: notice }) }).execute();
+    });
+    return fault.error;
+  } catch (cause) {
+    return { ...fault.error, detail: `${fault.error.detail} (recording the fault failed: ${String(cause)})` };
+  }
+}
+
+interface FaultIdentity { readonly run_id: string; readonly ingress_id: string; readonly after_event: string | null }
+/** Whether this request's fault is already recorded and still stands: nothing has committed on its unit since. */
+async function isFaultStanding(trx: DatabaseTransaction, input: FaultIdentity): Promise<boolean> {
+  const rows = await trx.selectFrom("authority.operator_event").select("payload").where("run_id", "=", input.run_id)
+    .where("event_key", "=", "commit_fault").execute();
+  return rows.some((row) => row.payload.kind === "commit_fault" && row.payload.data.ingress_id === input.ingress_id
+    && row.payload.data.after_event === input.after_event);
+}
+
+/** The latest event committed on a unit, or on the run as a whole for null: what a stall or a fault stands after. */
+async function readLatestEventId(trx: DatabaseTransaction, run_id: string, unit_id: string | null): Promise<string | null> {
+  let latest = trx.selectFrom("authority.event").select("id").where("run_id", "=", run_id);
+  if (unit_id !== null) latest = latest.where("unit_id", "=", unit_id);
+  return (await latest.orderBy("created_at", "desc").orderBy("id", "desc").limit(1).executeTakeFirst())?.id ?? null;
 }
 
 /** Deadlock and serialization failures are retryable outcomes, not faults. */
@@ -139,6 +188,16 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
   if (stepped.kind === "rejected") return reject(stepped.reason, unit_id.value);
+  if (stepped.kind === "stalled") {
+    // The event is refused as any rejection is, and the refusal records where the run stopped (D-V4).
+    const reason = `run stalled at ${stepped.unit}: ${stepped.reason}`;
+    const stall: StallRecord = { unit_id: stepped.unit, event: request.event, after_event: await readLatestEventId(trx, run_id, unit_id.value),
+      refused_at: new Date().toISOString() };
+    await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result: { kind: "rejected", reason, stall } });
+    await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id, event_key: "invalidate",
+      payload: jsonText({ kind: "invalidate", data: { target: "run", run_id } }) }).execute();
+    return { kind: "rejected", reason };
+  }
   const step = stepped.step;
   const violation = selectDeltaViolation(snapshot, step.snapshot);
   if (violation !== null) throw fault(run_id, `step changed state commit does not write: ${violation}`);
@@ -187,7 +246,11 @@ interface StepInput {
   readonly snapshot: StepSnapshot;
   readonly incoming: Incoming;
 }
-type Stepped = { readonly kind: "stepped"; readonly step: StepResult } | { readonly kind: "rejected"; readonly reason: string };
+type Stepped =
+  | { readonly kind: "stepped"; readonly step: StepResult }
+  | { readonly kind: "rejected"; readonly reason: string }
+  /** The event was refused because advancing the run past it stopped at `unit`. */
+  | { readonly kind: "stalled"; readonly unit: string; readonly reason: string };
 /** Step against the pinned program, compiling it from its pinned source and prompts when the core has not cached it. */
 async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: StepInput): Promise<Stepped> {
   const step = () => core.request("step", { workflow_digest: input.definition.digest, snapshot: input.snapshot, incoming: input.incoming });
@@ -206,7 +269,12 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
   if (!response.ok) {
     if (response.error.kind === "domain" && response.error.detail.kind === "rejected_event")
       return { kind: "rejected", reason: response.error.detail.detail };
-    throw fault(input.run_id, `core step failed: ${JSON.stringify(response.error)}`);
+    if (response.error.kind === "domain" && response.error.detail.kind === "stalled_event")
+      return { kind: "stalled", unit: response.error.detail.entity_id, reason: response.error.detail.detail };
+    // An inconsistency the core found advancing a unit names it as the entity.
+    const unit_id = response.error.kind === "domain" && response.error.detail.kind === "invalid_snapshot"
+      && response.error.detail.entity_id !== "step" ? response.error.detail.entity_id : null;
+    throw fault(input.run_id, `core step failed: ${JSON.stringify(response.error)}`, unit_id);
   }
   if (response.value.kind !== "stepped") throw fault(input.run_id, "core returned a non-step output");
   return { kind: "stepped", step: response.value.value };
