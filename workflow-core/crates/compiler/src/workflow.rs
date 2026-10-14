@@ -37,8 +37,9 @@ fn validate_type(
         }
         Type::Named { schema } if schema.0 == TYPE_VARIABLE => {}
         Type::Named { schema } => return Err(reject(1, format!("schema {} absent", schema.0))),
-        // W5 resolves this after stage names and outcome records are known.
-        Type::OutcomeOf { .. } => {}
+        // W5 will resolve this after stage names and outcome records are known.
+        // Until then, even an unused alias must not reach read projections.
+        Type::OutcomeOf { .. } => return Err(reject(11, format!("unresolved type {ty}"))),
         _ => {}
     }
     Ok(())
@@ -899,6 +900,14 @@ pub fn compile_workflow_with_limits(
     limits
         .check_value(&source_value)
         .map_err(|detail| DomainError::new(DomainErrorKind::ResourceLimit, "workflow", detail))?;
+    for key in source.schemas.keys() {
+        if matches!(
+            key.as_str(),
+            "text" | "ident" | "repo_path" | "integer" | "boolean"
+        ) {
+            return Err(reject(1, format!("schema {key} shadows a primitive type")));
+        }
+    }
     validate_type(&source.input, &source.schemas, &mut BTreeSet::new())?;
     for ty in source.schemas.values() {
         validate_type(ty, &source.schemas, &mut BTreeSet::new())?;
