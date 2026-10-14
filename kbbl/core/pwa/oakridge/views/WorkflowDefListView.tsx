@@ -1,20 +1,20 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchOperatorDefinitions, setOperatorDefinitionArchived } from "../client";
+import { useQuery } from "@tanstack/react-query";
+import { fetchOperatorDefinitions } from "../client";
 import { queryKeys } from "../queryKeys";
-import { invalidateDefinitions } from "../lib/operator-invalidation";
+import { useSetDefinitionArchived } from "../hooks/useSetDefinitionArchived";
 import { WorkflowDefList } from "../components/organisms/WorkflowDefList";
 import { Button } from "../../components/atoms/Button";
 
 interface Props { readonly onBack: () => void; readonly onNew: () => void; readonly onSelect: (id: string) => void; readonly onClone: (id: string) => void }
 export function WorkflowDefListView({ onBack, onNew, onSelect, onClone }: Props) {
-  const client = useQueryClient();
+  const archive = useSetDefinitionArchived();
   const [isArchived, setIsArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const query = useQuery({ queryKey: queryKeys.definitionList(isArchived), queryFn: () => fetchOperatorDefinitions(isArchived) });
   const toggleArchived = async (id: string) => {
     setError(null);
-    try { await setOperatorDefinitionArchived(id, !isArchived); invalidateDefinitions(client); }
+    try { await archive.mutateAsync({ bundleId: id, isArchived: !isArchived }); }
     catch (cause) { setError(String(cause)); }
   };
   return <main className="or-page"><header className="or-page-header">
