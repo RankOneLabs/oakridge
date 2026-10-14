@@ -290,7 +290,7 @@ COMMENT ON COLUMN authority.artifact_revision.body IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.review_decision.payload IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.event.payload IS '@type {CoreEvent}';
 COMMENT ON COLUMN authority.event.writer IS '@type {Writer}';
-COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedActions}';
+COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedWorkers}';
 COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectInstruction}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';

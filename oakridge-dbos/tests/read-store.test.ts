@@ -147,7 +147,7 @@ test("history pages newest first with each event's writer and wanted actions; a 
   expect(await readHistory(authority.db, { run_id, unit_id: `${run_id}/missing`, after: null, limit: 10 })).toBeNull();
   const kinds = [...first.items, ...rest.items].map((item) => item.event.payload.kind);
   expect({ kinds, last_page: rest.next, launch_writer: rest.items.at(-1)?.event.writer.kind,
-    decided_wanted: first.items[0]?.wanted.flatMap((item) => item.actions.map((wanted) => wanted.kind === "run_worker" ? wanted.mode.kind : wanted.kind)),
+    decided_wanted: first.items[0]?.wanted.flatMap((item) => item.actions.map((wanted) => wanted.action.kind === "run_worker" ? wanted.action.mode.kind : wanted.action.kind)),
     unit_kinds: unit_only.items.map((item) => item.event.payload.kind) })
     .toEqual({ kinds: ["operator_decided", "worker_ended", "revision_published", "worker_started", "launched"], last_page: null, launch_writer: "operator",
       decided_wanted: ["revise"], unit_kinds: ["operator_decided", "worker_ended", "revision_published", "worker_started"] });

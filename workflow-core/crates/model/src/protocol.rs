@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 /// step over the section 2 workflow model.
 pub const PROTOCOL_VERSION: u32 = 4;
 
+/// One wanted worker and the identity of the attempt that runs it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WantedWorker {
+    pub unit: UnitId,
+    pub worker: WorkerKey,
+    pub action_id: ActionKey,
+    #[serde(with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub attempt_seq: u32,
+    pub action: Action,
+    pub resolved: ResolvedRunWorker,
+}
+
 /// Deepest container nesting serde_json accepts.
 pub const WIRE_MAX_JSON_DEPTH: usize = 127;
 /// Containers the frame wraps around the deepest JSON value slot. Values are
