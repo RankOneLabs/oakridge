@@ -8,7 +8,7 @@ pub fn check_type(ty: &CheckedType, value: &Value) -> bool {
         }),
         CheckedType::Text | CheckedType::RepoPath => value.is_string(),
         CheckedType::Ident => value.as_str().is_some_and(is_ident),
-        CheckedType::Enumeration { variants } => value
+        CheckedType::Enum { variants } => value
             .as_str()
             .is_some_and(|text| variants.iter().any(|variant| variant == text)),
         CheckedType::Boolean => value.is_boolean(),
@@ -17,5 +17,6 @@ pub fn check_type(ty: &CheckedType, value: &Value) -> bool {
         CheckedType::List { item } => value
             .as_array()
             .is_some_and(|items| items.iter().all(|value| check_type(item, value))),
+        CheckedType::Named { .. } | CheckedType::OutcomeOf { .. } => false,
     }
 }
