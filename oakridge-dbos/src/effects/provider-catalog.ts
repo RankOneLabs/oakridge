@@ -26,6 +26,8 @@ export const PROVIDER_ERROR_CODES = {
   output_rejected: "output_rejected",
   invalid_instruction: "invalid_instruction",
   attempt_stopped: "attempt_stopped",
+  session_unrecorded: "session_unrecorded",
+  carrier_ended: "carrier_ended",
 } as const;
 
 export type HandleKind = typeof HANDLE_KINDS[keyof typeof HANDLE_KINDS];

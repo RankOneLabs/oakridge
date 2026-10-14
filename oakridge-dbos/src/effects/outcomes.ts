@@ -46,7 +46,7 @@ export type ObserveOutcome =
   | { readonly kind: "running" }
   | { readonly kind: "ended"; readonly result: WorkerResult }
   | { readonly kind: "refused"; readonly failure: WorkerFailure }
-  | { readonly kind: "retry"; readonly detail: string; readonly is_unavailable: boolean };
+  | { readonly kind: "retry"; readonly detail: string };
 export function resolveObserve(result: ProviderResult<TerminalObservation | unknown>): ObserveOutcome {
   if (result.kind === "acknowledged") {
     const value = result.value;
@@ -57,7 +57,7 @@ export function resolveObserve(result: ProviderResult<TerminalObservation | unkn
     return { kind: "refused", failure: failed("observation_rejected", "provider returned a malformed terminal observation") };
   }
   if (result.kind === "permanently_rejected") return { kind: "refused", failure: failed(result.code, result.detail) };
-  return { kind: "retry", detail: result.detail, is_unavailable: result.kind === "transiently_unavailable" };
+  return { kind: "retry", detail: result.detail };
 }
 
 export type StopOutcome = { readonly kind: "confirmed" } | { readonly kind: "retry"; readonly detail: string };

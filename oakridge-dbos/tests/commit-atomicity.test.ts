@@ -47,12 +47,12 @@ test("a fault on the receipt rolls back the event, writer, delta, intent stops a
   }
 });
 
-test("a rejected launch stores its receipt and nothing else, and is not a run to the operator", async () => {
+test("a rejected launch stores its receipt and nothing else, leaving no run row", async () => {
   const request_id = crypto.randomUUID();
   const { run_id, result } = await launch(authority, { bundle_id, request_id, input: { topic: 42 } });
   const runs = await listRuns(authority.db, { after: null, limit: 100, is_archived: false });
   expect({ kind: result.ok && result.value.kind, after: await counts(run_id), listed: runs.items.some((read) => read.run.id === run_id) })
-    .toEqual({ kind: "rejected", after: { version: 0, status: "not_started", events: 0, units: 0, receipts: 1 }, listed: false });
+    .toEqual({ kind: "rejected", after: { version: null, status: null, events: 0, units: 0, receipts: 1 }, listed: false });
 });
 
 test("a fault mid-write rolls back the event, writer, delta and receipt together", async () => {

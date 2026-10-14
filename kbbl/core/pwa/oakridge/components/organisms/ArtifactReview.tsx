@@ -56,7 +56,7 @@ export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, 
         <Button type="submit">Start thread</Button></form>
       {selectedThreadId && <form onSubmit={(event) => { event.preventDefault(); if (!text.trim()) return;
         void message.mutateAsync({ run_id: selected.revision.run_id, unit_id: selected.unit_id, thread_id: selectedThreadId,
-          request_key: randomUuid(), text: text.trim(), author: "operator", ping: isPing }).then(() => { setText(""); setSelectedThreadId(null); })
+          request_key: randomUuid(), text: text.trim(), ping: isPing }).then(() => { setText(""); setSelectedThreadId(null); })
           .catch((cause: unknown) => setError(String(cause)));
       }}><label>Reply<textarea value={text} onChange={(event) => setText(event.target.value)} /></label>
         <label><input type="checkbox" checked={isPing} onChange={(event) => setIsPing(event.target.checked)} />Ping agent</label>

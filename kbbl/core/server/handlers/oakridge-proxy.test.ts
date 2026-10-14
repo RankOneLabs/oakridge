@@ -188,6 +188,24 @@ describe("oakridge proxy", () => {
       headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer core-secret" } })).status).toBe(401);
   });
 
+  // Presenting the core token for a caller kbbl cannot check would let any
+  // local process act as the operator.
+  test("a core token without a browser token refuses operator routes rather than present it for any caller", async () => {
+    const forwarded: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      forwarded.push((init?.headers as Headers).get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+    const statuses = [
+      (await app.request("/oakridge/api/api/runs")).status,
+      (await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status,
+      (await app.request("/oakridge/api/health")).status,
+    ];
+    expect({ statuses, forwarded }).toEqual({ statuses: [401, 401, 200], forwarded: [null] });
+  });
+
   test("table operator routes forward the supplied control token", async () => {
     const received: (string | null)[] = [];
     globalThis.fetch = (async (_input, init) => {

@@ -3,6 +3,10 @@ CREATE SCHEMA authority;
 
 CREATE TYPE authority.effect_status AS ENUM
   ('pending', 'acknowledged', 'stop_requested', 'stopped', 'failed');
+-- Who asked for an intent's stop: commit, when its unit is no longer active or
+-- its watch was replaced, or the executor, when an attempt failed while an
+-- execution may still be live.
+CREATE TYPE authority.stop_origin AS ENUM ('commit', 'executor');
 
 CREATE TABLE authority.schema_baseline (
   id boolean PRIMARY KEY DEFAULT true CHECK (id),
@@ -182,14 +186,18 @@ CREATE TABLE authority.effect_intent (
   tries integer NOT NULL DEFAULT 0 CHECK (tries >= 0),
   next_try_at timestamptz,
   last_error text,
+  -- Set with the stop request, and kept once it settles; null while none was requested.
+  stop_origin authority.stop_origin CHECK (status <> 'stop_requested' OR stop_origin IS NOT NULL),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (action_id, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id)
 );
 
+-- A receipt names its run without a foreign key on it: a refused launch rolls
+-- its run row back and keeps only its receipt, so a replay finds the refusal.
 CREATE TABLE authority.ingress_receipt (
   id text PRIMARY KEY,
-  run_id text NOT NULL REFERENCES authority.run(id),
+  run_id text NOT NULL,
   unit_id text,
   ingress_id text NOT NULL,
   request_digest text NOT NULL,
@@ -269,9 +277,16 @@ CREATE INDEX event_commit_idx ON authority.event(commit_txid, id);
 CREATE INDEX event_run_created_idx ON authority.event(run_id, created_at, id);
 CREATE INDEX event_unit_created_idx ON authority.event(run_id, unit_id, created_at, id);
 CREATE INDEX wanted_log_unit_idx ON authority.wanted_log(run_id, unit_id);
+CREATE INDEX wanted_log_event_idx ON authority.wanted_log(run_id, event_id);
 CREATE INDEX effect_intent_run_idx ON authority.effect_intent(run_id, status);
 CREATE INDEX effect_intent_unit_idx ON authority.effect_intent(run_id, unit_id);
 CREATE INDEX operator_event_commit_idx ON authority.operator_event(commit_txid, id);
+-- Collaboration rows are read by revision and thread, and deleted with their run;
+-- each index also serves the foreign key its child rows hold on the parent.
+CREATE INDEX collaboration_thread_revision_idx ON authority.collaboration_thread(run_id, unit_id, artifact_revision_id);
+CREATE INDEX collaboration_message_thread_idx ON authority.collaboration_message(run_id, thread_id);
+CREATE INDEX review_item_thread_idx ON authority.review_item(run_id, thread_id);
+CREATE INDEX collaboration_delivery_message_idx ON authority.collaboration_delivery(run_id, message_id);
 
 COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
 COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';

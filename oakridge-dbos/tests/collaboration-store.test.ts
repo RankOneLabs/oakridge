@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import { Hono } from "hono";
 import { sql } from "kysely";
+import { collaborationHandlers } from "../src/http/collaboration";
+import { operatorWriterFromCredential } from "../src/http/control-auth";
 import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread, readCollaborationThreads,
   readThreadRevision, recordCollaborationDelivery } from "../src/storage/collaboration-store";
 import { listOwedIntents, settleIntent } from "../src/storage/executor-store";
@@ -108,4 +111,30 @@ test("a ping recorded while its run is being deleted waits for the deletion and 
   } finally {
     await sql`DROP TRIGGER slow_message_delete ON authority.collaboration_message; DROP FUNCTION public.slow_message_delete()`.execute(authority.db);
   }
+});
+
+test("a thread view reads its revision chain in the same number of queries however long the chain", async () => {
+  const queries = async (count: number): Promise<number> => {
+    const { run_id, unit, revisions } = await drafted(count);
+    let issued = 0;
+    const counted = authority.db.withPlugin({ transformQuery: (args) => { issued++; return args.node; }, transformResult: async (args) => args.result });
+    await readCollaborationThreads(counted, { run_id, unit_id: unit, revision_id: revisions.at(-1)! });
+    return issued;
+  };
+  expect(await queries(6)).toBe(await queries(1));
+});
+
+test("a message's author is the credential that posted it, whatever the body claims", async () => {
+  const { run_id, unit, revisions } = await drafted(1);
+  const opened = await thread(run_id, unit, revisions[0]!);
+  if (opened.kind !== "written") throw new Error("thread not written");
+  const app = new Hono();
+  app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/messages", collaborationHandlers({ db: authority.db }).addMessage);
+  const headers = { "content-type": "application/json", authorization: "Bearer operator-token" };
+  const path = [run_id, unit, opened.value.id].map(encodeURIComponent);
+  const posted = await app.request(`/api/runs/${path[0]}/units/${path[1]}/threads/${path[2]}/messages`,
+    { method: "POST", headers, body: JSON.stringify({ request_key: "k", text: "looks good", author: "someone-else" }) });
+  const { message } = await posted.json() as { readonly message: { readonly body: { readonly author: string } } };
+  expect({ status: posted.status, author: message.body.author })
+    .toEqual({ status: 201, author: operatorWriterFromCredential(new Request("http://x", { headers })).subject });
 });

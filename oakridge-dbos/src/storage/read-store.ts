@@ -36,46 +36,68 @@ export interface StallRefusal { readonly unit_id: string | null; readonly ingres
 export interface RecordedFault { readonly notice: CommitFaultNotice; readonly recorded_at: Date }
 /** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
 export interface LatestUnitEvent { readonly unit_id: string | null; readonly event_id: string; readonly created_at: Date }
+/** A run as lists read it: everything but its launch input and config. */
+export type RunSummaryRecord = Omit<RunRecord, "input" | "config">;
+/** A unit as lists read it: everything but its resolved input. */
+export type UnitSummaryRecord = Omit<UnitRecord, "input">;
+/** A revision as lists read it: where it is and when, never its body. */
+export type RevisionRef = Pick<ArtifactRevisionRecord, "id" | "run_id" | "unit_id" | "artifact" | "created_at">;
 /**
- * One launched run and everything recorded against it, each in the order
- * commit wrote it: the source of every run, unit, inbox and inspect projection.
+ * One launched run as the run list, the run view and the inbox read it: what
+ * RunView and attention derive from, and no revision body, decision, unit
+ * input or launch input. A page of runs costs what its summaries need.
  */
-export interface RunRead {
-  readonly run: RunRecord;
+export interface RunSummaryRead {
+  readonly run: RunSummaryRecord;
   readonly definition: PinnedSource;
-  readonly units: readonly UnitRecord[];
-  readonly dependencies: readonly UnitDependencyRecord[];
+  readonly units: readonly UnitSummaryRecord[];
   readonly attempts: readonly AttemptRecord[];
-  readonly revisions: readonly ArtifactRevisionRecord[];
-  readonly decisions: readonly ReviewDecisionRecord[];
+  readonly revisions: readonly RevisionRef[];
   readonly retries: readonly RetryRequest[];
   readonly wanted: readonly UnitWanted[];
   /** Refusals that recorded where the run stopped advancing, in the order they were refused. */
   readonly stalls: readonly StallRefusal[];
   /** Faulted commits recorded against the run, in the order they faulted. */
   readonly faults: readonly RecordedFault[];
+  /** Read only for a run with a stall or a fault: they are what it is compared against. */
   readonly latest_events: readonly LatestUnitEvent[];
 }
+/**
+ * One launched run and everything recorded against it, each in the order
+ * commit wrote it: the source of the unit, artifact and inspect projections.
+ */
+export interface RunRead extends RunSummaryRead {
+  readonly run: RunRecord;
+  readonly units: readonly UnitRecord[];
+  readonly dependencies: readonly UnitDependencyRecord[];
+  readonly revisions: readonly ArtifactRevisionRecord[];
+  readonly decisions: readonly ReviewDecisionRecord[];
+}
+
+const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id", "run.status", "run.version",
+  "run.created_at", "run.archived_at"] as const;
+const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "unit_key", "collection_key", "declaration", "stage", "pool", "status",
+  "review_prompts", "version"] as const;
+const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "created_at"] as const;
+const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
 
 /**
- * Launched runs, in the order asked; a run row whose launch was rejected has
- * no root and is not a run to the operator. One query per table for every
- * run asked, so a page of runs costs what one run does.
+ * Launched runs as lists read them, in the order asked; a run row with no
+ * root is not a run to the operator. One query per table for every run
+ * asked, so a page of runs costs what one run does.
  */
-async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): Promise<readonly RunRead[]> {
+async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly string[]): Promise<readonly RunSummaryRead[]> {
   if (run_ids.length === 0) return [];
   const ids = anyOf(run_ids);
-  // Action ids are hashes: attempts, revisions and decisions read in the order commit wrote them.
-  const [runs, units, dependencies, attempts, revisions, decisions, retries, wanted, stalls, faults, latest_events] = await Promise.all([
+  // Action ids are hashes: attempts and revisions read in the order commit wrote them.
+  const [runs, units, attempts, revisions, retries, wanted, stalls, faults] = await Promise.all([
     trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
-      .selectAll("run").select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
+      .select(RUN_SUMMARY_COLUMNS).select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
       .where("run.id", "=", ids).where("run.root_unit_id", "is not", null).execute(),
-    trx.selectFrom("authority.unit").selectAll().where("run_id", "=", ids).orderBy("id").execute(),
-    trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", ids).orderBy("unit_id").orderBy("depends_on_id").execute(),
+    trx.selectFrom("authority.unit").select(UNIT_SUMMARY_COLUMNS).where("run_id", "=", ids).orderBy("id").execute(),
     trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
-    trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.event").select(["id", "run_id", "unit_id", "ingress_id", "payload"]).where("run_id", "=", ids)
+    trx.selectFrom("authority.artifact_revision").select(REVISION_REF_COLUMNS).where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.event").select(["run_id", "unit_id", "ingress_id", "payload"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "retry_requested")).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
       join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
@@ -86,18 +108,18 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       .where((eb) => eb(eb.ref("result", "->").key("stall"), "is not", null)).execute(),
     trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where("event_key", "=", "commit_fault")
       .orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"]).select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
-      .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
   ]);
-  const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
+  // A stall or fault stands only while nothing has committed after it: only a run with one needs its latest events.
+  const contested = [...new Set([...stalls, ...faults].flatMap((row) => row.run_id === null ? [] : [row.run_id]))];
+  const latest_events = contested.length === 0 ? [] : await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
+    .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", anyOf(contested))
+    .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute();
   return run_ids.flatMap((run_id) => {
     const found = runs.find((run) => run.id === run_id);
     if (!found) return [];
     const { digest, bundle_version, source, ...run } = found;
-    return [{ run: run as RunRecord, definition: { digest, version: bundle_version, workflow: source },
-      units: of(units, run_id) as UnitRecord[], dependencies: of(dependencies, run_id) as UnitDependencyRecord[],
-      attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as ArtifactRevisionRecord[],
-      decisions: of(decisions, run_id) as ReviewDecisionRecord[],
+    return [{ run: run as RunSummaryRecord, definition: { digest, version: bundle_version, workflow: source },
+      units: of(units, run_id) as UnitSummaryRecord[], attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as RevisionRef[],
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, retry_id: retry.ingress_id }] : []),
       wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })),
@@ -109,14 +131,28 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       latest_events: of(latest_events, run_id).map(({ unit_id, id, created_at }) => ({ unit_id, event_id: id, created_at })) }];
   });
 }
-const runRead = async (trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> => (await runReads(trx, [run_id]))[0] ?? null;
+
+/** One run with everything recorded against it: its summary read, and the rows the summary leaves out. */
+async function runRead(trx: DatabaseTransaction, run_id: string): Promise<RunRead | null> {
+  const [summary] = await runSummaryReads(trx, [run_id]);
+  if (!summary) return null;
+  const [run, units, dependencies, revisions, decisions] = await Promise.all([
+    trx.selectFrom("authority.run").selectAll().where("id", "=", run_id).executeTakeFirstOrThrow(),
+    trx.selectFrom("authority.unit").selectAll().where("run_id", "=", run_id).orderBy("id").execute(),
+    trx.selectFrom("authority.unit_dependency").selectAll().where("run_id", "=", run_id).orderBy("unit_id").orderBy("depends_on_id").execute(),
+    trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
+    trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", run_id).orderBy("created_at").orderBy("id").execute(),
+  ]);
+  return { ...summary, run: run as RunRecord, units: units as UnitRecord[], dependencies: dependencies as UnitDependencyRecord[],
+    revisions: revisions as ArtifactRevisionRecord[], decisions: decisions as ReviewDecisionRecord[] };
+}
 
 export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead | null> {
   return consistent(db, (trx) => runRead(trx, run_id));
 }
 
 export interface RunPageQuery { readonly after: { readonly created_at: string; readonly id: string } | null; readonly limit: number; readonly is_archived: boolean }
-export interface RunReadPage { readonly items: readonly RunRead[]; readonly next: { readonly created_at: Date; readonly id: string } | null }
+export interface RunReadPage { readonly items: readonly RunSummaryRead[]; readonly next: { readonly created_at: Date; readonly id: string } | null }
 /** Newest first; one listing is either the archived runs or the active ones. */
 export async function listRuns(db: Kysely<DB>, query: RunPageQuery): Promise<RunReadPage> {
   return consistent(db, async (trx) => {
@@ -126,7 +162,7 @@ export async function listRuns(db: Kysely<DB>, query: RunPageQuery): Promise<Run
     if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(new Date(after.created_at), after.id)));
     const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
-    const items = await runReads(trx, selected.map((row) => row.id));
+    const items = await runSummaryReads(trx, selected.map((row) => row.id));
     const last = selected.at(-1);
     return { items, next: rows.length > query.limit && last ? { created_at: last.created_at, id: last.id } : null };
   });
@@ -146,7 +182,7 @@ export async function readRunInspect(db: Kysely<DB>, run_id: string): Promise<Ru
 }
 
 export interface LiveRunQuery { readonly after: string | null; readonly limit: number }
-export interface LiveRunPage { readonly items: readonly RunRead[]; readonly next: string | null }
+export interface LiveRunPage { readonly items: readonly RunSummaryRead[]; readonly next: string | null }
 /** Launched runs that are neither finished nor archived, by id: what the inbox derives its items from. */
 export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise<LiveRunPage> {
   return consistent(db, async (trx) => {
@@ -155,7 +191,7 @@ export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise
     if (query.after !== null) page = page.where("id", ">", query.after);
     const rows = await page.orderBy("id").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
-    const items = await runReads(trx, selected.map((row) => row.id));
+    const items = await runSummaryReads(trx, selected.map((row) => row.id));
     return { items, next: rows.length > query.limit ? selected.at(-1)?.id ?? null : null };
   });
 }

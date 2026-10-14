@@ -2,10 +2,10 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
 import { requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { actionOf, executor, launch, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -109,6 +109,43 @@ test("a step rejection is stored as a rejected receipt, replays as rejected, and
     .toEqual({ first: "rejected", replay: "rejected", receipt: "rejected", events: 0, is_listed: false });
 });
 
+test("a refused launch leaves no run row, and its receipt answers a replay or a changed request", async () => {
+  const request_id = crypto.randomUUID();
+  const first = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
+  const replay = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
+  const changed = await launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } });
+  const runs = await authority.db.selectFrom("authority.run").select("id").where("id", "=", first.run_id).execute();
+  const receipts = await authority.db.selectFrom("authority.ingress_receipt").select("result").where("run_id", "=", first.run_id).execute();
+  expect({ first: first.result.ok && first.result.value.kind, replay: replay.result.ok && replay.result.value.kind,
+    changed: changed.result.ok && changed.result.value.kind, runs: runs.length, receipts: receipts.map((receipt) => receipt.result.kind) })
+    .toEqual({ first: "rejected", replay: "replayed", changed: "conflict", runs: 0, receipts: ["rejected"] });
+});
+
+test("concurrent identical refused launches store one receipt and leave no run row", async () => {
+  const request_id = crypto.randomUUID();
+  const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { bundle_id, request_id, input: { topic: 5 } })));
+  const run_id = results[0]!.run_id;
+  const [runs, receipts] = await Promise.all([
+    authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).execute(),
+    authority.db.selectFrom("authority.ingress_receipt").select("id").where("run_id", "=", run_id).execute()]);
+  expect({ kinds: results.map(({ result }) => result.ok ? result.value.kind : "error").sort(), runs: runs.length, receipts: receipts.length })
+    .toEqual({ kinds: ["rejected", "replayed", "replayed", "replayed", "replayed"], runs: 0, receipts: 1 });
+});
+
+test("an event that leaves a unit's wanted set unchanged logs nothing for the unit", async () => {
+  const run_id = await launched();
+  const action = await writerAction(run_id);
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: action }, writer: executor(action) });
+  const logged = await authority.db.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", "event.id", "wanted.event_id")
+    .select("wanted.actions").where("wanted.run_id", "=", run_id).where("wanted.unit_id", "=", unit)
+    .orderBy("event.created_at").orderBy("event.id").execute();
+  const repeats = logged.filter((row, index) => index > 0 && JSON.stringify(row.actions) === JSON.stringify(logged[index - 1]!.actions));
+  expect({ logged: logged.length > 0, repeats: repeats.length }).toEqual({ logged: true, repeats: 0 });
+});
+
 test("C4: a decision on a non-latest revision is refused at commit", async () => {
   const run_id = await launched();
   const submit = submitter(authority);
@@ -196,6 +233,15 @@ test("a request digest ignores key order and changes with the event or the write
     other_event: requestDigest({ event: { kind: "launched", input: { a: 1, b: 3 } }, writer }) === digest,
     other_writer: requestDigest({ event: { kind: "launched", input: { a: 1, b: 2 } }, writer: { kind: "operator", subject: "credential:b" } }) === digest })
     .toEqual({ reordered: true, other_event: false, other_writer: false });
+});
+
+test("a launch's request digest changes with its project or config", () => {
+  const request = { event: { kind: "launched", input: { a: 1 } }, writer: OPERATOR } as const;
+  const launch = { definition_bundle_id: bundle_id, project_id: null, config: null };
+  const digest = requestDigest({ ...request, launch });
+  expect({ other_project: requestDigest({ ...request, launch: { ...launch, project_id: "project-b" as ProjectId } }) === digest,
+    other_config: requestDigest({ ...request, launch: { ...launch, config: { sessions: {} } } }) === digest })
+    .toEqual({ other_project: false, other_config: false });
 });
 
 test("an awaiting operator review's prompt is rendered with its resolved inputs, re-rendered as they change, and dropped once decided", async () => {

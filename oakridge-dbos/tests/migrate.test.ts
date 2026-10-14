@@ -54,3 +54,22 @@ test("two runs each have a root unit with no parent, and ingress ids are scoped 
     expect(units.length).toBe(2);
   } finally { await db.destroy(); await scratch.drop(); }
 });
+
+test("the baseline indexes the wanted log by event and collaboration rows by their run and parent", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db);
+    const indexes = await sql<{ table_name: string; columns: string }>`SELECT index_table.relname AS table_name,
+        string_agg(attribute.attname, ',' ORDER BY key.ordinality) AS columns
+      FROM pg_index AS idx JOIN pg_class AS index_table ON index_table.oid = idx.indrelid
+      JOIN pg_namespace AS namespace ON namespace.oid = index_table.relnamespace AND namespace.nspname = 'authority'
+      CROSS JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS key(attnum, ordinality)
+      JOIN pg_attribute AS attribute ON attribute.attrelid = idx.indrelid AND attribute.attnum = key.attnum
+      GROUP BY idx.indexrelid, index_table.relname`.execute(db);
+    const indexed = new Set(indexes.rows.map((row) => `${row.table_name}(${row.columns})`));
+    const wanted = ["wanted_log(run_id,event_id)", "collaboration_thread(run_id,unit_id,artifact_revision_id)", "collaboration_message(run_id,thread_id)",
+      "review_item(run_id,thread_id)", "collaboration_delivery(run_id,message_id)"];
+    expect(wanted.filter((index) => !indexed.has(index))).toEqual([]);
+  } finally { await db.destroy(); await scratch.drop(); }
+});

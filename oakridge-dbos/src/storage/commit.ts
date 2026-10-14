@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
-import { compileWorkflow, selectWanted } from "../core-client/client";
+import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
 import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
@@ -9,7 +9,7 @@ import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "
 import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt, ReviewPrompts, StallRecord } from "./json-column-types";
+import type { CommitReceipt, ReviewPrompts, StallRecord, WantedActions } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
 import { readStepSnapshot } from "./snapshot-store";
 
@@ -59,9 +59,11 @@ function canonical(value: unknown): string {
     .map((key) => `${JSON.stringify(key)}:${canonical((value as { readonly [key: string]: unknown })[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | "publication_secret_hash">): string {
-  const { event, writer, publication_secret_hash } = request;
-  return createHash("sha256").update(canonical(publication_secret_hash ? { event, writer, publication_secret_hash } : { event, writer })).digest("hex");
+/** A launch's definition, project and config are part of what it asks for: a replay naming another is other content. */
+export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | "publication_secret_hash" | "launch">): string {
+  const { event, writer, publication_secret_hash, launch } = request;
+  return createHash("sha256").update(canonical({ event, writer, ...(publication_secret_hash ? { publication_secret_hash } : {}),
+    ...(launch ? { launch } : {}) })).digest("hex");
 }
 
 /**
@@ -80,6 +82,7 @@ export async function commitEvent(deps: CommitDependencies, request: CommitReque
     return { ok: true, value: outcome };
   } catch (error) {
     if (error instanceof CommitFault) return { ok: false, error: await recordCommitFault(deps.db, scoped, error) };
+    if (error instanceof UncommittedLaunch) return storeLaunchRefusal(deps.db, scoped, error);
     const conflict = concurrencyConflict(error);
     if (conflict) return { ok: true, value: { kind: "conflict", detail: conflict } };
     return { ok: false, error: { operation: "commit_event", entity_id: request.run_id, detail: String(error) } };
@@ -151,28 +154,71 @@ function concurrencyConflict(error: unknown): string | null {
   return error.code === "40P01" || error.code === "40001" ? `database concurrency conflict (${error.code}); retry the event` : null;
 }
 
+/**
+ * A launch creates its run row before stepping it. A launch that created the
+ * row and does not commit (step refused it, or it replays a refused launch)
+ * rolls its whole transaction back, so no run is left without a root. Its
+ * outcome rides out on this, and a refusal's receipt is stored on its own.
+ */
+class UncommittedLaunch extends Error {
+  constructor(readonly outcome: CommitOutcome, readonly refusal: StoredReceipt | null) { super(`launch not committed: ${outcome.kind}`); }
+}
+
 async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<CommitOutcome> {
+  if (request.event.kind !== "launched") return commitToRun(trx, core, request);
+  const launch = request.launch;
+  if (!launch) return { kind: "missing", detail: "a launch names its pinned definition" };
+  const created = await trx.insertInto("authority.run").values({ id: request.run_id, definition_bundle_id: launch.definition_bundle_id,
+    project_id: launch.project_id, config: launch.config === null ? null : jsonText(launch.config) })
+    .onConflict((conflict) => conflict.column("id").doNothing()).returning("id").executeTakeFirst();
+  const outcome = await commitToRun(trx, core, request);
+  if (!created || outcome.kind === "committed") return outcome;
+  throw new UncommittedLaunch(outcome, outcome.kind === "rejected" ? await readReceipt(trx, request) : null);
+}
+
+interface StoredReceipt { readonly ingress_id: string; readonly request_digest: string; readonly result: CommitReceipt }
+async function readReceipt(db: Database | DatabaseTransaction, request: Pick<CommitRequest, "run_id" | "ingress_id">): Promise<StoredReceipt | null> {
+  if (request.ingress_id === null) return null;
+  return await db.selectFrom("authority.ingress_receipt").select(["ingress_id", "request_digest", "result"])
+    .where("run_id", "=", request.run_id).where("ingress_id", "=", request.ingress_id).executeTakeFirst() ?? null;
+}
+
+/**
+ * A refused launch's receipt, stored once its transaction has rolled the run
+ * row back. With no run row there is no lock to serialize on: a concurrent
+ * launch of the same request may have stored the receipt first, and then
+ * this one answers from it as a replay would.
+ */
+async function storeLaunchRefusal(db: Database, request: CommitRequest, launch: UncommittedLaunch): Promise<CommitResult> {
+  const refusal = launch.refusal;
+  if (refusal === null) return { ok: true, value: launch.outcome };
+  try {
+    const stored = await db.insertInto("authority.ingress_receipt").values({ id: crypto.randomUUID(), run_id: request.run_id, unit_id: null,
+      ingress_id: refusal.ingress_id, request_digest: refusal.request_digest, result: jsonText(refusal.result) })
+      .onConflict((conflict) => conflict.columns(["run_id", "ingress_id"]).doNothing()).returning("id").executeTakeFirst();
+    if (stored) return { ok: true, value: launch.outcome };
+    const earlier = await readReceipt(db, request);
+    if (!earlier) return { ok: true, value: { kind: "conflict", detail: "a concurrent launch's receipt could not be read; retry the launch" } };
+    return { ok: true, value: earlier.request_digest === refusal.request_digest ? { kind: "replayed", receipt: earlier.result }
+      : { kind: "conflict", detail: "ingress id reused with different content" } };
+  } catch (cause) {
+    return { ok: false, error: { operation: "store_launch_refusal", entity_id: request.run_id, detail: String(cause) } };
+  }
+}
+
+async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<CommitOutcome> {
   const { run_id } = request;
   if (request.publication_secret_hash && request.event.kind !== "worker_started")
     throw fault(run_id, `a publication secret hash rides only on worker_started, not ${request.event.kind}`);
-  if (request.event.kind === "launched") {
-    if (!request.launch) return { kind: "missing", detail: "a launch names its pinned definition" };
-    await trx.insertInto("authority.run").values({ id: run_id, definition_bundle_id: request.launch.definition_bundle_id,
-      project_id: request.launch.project_id, config: request.launch.config === null ? null : jsonText(request.launch.config) })
-      .onConflict((conflict) => conflict.column("id").doNothing()).execute();
-  }
   const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config"])
     .where("id", "=", run_id).forUpdate().executeTakeFirst();
   if (!run) return { kind: "missing", detail: "run not found" };
   if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
     return { kind: "conflict", detail: "run is pinned to a different definition" };
   const digest = requestDigest(request);
-  if (request.ingress_id !== null) {
-    const receipt = await trx.selectFrom("authority.ingress_receipt").select(["request_digest", "result"])
-      .where("run_id", "=", run_id).where("ingress_id", "=", request.ingress_id).executeTakeFirst();
-    if (receipt) return receipt.request_digest === digest ? { kind: "replayed", receipt: receipt.result }
-      : { kind: "conflict", detail: "ingress id reused with different content" };
-  }
+  const receipt = await readReceipt(trx, request);
+  if (receipt) return receipt.request_digest === digest ? { kind: "replayed", receipt: receipt.result }
+    : { kind: "conflict", detail: "ingress id reused with different content" };
   const unit_id = await affectedUnit(trx, run_id, request.event);
   // The receipt names a unit only once the unit is known to exist: its foreign key would refuse any other.
   const reject = async (reason: string, receipt_unit: string | null): Promise<CommitOutcome> => {
@@ -209,9 +255,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
     .returning(["id", "created_at"]).executeTakeFirstOrThrow();
   await reconcileIntents(trx, { run_id, source: definition.source, prompts: definition.prompts, config: run.config, step });
   const newly_awaiting = await writeReviewPrompts(trx, { run_id, source: definition.source, prompts: definition.prompts, step });
-  for (const { unit_id: unit, actions } of selectWanted(step))
-    await trx.insertInto("authority.wanted_log").values({ id: crypto.randomUUID(), run_id, unit_id: unit, event_id: event.id,
-      actions: jsonText(actions) }).execute();
+  await writeWantedLog(trx, { run_id, event_id: event.id, wanted: selectWanted(step) });
   await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result: { kind: "committed", event_id: event.id } });
   // A launch or a cancel addresses the whole run: its event names the root unit.
   const addressed = step.snapshot.units.find((unit) => unit.id === (unit_id.value ?? step.snapshot.run.root));
@@ -413,11 +457,11 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     existing.add(inputs.action_id);
     // A new watch replaces the worker's previous action (D-V1): its carrier stops repeating.
     const replaced = selectReplacedAction(action);
-    if (replaced !== null) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", updated_at: new Date() })
+    if (replaced !== null) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
       .where("run_id", "=", run_id).where("action_id", "=", replaced).where("status", "in", ["pending", "acknowledged"]).execute();
   }
   const inactive = step.snapshot.units.filter((unit) => unit.status.kind === "done" || unit.status.kind === "cancelled").map((unit) => unit.id);
-  if (inactive.length) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", updated_at: new Date() })
+  if (inactive.length) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", ["pending", "acknowledged"]).execute();
 }
 
@@ -468,11 +512,45 @@ async function writeReviewPrompts(trx: DatabaseTransaction, input: Omit<Reconcil
   return newly_awaiting;
 }
 
+interface WantedLogInput { readonly run_id: string; readonly event_id: string; readonly wanted: readonly WantedForUnit[] }
+/**
+ * Log each unit's wanted set only when it differs from the set last logged
+ * for the unit: the latest row per unit is then still the set step last
+ * computed for it, and the log grows with changes rather than with events.
+ */
+async function writeWantedLog(trx: DatabaseTransaction, input: WantedLogInput): Promise<void> {
+  if (input.wanted.length === 0) return;
+  const logged = await trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
+    join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
+    .distinctOn("wanted.unit_id").select(["wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", input.run_id)
+    .where("wanted.unit_id", "=", anyOf(input.wanted.map((item) => item.unit_id)))
+    .orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute();
+  const changed = selectChangedWanted(input.wanted, new Map(logged.map((row) => [row.unit_id, row.actions])));
+  if (changed.length === 0) return;
+  await trx.insertInto("authority.wanted_log").values(changed.map(({ unit_id, actions }) => ({ id: crypto.randomUUID(), run_id: input.run_id,
+    unit_id, event_id: input.event_id, actions: jsonText(actions) }))).execute();
+}
+
+/** The units whose wanted set differs from the one last logged for them; a unit never logged has changed. */
+export function selectChangedWanted(wanted: readonly WantedForUnit[], logged: ReadonlyMap<string, WantedActions>): readonly WantedForUnit[] {
+  return wanted.filter(({ unit_id, actions }) => {
+    const prior = logged.get(unit_id);
+    return prior === undefined || canonical(prior) !== canonical(actions);
+  });
+}
+
 interface ReceiptInput { readonly request: CommitRequest; readonly unit_id: string | null; readonly digest: string; readonly result: CommitReceipt }
+/**
+ * Under the run row lock no other receipt can race this one. A launch that
+ * created its run row holds no lock a refused launch's receipt waits on, and
+ * may meet one stored meanwhile: it keeps that receipt, and answers from it
+ * once its own transaction has rolled back.
+ */
 async function storeReceipt(trx: DatabaseTransaction, input: ReceiptInput): Promise<void> {
   if (input.request.ingress_id === null) return;
   await trx.insertInto("authority.ingress_receipt").values({ id: crypto.randomUUID(), run_id: input.request.run_id, unit_id: input.unit_id,
-    ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) }).execute();
+    ingress_id: input.request.ingress_id, request_digest: input.digest, result: jsonText(input.result) })
+    .onConflict((conflict) => conflict.columns(["run_id", "ingress_id"]).doNothing()).execute();
 }
 
 /**

@@ -1,6 +1,6 @@
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
 import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
-import type { RunRead } from "../storage/read-store";
+import type { RunRead, RunSummaryRead } from "../storage/read-store";
 import type { EventRecord } from "../storage/schema-records";
 import { selectRunAttention, type RunStall, type UnitAttention } from "./attention";
 import { selectUnitLabel } from "./unit-label";
@@ -29,7 +29,7 @@ export interface RunPage { readonly items: readonly RunView[]; readonly next_cur
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
   attention.find((item) => item.unit_id === unit_id) ?? { unit_id, run_stalls: [], awaiting: [], stalled: [], blocked: null };
 
-export function selectRunView(read: RunRead): RunView {
+export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
     created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,

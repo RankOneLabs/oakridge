@@ -197,6 +197,12 @@ const coreControlToken =
   process.env.OAKRIDGE_CORE_CONTROL_TOKEN?.trim() ||
   process.env.OAKRIDGE_CONTROL_TOKEN?.trim() ||
   undefined;
+if (coreControlToken && authPolicy.mode !== "token") {
+  console.error(
+    "kbbl: WARNING: OAKRIDGE_CORE_CONTROL_TOKEN is set without OAKRIDGE_CONTROL_TOKEN, so the Oakridge proxy has no browser " +
+    "credential to check and refuses every operator route. Set OAKRIDGE_CONTROL_TOKEN.",
+  );
+}
 
 const app = createApp({
   acp: acpService,

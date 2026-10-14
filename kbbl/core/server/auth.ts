@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler, Next } from "hono";
+import type { AuthStatus } from "../auth-wire";
 
 // ---- startup policy -------------------------------------------------------
 
@@ -25,8 +26,11 @@ export function isLoopbackHost(host: string): boolean {
 
 /**
  * Resolves the startup auth policy from host, optional control token, and
- * insecure flag. Throws when the bind host is non-loopback and neither a
- * token nor the explicit insecure escape hatch is configured.
+ * insecure flag. A configured token is required on every bind, loopback
+ * included: on loopback any local process — an agent among them — could
+ * otherwise act as the operator through the Oakridge proxy. Throws when the
+ * bind host is non-loopback and neither a token nor the explicit insecure
+ * escape hatch is configured.
  */
 export function resolveStartupAuthPolicy(opts: {
   host: string;
@@ -36,12 +40,12 @@ export function resolveStartupAuthPolicy(opts: {
   const { host, allowInsecure } = opts;
   const controlToken = opts.controlToken?.trim() || undefined;
 
-  if (isLoopbackHost(host)) {
-    return { mode: "loopback" };
-  }
-
   if (controlToken) {
     return { mode: "token", token: controlToken };
+  }
+
+  if (isLoopbackHost(host)) {
+    return { mode: "loopback" };
   }
 
   if (allowInsecure) {
@@ -192,6 +196,21 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
     const rejection = verifyControlCredentials(c, token);
     if (rejection) return rejection;
     await next();
+  };
+}
+
+/**
+ * Returns a Hono handler for GET /auth/status, which the PWA reads on load to
+ * decide whether to ask for the control token. The cookie is HttpOnly, so the
+ * page cannot see it; only the server can say whether it is valid.
+ */
+export function makeAuthStatusHandler(
+  policy: AuthPolicy,
+): (c: Context) => Response | Promise<Response> {
+  return (c: Context) => {
+    if (policy.mode !== "token") return c.json({ is_required: false, is_authenticated: true } satisfies AuthStatus);
+    const cookieToken = parseCookieToken(c.req.header("cookie") ?? "");
+    return c.json({ is_required: true, is_authenticated: cookieToken !== null && tokenEquals(cookieToken, policy.token) } satisfies AuthStatus);
   };
 }
 

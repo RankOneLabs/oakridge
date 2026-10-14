@@ -132,15 +132,22 @@ export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
 ./kbbl/scripts/kbbl-start --host=0.0.0.0
 ```
 
-The browser exchanges the token for an HttpOnly cookie. Non-loopback writes
-require control authentication. For trusted-network development only,
-`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` permits an unauthenticated bind.
-This is not a public-internet deployment configuration.
+The PWA asks for the token once and exchanges it for an HttpOnly cookie.
+With `OAKRIDGE_CONTROL_TOKEN` set, every write and every proxied Oakridge
+operator route requires it, on any bind, loopback included: otherwise any
+local process, an agent among them, could act as the operator through the
+proxy. Without a token, a loopback bind runs open. For trusted-network
+development only, `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` permits an
+unauthenticated non-loopback bind. This is not a public-internet deployment
+configuration.
 
 `OAKRIDGE_CORE_BASE_URL` points to the oakridge-dbos backend.
 `OAKRIDGE_CORE_CONTROL_TOKEN` overrides the upstream token, otherwise
-`OAKRIDGE_CONTROL_TOKEN` is used. Browser authorization is stripped before
-proxying. Agent permission decisions are separate from HTTP control authentication.
+`OAKRIDGE_CONTROL_TOKEN` is used. With an upstream token but no
+`OAKRIDGE_CONTROL_TOKEN`, the proxy has no browser credential to check and
+refuses every operator route. Browser authorization is stripped before
+proxying. The oakridge-dbos executor presents kbbl's token on its session
+calls (`KBBL_CONTROL_TOKEN`, or `OAKRIDGE_CONTROL_TOKEN`). Agent permission decisions are separate from HTTP control authentication.
 
 `OAKRIDGE_FALLBACK_REFRESH_MS` sets the operator surface's fallback refresh
 interval without a PWA rebuild; it is served from `/oakridge/config` and takes

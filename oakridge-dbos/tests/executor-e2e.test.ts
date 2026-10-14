@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
 import { createProductionComposition } from "../src/runtime/compose";
+import { intentWorkflowId } from "../src/workflows/topology";
 import { openDatabase, type Database } from "../src/storage/database";
 import { launchRunId } from "../src/storage/commit";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
@@ -44,7 +46,9 @@ beforeAll(async () => {
   base_url = `http://127.0.0.1:${server.port}`;
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
     executor: { kbbl_base_url: stub.url, publication_key: "e2e-key", publish_base_url: base_url, agent_workdir: workdir, github_token: null },
-    timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5 } });
+    // A small carrier bound, so sessions and watches here also run across carrier generations.
+    timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5,
+      carrier_max_iterations: 2 } });
   handler = composition.app.fetch;
 }, 60_000);
 afterAll(async () => {
@@ -316,7 +320,7 @@ test("K3: sample A with every key renamed runs end to end, so a new workflow nee
   await eventually("the run to finish", async () => await runStatus(run_id) === "done");
 }, 90_000);
 
-test("a periodic code worker repeats under one intent, publishes only a changed value, and stops with its run", async () => {
+test("a periodic code worker repeats under one intent across carrier generations, publishes only a changed value, and stops with its run", async () => {
   const repo = await temporaryRepository();
   try {
     const periodic: Workflow = {
@@ -347,9 +351,11 @@ test("a periodic code worker repeats under one intent, publishes only a changed 
     }, 20_000);
     const runs_after_stop = (await attempts(run_id, "prepare")).length;
     await Bun.sleep(2_500);
+    const intent = await db.selectFrom("authority.effect_intent").select("id").where("run_id", "=", run_id).executeTakeFirstOrThrow();
+    const carriers = await DBOS.listWorkflows({ workflowName: "oakridgeEffectWorkflow", workflow_id_prefix: intentWorkflowId(intent.id) });
     expect({ unchanged, moved: moved[0] !== moved[1] && moved[0] === repo.head, intents: intents.length,
-      quiet_after_stop: (await attempts(run_id, "prepare")).length === runs_after_stop })
-      .toEqual({ unchanged: 1, moved: true, intents: 1, quiet_after_stop: true });
+      quiet_after_stop: (await attempts(run_id, "prepare")).length === runs_after_stop, has_rolled_over: carriers.length > 1 })
+      .toEqual({ unchanged: 1, moved: true, intents: 1, quiet_after_stop: true, has_rolled_over: true });
   } finally { repo.remove(); }
 }, 90_000);
 

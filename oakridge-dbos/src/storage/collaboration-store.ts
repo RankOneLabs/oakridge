@@ -178,13 +178,14 @@ export async function readCollaborationThreads(db: Reader, input: { readonly run
   if (threads.length === 0) return [];
   const thread_ids = threads.map((thread) => thread.id);
   const [messages, review_items, deliveries] = await Promise.all([
-    db.selectFrom("authority.collaboration_message").selectAll().where("thread_id", "=", anyOf(thread_ids))
+    db.selectFrom("authority.collaboration_message").selectAll().where("run_id", "=", input.run_id).where("thread_id", "=", anyOf(thread_ids))
       .orderBy("thread_id").orderBy("created_at").orderBy("id").execute(),
-    db.selectFrom("authority.review_item").selectAll().where("thread_id", "=", anyOf(thread_ids))
+    db.selectFrom("authority.review_item").selectAll().where("run_id", "=", input.run_id).where("thread_id", "=", anyOf(thread_ids))
       .orderBy("thread_id").orderBy("created_at").orderBy("id").execute(),
     db.selectFrom("authority.collaboration_delivery as delivery")
-      .innerJoin("authority.collaboration_message as message", "message.id", "delivery.message_id")
-      .selectAll("delivery").select("message.thread_id").where("message.thread_id", "=", anyOf(thread_ids))
+      .innerJoin("authority.collaboration_message as message", (join) =>
+        join.onRef("message.run_id", "=", "delivery.run_id").onRef("message.id", "=", "delivery.message_id"))
+      .selectAll("delivery").select("message.thread_id").where("delivery.run_id", "=", input.run_id).where("message.thread_id", "=", anyOf(thread_ids))
       .orderBy("message.thread_id").orderBy("delivery.created_at", "desc").orderBy("delivery.id", "desc").execute(),
   ]);
   return threads.map((thread) => selectCollaborationThreadView({ ...thread, latest_revision_id: latest?.id ?? null },
@@ -193,16 +194,15 @@ export async function readCollaborationThreads(db: Reader, input: { readonly run
     deliveries.filter((row) => row.thread_id === thread.id).map(({ thread_id: _thread, ...row }) => ({ ...row, created_at: createdAt(row.created_at) }))));
 }
 
-/** The revision and its predecessors, newest first, within one unit. */
+/** The revision and its predecessors, newest first, within one unit: one recursive query, however long the chain. */
 async function revisionChain(db: Reader, input: { readonly run_id: string; readonly unit_id: string; readonly revision_id: string }): Promise<readonly string[]> {
-  const chain: string[] = [];
-  let id: string | null = input.revision_id;
-  while (id !== null && !chain.includes(id)) {
-    const revision: { readonly predecessor_id: string | null } | undefined = await db.selectFrom("authority.artifact_revision").select("predecessor_id")
-      .where("run_id", "=", input.run_id).where("unit_id", "=", input.unit_id).where("id", "=", id).executeTakeFirst();
-    if (!revision) break;
-    chain.push(id);
-    id = revision.predecessor_id;
-  }
-  return chain;
+  // UNION drops a revision already walked, so even a corrupt cycle ends; a predecessor is always older than its successor.
+  const chain = await db.withRecursive("chain(id, predecessor_id, created_at)", (recursive) => recursive.selectFrom("authority.artifact_revision")
+    .select(["id", "predecessor_id", "created_at"]).where("run_id", "=", input.run_id).where("unit_id", "=", input.unit_id).where("id", "=", input.revision_id)
+    .union((predecessor) => predecessor.selectFrom("authority.artifact_revision as revision")
+      .innerJoin("chain", "chain.predecessor_id", "revision.id")
+      .select(["revision.id", "revision.predecessor_id", "revision.created_at"])
+      .where("revision.run_id", "=", input.run_id).where("revision.unit_id", "=", input.unit_id)))
+    .selectFrom("chain").select("chain.id").orderBy("chain.created_at", "desc").orderBy("chain.id", "desc").execute();
+  return chain.map((row) => row.id);
 }

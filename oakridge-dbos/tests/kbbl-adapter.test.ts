@@ -8,6 +8,7 @@ import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
 import type { ExternalHandle } from "../src/effects/provider";
+import { resolveObserve } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
 
 interface Call { readonly method: string; readonly url: string; readonly headers: Headers; readonly body: unknown }
@@ -58,6 +59,18 @@ test("ensure asks kbbl to revive an ended session under the key", async () => {
   expect({ ensured, url: calls[0]!.url, revive: calls[0]!.headers.get(REVIVE_HEADER) }).toEqual({
     ensured: { kind: "acknowledged", value: { kind: "attached", session: { sid: "sid-1", status: "live", last_activity_ts: "2026-10-12T12:00:00.000Z" } } },
     url: "http://kbbl.test/sessions/resumable/a.b", revive: "true" });
+});
+
+// kbbl refuses an unauthenticated write once it has a control token, so the executor presents one on every call.
+test("a configured control token reaches kbbl as Bearer on every call", async () => {
+  const { calls, fetch } = recording(() => Response.json({ kind: "attached", session: snapshot() }));
+  const client = new KbblClient({ base_url: "http://kbbl.test", control_token: "kbbl-token", fetch });
+  await client.ensure("a.b", { initial_prompt: "p", workdir: "/w" });
+  await client.deliver("sid-1", "k", "do it");
+  await client.read("sid-1");
+  await client.close("sid-1", { action_id: "a", is_fence: false });
+  expect(calls.map((call) => [call.method, call.headers.get("authorization")])).toEqual([["PUT", "Bearer kbbl-token"], ["PUT", "Bearer kbbl-token"],
+    ["GET", "Bearer kbbl-token"], ["DELETE", "Bearer kbbl-token"]]);
 });
 
 test("a 5xx answer is transient, a 4xx refusal permanent, and a lost connection uncertain", async () => {
@@ -184,14 +197,14 @@ test("a session closed under a running task fails the attempt as closed", async 
     .toBe("session_closed");
 });
 
-test("a task silent past the bound fails as executor_silent_timeout", async () => {
+// A silent session may still be running: the observation is refused, so the carrier stops the session instead of settling past it.
+test("a task silent past the bound refuses its observation as executor_silent_timeout", async () => {
   const { fetch } = recording((call) => call.method === "GET"
     ? Response.json({ pending: true, session: snapshot() }, { status: 202 })
     : Response.json({ accepted: true, status: "prompting" }));
   const provider = createAgentProvider(config(fetch, { max_silent_ms: 60_000, now: () => Date.parse("2026-10-12T12:05:00.000Z") }));
   const observed = await provider.observe(instructionFor(), { task: "t" }, session);
-  expect(observed.kind === "acknowledged" && observed.value.kind === "terminal" && observed.value.result.kind === "failed" ? observed.value.result.code : null)
-    .toBe("executor_silent_timeout");
+  expect(resolveObserve(observed)).toMatchObject({ kind: "refused", failure: { code: "executor_silent_timeout" } });
 });
 
 test("a stop fences a fresh session, closes a resumed one revivably as its attempt, and finds a lost start by its ensure", async () => {

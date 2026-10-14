@@ -55,7 +55,7 @@ export const isValidControlToken = equalToken;
 
 /** Stable, non-secret identifier for the credential that passed control auth.
  * The request body has no role in choosing the event writer. */
-export function operatorWriterFromCredential(request: Request): Writer {
+export function operatorWriterFromCredential(request: Request): Extract<Writer, { readonly kind: "operator" }> {
   const authorization = request.headers.get("authorization");
   const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
   const credential = bearer ?? controlCookie(request.headers.get("cookie"));

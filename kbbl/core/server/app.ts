@@ -4,6 +4,7 @@ import { serveStatic } from "hono/bun";
 import type { KbblConfig } from "../config";
 import type { AcpSessionService } from "../acp/session-service";
 import {
+  makeAuthStatusHandler,
   makeControlAuthMiddleware,
   makeCookieHandler,
   type AuthPolicy,
@@ -71,8 +72,8 @@ export function createApp(deps: CreateAppDeps): Hono {
   //
   // Applied globally before any route so every non-GET/HEAD request other
   // than /hook/* adapter routes requires authentication when the server is
-  // bound to a non-loopback address. In loopback or insecure mode this is
-  // a no-op pass-through so local development stays frictionless.
+  // configured with a control token, on any bind. Without one (loopback or
+  // insecure mode) this is a no-op pass-through.
   app.use("/*", makeControlAuthMiddleware(authPolicy));
 
   // ---- cookie establishment endpoint ----
@@ -82,6 +83,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   // calls without re-sending the token as a header (which would require
   // storing it in JS-accessible state).
   app.post("/auth/cookie", makeCookieHandler(authPolicy));
+  app.get("/auth/status", makeAuthStatusHandler(authPolicy));
 
   // ---- ACP per-session routes (§14) ----
   mountAcpPerSidRoutes(app, { acp });

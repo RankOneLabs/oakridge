@@ -1,5 +1,5 @@
 import type { RunId, UnitId } from "../domain/primitives";
-import type { RunRead } from "../storage/read-store";
+import type { RunSummaryRead } from "../storage/read-store";
 import { selectAttention, selectRunAttention, selectRunStallDetail } from "./attention";
 import { selectUnitLabel } from "./unit-label";
 import { isAsk, selectAvailableDecisions, type DecisionSubmit } from "./unit-view";
@@ -20,7 +20,7 @@ export type InboxItem =
 export interface InboxPage { readonly items: readonly InboxItem[]; readonly next_cursor: string | null }
 
 /** A run's inbox items, unit by unit: the run's stalls, each decision that asks for the operator, each stalled worker, and the unit's wait. */
-export function selectRunInboxItems(read: RunRead): readonly InboxItem[] {
+export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] {
   return selectRunAttention(read).flatMap((attention) => {
     const unit = read.units.find((candidate) => candidate.id === attention.unit_id);
     if (!unit) return [];
@@ -37,5 +37,5 @@ export function selectRunInboxItems(read: RunRead): readonly InboxItem[] {
   });
 }
 
-export const selectInboxPage = (runs: readonly RunRead[], next_cursor: string | null): InboxPage =>
+export const selectInboxPage = (runs: readonly RunSummaryRead[], next_cursor: string | null): InboxPage =>
   ({ items: runs.flatMap(selectRunInboxItems), next_cursor });

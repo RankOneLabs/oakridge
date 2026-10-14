@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { App } from "./App";
+import { ControlAuthGate } from "./components/organisms/ControlAuthGate";
 import "./styles.css";
 
 // Module-level singleton so StrictMode's double-invoke doesn't construct two
@@ -26,7 +27,9 @@ if (!rootEl) throw new Error("missing #app");
 createRoot(rootEl).render(
   <QueryClientProvider client={queryClient}>
     <StrictMode>
-      <App />
+      <ControlAuthGate>
+        <App />
+      </ControlAuthGate>
     </StrictMode>
   </QueryClientProvider>,
 );
