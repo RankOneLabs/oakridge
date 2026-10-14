@@ -30,3 +30,15 @@ test("a kbbl without a control token shows the app directly", async () => {
   renderGate();
   expect(await screen.findByTestId("app")).toBeTruthy();
 });
+
+test("a status kbbl cannot answer keeps the app closed behind a retry, which opens it once kbbl answers", async () => {
+  let is_reachable = false;
+  globalThis.fetch = vi.fn(async () => is_reachable
+    ? Response.json({ is_required: false, is_authenticated: true }) : new Response("", { status: 502 })) as unknown as typeof fetch;
+  renderGate();
+  await screen.findByTestId("control-auth-unavailable");
+  expect(screen.queryByTestId("app")).toBeNull();
+  is_reachable = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByTestId("app")).toBeTruthy();
+});

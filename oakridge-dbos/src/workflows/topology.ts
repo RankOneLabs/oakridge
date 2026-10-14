@@ -305,7 +305,6 @@ async function untilSettled<Value>(label: string, body: () => Promise<Value>): P
 /** Carries one intent: an agent's session, or a code worker's operation. Workflow id = `intentWorkflowId(intent_id)`, then its successors'. */
 export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: EFFECT_WORKFLOW_NAME });
 
-const carrierWorkflow = (kind: CarrierKind) => kind === "start" ? effectWorkflow : cleanupWorkflow;
 /**
  * A carrier that has looped `carrier_max_iterations` times hands its intent to
  * the next generation, as the run workflow does at RUN_MAX_ITERATIONS, so no
@@ -313,10 +312,13 @@ const carrierWorkflow = (kind: CarrierKind) => kind === "start" ? effectWorkflow
  * successor resumes from the authority rows. False when this workflow is not
  * one of the intent's generations (an operator's recovery fork): it keeps looping.
  */
-async function rollOver(kind: CarrierKind, intent_id: string): Promise<boolean> {
+async function rollOver(kind: CarrierKind, intent_id: string, carried: CarriedStop = { reason: null }): Promise<boolean> {
   const generation = generationOf(carrierWorkflowId(kind, intent_id), DBOS.workflowID ?? "");
   if (generation === null) return false;
-  await DBOS.startWorkflow(carrierWorkflow(kind), { workflowID: carrierWorkflowId(kind, intent_id, generation + 1) })(intent_id);
+  const workflowID = carrierWorkflowId(kind, intent_id, generation + 1);
+  // A successor inherits this carrier's deadline: DBOS propagates it to a workflow started without its own timeout.
+  if (kind === "start") await DBOS.startWorkflow(effectWorkflow, { workflowID })(intent_id);
+  else await DBOS.startWorkflow(cleanupWorkflow, { workflowID })(intent_id, carried);
   return true;
 }
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
@@ -382,7 +384,8 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
   if (status === "acknowledged" && handle === null) return abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.session_unrecorded,
     detail: `attempt ${intent.instruction.attempt.action_id}#${intent.instruction.attempt.seq} has no recorded session to observe` });
   for (let observations = 0, unavailable = 0; status === "acknowledged" && handle !== null; observations++) {
-    if (observations >= timing.carrier_max_iterations && await rollOver("start", intent_id)) return status;
+    // A run of unanswered observations is counted in one carrier, so it rolls over only between runs.
+    if (observations >= timing.carrier_max_iterations && unavailable === 0 && await rollOver("start", intent_id)) return status;
     const outcome = resolveObserve(await observeStep(intent.instruction, material, handle));
     if (outcome.kind === "ended") {
       await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: outcome.result } });
@@ -476,22 +479,25 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
 }
 
 /** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`, then its successors'. */
-export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: CLEANUP_WORKFLOW_NAME });
-async function carryStop(intent_id: string): Promise<EffectStatus | null> {
+export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string, carried?: CarriedStop) =>
+  untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id, carried)), { name: CLEANUP_WORKFLOW_NAME });
+/** What a rolled-over stop carrier hands its successor: the reason it loaded, before its own stop tries overwrote `last_error`. */
+interface CarriedStop { readonly reason: string | null }
+async function carryStop(intent_id: string, carried?: CarriedStop): Promise<EffectStatus | null> {
   const timing = current().timing;
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind !== "carried") return loaded.kind === "invalid" ? settleStep({ intent_id, status: "stopped", last_error: loaded.detail }) : null;
   const intent = loaded.intent;
   if (intent.status !== "stop_requested") return intent.status;
-  // Why the attempt failed, when the executor requested the stop; kept past the stop's own retries.
-  const reason = intent.last_error;
+  // Why the attempt failed, when the executor requested the stop; kept past the stop's own retries, across generations.
+  const reason = carried === undefined ? intent.last_error : carried.reason;
   // A code operation leaves nothing running outside: its loop ends when it sees the stop.
   if (intent.instruction.worker.kind === "code") return settleStep({ intent_id, status: "stopped", last_error: reason });
   // A start never claimed never reached kbbl, so nothing can be running; ensuring the session only to close it would spawn the agent.
   if (intent.tries === 0 && intent.handle === null) return confirmStop(intent, reason);
   let handle = intent.handle;
   for (let attempt = 0; ; attempt++) {
-    if (attempt >= timing.carrier_max_iterations && await rollOver("stop", intent_id)) return intent.status;
+    if (attempt >= timing.carrier_max_iterations && await rollOver("stop", intent_id, { reason })) return intent.status;
     const outcome = resolveStop(await stopStep(intent.instruction, handle));
     if (outcome.kind === "confirmed") return confirmStop(intent, reason);
     const retry_in = backoff(attempt, timing);

@@ -57,8 +57,10 @@ beforeAll(async () => {
   db = openDatabase(scratch.url);
   await migrateEmptyDatabase(db);
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", effect_provider: provider,
+    // A carrier bound below the unavailable bound, so a run of unanswered observations spans a rollover;
+    // and a deadline every rolled-over carrier must keep.
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 2, wake_timeout_seconds: 0.5,
-      carrier_max_iterations: 3 } });
+      carrier_max_iterations: 1, execution_deadline_ms: 600_000 } });
   ({ digest } = await (await composition.app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string });
 }, 30_000);
 afterAll(async () => {
@@ -199,9 +201,12 @@ test("an agent carrier observing past its iteration bound hands its intent to th
   const intent_id = (await intentsOf(run_id))[0]!.id;
   const carriers = () => DBOS.listWorkflows({ workflowName: "oakridgeEffectWorkflow", workflow_id_prefix: intentWorkflowId(intent_id) });
   for (let poll = 0; poll < 150 && (await carriers()).length < 3; poll++) await Bun.sleep(100);
-  const first = await DBOS.getWorkflowStatus(intentWorkflowId(intent_id));
-  expect({ has_successors: (await carriers()).length >= 3, first: first?.status, status: (await intentOf(run_id)).status, starts: start_calls.get(run_id) })
-    .toEqual({ has_successors: true, first: "SUCCESS", status: "acknowledged", starts: 1 });
+  const generations = await carriers();
+  const first = generations.find((carrier) => carrier.workflowID === intentWorkflowId(intent_id));
+  expect({ has_successors: generations.length >= 3, first: first?.status, status: (await intentOf(run_id)).status, starts: start_calls.get(run_id),
+    // Every generation keeps the deadline the first was dispatched with.
+    deadlines: [...new Set(generations.map((carrier) => carrier.deadlineEpochMS))].length, has_deadline: first?.deadlineEpochMS !== undefined })
+    .toEqual({ has_successors: true, first: "SUCCESS", status: "acknowledged", starts: 1, deadlines: 1, has_deadline: true });
   expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
   await until(run_id, isSettled);
   expect(stop_calls.get(run_id)).toEqual([session("s-long")]);

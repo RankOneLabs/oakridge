@@ -17,6 +17,13 @@ export function ControlAuthGate({ children }: ControlAuthGateProps) {
   const auth = useControlAuth();
   const [token, setToken] = useState("");
   if (auth.is_loading) return null;
+  // Without kbbl's answer the gate cannot tell whether a token is needed: it stays closed rather than open onto refused requests.
+  if (auth.status_error !== null) return (
+    <main className="mx-auto mt-24 flex max-w-sm flex-col gap-4 px-4" data-testid="control-auth-unavailable">
+      <FeedbackMessage tone="danger">Could not reach kbbl to check sign-in: {auth.status_error.message}</FeedbackMessage>
+      <Button variant="secondary" size="medium" onClick={auth.retryStatus}>Retry</Button>
+    </main>
+  );
   if (!selectIsSignInRequired(auth.status)) return <>{children}</>;
   return (
     <main className="mx-auto mt-24 flex max-w-sm flex-col gap-4 px-4" data-testid="control-sign-in">
