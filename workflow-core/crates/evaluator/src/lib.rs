@@ -15,6 +15,7 @@ mod typing;
 mod wants;
 
 use advance::*;
+use apply::{apply, apply_all, Delta};
 pub use apply::{step, step_with_limits};
 pub use expression::eval_expression;
 use expression::*;

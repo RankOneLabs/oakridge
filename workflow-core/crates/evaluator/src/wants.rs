@@ -340,16 +340,18 @@ pub fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) 
 pub(super) struct StageWants {
     pub(super) workers: Vec<workflow_model::protocol::WantedWorker>,
     pub(super) reviews: Vec<ResolvedReview>,
+    pub(super) pending: Vec<Delta>,
 }
-/// A wanted worker with no attempt yet gets its pending one.
+/// Derive a stage's wanted workers and pending attempts without changing state.
 pub(super) fn stage_wants(
     program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
+    state: &StepSnapshot,
     stage_unit: &UnitState,
     context: &EvaluationContext<'_>,
 ) -> Result<StageWants, StepError> {
     let actions = stage_actions(program, state, stage_unit, context)?;
     let mut workers = Vec::new();
+    let mut pending = Vec::new();
     for action in &actions {
         let Action::RunWorker {
             unit,
@@ -369,8 +371,9 @@ pub(super) fn stage_wants(
             },
             context,
         )?;
-        if !state.attempts.iter().any(|a| a.action_id == id) {
-            state.attempts.push(AttemptState {
+        let existing = state.attempts.iter().rev().find(|a| a.action_id == id);
+        if existing.is_none() {
+            pending.push(Delta::PushAttempt(AttemptState {
                 action_id: id.clone(),
                 seq: 1,
                 unit: unit.clone(),
@@ -380,15 +383,9 @@ pub(super) fn stage_wants(
                 status: AttemptStatus::Pending,
                 kbbl_session_id: None,
                 ended_at: None,
-            });
+            }));
         }
-        let attempt_seq = state
-            .attempts
-            .iter()
-            .rev()
-            .find(|a| a.action_id == id)
-            .expect("wanted worker has an attempt")
-            .seq;
+        let attempt_seq = existing.map_or(1, |attempt| attempt.seq);
         workers.push(workflow_model::protocol::WantedWorker {
             unit: unit.clone(),
             worker: worker.clone(),
@@ -399,5 +396,9 @@ pub(super) fn stage_wants(
         });
     }
     let reviews = resolve_reviews(program, state, stage_unit, context)?;
-    Ok(StageWants { workers, reviews })
+    Ok(StageWants {
+        workers,
+        reviews,
+        pending,
+    })
 }

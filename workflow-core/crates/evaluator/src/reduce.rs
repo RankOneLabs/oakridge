@@ -1,22 +1,31 @@
 use super::*;
 pub(super) fn reduce(
     program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
+    snapshot: &StepSnapshot,
     incoming: &Incoming,
     context: &EvaluationContext<'_>,
-) -> Result<(), StepError> {
+) -> Result<Vec<Delta>, StepError> {
+    let mut state = snapshot.clone();
+    let mut deltas = Vec::new();
+    macro_rules! record {
+        ($delta:expr) => {{
+            let delta = $delta;
+            apply(&mut state, delta.clone());
+            deltas.push(delta);
+        }};
+    }
     match &incoming.event {
         Event::Launched { input } => {
             if state.run.input.is_some() {
-                return Ok(());
+                return Ok(deltas);
             }
             context.check_value(input)?;
             if !check_type(&program.input, input) {
                 return Err(rejected("launch input fails schema"));
             }
-            state.run.input = Some(input.clone());
-            state.run.status = UnitStatus::Active;
-            state.units.push(UnitState {
+            record!(Delta::RunInput(input.clone()));
+            record!(Delta::RunStatus(UnitStatus::Active));
+            record!(Delta::PushUnit(UnitState {
                 id: state.run.root.clone(),
                 parent: None,
                 declaration: SymbolKey::from("$root"),
@@ -25,9 +34,11 @@ pub(super) fn reduce(
                 input: input.clone(),
                 after: vec![],
                 pool: None,
-            });
+            }));
             let root = state.run.root.clone();
-            start_group(program, state, &root, context)?;
+            for delta in start_group(program, &state, &root, context)? {
+                record!(delta);
+            }
         }
         Event::WorkerStarted {
             action,
@@ -41,25 +52,31 @@ pub(super) fn reduce(
             let old = state.attempts[index].clone();
             match old.status {
                 AttemptStatus::Pending => {
-                    state.attempts[index].status = AttemptStatus::Running;
-                    state.attempts[index].kbbl_session_id = kbbl_session_id.clone();
+                    record!(Delta::ReplaceAttempt {
+                        index,
+                        attempt: AttemptState {
+                            status: AttemptStatus::Running,
+                            kbbl_session_id: kbbl_session_id.clone(),
+                            ..old
+                        },
+                    });
                 }
                 AttemptStatus::Running => {}
                 AttemptStatus::Succeeded if matches!(old.cause, Cause::Periodic { .. }) => {
                     // A watch whose worker has moved on to another action
                     // (new inputs, or a retry) runs no further attempt.
-                    if attempt(state, &old.unit, &old.worker)
+                    if attempt(&state, &old.unit, &old.worker)
                         .is_some_and(|latest| latest.action_id != *action)
                     {
                         return Err(rejected("periodic action is superseded"));
                     }
-                    state.attempts.push(AttemptState {
+                    record!(Delta::PushAttempt(AttemptState {
                         seq: old.seq + 1,
                         status: AttemptStatus::Running,
                         kbbl_session_id: kbbl_session_id.clone(),
                         ended_at: None,
                         ..old
-                    });
+                    }));
                 }
                 _ => {}
             }
@@ -74,7 +91,7 @@ pub(super) fn reduce(
                 state.attempts[index].status,
                 AttemptStatus::Succeeded | AttemptStatus::Failed { .. }
             ) {
-                return Ok(());
+                return Ok(deltas);
             }
             let attempt = state.attempts[index].clone();
             let unit = state
@@ -83,7 +100,7 @@ pub(super) fn reduce(
                 .find(|u| u.id == attempt.unit)
                 .ok_or_else(|| invalid("attempt unit absent"))?;
             let definition = worker(checked_stage(program, unit)?, &attempt.worker)?;
-            state.attempts[index].status = match result {
+            let status = match result {
                 WorkerResult::Failed { code, detail } => AttemptStatus::Failed {
                     code: code.clone(),
                     detail: detail.clone(),
@@ -105,7 +122,14 @@ pub(super) fn reduce(
                 }
                 WorkerResult::Succeeded => AttemptStatus::Succeeded,
             };
-            state.attempts[index].ended_at = Some(attempt.seq as i64);
+            record!(Delta::ReplaceAttempt {
+                index,
+                attempt: AttemptState {
+                    status,
+                    ended_at: Some(attempt.seq as i64),
+                    ..attempt
+                },
+            });
         }
         Event::RevisionPublished {
             unit,
@@ -147,10 +171,10 @@ pub(super) fn reduce(
                     "a revision that names no attempt must be the operator's"
                 }));
             }
-            if latest(state, unit, artifact)
+            if latest(&state, unit, artifact)
                 .is_some_and(|revision| revision.by == *by && is_unchanged(revision))
             {
-                return Ok(());
+                return Ok(deltas);
             }
             let attempt_index = match by {
                 None => None,
@@ -190,9 +214,9 @@ pub(super) fn reduce(
             // An unchanged value from a code worker (a periodic observation)
             // or an operator publishes nothing. An agent's attempt that
             // republishes it records a revision: the attempt published it.
-            let previous = latest(state, unit, artifact);
+            let previous = latest(&state, unit, artifact);
             if previous.is_some_and(is_unchanged) && (is_code || by.is_none()) {
-                return Ok(());
+                return Ok(deltas);
             }
             if previous.map(|r| &r.id) != predecessor.as_ref() {
                 return Err(rejected("stale predecessor"));
@@ -202,7 +226,7 @@ pub(super) fn reduce(
                 if eval_expression(
                     &validation.expression.expression,
                     owner,
-                    state,
+                    &state,
                     None,
                     Some((&artifact.0, body)),
                     context,
@@ -215,15 +239,21 @@ pub(super) fn reduce(
                 (messages.is_empty(), is_code, attempt_index)
             {
                 let attempt = state.attempts[attempt_index].clone();
-                state.attempts[attempt_index].status = AttemptStatus::Failed {
-                    code: "validation_failed".into(),
-                    detail: messages.join("; "),
-                };
-                state.attempts[attempt_index].ended_at = Some(attempt.seq as i64);
-                return Ok(());
+                record!(Delta::ReplaceAttempt {
+                    index: attempt_index,
+                    attempt: AttemptState {
+                        status: AttemptStatus::Failed {
+                            code: "validation_failed".into(),
+                            detail: messages.join("; "),
+                        },
+                        ended_at: Some(attempt.seq as i64),
+                        ..attempt
+                    },
+                });
+                return Ok(deltas);
             }
-            let id = revision_id(state, unit, artifact);
-            state.revisions.push(RevisionState {
+            let id = revision_id(&state, unit, artifact);
+            record!(Delta::PushRevision(RevisionState {
                 id: id.clone(),
                 unit: unit.clone(),
                 artifact: artifact.clone(),
@@ -231,10 +261,10 @@ pub(super) fn reduce(
                 predecessor: predecessor.clone(),
                 subject: subject.clone(),
                 by: by.clone(),
-            });
+            }));
             if !messages.is_empty() && !is_code {
-                let decision = decision_id(state, unit);
-                state.decisions.push(DecisionState {
+                let decision = decision_id(&state, unit);
+                record!(Delta::PushDecision(DecisionState {
                     id: decision,
                     unit: unit.clone(),
                     review: SymbolKey::from("engine:validator"),
@@ -242,7 +272,7 @@ pub(super) fn reduce(
                     effect: DecisionEffect::RequestChanges,
                     target: id,
                     payload: serde_json::json!({"feedback": messages.join("; ")}),
-                });
+                }));
             }
         }
         Event::OperatorDecided {
@@ -286,7 +316,7 @@ pub(super) fn reduce(
             let decision_definition = decisions
                 .get(&decision.0)
                 .ok_or_else(|| rejected("decision absent"))?;
-            if !holds(when.as_ref(), owner, state, context)? {
+            if !holds(when.as_ref(), owner, &state, context)? {
                 return Err(rejected("review is not open"));
             }
             if state.decisions.iter().any(|d| {
@@ -296,14 +326,14 @@ pub(super) fn reduce(
                     && d.target == *target
                     && d.payload == *payload
             }) {
-                return Ok(());
+                return Ok(deltas);
             }
-            let current = latest(state, unit, decided_artifact(of, &decision_definition.on))
+            let current = latest(&state, unit, decided_artifact(of, &decision_definition.on))
                 .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
             if current.id != *target {
                 return Err(rejected("target is not latest revision"));
             }
-            if is_decided_by(state, unit, review, target) {
+            if is_decided_by(&state, unit, review, target) {
                 return Err(rejected("review already decided on latest revision"));
             }
             if let Some(ty) = &decision_definition.payload {
@@ -319,8 +349,8 @@ pub(super) fn reduce(
             {
                 return Err(rejected("request_changes requires feedback"));
             }
-            let id = decision_id(state, unit);
-            state.decisions.push(DecisionState {
+            let id = decision_id(&state, unit);
+            record!(Delta::PushDecision(DecisionState {
                 id,
                 unit: unit.clone(),
                 review: review.clone(),
@@ -328,7 +358,7 @@ pub(super) fn reduce(
                 effect: decision_definition.effect.clone(),
                 target: target.clone(),
                 payload: payload.clone(),
-            });
+            }));
         }
         Event::RetryRequested { unit, worker } => {
             // Only a replay of a retry already registered is a no-op: the
@@ -337,7 +367,7 @@ pub(super) fn reduce(
             if state.retry_events.iter().any(|(u, w, id)| {
                 u == unit && w == worker && incoming.ingress_id.as_deref() == Some(&id.0)
             }) {
-                return Ok(());
+                return Ok(deltas);
             }
             let owner = state
                 .units
@@ -348,12 +378,12 @@ pub(super) fn reduce(
                 return Err(rejected("unit is not active"));
             }
             let previous =
-                attempt(state, unit, worker).ok_or_else(|| rejected("worker has no attempt"))?;
+                attempt(&state, unit, worker).ok_or_else(|| rejected("worker has no attempt"))?;
             if !matches!(previous.status, AttemptStatus::Failed { .. }) {
                 return Err(rejected("latest attempt has not failed"));
             }
-            if latest_retry(state, unit, worker)
-                .is_some_and(|last| !is_retry_spent(state, unit, worker, last))
+            if latest_retry(&state, unit, worker)
+                .is_some_and(|last| !is_retry_spent(&state, unit, worker, last))
             {
                 return Err(rejected("a retry is already requested"));
             }
@@ -365,22 +395,26 @@ pub(super) fn reduce(
                     .clone()
                     .ok_or_else(|| rejected("a retry request needs an ingress id"))?,
             );
-            state.retry_events.push((unit.clone(), worker.clone(), id));
+            record!(Delta::PushRetry(unit.clone(), worker.clone(), id));
         }
         Event::CancelRequested => {
             // A finished run stays finished; a cancelled one is cancelled once.
             match state.run.status {
                 UnitStatus::Done { .. } => return Err(rejected("run is done")),
-                UnitStatus::Cancelled => return Ok(()),
+                UnitStatus::Cancelled => return Ok(deltas),
                 _ => {}
             }
-            for unit in &mut state.units {
+            for index in 0..state.units.len() {
+                let unit = &state.units[index];
                 if !matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
-                    unit.status = UnitStatus::Cancelled;
+                    record!(Delta::UnitStatus {
+                        index,
+                        status: UnitStatus::Cancelled
+                    });
                 }
             }
-            state.run.status = UnitStatus::Cancelled;
+            record!(Delta::RunStatus(UnitStatus::Cancelled));
         }
     }
-    Ok(())
+    Ok(deltas)
 }

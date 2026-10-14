@@ -1,17 +1,19 @@
 use super::*;
 pub(super) fn materialize_group(
     program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
+    snapshot: &StepSnapshot,
     group_id: &UnitId,
     context: &EvaluationContext<'_>,
-) -> Result<(), StepError> {
+) -> Result<Vec<Delta>, StepError> {
+    let mut state = snapshot.clone();
+    let mut deltas = Vec::new();
     let parent = state
         .units
         .iter()
         .find(|u| u.id == *group_id)
         .cloned()
         .ok_or_else(|| invalid("group absent"))?;
-    let group = group_for(program, state, &parent)?.clone();
+    let group = group_for(program, &state, &parent)?.clone();
     let mut units = group.units.iter().collect::<Vec<_>>();
     units.sort_by_key(|unit| &unit.key);
     for unit in units {
@@ -21,7 +23,7 @@ pub(super) fn materialize_group(
             eval_expression(
                 &collection.source.expression,
                 &parent,
-                state,
+                &state,
                 None,
                 None,
                 context,
@@ -40,7 +42,7 @@ pub(super) fn materialize_group(
                 eval_expression(
                     &collection.key.expression,
                     &parent,
-                    state,
+                    &state,
                     Some(each),
                     None,
                     context,
@@ -67,7 +69,7 @@ pub(super) fn materialize_group(
                     eval_expression(
                         &after.after.expression,
                         &parent,
-                        state,
+                        &state,
                         Some(each),
                         None,
                         context,
@@ -85,12 +87,12 @@ pub(super) fn materialize_group(
             };
             let declared_input = &unit.input;
             let input = if unit.collection.is_some() {
-                eval_fields(declared_input, &parent, state, Some(each), context)?
+                eval_fields(declared_input, &parent, &state, Some(each), context)?
                     .ok_or_else(|| rejected("collection input unresolved"))?
             } else {
                 Value::Null
             };
-            state.units.push(UnitState {
+            let delta = Delta::PushUnit(UnitState {
                 id: UnitId(format!("{group_id}/{member}")),
                 parent: Some(group_id.clone()),
                 declaration: SymbolKey::from(key.as_str()),
@@ -103,6 +105,8 @@ pub(super) fn materialize_group(
                     .collect(),
                 pool: unit.pool.clone(),
             });
+            apply(&mut state, delta.clone());
+            deltas.push(delta);
         }
     }
     let prerequisites: BTreeMap<&UnitId, BTreeSet<&UnitId>> = state
@@ -121,7 +125,7 @@ pub(super) fn materialize_group(
     if !is_acyclic(&prerequisites) {
         return Err(rejected("cyclic prerequisite"));
     }
-    Ok(())
+    Ok(deltas)
 }
 pub(super) fn group_outcome(
     program: &CheckedWorkflow,
@@ -143,26 +147,31 @@ pub(super) fn group_outcome(
 /// all of its members, since a snapshot omits a non-ancestor's children.
 pub(super) fn start_group(
     program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
+    snapshot: &StepSnapshot,
     group_id: &UnitId,
     context: &EvaluationContext<'_>,
-) -> Result<(), StepError> {
-    materialize_group(program, state, group_id, context)?;
+) -> Result<Vec<Delta>, StepError> {
+    let mut state = snapshot.clone();
+    let mut deltas = materialize_group(program, &state, group_id, context)?;
+    apply_all(&mut state, deltas.clone());
     if state
         .units
         .iter()
         .any(|unit| unit.parent.as_ref() == Some(group_id))
     {
-        return Ok(());
+        return Ok(deltas);
     }
     let index = state
         .units
         .iter()
         .position(|unit| unit.id == *group_id)
         .ok_or_else(|| invalid("group absent"))?;
-    let outcome = group_outcome(program, state, &state.units[index], context)?;
-    state.units[index].status = UnitStatus::Done { outcome };
-    Ok(())
+    let outcome = group_outcome(program, &state, &state.units[index], context)?;
+    deltas.push(Delta::UnitStatus {
+        index,
+        status: UnitStatus::Done { outcome },
+    });
+    Ok(deltas)
 }
 pub(super) fn engine_decision(
     program: &CheckedWorkflow,
@@ -209,166 +218,164 @@ pub(super) fn engine_decision(
     }
     Ok(None)
 }
-/// One move of an active unit: a stage completes or its engine review
-/// decides; a group whose members are all done completes.
-pub(super) fn advance_active(
+/// Return one observable move. The caller applies it and repeats until there is
+/// no move left. Active units keep their snapshot order; candidates use ID order.
+pub(super) fn next_move(
     program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
-    index: usize,
+    state: &StepSnapshot,
     context: &EvaluationContext<'_>,
-) -> Result<bool, StepError> {
-    let unit = state.units[index].clone();
-    if unit.stage.is_some() {
-        let definition = checked_stage(program, &unit)?;
-        let unobserved = unobserved_watch_artifacts(program, state, &unit, context)?;
-        // A stage completes on what its watches observe of their current inputs.
-        let reads_unobserved = reads_any(&definition.done_when.expression, &unobserved)
-            || definition
-                .outcome
-                .iter()
-                .any(|field| reads_any(&field.value.expression, &unobserved));
-        if !reads_unobserved
-            && eval_expression(
-                &definition.done_when.expression,
-                &unit,
-                state,
-                None,
-                None,
-                context,
-            )? == Some(Value::Bool(true))
-        {
-            let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
-                .ok_or_else(|| invalid("stage outcome unresolved"))?;
-            state.units[index].status = UnitStatus::Done { outcome };
-            return Ok(true);
-        }
-        if let Some(decision) = engine_decision(program, state, &unit, &unobserved, context)? {
-            state.decisions.push(decision);
-            return Ok(true);
-        }
-        return Ok(false);
-    }
-    let children: Vec<_> = state
-        .units
-        .iter()
-        .filter(|u| u.parent.as_ref() == Some(&unit.id))
-        .collect();
-    // An empty group completed when it materialized: no children here
-    // means a snapshot that omits them, not a group that has none.
-    if !children.is_empty()
-        && children
-            .iter()
-            .all(|u| matches!(u.status, UnitStatus::Done { .. }))
-    {
-        let outcome = group_outcome(program, state, &unit, context)?;
-        state.units[index].status = UnitStatus::Done { outcome };
-        return Ok(true);
-    }
-    Ok(false)
-}
-pub(super) fn advance(
-    program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
-    context: &EvaluationContext<'_>,
-) -> Result<bool, StepError> {
-    for index in 0..state.units.len() {
-        if !matches!(state.units[index].status, UnitStatus::Active) {
+) -> Result<Option<Vec<Delta>>, StepError> {
+    for (index, unit) in state.units.iter().enumerate() {
+        if !matches!(unit.status, UnitStatus::Active) {
             continue;
         }
-        let unit_id = state.units[index].id.clone();
-        if advance_active(program, state, index, context).map_err(advancing(&unit_id))? {
-            return Ok(true);
+        let move_for_unit = (|| -> Result<Option<Vec<Delta>>, StepError> {
+            if unit.stage.is_some() {
+                let definition = checked_stage(program, unit)?;
+                let unobserved = unobserved_watch_artifacts(program, state, unit, context)?;
+                let reads_unobserved = reads_any(&definition.done_when.expression, &unobserved)
+                    || definition
+                        .outcome
+                        .iter()
+                        .any(|field| reads_any(&field.value.expression, &unobserved));
+                if !reads_unobserved
+                    && eval_expression(
+                        &definition.done_when.expression,
+                        unit,
+                        state,
+                        None,
+                        None,
+                        context,
+                    )? == Some(Value::Bool(true))
+                {
+                    let outcome = eval_fields(&definition.outcome, unit, state, None, context)?
+                        .ok_or_else(|| invalid("stage outcome unresolved"))?;
+                    return Ok(Some(vec![Delta::UnitStatus {
+                        index,
+                        status: UnitStatus::Done { outcome },
+                    }]));
+                }
+                if let Some(decision) = engine_decision(program, state, unit, &unobserved, context)?
+                {
+                    return Ok(Some(vec![Delta::PushDecision(decision)]));
+                }
+                return Ok(None);
+            }
+            let children: Vec<_> = state
+                .units
+                .iter()
+                .filter(|child| child.parent.as_ref() == Some(&unit.id))
+                .collect();
+            if !children.is_empty()
+                && children
+                    .iter()
+                    .all(|child| matches!(child.status, UnitStatus::Done { .. }))
+            {
+                let outcome = group_outcome(program, state, unit, context)?;
+                return Ok(Some(vec![Delta::UnitStatus {
+                    index,
+                    status: UnitStatus::Done { outcome },
+                }]));
+            }
+            Ok(None)
+        })()
+        .map_err(advancing(&unit.id))?;
+        if move_for_unit.is_some() {
+            return Ok(move_for_unit);
         }
     }
+
     let mut candidates: Vec<_> = state
         .units
         .iter()
         .enumerate()
-        .filter(|(_, u)| {
+        .filter(|(_, unit)| {
             matches!(
-                u.status,
+                unit.status,
                 UnitStatus::NotStarted | UnitStatus::Blocked { .. }
             )
         })
-        .map(|(i, _)| i)
         .collect();
-    candidates.sort_by_key(|&index| state.units[index].id.clone());
-    for index in candidates {
-        let unit_id = state.units[index].id.clone();
-        if start_candidate(program, state, index, context).map_err(advancing(&unit_id))? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-/// Start a unit that is not started or blocked, once what it waits on is
-/// done and its pool has room; otherwise record why it is blocked.
-pub(super) fn start_candidate(
-    program: &CheckedWorkflow,
-    state: &mut StepSnapshot,
-    index: usize,
-    context: &EvaluationContext<'_>,
-) -> Result<bool, StepError> {
-    {
-        let unit = state.units[index].clone();
-        let waiting: Vec<_> = unit
-            .after
-            .iter()
-            .filter(|dep| {
-                !state
+    candidates.sort_by_key(|(_, unit)| unit.id.clone());
+    for (index, unit) in candidates {
+        let move_for_unit = (|| -> Result<Option<Vec<Delta>>, StepError> {
+            let waiting: Vec<_> = unit
+                .after
+                .iter()
+                .filter(|dep| {
+                    !state.units.iter().any(|candidate| {
+                        candidate.id == **dep && matches!(candidate.status, UnitStatus::Done { .. })
+                    })
+                })
+                .cloned()
+                .collect();
+            if !waiting.is_empty() {
+                let status = UnitStatus::Blocked {
+                    reason: BlockedReason::WaitingOn { units: waiting },
+                };
+                return Ok(
+                    (unit.status != status).then_some(vec![Delta::UnitStatus { index, status }])
+                );
+            }
+            if let Some(pool) = &unit.pool {
+                let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
+                let parent = state
                     .units
                     .iter()
-                    .any(|u| u.id == **dep && matches!(u.status, UnitStatus::Done { .. }))
-            })
-            .cloned()
-            .collect();
-        if !waiting.is_empty() {
-            state.units[index].status = UnitStatus::Blocked {
-                reason: BlockedReason::WaitingOn { units: waiting },
-            };
-            return Ok(false);
-        }
-        if let Some(pool) = &unit.pool {
-            let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
-            let parent = state
-                .units
-                .iter()
-                .find(|u| u.id == *parent_id)
-                .ok_or_else(|| invalid("pool owner absent"))?;
-            let capacity = *group_for(program, state, parent)?
-                .pools
-                .get(&pool.0)
-                .ok_or_else(|| invalid("pool absent"))? as usize;
-            let held = state
-                .units
-                .iter()
-                .filter(|u| {
-                    u.parent.as_ref() == Some(parent_id)
-                        && u.pool.as_ref() == Some(pool)
-                        && matches!(u.status, UnitStatus::Active)
-                })
-                .count();
-            if held >= capacity {
-                state.units[index].status = UnitStatus::Blocked {
-                    reason: BlockedReason::Capacity { pool: pool.clone() },
-                };
-                return Ok(false);
+                    .find(|candidate| candidate.id == *parent_id)
+                    .ok_or_else(|| invalid("pool owner absent"))?;
+                let capacity = *group_for(program, state, parent)?
+                    .pools
+                    .get(&pool.0)
+                    .ok_or_else(|| invalid("pool absent"))? as usize;
+                let held = state
+                    .units
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.parent.as_ref() == Some(parent_id)
+                            && candidate.pool.as_ref() == Some(pool)
+                            && matches!(candidate.status, UnitStatus::Active)
+                    })
+                    .count();
+                if held >= capacity {
+                    let status = UnitStatus::Blocked {
+                        reason: BlockedReason::Capacity { pool: pool.clone() },
+                    };
+                    return Ok((unit.status != status)
+                        .then_some(vec![Delta::UnitStatus { index, status }]));
+                }
             }
+            let mut state_after = state.clone();
+            let mut deltas = Vec::new();
+            if unit.input.is_null() {
+                let parent = state
+                    .units
+                    .iter()
+                    .find(|candidate| Some(&candidate.id) == unit.parent.as_ref())
+                    .ok_or_else(|| invalid("parent absent"))?;
+                let declared =
+                    checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
+                let input = eval_fields(&declared.input, parent, state, None, context)?
+                    .ok_or_else(|| invalid("unit input unresolved"))?;
+                let delta = Delta::UnitInput { index, input };
+                apply(&mut state_after, delta.clone());
+                deltas.push(delta);
+            }
+            let delta = Delta::UnitStatus {
+                index,
+                status: UnitStatus::Active,
+            };
+            apply(&mut state_after, delta.clone());
+            deltas.push(delta);
+            if unit.stage.is_none() {
+                deltas.extend(start_group(program, &state_after, &unit.id, context)?);
+            }
+            Ok(Some(deltas))
+        })()
+        .map_err(advancing(&unit.id))?;
+        if move_for_unit.is_some() {
+            return Ok(move_for_unit);
         }
-        if unit.input.is_null() {
-            let parent = state
-                .units
-                .iter()
-                .find(|u| Some(&u.id) == unit.parent.as_ref())
-                .ok_or_else(|| invalid("parent absent"))?;
-            let declared = checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
-            state.units[index].input = eval_fields(&declared.input, parent, state, None, context)?
-                .ok_or_else(|| invalid("unit input unresolved"))?;
-        }
-        state.units[index].status = UnitStatus::Active;
-        if unit.stage.is_none() {
-            start_group(program, state, &unit.id, context)?;
-        }
-        Ok(true)
     }
+    Ok(None)
 }
