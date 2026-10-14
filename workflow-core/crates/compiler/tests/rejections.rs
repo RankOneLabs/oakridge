@@ -240,11 +240,11 @@ fn a_unit_cannot_wait_on_a_collection() {
         value["run"]["units"]["work"]["group"]["units"]["tail"] =
             tail_unit(serde_json::json!(["item"]));
     });
-    assert_eq!(
-        &*error.detail,
-        "unit tail waits on collection item, which is no one unit"
-    );
-    assert_eq!(&*error.path, "run.units.work.group.units.tail");
+    assert!(error
+        .detail
+        .contains("unit tail waits on collection item, which is no one unit"));
+    assert!(error.detail.contains("collection item shares its group"));
+    assert_eq!(&*error.path, "run.units.work.group.units.tail.after");
 }
 
 #[test]

@@ -340,3 +340,74 @@ pub(super) fn stage(
     errors.extend(expressions(key, stage, source));
     errors
 }
+
+pub(super) fn group(group: &Group, path: &str) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+    for (key, unit) in &group.units {
+        let unit_path = format!("{path}.units.{key}");
+        if unit.stage.is_some() == unit.group.is_some() {
+            errors.push(CompileError::new(
+                CheckKind::Collection,
+                &unit_path,
+                SourceSpan::default(),
+                format!("unit {key} needs exactly one stage or group"),
+            ));
+        }
+        if unit.for_each.is_some() != unit.key.is_some() {
+            errors.push(CompileError::new(
+                CheckKind::Collection,
+                format!("{unit_path}.key"),
+                SourceSpan::default(),
+                format!("collection {key} needs key"),
+            ));
+        }
+        if let Some(pool) = &unit.pool {
+            if group
+                .pools
+                .get(&pool.0)
+                .is_none_or(|capacity| *capacity == 0)
+            {
+                errors.push(CompileError::new(
+                    CheckKind::Name,
+                    format!("{unit_path}.pool"),
+                    SourceSpan::default(),
+                    format!("pool {pool} absent or empty"),
+                ));
+            }
+        }
+        if let UnitDependencies::Fixed(after) = &unit.after {
+            for dependency in after {
+                match group.units.get(&dependency.0) {
+                    None => errors.push(CompileError::new(
+                        CheckKind::Name,
+                        format!("{unit_path}.after"),
+                        SourceSpan::default(),
+                        format!("unit {dependency} absent"),
+                    )),
+                    Some(prerequisite) if prerequisite.for_each.is_some() => {
+                        errors.push(CompileError::new(
+                            CheckKind::Collection,
+                            format!("{unit_path}.after"),
+                            SourceSpan::default(),
+                            format!(
+                                "unit {key} waits on collection {dependency}, which is no one unit"
+                            ),
+                        ))
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        if let Some(nested) = &unit.group {
+            errors.extend(self::group(nested, &format!("{unit_path}.group")));
+        }
+    }
+    if group.units.len() > 1 {
+        for (key, unit) in &group.units {
+            if unit.for_each.is_some() {
+                errors.push(CompileError::new(CheckKind::Collection, format!("{path}.units.{key}"), SourceSpan::default(), format!("collection {key} shares its group, so a member key could collide with a sibling")));
+            }
+        }
+    }
+    errors
+}

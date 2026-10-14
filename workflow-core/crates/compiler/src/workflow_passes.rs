@@ -438,6 +438,7 @@ pub(super) fn check(
             )),
         }
     }
+    errors.extend(precheck::group(&source.run, "run"));
     if !errors.is_empty() {
         return Err(errors);
     }
