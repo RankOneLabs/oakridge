@@ -5,6 +5,7 @@
 // should be W0 (752192e7) and must contain its built evaluator WASM.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CORE_PROTOCOL_VERSION } from "../oakridge-dbos/src/core-client/core-types.ts";
 import { OPERATION_REGISTRY } from "../oakridge-dbos/src/operations/registry.ts";
 
 const current = process.cwd();
@@ -14,7 +15,7 @@ if (!baselineArg) {
 }
 const baseline = resolve(baselineArg);
 
-function evaluator(root) {
+function evaluator(root, protocolVersion) {
   const bytes = readFileSync(`${root}/workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm`);
   const module = new WebAssembly.Module(bytes);
   const core = new WebAssembly.Instance(module, {}).exports;
@@ -22,7 +23,7 @@ function evaluator(root) {
 
   return (operation, input) => {
     const request = new TextEncoder().encode(JSON.stringify({
-      version: 4,
+      version: protocolVersion,
       request_id: String(++requestId),
       operation,
       input,
@@ -147,8 +148,8 @@ function assertEqual(before, after, location) {
   }
 }
 
-const beforeCore = evaluator(baseline);
-const afterCore = evaluator(current);
+const beforeCore = evaluator(baseline, 4);
+const afterCore = evaluator(current, CORE_PROTOCOL_VERSION);
 let comparisons = 0;
 
 for (const traceName of ["review-loop", "fan-out", "fan-out-stall"]) {

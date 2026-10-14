@@ -1,9 +1,9 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-/// Bumped whenever the request or response shape changes. v4 uses compile and
-/// step over the section 2 workflow model.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Bumped whenever the request or response shape changes. v5 carries each
+/// wanted worker's identity and resolved inputs in one step response entry.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
