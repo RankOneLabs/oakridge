@@ -2,6 +2,12 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { OperatorStreamInvalidation } from "../operator-contracts";
 import { queryKeys } from "../queryKeys";
 
+/**
+ * The production invalidateQueries audit includes this module and exempts the
+ * two event-stream hooks (useOakridgeInvalidationStream and useOakridgeRunEventStream).
+ * Test files do not count; four PWA test files call or spy on invalidateQueries.
+ */
+
 const INVALIDATION_TARGETS: readonly OperatorStreamInvalidation["target"][] = ["run", "runs", "definitions", "projects"];
 
 const isInvalidationTarget = (value: unknown): value is OperatorStreamInvalidation["target"] =>

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ArtifactId } from "../../../lib/ids";
 import { formatRunWorkspaceHash, type RoutePaneTarget } from "../../../lib/hash";
-import { fetchOperatorDefinitionDetail, fetchOperatorRunUnits } from "../../client";
 import { useRun } from "../../hooks/useRun";
-import { queryKeys } from "../../queryKeys";
+import { usePinnedDefinition } from "../../hooks/usePinnedDefinition";
+import { useRunUnits } from "../../hooks/useRunUnits";
 import { selectRunUnit, selectUnitDetail } from "../../lib/run-overview";
 import { selectPendingDecisionsForRecovery, selectRunAttention } from "../../lib/run-attention";
 import { clearOperatorDraft, clearPendingDecision, listPendingDecisions, operatorDraftIdentity } from "../../lib/operator-drafts";
@@ -30,9 +30,8 @@ export function RunWorkspace({ runId, routePane, unitId, onBack }: Props) {
   const attention = selectRunAttention(attentionQuery.data?.items ?? []);
   const decision = useSubmitOperatorDecision();
   const bundleId = runQuery.data?.definition_bundle_id ?? null;
-  const definition = useQuery({ queryKey: queryKeys.definitionDetail(bundleId),
-    queryFn: () => fetchOperatorDefinitionDetail(bundleId ?? ""), enabled: bundleId !== null, staleTime: Infinity });
-  const unitQuery = useQuery({ queryKey: queryKeys.units(runId), queryFn: () => fetchOperatorRunUnits(runId), enabled: !!runQuery.data });
+  const definition = usePinnedDefinition(bundleId);
+  const unitQuery = useRunUnits(runId, !!runQuery.data);
   const units = unitQuery.data ?? [];
   useEffect(() => {
     if (units.length === 0) return;
