@@ -14,6 +14,10 @@ fn malformed_type_reports_its_config_path() {
         "{error:?}"
     );
     assert_eq!(&*error.path, "schemas.pr_status.number");
+    let errors = workflow_compiler::decode_workflow_value_detailed(workflow).unwrap_err();
+    assert_eq!(errors[0].check, workflow_compiler::CheckKind::Schema);
+    assert_eq!(errors[0].path.0, "schemas.pr_status.number");
+    assert_eq!(errors[0].span, SourceSpan { start: 0, end: 12 });
 }
 
 /// `repository.prepare` as the samples' registry declares it.
@@ -339,4 +343,24 @@ fn independent_expression_errors_in_one_stage_are_collected() {
         errors[1].path.0,
         "stages.item.workers.worker.inputs.workspace"
     );
+}
+
+#[test]
+fn independent_group_input_errors_are_collected() {
+    use workflow_compiler::{compile_workflow_detailed, decode_workflow};
+    let mut value: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/fan-out.json")).unwrap();
+    value["run"]["units"]["work"]["input"]["items"] = "input.missing_items".into();
+    value["run"]["units"]["work"]["input"]["workspace"] = "input.missing_workspace".into();
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(
+        &source,
+        &prepare_operation(),
+        &BTreeMap::from([("fan-out/item.md".into(), "{{text}}".into())]),
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(errors[0].path.0, "run.units.work.input.items");
+    assert_eq!(errors[1].path.0, "run.units.work.input.workspace");
+    assert!(errors.iter().all(|error| error.span.end > error.span.start));
 }

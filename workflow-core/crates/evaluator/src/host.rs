@@ -119,13 +119,12 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         );
     }
     if let Some(source) = raw.get("input").and_then(|input| input.get("workflow")) {
-        let source_bytes = serde_json::to_vec(source).expect("JSON value serializes");
-        if let Err(error) = workflow_compiler::decode_workflow(&source_bytes) {
+        if let Err(errors) = workflow_compiler::decode_workflow_value_detailed(source.clone()) {
             return Response {
                 version: PROTOCOL_VERSION,
                 request_id: id,
                 truncated: false,
-                result: ResponseResult::DomainError(error),
+                result: ResponseResult::CompileErrors(errors),
             };
         }
     }

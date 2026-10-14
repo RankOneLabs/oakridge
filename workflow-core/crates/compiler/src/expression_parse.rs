@@ -14,12 +14,10 @@ struct Token {
     kind: TokenKind,
     span: SourceSpan,
 }
-fn syntax(detail: impl Into<String>, span: SourceSpan) -> DomainError {
-    let mut error = crate::workflow::failure(1, detail);
-    error.path = format!("{}..{}", span.start, span.end).into();
-    error
+fn syntax(path: &str, detail: impl Into<String>, span: SourceSpan) -> CompileError {
+    CompileError::new(CheckKind::Name, path, span, detail)
 }
-fn tokenize(source: &str) -> Result<Vec<Token>, DomainError> {
+fn tokenize(source: &str, path: &str) -> Result<Vec<Token>, CompileError> {
     let mut tokens = Vec::new();
     let mut offset = 0;
     while offset < source.len() {
@@ -47,12 +45,14 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DomainError> {
             }
             if !closed {
                 return Err(syntax(
+                    path,
                     "unterminated string literal",
                     SourceSpan { start, end: offset },
                 ));
             }
             let literal = serde_json::from_str(&source[start..offset]).map_err(|error| {
                 syntax(
+                    path,
                     format!("malformed text literal: {error}"),
                     SourceSpan { start, end: offset },
                 )
@@ -65,6 +65,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DomainError> {
             }
             TokenKind::Integer(source[start..offset].parse().map_err(|_| {
                 syntax(
+                    path,
                     "integer literal out of range",
                     SourceSpan { start, end: offset },
                 )
@@ -93,6 +94,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DomainError> {
                 ('<', false) => "<",
                 _ => {
                     return Err(syntax(
+                        path,
                         "invalid operator",
                         SourceSpan { start, end: offset },
                     ))
@@ -103,6 +105,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DomainError> {
             TokenKind::Symbol(ch)
         } else {
             return Err(syntax(
+                path,
                 format!("invalid character {ch}"),
                 SourceSpan {
                     start,
@@ -121,6 +124,7 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     cursor: usize,
     source: &'a str,
+    path: &'a str,
 }
 impl Parser<'_> {
     fn peek(&self) -> Option<&TokenKind> {
@@ -139,7 +143,7 @@ impl Parser<'_> {
             false
         }
     }
-    fn error(&self, detail: impl Into<String>) -> DomainError {
+    fn error(&self, detail: impl Into<String>) -> CompileError {
         let span = self
             .tokens
             .get(self.cursor)
@@ -148,16 +152,16 @@ impl Parser<'_> {
                 start: self.source.len(),
                 end: self.source.len(),
             });
-        syntax(detail, span)
+        syntax(self.path, detail, span)
     }
-    fn expect(&mut self, symbol: char) -> Result<(), DomainError> {
+    fn expect(&mut self, symbol: char) -> Result<(), CompileError> {
         if self.consume(symbol) {
             Ok(())
         } else {
             Err(self.error(format!("expected {symbol}")))
         }
     }
-    fn name(&mut self) -> Result<String, DomainError> {
+    fn name(&mut self) -> Result<String, CompileError> {
         match self.take() {
             Some(Token {
                 kind: TokenKind::Word(name),
@@ -166,7 +170,11 @@ impl Parser<'_> {
             _ => Err(self.error("expected name")),
         }
     }
-    fn expression(&mut self, min_binding: u8) -> Result<StageExpr, DomainError> {
+    fn expression(&mut self, min_binding: u8) -> Result<StageExpr, CompileError> {
+        let start = self
+            .tokens
+            .get(self.cursor)
+            .map_or(self.source.len(), |token| token.span.start);
         let mut left = match self.take() {
             Some(Token {
                 kind: TokenKind::Word(word),
@@ -210,12 +218,12 @@ impl Parser<'_> {
         };
         loop {
             if min_binding <= 7 && self.consume('(') {
-                left = self.call(left)?;
+                left = self.call(left.into_unspanned())?;
                 continue;
             }
             if min_binding <= 7 && self.consume('.') {
                 let name = self.name()?;
-                left = match left {
+                left = match left.into_unspanned() {
                     StageExpr::Input(mut path) => {
                         path.push(name);
                         StageExpr::Input(path)
@@ -297,9 +305,16 @@ impl Parser<'_> {
                 },
             };
         }
-        Ok(left)
+        let end = self
+            .tokens
+            .get(self.cursor.saturating_sub(1))
+            .map_or(start, |token| token.span.end);
+        Ok(StageExpr::Spanned(
+            Box::new(left),
+            SourceSpan { start, end },
+        ))
     }
-    fn record(&mut self) -> Result<StageExpr, DomainError> {
+    fn record(&mut self) -> Result<StageExpr, CompileError> {
         let mut fields = Vec::new();
         let mut seen = BTreeSet::new();
         if self.consume('}') {
@@ -308,15 +323,13 @@ impl Parser<'_> {
         loop {
             let key = self.name()?;
             if !seen.insert(key.clone()) {
-                let mut error =
-                    crate::workflow::failure(11, format!("duplicate record field {key}"));
-                let span = self
-                    .tokens
-                    .get(self.cursor.saturating_sub(1))
-                    .map(|token| token.span)
-                    .unwrap_or_default();
-                error.path = format!("{}..{}", span.start, span.end).into();
-                return Err(error);
+                let span = self.tokens[self.cursor - 1].span;
+                return Err(CompileError::new(
+                    CheckKind::Schema,
+                    self.path,
+                    span,
+                    format!("duplicate record field {key}"),
+                ));
             }
             self.expect(':')?;
             fields.push((key, self.expression(0)?));
@@ -327,7 +340,7 @@ impl Parser<'_> {
         }
         Ok(StageExpr::Record(fields))
     }
-    fn call(&mut self, callee: StageExpr) -> Result<StageExpr, DomainError> {
+    fn call(&mut self, callee: StageExpr) -> Result<StageExpr, CompileError> {
         let StageExpr::Name { head, path } = callee else {
             return Err(self.error("call target must be a name"));
         };
@@ -356,7 +369,7 @@ impl Parser<'_> {
         let mut args = args.into_iter();
         let first = args.next().unwrap();
         let boxed = Box::new(first.clone());
-        let name = |expr: StageExpr| match expr {
+        let name = |expr: StageExpr| match expr.into_unspanned() {
             StageExpr::Name { head, path } if path.is_empty() => Some(head),
             _ => None,
         };
@@ -412,24 +425,26 @@ impl Parser<'_> {
         })
     }
 }
-pub(crate) fn parse_expression(text: &str) -> Result<StageExpr, DomainError> {
+pub(crate) fn parse_expression(text: &str, path: &str) -> Result<StageExpr, CompileError> {
     let mut parser = Parser {
-        tokens: tokenize(text)?,
+        tokens: tokenize(text, path)?,
         cursor: 0,
         source: text,
+        path,
     };
     let expression = parser.expression(0)?;
     if parser.peek().is_some() {
         return Err(parser.error("unexpected token after expression"));
     }
-    Ok(expression)
+    Ok(expression.into_unspanned())
 }
 
-pub(crate) fn parse_repository(text: &str) -> Result<&str, DomainError> {
+pub(crate) fn parse_repository<'a>(text: &'a str, path: &str) -> Result<&'a str, CompileError> {
     let mut parser = Parser {
-        tokens: tokenize(text)?,
+        tokens: tokenize(text, path)?,
         cursor: 0,
         source: text,
+        path,
     };
     if parser.name()? != "repository" {
         return Err(parser.error("workspace must be repository(<expr>)"));

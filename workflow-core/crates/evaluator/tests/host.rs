@@ -57,3 +57,48 @@ fn previous_wire_version_is_rejected_before_dispatch() {
         })
     ));
 }
+
+#[test]
+fn compile_response_carries_every_located_error() {
+    let mut workflow: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/fan-out.json")).unwrap();
+    workflow["stages"]["prepare"]["done_when"] = serde_json::Value::Null;
+    workflow["stages"]["item"]["done_when"] = serde_json::Value::Null;
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "request_id": "compile-errors",
+        "operation": "compile",
+        "input": { "workflow": workflow, "prompts": {}, "operations": [] },
+    }))
+    .unwrap();
+    let response = request(&bytes);
+    let ResponseResult::CompileErrors(errors) = response.result else {
+        panic!("expected compile errors")
+    };
+    assert!(errors
+        .iter()
+        .any(|error| error.path.0 == "stages.item.done_when"));
+    assert!(errors
+        .iter()
+        .any(|error| error.path.0 == "stages.prepare.done_when"));
+}
+
+#[test]
+fn source_decode_error_uses_the_compile_error_response() {
+    let mut workflow: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    workflow["schemas"]["pr_status"]["number"] = "list(integer".into();
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "request_id": "source-error",
+        "operation": "compile",
+        "input": { "workflow": workflow, "prompts": {}, "operations": [] },
+    }))
+    .unwrap();
+    let response = request(&bytes);
+    let ResponseResult::CompileErrors(errors) = response.result else {
+        panic!("expected compile errors")
+    };
+    assert_eq!(errors[0].path.0, "schemas.pr_status.number");
+    assert_eq!((errors[0].span.start, errors[0].span.end), (0, 12));
+}

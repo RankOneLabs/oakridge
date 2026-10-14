@@ -11,6 +11,7 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
     }
     let boxed = |inner: &StageExpr| Box::new(resolve(inner));
     match expression {
+        StageExpr::Spanned(inner, _) => resolve(inner),
         StageExpr::Or(left, right) => Expression::Any {
             items: vec![resolve(left), resolve(right)],
         },

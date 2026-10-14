@@ -195,3 +195,42 @@ fn unterminated_string_reports_its_span() {
     );
     assert_eq!(errors[0].span, SourceSpan { start: 0, end: 13 });
 }
+
+#[test]
+fn nested_type_error_reports_the_read_span() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("len(input.missing) > 1"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(
+        errors[0].path.0,
+        "stages.document.artifacts.draft.validate.0.check"
+    );
+    assert_eq!(errors[0].span, SourceSpan { start: 4, end: 17 });
+}
+
+#[test]
+fn not_call_reports_the_operand_span_when_it_is_not_boolean() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[("/stages/document/done_when", json!("not(input.topic)"))]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.done_when");
+    assert_eq!(errors[0].span, SourceSpan { start: 3, end: 16 });
+}
+
+#[test]
+fn workspace_type_error_span_uses_the_full_workspace_source() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!("repository(input.missing)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
+    assert_eq!(errors[0].span, SourceSpan { start: 11, end: 24 });
+}

@@ -5,7 +5,6 @@
 //! Precedence, loosest first: `or`, `and`, `not`, a comparison (`==`, `!=`,
 //! `>`, `>=`, `<`, `<=`), then an atom: a call, a record literal, a literal or
 //! a read. Inside `every`, `any`, `filter` and `map`, `item` is the element.
-use crate::workflow::failure;
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
@@ -18,6 +17,7 @@ pub(crate) enum Comparison {
 }
 #[derive(Clone, Debug)]
 pub(crate) enum StageExpr {
+    Spanned(Box<StageExpr>, SourceSpan),
     Or(Box<StageExpr>, Box<StageExpr>),
     And(Box<StageExpr>, Box<StageExpr>),
     Not(Box<StageExpr>),
@@ -93,13 +93,19 @@ pub(crate) enum StageExpr {
     Integer(i64),
     Text(String),
 }
+impl StageExpr {
+    pub(crate) fn into_unspanned(self) -> Self {
+        match self {
+            Self::Spanned(inner, _) => inner.into_unspanned(),
+            other => other,
+        }
+    }
+}
 
 #[path = "expression_check.rs"]
 mod check;
 #[path = "expression_lower.rs"]
 mod lower;
-/// Byte offsets of `text` that sit outside quotes and at bracket depth zero.
-/// A backslash escapes the next character inside a quoted literal.
 #[path = "expression_parse.rs"]
 mod parse;
 pub(crate) use check::infer;
@@ -109,6 +115,7 @@ pub(crate) use parse::parse_expression;
 pub(crate) use parse::parse_repository;
 pub(crate) fn guaranteed_artifacts(expression: &StageExpr) -> BTreeSet<String> {
     match expression {
+        StageExpr::Spanned(inner, _) => guaranteed_artifacts(inner),
         StageExpr::Published(artifact) | StageExpr::Approved(artifact) => {
             BTreeSet::from([artifact.clone()])
         }
@@ -139,8 +146,32 @@ pub(crate) struct Scope<'a> {
     /// Collection units in `outcomes`: a collection has one outcome per
     /// member, so its outcome is read only through `map`.
     pub collections: BTreeSet<String>,
+    pub diagnostic_path: String,
+    pub diagnostic_span: SourceSpan,
 }
 impl Scope<'_> {
+    pub(crate) fn at(&self, path: &str, text: &str) -> Self {
+        Self {
+            diagnostic_path: path.to_owned(),
+            diagnostic_span: SourceSpan {
+                start: 0,
+                end: text.len(),
+            },
+            ..self.clone()
+        }
+    }
+    fn error(&self, check: CheckKind, detail: impl Into<String>) -> CompileError {
+        CompileError::new(check, &self.diagnostic_path, self.diagnostic_span, detail)
+    }
+    fn for_expr(&self, expression: &StageExpr) -> Self {
+        match expression {
+            StageExpr::Spanned(_, span) => Self {
+                diagnostic_span: *span,
+                ..self.clone()
+            },
+            _ => self.clone(),
+        }
+    }
     fn guarded_by(&self, expression: &StageExpr) -> Self {
         let mut scope = self.clone();
         scope.guaranteed.extend(guaranteed_artifacts(expression));
@@ -156,11 +187,13 @@ impl Scope<'_> {
 pub(crate) fn checked(
     text: &str,
     scope: &Scope<'_>,
-) -> Result<CheckedStageExpression, DomainError> {
-    let parsed = parse_expression(text)?;
+    path: &str,
+) -> Result<CheckedStageExpression, CompileError> {
+    let parsed = parse_expression(text, path)?;
+    let scope = scope.at(path, text);
     Ok(CheckedStageExpression {
         source: text.into(),
-        value_type: infer(&parsed, scope)?,
+        value_type: infer(&parsed, &scope)?,
         expression: resolve(&parsed),
     })
 }
@@ -169,13 +202,15 @@ pub(crate) fn checked(
 pub(crate) fn checked_guard(
     text: &str,
     scope: &Scope<'_>,
-    class: u8,
+    path: &str,
+    check: CheckKind,
     what: &str,
-) -> Result<(CheckedStageExpression, BTreeSet<String>), DomainError> {
-    let parsed = parse_expression(text)?;
-    let value_type = infer(&parsed, scope)?;
+) -> Result<(CheckedStageExpression, BTreeSet<String>), CompileError> {
+    let parsed = parse_expression(text, path)?;
+    let scope = scope.at(path, text);
+    let value_type = infer(&parsed, &scope)?;
     if value_type != Type::Boolean {
-        return Err(failure(class, format!("{what} is not boolean")));
+        return Err(scope.error(check, format!("{what} is not boolean")));
     }
     Ok((
         CheckedStageExpression {

@@ -1,8 +1,6 @@
 use super::*;
 use crate::expressions::{infer, parse_expression, parse_repository, proven_artifacts};
 use workflow_model::SourceSpan;
-#[path = "workflow_precheck.rs"]
-mod precheck;
 
 pub use workflow_model::{CheckKind, CompileError};
 pub(super) struct ParsedWorkflow {
@@ -19,15 +17,8 @@ pub(super) struct CheckedParts {
     root: CheckedGroup,
 }
 fn parse_text(text: &str, path: String, errors: &mut Vec<CompileError>) {
-    if let Err(error) = parse_expression(text) {
-        errors.push(CompileError::from_domain(
-            error,
-            path,
-            SourceSpan {
-                start: 0,
-                end: text.len(),
-            },
-        ));
+    if let Err(error) = parse_expression(text, &path) {
+        errors.push(error);
     }
 }
 fn parse_fields(fields: &BTreeMap<String, String>, path: &str, errors: &mut Vec<CompileError>) {
@@ -85,15 +76,8 @@ pub(super) fn parse(source: &Workflow) -> Result<ParsedWorkflow, Vec<CompileErro
                     ..
                 } => {
                     if let Some(text) = workspace.as_deref().filter(|text| *text != "none") {
-                        if let Err(error) = parse_repository(text) {
-                            let mut diagnostic = CompileError::from_domain(
-                                error,
-                                format!("{path}.workspace"),
-                                SourceSpan {
-                                    start: 0,
-                                    end: text.len(),
-                                },
-                            );
+                        if let Err(error) = parse_repository(text, &format!("{path}.workspace")) {
+                            let mut diagnostic = error;
                             diagnostic.check = CheckKind::Workspace;
                             errors.push(diagnostic);
                         }
@@ -206,7 +190,7 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
         let guaranteed = stage
             .done_when
             .as_deref()
-            .and_then(|text| parse_expression(text).ok())
+            .and_then(|text| parse_expression(text, &format!("stages.{key}.done_when")).ok())
             .map(|expr| proven_artifacts(&expr))
             .unwrap_or_default();
         let scope = Scope {
@@ -219,12 +203,14 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
             body: None,
             guaranteed,
             collections: BTreeSet::new(),
+            diagnostic_path: String::new(),
+            diagnostic_span: SourceSpan::default(),
         };
         let fields = stage
             .outcome
             .iter()
             .filter_map(|(field, text)| {
-                let expr = parse_expression(text).ok()?;
+                let expr = parse_expression(text, &format!("stages.{key}.outcome.{field}")).ok()?;
                 Some((field.clone(), infer(&expr, &scope).ok()?))
             })
             .collect();
@@ -239,7 +225,7 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
             errors.push(CompileError::new(
                 CheckKind::Name,
                 format!("schemas.{key}"),
-                SourceSpan::default(),
+                source_span(key),
                 format!("schema {key} shadows a primitive type"),
             ));
         }
@@ -303,14 +289,13 @@ pub(super) fn check(
     limits: &ResourceLimits,
 ) -> Result<CheckedParts, Vec<CompileError>> {
     let source = resolved.source;
-    set_path("workflow");
     let mut errors = Vec::new();
     if let Ok(value) = serde_json::to_value(&source) {
         if let Err(detail) = limits.check_value(&value) {
             errors.push(CompileError::new(
                 CheckKind::Schema,
                 "workflow",
-                SourceSpan::default(),
+                source_span(&source.workflow.0),
                 detail,
             ));
         }
@@ -318,37 +303,20 @@ pub(super) fn check(
     let mut stages = Vec::new();
     let mut outcomes = BTreeMap::new();
     for (key, stage) in &source.stages {
-        set_path(format!("stages.{key}"));
-        let stage_errors = precheck::stage(key, stage, &source, operations, prompts);
-        if !stage_errors.is_empty() {
-            errors.extend(stage_errors);
-            continue;
-        }
         match compile_stage(key, stage, &source, operations, prompts) {
             Ok((checked, outcome)) => {
                 stages.push(checked);
                 outcomes.insert(key.clone(), outcome);
             }
-            Err(error) => errors.push(CompileError::from_domain(
-                error,
-                format!("stages.{key}"),
-                SourceSpan::default(),
-            )),
+            Err(stage_errors) => errors.extend(stage_errors),
         }
     }
-    errors.extend(precheck::group(&source.run, "run"));
+    group::check_structure(&source.run, "run", &source, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
-    set_path("run");
-    let root = compile_group(&source.run, &source.input, &outcomes, &source)
-        .map_err(|error| {
-            vec![CompileError::from_domain(
-                error,
-                "run",
-                SourceSpan::default(),
-            )]
-        })?
+    let root = compile_group(&source.run, &source.input, &outcomes, &source, "run")
+        .map_err(|errors| errors.0)?
         .0;
     Ok(CheckedParts {
         source,
@@ -358,12 +326,25 @@ pub(super) fn check(
     })
 }
 pub(super) fn lower(parts: CheckedParts) -> Result<CheckedWorkflow, Vec<CompileError>> {
-    let encoded = serde_json::to_vec(&parts.original).map_err(|error| {
+    let mut encoded = Vec::new();
+    let mut serializer = serde_json::Serializer::new(&mut encoded);
+    serde_path_to_error::serialize(&parts.original, &mut serializer).map_err(|error| {
+        let location = error.path().to_string();
+        let path = if location == "." {
+            "workflow"
+        } else {
+            &location
+        };
+        let span = if path == "workflow" {
+            source_span(&parts.original.workflow.0)
+        } else {
+            workflow_span(&parts.original, path)
+        };
         vec![CompileError::new(
             CheckKind::Schema,
-            "workflow",
-            SourceSpan::default(),
-            error.to_string(),
+            path,
+            span,
+            error.inner().to_string(),
         )]
     })?;
     Ok(CheckedWorkflow {

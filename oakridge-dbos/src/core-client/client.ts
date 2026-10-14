@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
-import type { CompileError, CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
+import type { CompiledWorkflow, CoreCompileError, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
 import { OPERATION_REGISTRY } from "../operations/registry";
 
@@ -10,7 +10,7 @@ export const MAX_SNAPSHOT_BYTES = 64 * 1_048_576;
 
 export type CoreResult<T> = { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly kind: "domain"; readonly detail: CoreDomainError }
-      | { readonly kind: "compile"; readonly detail: readonly CompileError[] }
+      | { readonly kind: "compile"; readonly detail: readonly CoreCompileError[] }
       | { readonly kind: "transport"; readonly detail: CoreTransportError } };
 export type CoreStartupResult = { readonly ok: true; readonly value: CoreClient }
   | { readonly ok: false; readonly error: { readonly kind: "transport"; readonly detail: CoreTransportError } };

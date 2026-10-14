@@ -43,22 +43,6 @@ pub enum CheckKind {
     Operation,
 }
 impl CheckKind {
-    pub fn from_number(number: u8) -> Self {
-        match number {
-            2 => Self::Collection,
-            3 => Self::Scope,
-            4 => Self::Outcome,
-            5 => Self::DependencyCycle,
-            6 => Self::Workspace,
-            7 => Self::Worker,
-            8 => Self::Review,
-            9 => Self::ExpressionType,
-            10 => Self::Prompt,
-            11 => Self::Schema,
-            12 => Self::Operation,
-            _ => Self::Name,
-        }
-    }
     pub fn number(self) -> u8 {
         match self {
             Self::Name => 1,
@@ -100,30 +84,6 @@ impl CompileError {
             span,
             detail: detail.into(),
         }
-    }
-    pub fn from_domain(error: DomainError, path: impl Into<String>, span: SourceSpan) -> Self {
-        let number = error
-            .entity_id
-            .strip_prefix("check ")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(11);
-        let parsed_span = error.path.split_once("..").and_then(|(start, end)| {
-            Some(SourceSpan {
-                start: start.parse().ok()?,
-                end: end.parse().ok()?,
-            })
-        });
-        let contextual = if !error.path.starts_with("check ") && parsed_span.is_none() {
-            Some(error.path.to_string())
-        } else {
-            None
-        };
-        Self::new(
-            CheckKind::from_number(number),
-            contextual.unwrap_or_else(|| path.into()),
-            parsed_span.unwrap_or(span),
-            error.detail.to_string(),
-        )
     }
     pub fn as_domain_error(&self) -> DomainError {
         let mut error = DomainError::new(

@@ -5,24 +5,37 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
-pub(crate) fn failure(class: u8, detail: impl Into<String>) -> DomainError {
-    let mut error = DomainError::new(
-        DomainErrorKind::InvalidWorkflow,
-        format!("check {class}"),
-        detail.into(),
-    );
-    let path = current_path();
-    if !path.is_empty() {
-        error.path = path.into();
+pub(crate) fn source_span(text: &str) -> SourceSpan {
+    SourceSpan {
+        start: 0,
+        end: text.len(),
     }
-    error
 }
-thread_local! { static SOURCE_PATH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) }; }
-pub(crate) fn set_path(path: impl Into<String>) {
-    SOURCE_PATH.with(|current| *current.borrow_mut() = path.into());
+/// Span the source value selected by a diagnostic path. A missing value has an
+/// insertion point at byte zero; existing values span their encoded source.
+pub(crate) fn workflow_span(source: &Workflow, path: &str) -> SourceSpan {
+    serde_json::to_value(source)
+        .map(|value| json_value_span(&value, path))
+        .unwrap_or_default()
 }
-pub(crate) fn current_path() -> String {
-    SOURCE_PATH.with(|current| current.borrow().clone())
+fn json_value_span(root: &serde_json::Value, path: &str) -> SourceSpan {
+    let mut value = root;
+    for segment in path.split('.') {
+        value = match value {
+            serde_json::Value::Object(fields) => fields.get(segment),
+            serde_json::Value::Array(items) => segment
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| items.get(index)),
+            _ => None,
+        }
+        .unwrap_or(&serde_json::Value::Null);
+    }
+    match value {
+        serde_json::Value::Null => SourceSpan::default(),
+        serde_json::Value::String(text) => source_span(text),
+        other => source_span(&other.to_string()),
+    }
 }
 pub(crate) fn resolve_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Type {
     fn visit(ty: &Type, aliases: &BTreeMap<String, Type>, visiting: &mut BTreeSet<String>) -> Type {
@@ -52,7 +65,11 @@ pub(crate) fn resolve_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Type 
     }
     visit(ty, aliases, &mut BTreeSet::new())
 }
-fn checked_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Result<CheckedType, DomainError> {
+fn checked_type(
+    ty: &Type,
+    aliases: &BTreeMap<String, Type>,
+    path: &str,
+) -> Result<CheckedType, CompileError> {
     let resolved = resolve_type(ty, aliases);
     fn has_unresolved(ty: &Type) -> bool {
         match ty {
@@ -64,7 +81,12 @@ fn checked_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Result<CheckedTy
         }
     }
     if has_unresolved(&resolved) {
-        return Err(failure(11, format!("unresolved type {resolved}")));
+        return Err(CompileError::new(
+            CheckKind::Schema,
+            path,
+            source_span(&ty.to_string()),
+            format!("unresolved type {resolved}"),
+        ));
     }
     Ok(resolved)
 }
@@ -91,35 +113,51 @@ pub(crate) fn field_type(
 fn fields(
     values: &BTreeMap<String, String>,
     scope: &Scope<'_>,
-) -> Result<Vec<CheckedNamedExpression>, DomainError> {
-    let base = current_path();
+    path: &str,
+) -> Result<Vec<CheckedNamedExpression>, Vec<CompileError>> {
     let mut checked_fields = Vec::new();
+    let mut errors = Vec::new();
     for (key, source) in values {
-        set_path(format!("{base}.{key}"));
-        checked_fields.push(CheckedNamedExpression {
-            key: key.clone(),
-            value: checked(source, scope)?,
-        });
+        match checked(source, scope, &format!("{path}.{key}")) {
+            Ok(value) => checked_fields.push(CheckedNamedExpression {
+                key: key.clone(),
+                value,
+            }),
+            Err(error) => errors.push(error),
+        }
     }
-    set_path(base);
-    Ok(checked_fields)
+    if errors.is_empty() {
+        Ok(checked_fields)
+    } else {
+        Err(errors)
+    }
 }
 /// `none` (or no workspace) gives the session no worktree; `repository(<expr>)`
 /// names the repository its worktree is cut from, read from the stage input.
 fn workspace_expression(
     source: Option<&str>,
     scope: &Scope<'_>,
-) -> Result<Option<CheckedStageExpression>, DomainError> {
+    path: &str,
+) -> Result<Option<CheckedStageExpression>, CompileError> {
     let Some(text) = source.map(str::trim) else {
         return Ok(None);
     };
     if text == "none" {
         return Ok(None);
     }
-    match parse_repository(text) {
-        Ok(inner) => Ok(Some(checked(inner, scope)?)),
-        Err(_) => Err(failure(
-            6,
+    match parse_repository(text, path) {
+        Ok(inner) => {
+            let offset = inner.as_ptr() as usize - text.as_ptr() as usize;
+            checked(inner, scope, path).map(Some).map_err(|mut error| {
+                error.span.start += offset;
+                error.span.end += offset;
+                error
+            })
+        }
+        Err(_) => Err(CompileError::new(
+            CheckKind::Workspace,
+            path,
+            source_span(text),
             format!("workspace {text} must be none or repository(<expr>)"),
         )),
     }
@@ -146,23 +184,36 @@ const MODE_ENGINE_INPUTS: &[&str] = &["previous", "feedback", "subject"];
 const HANDOFF_PROMPT: &str = "handoff";
 const HANDOFF_ENGINE_INPUTS: &[&str] = &["artifacts", "feedback", "previous_attempt"];
 fn prompt(
-    path: &str,
+    file: &str,
     inputs: &BTreeMap<String, String>,
     prompts: &BTreeMap<String, String>,
     engine_inputs: &[&str],
-) -> Result<(), DomainError> {
-    if path.trim().is_empty() {
-        return Err(failure(7, "review or agent prompt missing"));
+    path: &str,
+) -> Result<(), CompileError> {
+    if file.trim().is_empty() {
+        return Err(CompileError::new(
+            CheckKind::Worker,
+            path,
+            source_span(file),
+            "review or agent prompt missing",
+        ));
     }
-    let body = prompts
-        .get(path)
-        .ok_or_else(|| failure(10, format!("prompt file {path} missing")))?;
+    let body = prompts.get(file).ok_or_else(|| {
+        CompileError::new(
+            CheckKind::Prompt,
+            path,
+            source_span(file),
+            format!("prompt file {file} missing"),
+        )
+    })?;
     for part in body.split("{{").skip(1) {
         let key = part.split("}}").next().unwrap_or("").trim();
         if !inputs.contains_key(key) && !engine_inputs.contains(&key) {
-            return Err(failure(
-                10,
-                format!("prompt {path} names undeclared input {key}"),
+            return Err(CompileError::new(
+                CheckKind::Prompt,
+                path,
+                source_span(file),
+                format!("prompt {file} names undeclared input {key}"),
             ));
         }
     }
@@ -174,22 +225,41 @@ fn check_operator_review(
     key: &str,
     review: &Review,
     prompts: &BTreeMap<String, String>,
-) -> Result<(), DomainError> {
-    let review_prompt = review
-        .prompt
-        .as_deref()
-        .ok_or_else(|| failure(7, format!("review {key} lacks prompt")))?;
+    path: &str,
+) -> Result<(), CompileError> {
+    let prompt_path = format!("{path}.prompt");
+    let review_prompt = review.prompt.as_deref().ok_or_else(|| {
+        CompileError::new(
+            CheckKind::Worker,
+            &prompt_path,
+            SourceSpan::default(),
+            format!("review {key} lacks prompt"),
+        )
+    })?;
     if review_prompt.trim().is_empty() {
-        return Err(failure(7, format!("review {key} lacks prompt")));
+        return Err(CompileError::new(
+            CheckKind::Worker,
+            &prompt_path,
+            source_span(review_prompt),
+            format!("review {key} lacks prompt"),
+        ));
     }
-    prompt(review_prompt, &review.inputs, prompts, MODE_ENGINE_INPUTS)?;
-    if review
+    prompt(
+        review_prompt,
+        &review.inputs,
+        prompts,
+        MODE_ENGINE_INPUTS,
+        &prompt_path,
+    )?;
+    if let Some((decision_key, decision)) = review
         .decisions
-        .values()
-        .any(|decision| decision.feedback.is_some())
+        .iter()
+        .find(|(_, decision)| decision.feedback.is_some())
     {
-        return Err(failure(
-            8,
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions.{decision_key}.feedback"),
+            source_span(decision.feedback.as_deref().unwrap_or("")),
             format!("operator review {key} sets fixed feedback"),
         ));
     }
@@ -197,19 +267,40 @@ fn check_operator_review(
 }
 /// An engine review decides by itself: a `when`, and exactly one
 /// request_changes decision carrying fixed, non-empty feedback.
-fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(), DomainError> {
+fn check_engine_review(
+    key: &str,
+    review: &Review,
+    has_when: bool,
+    path: &str,
+) -> Result<(), CompileError> {
     if !has_when {
-        return Err(failure(8, format!("engine review {key} lacks when")));
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.when"),
+            SourceSpan::default(),
+            format!("engine review {key} lacks when"),
+        ));
     }
     if review.prompt.is_some() || !review.inputs.is_empty() {
-        return Err(failure(
-            8,
+        let (field, span) = match review.prompt.as_deref() {
+            Some(prompt) => ("prompt", source_span(prompt)),
+            None => (
+                "inputs",
+                source_span(&serde_json::to_string(&review.inputs).unwrap_or_default()),
+            ),
+        };
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.{field}"),
+            span,
             format!("engine review {key} has a prompt or inputs"),
         ));
     }
-    let [decision] = review.decisions.values().collect::<Vec<_>>()[..] else {
-        return Err(failure(
-            8,
+    let [(decision_key, decision)] = review.decisions.iter().collect::<Vec<_>>()[..] else {
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions"),
+            source_span(&serde_json::to_string(&review.decisions).unwrap_or_default()),
             format!("engine review {key} needs exactly one decision"),
         ));
     };
@@ -222,8 +313,10 @@ fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(),
         || decision.payload.is_some()
         || !decision.fields.is_empty()
     {
-        return Err(failure(
-            8,
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions.{decision_key}"),
+            source_span(&serde_json::to_string(decision).unwrap_or_default()),
             format!("engine review {key} decides request_changes with fixed feedback only"),
         ));
     }
@@ -278,6 +371,8 @@ fn unify(
 mod group;
 #[path = "workflow_stage.rs"]
 mod stage;
+#[path = "workflow_worker.rs"]
+mod worker;
 use group::compile_group;
 use stage::compile_stage;
 #[path = "workflow_passes.rs"]
@@ -333,37 +428,9 @@ pub fn compile_workflow_with_limits(
         domain
     })
 }
-pub fn decode_workflow(bytes: &[u8]) -> Result<Workflow, DomainError> {
-    let value = crate::decode_unique_json(bytes)?;
-    if let Some(stages) = value.get("stages").and_then(serde_json::Value::as_object) {
-        for stage in stages.values() {
-            if let Some(workers) = stage.get("workers").and_then(serde_json::Value::as_object) {
-                for (key, worker) in workers {
-                    let kind = worker
-                        .get("kind")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("");
-                    let forbidden: &[&str] = match kind {
-                        "code" => &["prompts", "runtime", "workspace", "session", "reviews"],
-                        "agent" => &["operation", "every"],
-                        _ => &[],
-                    };
-                    if let Some(field) =
-                        forbidden.iter().find(|field| worker.get(**field).is_some())
-                    {
-                        return Err(failure(12, format!("worker {key} cannot set {field}")));
-                    }
-                }
-            }
-        }
-    }
-    serde_path_to_error::deserialize(value).map_err(|error| {
-        let path = error.path().to_string();
-        let mut failure = failure(11, format!("{path}: {}", error.inner()));
-        failure.path = path.into_boxed_str();
-        failure
-    })
-}
+#[path = "workflow_decode.rs"]
+mod decode;
+pub use decode::{decode_workflow, decode_workflow_value_detailed};
 
 #[cfg(test)]
 mod review_regressions {
