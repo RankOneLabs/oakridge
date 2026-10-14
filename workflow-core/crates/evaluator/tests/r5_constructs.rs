@@ -443,6 +443,14 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
 #[test]
 fn an_operator_cannot_decide_an_engine_review() {
     let mut run = Run::through_build(false);
+    let absent = run.decide(
+        COHORT,
+        "pr_closed",
+        "missing",
+        "build",
+        json!({ "feedback": "x" }),
+    );
+    assert!(matches!(absent, Err(StepError::Rejected { reason }) if reason == "decision absent"));
     let refused = run.decide(
         COHORT,
         "pr_closed",

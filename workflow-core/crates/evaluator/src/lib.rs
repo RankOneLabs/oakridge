@@ -1530,24 +1530,22 @@ fn reduce(
                 .iter()
                 .find(|candidate| candidate.key() == review)
                 .ok_or_else(|| rejected("review absent"))?;
-            let CheckedReview::Operator {
-                of,
-                when,
-                decisions,
-                ..
-            } = review_definition
-            else {
-                let CheckedReview::Engine {
+            let (of, when, decisions) = match review_definition {
+                CheckedReview::Operator {
+                    of,
+                    when,
+                    decisions,
+                    ..
+                } => (of, when, decisions),
+                CheckedReview::Engine {
                     decision: engine_decision,
                     ..
-                } = review_definition
-                else {
-                    unreachable!()
-                };
-                if engine_decision.key != *decision {
-                    return Err(rejected("decision absent"));
+                } => {
+                    if engine_decision.key != *decision {
+                        return Err(rejected("decision absent"));
+                    }
+                    return Err(rejected("the engine decides this review"));
                 }
-                return Err(rejected("the engine decides this review"));
             };
             let decision_definition = decisions
                 .get(&decision.0)
