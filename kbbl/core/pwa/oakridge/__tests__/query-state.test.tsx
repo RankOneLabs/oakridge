@@ -5,7 +5,6 @@ import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
 import { ReviewInboxView } from "../views/ReviewInboxView";
 import { OperatorDecisionForm } from "../components/organisms/OperatorDecisionForm";
-import { invalidateOperatorFrame } from "../hooks/useOakridgeInvalidationStream";
 import { useOakridgeInvalidationStream } from "../hooks/useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "../hooks/useOakridgeRunEventStream";
 import { selectEventNotification } from "../lib/run-notifications";
@@ -27,10 +26,9 @@ class EventSourceStub {
   emit(frame: LiveStreamFrame): void { this.listeners.get("live")?.(new MessageEvent("live", { data: JSON.stringify(frame) })); }
 }
 
-function StreamConsumer({ onToast, cache }: { readonly onToast: (toast: unknown) => void; readonly cache: QueryClient }) {
+function StreamConsumer({ onToast }: { readonly onToast: (toast: unknown) => void }) {
   useOakridgeInvalidationStream(true);
   useOakridgeRunEventStream(true, (event) => {
-    invalidateOperatorFrame(cache, event);
     const toast = selectEventNotification(event);
     if (toast) onToast(toast);
   });
@@ -100,7 +98,7 @@ test("replayed authority frames refresh queries without toasts; session snapshot
   const cache = client();
   const invalidations = vi.spyOn(cache, "invalidateQueries");
   const onToast = vi.fn();
-  const mounted = render(<QueryClientProvider client={cache}><StreamConsumer cache={cache} onToast={onToast} /></QueryClientProvider>);
+  const mounted = render(<QueryClientProvider client={cache}><StreamConsumer onToast={onToast} /></QueryClientProvider>);
   await waitFor(() => expect(EventSourceStub.instances.some((source) => source.readyState !== EventSourceStub.CLOSED)).toBe(true));
   const source = EventSourceStub.instances.findLast((item) => item.readyState !== EventSourceStub.CLOSED);
   if (!source) throw new Error("live source did not connect");
@@ -126,7 +124,7 @@ test("a session snapshot does not refetch an active run", async () => {
   const fetch = vi.fn(async (url: string) => runResponse(url));
   vi.stubGlobal("fetch", fetch);
   const cache = client();
-  const mounted = render(<QueryClientProvider client={cache}><RunConsumer /><StreamConsumer cache={cache} onToast={() => undefined} /></QueryClientProvider>);
+  const mounted = render(<QueryClientProvider client={cache}><RunConsumer /><StreamConsumer onToast={() => undefined} /></QueryClientProvider>);
   await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1));
   await waitFor(() => expect(EventSourceStub.instances.some((source) => source.readyState !== EventSourceStub.CLOSED)).toBe(true));
   const source = EventSourceStub.instances.findLast((item) => item.readyState !== EventSourceStub.CLOSED);

@@ -4,13 +4,15 @@ import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-clien
 import type { Event, Incoming, ResolvedRunWorker, StepSnapshot, StepResult, Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
+import { isTerminalStatus } from "../domain/unit-status";
 import { renderTemplate } from "../domain/prompt-template";
 import type { DefinitionBundleId, ProjectId, RunId, TracedError, UnitId } from "../domain/primitives";
 import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEvent } from "../projections/run-event";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CommitReceipt, ReviewPrompts, StallRecord, WantedActions } from "./json-column-types";
+import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedActions } from "./json-column-types";
 import { readPromptTexts } from "./registry-store";
+import { START_OWED_STATUSES } from "./executor-store";
 import { readStepSnapshot } from "./snapshot-store";
 
 /** An event as ingress hands it over: the writer is resolved from the credential, never the body. */
@@ -123,8 +125,7 @@ async function recordCommitFault(db: Database, request: CommitRequest, fault: Co
       if (request.ingress_id !== null && await isFaultStanding(trx, { run_id: request.run_id, ingress_id: request.ingress_id, after_event })) return;
       const notice: CommitFaultNotice = { run_id: request.run_id, unit_id: addressed as UnitId | null, at_unit: fault.unit_id as UnitId | null,
         ingress_id: request.ingress_id, event: request.event, detail: fault.error.detail, after_event };
-      await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: request.run_id, run_key: request.run_id,
-        event_key: "commit_fault", payload: jsonText({ kind: "commit_fault", data: notice }) }).execute();
+      await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: request.run_id, run_key: request.run_id, payload: jsonText({ kind: "commit_fault", data: notice }) }).execute();
     });
     return fault.error;
   } catch (cause) {
@@ -136,7 +137,7 @@ interface FaultIdentity { readonly run_id: string; readonly ingress_id: string; 
 /** Whether this request's fault is already recorded and still stands: nothing has committed on its unit since. */
 async function isFaultStanding(trx: DatabaseTransaction, input: FaultIdentity): Promise<boolean> {
   const rows = await trx.selectFrom("authority.operator_event").select("payload").where("run_id", "=", input.run_id)
-    .where("event_key", "=", "commit_fault").execute();
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   return rows.some((row) => row.payload.kind === "commit_fault" && row.payload.data.ingress_id === input.ingress_id
     && row.payload.data.after_event === input.after_event);
 }
@@ -240,7 +241,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     const stall: StallRecord = { unit_id: stepped.unit, event: request.event, after_event: await readLatestEventId(trx, run_id, unit_id.value),
       refused_at: new Date().toISOString() };
     await storeReceipt(trx, { request, unit_id: unit_id.value, digest, result: { kind: "rejected", reason, stall } });
-    await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id, event_key: "invalidate",
+    await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id,
       payload: jsonText({ kind: "invalidate", data: { target: "run", run_id } }) }).execute();
     return { kind: "rejected", reason };
   }
@@ -262,10 +263,10 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   if (!addressed) throw fault(run_id, `event ${event.id} addresses no unit of the run`);
   const run_event = selectRunEvent({ event_id: event.id, run_id, kind: request.event.kind, occurred_at: new Date(event.created_at),
     run_status: step.snapshot.run.status, workflow: definition.source,
-    unit: { id: addressed.id as UnitId, unit_key: addressed.declaration, collection_key: collectionKey(addressed), stage: addressed.stage ?? null,
+    unit: { id: addressed.id as UnitId, parent_id: addressed.parent ?? null, declaration: addressed.declaration, stage: addressed.stage ?? null,
       status: addressed.status },
     newly_awaiting: newly_awaiting.get(addressed.id) ?? [] });
-  await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id, event_key: "run_event",
+  await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id,
     payload: jsonText({ kind: "run_event", data: run_event }) }).execute();
   return { kind: "committed", event_id: event.id };
 }
@@ -324,13 +325,6 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
   return { kind: "stepped", step: response.value.value };
 }
 
-/** A collection member's key is its id below its parent; a fixed unit has none. */
-function collectionKey(unit: StepSnapshot["units"][number]): string | null {
-  if (unit.parent == null) return null;
-  const member = unit.id.slice(unit.parent.length + 1);
-  return member === unit.declaration ? null : member;
-}
-
 /**
  * What writeDelta does not write must not change: it writes new rows, unit
  * status, a unit's input when it first resolves, and an attempt's status,
@@ -366,22 +360,20 @@ export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot):
 
 /** Write what step changed: run, new units and edges, unit statuses and inputs, attempts, revisions and decisions. */
 async function writeDelta(trx: DatabaseTransaction, run_id: string, before: StepSnapshot, after: StepSnapshot): Promise<void> {
-  await trx.updateTable("authority.run").set((eb) => ({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
-    status: jsonText(after.run.status), version: eb("version", "+", 1) })).where("id", "=", run_id).execute();
+  await trx.updateTable("authority.run").set({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
+    status: jsonText(after.run.status) }).where("id", "=", run_id).execute();
   const known = new Map(before.units.map((unit) => [unit.id, unit]));
   // Parents first: a member's foreign key names its parent.
   const created = after.units.filter((unit) => !known.has(unit.id)).sort((left, right) => left.id.split("/").length - right.id.split("/").length);
   for (const unit of created) await trx.insertInto("authority.unit").values({ id: unit.id, run_id, parent_id: unit.parent ?? null,
-    unit_key: unit.declaration, collection_key: collectionKey(unit), declaration: unit.declaration, stage: unit.stage ?? null,
-    pool: unit.pool ?? null, input: jsonText(unit.input), status: jsonText(unit.status) }).execute();
+    declaration: unit.declaration, stage: unit.stage ?? null, pool: unit.pool ?? null, input: jsonText(unit.input), status: jsonText(unit.status) }).execute();
   for (const unit of created) for (const depends_on_id of unit.after)
     await trx.insertInto("authority.unit_dependency").values({ run_id, unit_id: unit.id, depends_on_id }).execute();
   // A unit created waiting resolves its input when it starts, possibly in a later step than the one that created it.
   for (const unit of after.units) {
     const old = known.get(unit.id);
     if (old && (canonical(old.status) !== canonical(unit.status) || canonical(old.input) !== canonical(unit.input)))
-      await trx.updateTable("authority.unit")
-        .set((eb) => ({ status: jsonText(unit.status), input: jsonText(unit.input), version: eb("version", "+", 1) }))
+      await trx.updateTable("authority.unit").set({ status: jsonText(unit.status), input: jsonText(unit.input) })
         .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
   }
   const old_attempts = new Map(before.attempts.map((attempt) => [`${attempt.action_id}#${attempt.seq}`, attempt]));
@@ -458,11 +450,11 @@ async function reconcileIntents(trx: DatabaseTransaction, input: Reconcile): Pro
     // A new watch replaces the worker's previous action (D-V1): its carrier stops repeating.
     const replaced = selectReplacedAction(action);
     if (replaced !== null) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
-      .where("run_id", "=", run_id).where("action_id", "=", replaced).where("status", "in", ["pending", "acknowledged"]).execute();
+      .where("run_id", "=", run_id).where("action_id", "=", replaced).where("status", "in", START_OWED_STATUSES).execute();
   }
-  const inactive = step.snapshot.units.filter((unit) => unit.status.kind === "done" || unit.status.kind === "cancelled").map((unit) => unit.id);
+  const inactive = step.snapshot.units.filter((unit) => isTerminalStatus(unit.status)).map((unit) => unit.id);
   if (inactive.length) await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
-    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", ["pending", "acknowledged"]).execute();
+    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(inactive)).where("status", "in", START_OWED_STATUSES).execute();
 }
 
 /** The action a periodic worker's new watch replaces; null for any other action, or a first watch. */
@@ -488,7 +480,7 @@ async function writeReviewPrompts(trx: DatabaseTransaction, input: Omit<Reconcil
     return path ? [path] : [];
   });
   const texts = await readPromptTexts(trx, paths.flatMap((path) => input.prompts[path] ?? []));
-  const rendered = new Map<string, { [review: string]: { readonly target: string; readonly prompt: string } }>();
+  const rendered = new Map<string, { [review: string]: ReviewPrompt }>();
   for (const review of step.reviews) {
     const stage = stage_units.find((unit) => unit.id === review.unit)?.stage;
     const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
@@ -497,7 +489,7 @@ async function writeReviewPrompts(trx: DatabaseTransaction, input: Omit<Reconcil
     if (text === undefined) throw fault(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);
     const inputs = typeof review.inputs === "object" && review.inputs !== null ? review.inputs as { readonly [key: string]: unknown } : {};
     const unit = rendered.get(review.unit) ?? {};
-    unit[review.review] = { target: review.target, prompt: renderTemplate(text, inputs) };
+    unit[review.review] = { target: review.target, decisions: review.decisions, prompt: renderTemplate(text, inputs) };
     rendered.set(review.unit, unit);
   }
   const current = await trx.selectFrom("authority.unit").select(["id", "review_prompts"]).where("run_id", "=", run_id)

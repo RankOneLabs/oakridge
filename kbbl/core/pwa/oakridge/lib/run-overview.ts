@@ -1,4 +1,6 @@
 import type { OperatorArtifactRevisionView, OperatorArtifactView, OperatorRunUnitSummary, OperatorRunView, OperatorUnitStatus, OperatorUnitView } from "../operator-contracts";
+import { selectUnitAsks } from "./decision-queue";
+import { selectRootUnitId } from "./operator-selectors";
 
 export interface RunProgress { readonly complete: number; readonly total: number; readonly needs_attention: number }
 export interface RunArtifact { readonly unit_id: string; readonly artifact: OperatorArtifactView; readonly revision: OperatorArtifactRevisionView }
@@ -9,10 +11,18 @@ export const selectRunProgress = (run: OperatorRunView): RunProgress => ({
   needs_attention: run.units.filter((unit) => !unit.is_terminal && unit.asks.length > 0).length,
 });
 
-export const selectRunUnit = (run: OperatorRunView, unitId: string | null, rootKey: string | null): OperatorRunUnitSummary | null =>
-  run.units.find((unit) => unit.unit_id === unitId)
-    ?? run.units.find((unit) => unit.unit_key === rootKey)
-    ?? run.units[0] ?? null;
+/**
+ * The unit a run workspace shows: the routed unit, else the root named by the
+ * pinned definition. Null until the definition names a root the run holds —
+ * never a guess at whichever unit the server listed first.
+ */
+export const selectRunUnit = (run: OperatorRunView, unitId: string | null, rootKey: string | null): OperatorRunUnitSummary | null => {
+  const routed = run.units.find((unit) => unit.unit_id === unitId);
+  if (routed) return routed;
+  if (rootKey === null) return null;
+  const rootId = selectRootUnitId({ units: run.units, root_key: rootKey });
+  return run.units.find((unit) => unit.unit_id === rootId) ?? null;
+};
 
 export const selectRunArtifacts = (units: readonly OperatorUnitView[]): readonly RunArtifact[] =>
   units.flatMap((unit) => unit.artifacts.flatMap((artifact) => artifact.latest_revision
@@ -22,7 +32,7 @@ export const selectLoadedUnits = (values: readonly (OperatorUnitView | undefined
   values.filter((value): value is OperatorUnitView => value !== undefined);
 
 export const selectUnitDetail = (units: readonly OperatorUnitView[], unitId: string | null): OperatorUnitView | null =>
-  unitId === null ? units[0] ?? null : units.find((unit) => unit.unit_id === unitId) ?? null;
+  unitId === null ? null : units.find((unit) => unit.unit_id === unitId) ?? null;
 
 export const selectUnitQueryIndex = (run: OperatorRunView, unitId: string | null): number =>
   run.units.findIndex((unit) => unit.unit_id === unitId);
@@ -33,21 +43,24 @@ export const selectWaitingUnits = (units: readonly OperatorUnitView[]): readonly
 export const selectCompletedUnitDetails = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
   units.filter((unit) => unit.outcome !== null);
 
-export const selectFinalIntegrationUnit = (units: readonly OperatorUnitView[]): OperatorUnitView | null =>
-  units.find((unit) => unit.unit_key === "final_integration") ?? null;
-
 export const selectArtifactInUnits = (units: readonly OperatorUnitView[], revisionId: string): RunArtifact | null =>
   selectRunArtifacts(units).find((artifact) => artifact.revision.id === revisionId) ?? null;
 
+export type UnitBadgeStatus = "complete" | "cancelled" | "attention" | "running";
+
 /** A unit's badge: done is complete and cancelled is cancelled, never complete; otherwise asks are attention. */
-export function selectUnitBadgeStatus(status: OperatorUnitStatus, has_asks: boolean): "complete" | "cancelled" | "attention" | "running" {
+function selectUnitBadgeStatus(status: OperatorUnitStatus, has_asks: boolean): UnitBadgeStatus {
   if (status.kind === "done") return "complete";
   if (status.kind === "cancelled") return "cancelled";
   return has_asks ? "attention" : "running";
 }
 
-export const selectUnitStatus = (unit: OperatorRunUnitSummary): "complete" | "cancelled" | "attention" | "running" =>
+export const selectUnitStatus = (unit: OperatorRunUnitSummary): UnitBadgeStatus =>
   selectUnitBadgeStatus(unit.status, unit.asks.length > 0);
+
+/** A loaded unit's badge, from its asks: the run's cancel on a live root is not attention. */
+export const selectUnitDetailStatus = (unit: OperatorUnitView): UnitBadgeStatus =>
+  selectUnitBadgeStatus(unit.status, selectUnitAsks(unit).length > 0);
 
 /** A unit's status in words. */
 export function selectUnitStatusLabel(status: OperatorUnitStatus): string {

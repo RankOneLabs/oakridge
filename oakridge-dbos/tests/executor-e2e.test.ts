@@ -8,6 +8,7 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { intentWorkflowId } from "../src/workflows/topology";
 import { openDatabase, type Database } from "../src/storage/database";
 import { launchRunId } from "../src/storage/commit";
+import { selectCollectionKey, selectUnitKey } from "../src/projections/unit-label";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
 import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTurn } from "./stub-kbbl";
@@ -83,7 +84,8 @@ const revisions = (run_id: string, artifact: string) => db.selectFrom("authority
   .where("run_id", "=", run_id).where("artifact", "=", artifact).orderBy("created_at").orderBy("id").execute();
 const attempts = (run_id: string, worker: string) => db.selectFrom("authority.attempt").select(["action_id", "seq", "status", "kbbl_session_id", "unit_id"])
   .where("run_id", "=", run_id).where("worker", "=", worker).orderBy("created_at").orderBy("action_id").execute();
-const units = (run_id: string) => db.selectFrom("authority.unit").select(["id", "unit_key", "collection_key", "status"]).where("run_id", "=", run_id).execute();
+const units = async (run_id: string) => (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "status"]).where("run_id", "=", run_id).execute())
+  .map((unit) => ({ ...unit, unit_key: selectUnitKey(unit), collection_key: selectCollectionKey(unit) }));
 const sessionsOfRun = (run_id: string, worker?: string) =>
   stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``) && (worker === undefined || session.spec.initial_prompt.includes(`worker \`${worker}\``)));
 

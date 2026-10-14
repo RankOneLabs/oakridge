@@ -92,38 +92,6 @@ export function projectionViolations(nodes: readonly ModuleNode[]): readonly Bou
     return violations;
   });
 }
-const retiredRequestKinds = new Set([
-  "accept_analysis", "accept_plan", "revise_analysis", "revise_plan", "accept_briefs", "revise_briefs",
-  "accept_build", "replace_pr", "request_build_changes", "accept_assessment", "discuss_assessment",
-  "request_implementation_changes", "confirm_merged", "closed_without_merge", "retry_provision", "retry_analysis",
-  "retry_plan", "retry_briefs", "retry_build", "retry_assessment", "retry_final_integration", "cancel", "abandon",
-]);
-export function closedCommandViolations(nodes: readonly ModuleNode[]): readonly BoundaryViolation[] {
-  return nodes.flatMap((node) => {
-    const parsed = parseModule(node.path, node.source);
-    const violations: BoundaryViolation[] = [];
-    function visit(child: ts.Node): void {
-      if (ts.isPropertyAssignment(child) && child.name.getText(parsed) === "kind" && ts.isStringLiteral(child.initializer)
-        && retiredRequestKinds.has(child.initializer.text)) violations.push({ path: node.path, detail: `retired workflow request constructor ${child.initializer.text}` });
-      if (ts.isTypeAliasDeclaration(child) && ts.isUnionTypeNode(child.type)) {
-        const variants = child.type.types.filter(ts.isTypeLiteralNode);
-        // A request carrying workflow targets/feedback beside finite kind values
-        // is the removed protocol. Descriptor keys remain open strings.
-        const isRequest = /Request|WorkflowChange/.test(child.name.text) || variants.some((variant) => variant.members.some((member) =>
-          ts.isPropertySignature(member) && ["feedback", "target"].includes(member.name.getText(parsed))));
-        if (isRequest && variants.some((variant) => variant.members.some((member) => ts.isPropertySignature(member)
-          && member.name.getText(parsed) === "kind" && member.type && (ts.isLiteralTypeNode(member.type) || ts.isUnionTypeNode(member.type)))))
-          violations.push({ path: node.path, detail: `closed workflow command type ${child.name.text}` });
-      }
-      if (ts.isStringLiteralLike(child) || ts.isTemplateExpression(child)) {
-        if (/\/cohorts\//.test(child.getText(parsed))) violations.push({ path: node.path, detail: "removed cohort endpoint" });
-      }
-      ts.forEachChild(child, visit);
-    }
-    visit(parsed);
-    return violations;
-  });
-}
 /** Core `compile`/`step` calls outside the approved modules: commit steps, the core client compiles. */
 export function evaluatorViolations(nodes: readonly ModuleNode[], mutationNodes: ReadonlySet<string>): readonly BoundaryViolation[] {
   return nodes.flatMap((node) => {

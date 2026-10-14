@@ -47,7 +47,7 @@ test("two runs each have a root unit with no parent, and ingress ids are scoped 
     await db.insertInto("authority.definition_bundle").values({ id: "b", digest: "d", source: jsonText({}) as never, checked_program: jsonText({}) as never }).execute();
     for (const run of ["r1", "r2"]) await db.transaction().execute(async (trx) => {
       await trx.insertInto("authority.run").values({ id: run, definition_bundle_id: "b", root_unit_id: run }).execute();
-      await trx.insertInto("authority.unit").values({ id: run, run_id: run, unit_key: "$root", declaration: "$root", input: jsonText({}) as never, status: jsonText({}) as never }).execute();
+      await trx.insertInto("authority.unit").values({ id: run, run_id: run, declaration: "$root", input: jsonText({}) as never, status: jsonText({}) as never }).execute();
       await trx.insertInto("authority.ingress_receipt").values({ id: `${run}-receipt`, run_id: run, ingress_id: "same", request_digest: "x", result: jsonText({}) as never }).execute();
     });
     const units = await db.selectFrom("authority.unit").select("id").execute();
@@ -55,7 +55,7 @@ test("two runs each have a root unit with no parent, and ingress ids are scoped 
   } finally { await db.destroy(); await scratch.drop(); }
 });
 
-test("the baseline indexes the wanted log by event and collaboration rows by their run and parent", async () => {
+test("the baseline indexes units by parent, the wanted log by event and collaboration rows by their run and parent", async () => {
   const scratch = await scratchDatabase();
   const db = openDatabase(scratch.url);
   try {
@@ -68,8 +68,8 @@ test("the baseline indexes the wanted log by event and collaboration rows by the
       JOIN pg_attribute AS attribute ON attribute.attrelid = idx.indrelid AND attribute.attnum = key.attnum
       GROUP BY idx.indexrelid, index_table.relname`.execute(db);
     const indexed = new Set(indexes.rows.map((row) => `${row.table_name}(${row.columns})`));
-    const wanted = ["wanted_log(run_id,event_id)", "collaboration_thread(run_id,unit_id,artifact_revision_id)", "collaboration_message(run_id,thread_id)",
-      "review_item(run_id,thread_id)", "collaboration_delivery(run_id,message_id)"];
+    const wanted = ["unit(run_id,parent_id)", "wanted_log(run_id,event_id)", "collaboration_thread(run_id,unit_id,artifact_revision_id)",
+      "collaboration_message(run_id,thread_id)", "review_item(run_id,thread_id)"];
     expect(wanted.filter((index) => !indexed.has(index))).toEqual([]);
   } finally { await db.destroy(); await scratch.drop(); }
 });

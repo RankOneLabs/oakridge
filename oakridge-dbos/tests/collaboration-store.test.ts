@@ -1,13 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { Hono } from "hono";
-import { sql } from "kysely";
 import { collaborationHandlers } from "../src/http/collaboration";
 import { operatorWriterFromCredential } from "../src/http/control-auth";
-import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread, readCollaborationThreads,
-  readThreadRevision, recordCollaborationDelivery } from "../src/storage/collaboration-store";
-import { listOwedIntents, settleIntent } from "../src/storage/executor-store";
-import { deleteRun } from "../src/storage/run-deletion";
+import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread, readCollaborationThreads } from "../src/storage/collaboration-store";
 import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -61,56 +57,31 @@ test("a superseded revision refuses new threads, messages and review items", asy
   expect([late_thread.kind, message.kind, item.kind]).toEqual(["superseded", "superseded", "superseded"]);
 });
 
-test("a message key keeps its ping intent: a changed ping is a conflict", async () => {
+test("a message key replays its text: a changed text is a conflict", async () => {
   const { run_id, unit, revisions } = await drafted(1);
   const opened = await thread(run_id, unit, revisions[0]!);
   if (opened.kind !== "written") throw new Error("thread not written");
-  const first = await addCollaborationMessage(authority.db, { id: "m1", run_id, unit_id: unit, thread_id: opened.value.id, body: { text: "hi", author: "op", ping: false } });
-  const changed = await addCollaborationMessage(authority.db, { id: "m1", run_id, unit_id: unit, thread_id: opened.value.id, body: { text: "hi", author: "op", ping: true } });
-  expect([first.kind, changed.kind, await readThreadRevision(authority.db, { run_id, unit_id: unit, thread_id: opened.value.id })])
-    .toEqual(["written", "conflict", revisions[0]]);
+  const message = (text: string) => addCollaborationMessage(authority.db, { id: "m1", run_id, unit_id: unit, thread_id: opened.value.id, body: { text, author: "op" } });
+  const first = await message("hi");
+  const replayed = await message("hi");
+  const changed = await message("bye");
+  expect([first.kind, replayed.kind, changed.kind]).toEqual(["written", "replayed", "conflict"]);
 });
 
-test("the thread view spans the revision chain, with write capability only on the latest and the last failed delivery", async () => {
+test("the thread view spans the revision chain, with write capability only on the latest", async () => {
   const { run_id, unit, revisions } = await drafted(1);
   const old_thread = await thread(run_id, unit, revisions[0]!);
   if (old_thread.kind !== "written") throw new Error("thread not written");
-  await addCollaborationMessage(authority.db, { id: "m-old", run_id, unit_id: unit, thread_id: old_thread.value.id, body: { text: "hi", author: "op", ping: true } });
+  await addCollaborationMessage(authority.db, { id: "m-old", run_id, unit_id: unit, thread_id: old_thread.value.id, body: { text: "hi", author: "op" } });
   await addReviewItem(authority.db, { id: "r-old", run_id, unit_id: unit, thread_id: old_thread.value.id, body: { title: "t", detail: "d", status: "open" } });
-  const delivery = await recordCollaborationDelivery(authority.db, { id: "d-old", run_id, unit_id: unit, message_id: "m-old",
-    payload: { status: "failed", session_id: null, reason: "no session", request_key: "k" } });
-  const repeat = await recordCollaborationDelivery(authority.db, { id: "d-old", run_id, unit_id: unit, message_id: "m-old",
-    payload: { status: "delivered", session_id: "sid", reason: null, request_key: "k" } });
   const action = await actionOf(authority, run_id, "writer");
   await submitter(authority)({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "v2" },
     predecessor: revisions[0]!, by: action }, writer: executor(action) });
   const latest = `${unit}:draft:2`;
   await thread(run_id, unit, latest, "new");
   const views = await readCollaborationThreads(authority.db, { run_id, unit_id: unit, revision_id: latest });
-  expect({ repeat: repeat?.payload.status, delivery: delivery?.payload.status,
-    views: views.map((view) => [view.artifact_revision_id, view.capabilities.can_write, view.messages.length, view.review_items.length, view.last_delivery_failure_reason]) })
-    .toEqual({ repeat: "failed", delivery: "failed",
-      views: [[revisions[0], false, 1, 1, "no session"], [latest, true, 0, 0, null]] });
-});
-
-test("a ping recorded while its run is being deleted waits for the deletion and finds the run gone", async () => {
-  const { run_id, unit, revisions } = await drafted(1);
-  const opened = await thread(run_id, unit, revisions[0]!);
-  if (opened.kind !== "written") throw new Error("thread not written");
-  await addCollaborationMessage(authority.db, { id: "m-race", run_id, unit_id: unit, thread_id: opened.value.id, body: { text: "hi", author: "op", ping: true } });
-  for (const intent of await listOwedIntents(authority.db, run_id)) await settleIntent(authority.db, { intent_id: intent.id, status: "stopped", last_error: null });
-  // Deletion pauses on the message, after it has already removed the run's deliveries.
-  await sql`CREATE FUNCTION public.slow_message_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN OLD; END $$;
-    CREATE TRIGGER slow_message_delete BEFORE DELETE ON authority.collaboration_message FOR EACH ROW EXECUTE FUNCTION public.slow_message_delete()`.execute(authority.db);
-  try {
-    const deleting = deleteRun(authority.db, run_id);
-    await Bun.sleep(150);
-    const delivery = await recordCollaborationDelivery(authority.db, { id: "d-race", run_id, unit_id: unit, message_id: "m-race",
-      payload: { status: "failed", session_id: null, reason: "no session", request_key: "race" } });
-    expect({ deleted: await deleting, delivery }).toEqual({ deleted: { kind: "deleted" }, delivery: null });
-  } finally {
-    await sql`DROP TRIGGER slow_message_delete ON authority.collaboration_message; DROP FUNCTION public.slow_message_delete()`.execute(authority.db);
-  }
+  expect(views.map((view) => [view.artifact_revision_id, view.capabilities.can_write, view.messages.length, view.review_items.length]))
+    .toEqual([[revisions[0], false, 1, 1], [latest, true, 0, 0]]);
 });
 
 test("a thread view reads its revision chain in the same number of queries however long the chain", async () => {

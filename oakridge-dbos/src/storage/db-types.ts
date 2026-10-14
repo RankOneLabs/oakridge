@@ -1,8 +1,10 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, Cause, CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedActions, Writer } from "./json-column-types";
+import type { AttemptStatus, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedActions, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
+
+export type AuthorityDecisionEffect = "approve" | "request_changes";
 
 export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "stop_requested" | "stopped";
 
@@ -53,18 +55,6 @@ export interface AuthorityAttempt {
   worker: string;
 }
 
-export interface AuthorityCollaborationDelivery {
-  created_at: Generated<Timestamp>;
-  id: string;
-  message_id: string;
-  /**
-   * @type {CollaborationDeliveryPayload}
-   */
-  payload: JsonColumn<CollaborationDeliveryPayload>;
-  run_id: string;
-  unit_id: string;
-}
-
 export interface AuthorityCollaborationMessage {
   /**
    * @type {CollaborationMessageBody}
@@ -106,7 +96,6 @@ export interface AuthorityDefinitionBundle {
    * @type {DefinitionBundleSource}
    */
   source: JsonColumn<DefinitionBundleSource>;
-  version: Generated<number>;
 }
 
 export interface AuthorityEffectIntent {
@@ -159,7 +148,6 @@ export interface AuthorityIngressReceipt {
 export interface AuthorityOperatorEvent {
   commit_txid: Generated<number>;
   created_at: Generated<Timestamp>;
-  event_key: string;
   id: string;
   /**
    * @type {OperatorEventPayload}
@@ -189,7 +177,7 @@ export interface AuthorityPromptContent {
 export interface AuthorityReviewDecision {
   created_at: Generated<Timestamp>;
   decision: string;
-  effect: string;
+  effect: AuthorityDecisionEffect;
   id: string;
   /**
    * @type {RuntimeValue}
@@ -233,11 +221,9 @@ export interface AuthorityRun {
    * @type {UnitStatus}
    */
   status: Generated<JsonColumn<UnitStatus>>;
-  version: Generated<number>;
 }
 
 export interface AuthorityUnit {
-  collection_key: string | null;
   declaration: string;
   id: string;
   /**
@@ -256,8 +242,6 @@ export interface AuthorityUnit {
    * @type {UnitStatus}
    */
   status: JsonColumn<UnitStatus>;
-  unit_key: string;
-  version: Generated<number>;
 }
 
 export interface AuthorityUnitDependency {
@@ -280,7 +264,6 @@ export interface AuthorityWantedLog {
 export interface DB {
   "authority.artifact_revision": AuthorityArtifactRevision;
   "authority.attempt": AuthorityAttempt;
-  "authority.collaboration_delivery": AuthorityCollaborationDelivery;
   "authority.collaboration_message": AuthorityCollaborationMessage;
   "authority.collaboration_thread": AuthorityCollaborationThread;
   "authority.definition_bundle": AuthorityDefinitionBundle;

@@ -7,6 +7,7 @@ CREATE TYPE authority.effect_status AS ENUM
 -- its watch was replaced, or the executor, when an attempt failed while an
 -- execution may still be live.
 CREATE TYPE authority.stop_origin AS ENUM ('commit', 'executor');
+CREATE TYPE authority.decision_effect AS ENUM ('approve', 'request_changes');
 
 CREATE TABLE authority.schema_baseline (
   id boolean PRIMARY KEY DEFAULT true CHECK (id),
@@ -22,7 +23,6 @@ CREATE TABLE authority.definition_bundle (
   -- prompt path -> content digest, pinned at compile (D9). Editing a prompt
   -- file afterwards cannot change what this definition renders.
   prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
-  version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   archived_at timestamptz
 );
@@ -52,7 +52,6 @@ CREATE TABLE authority.run (
   config jsonb,
   status jsonb NOT NULL DEFAULT '{"kind":"not_started"}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   archived_at timestamptz
 );
 
@@ -60,8 +59,6 @@ CREATE TABLE authority.unit (
   id text NOT NULL,
   run_id text NOT NULL REFERENCES authority.run(id),
   parent_id text,
-  unit_key text NOT NULL,
-  collection_key text,
   declaration text NOT NULL,
   stage text,
   pool text,
@@ -72,11 +69,7 @@ CREATE TABLE authority.unit (
   -- rewrites it on every event that steps the unit; nothing is asked or stored
   -- beyond what state already derives.
   review_prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
-  version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
   PRIMARY KEY (run_id, id),
-  -- run_id is load-bearing: roots in different runs both have a NULL parent
-  -- and the same unit key. Omitting it makes the second launch collide.
-  UNIQUE NULLS NOT DISTINCT (run_id, parent_id, unit_key, collection_key),
   FOREIGN KEY (run_id, parent_id) REFERENCES authority.unit(run_id, id)
 );
 ALTER TABLE authority.run ADD CONSTRAINT run_root_unit_fk
@@ -139,7 +132,7 @@ CREATE TABLE authority.review_decision (
   unit_id text NOT NULL,
   review text NOT NULL,
   decision text NOT NULL,
-  effect text NOT NULL CHECK (effect IN ('approve', 'request_changes')),
+  effect authority.decision_effect NOT NULL,
   target_revision_id text NOT NULL,
   payload jsonb NOT NULL,
   -- The order commit wrote it, stamped under the run row lock. The core reads
@@ -156,7 +149,9 @@ CREATE TABLE authority.event (
   ingress_id text,
   payload jsonb NOT NULL,
   writer jsonb NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Stamped under the run row lock, so a run's events order by when commit
+  -- wrote them; the core reads retries in event order (see attempt.created_at).
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint,
   UNIQUE (run_id, id),
   UNIQUE (run_id, ingress_id),
@@ -242,16 +237,6 @@ CREATE TABLE authority.review_item (
   FOREIGN KEY (run_id, artifact_revision_id) REFERENCES authority.artifact_revision(run_id, id),
   FOREIGN KEY (run_id, thread_id) REFERENCES authority.collaboration_thread(run_id, id)
 );
-CREATE TABLE authority.collaboration_delivery (
-  id text PRIMARY KEY,
-  run_id text NOT NULL,
-  unit_id text NOT NULL,
-  message_id text NOT NULL,
-  payload jsonb NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
-  FOREIGN KEY (run_id, message_id) REFERENCES authority.collaboration_message(run_id, id)
-);
 
 -- The operator stream's outbox. Written by commit and the registry store in the
 -- transaction that causes it; never read by step. A deleted run leaves its
@@ -262,14 +247,15 @@ CREATE TABLE authority.operator_event (
   -- The key of the entity the event concerns (run, definition or project id);
   -- kept when the run is deleted.
   run_key text NOT NULL,
-  event_key text NOT NULL,
   payload jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   commit_txid bigint NOT NULL DEFAULT pg_current_xact_id()::text::bigint
 );
 
--- unit is keyed (run_id, id) and its parent lookups use the (run_id, parent_id, …)
--- unique index; the rest serve commit, the executor and the read store per unit.
+-- unit is keyed (run_id, id); its parent lookups (the step snapshot's ancestors and
+-- their children) use unit_parent_idx. The rest serve commit, the executor and the
+-- read store per unit.
+CREATE INDEX unit_parent_idx ON authority.unit(run_id, parent_id);
 CREATE INDEX attempt_unit_idx ON authority.attempt(run_id, unit_id);
 CREATE INDEX artifact_revision_unit_idx ON authority.artifact_revision(run_id, unit_id, artifact, created_at);
 CREATE INDEX review_decision_unit_idx ON authority.review_decision(run_id, unit_id);
@@ -286,7 +272,6 @@ CREATE INDEX operator_event_commit_idx ON authority.operator_event(commit_txid, 
 CREATE INDEX collaboration_thread_revision_idx ON authority.collaboration_thread(run_id, unit_id, artifact_revision_id);
 CREATE INDEX collaboration_message_thread_idx ON authority.collaboration_message(run_id, thread_id);
 CREATE INDEX review_item_thread_idx ON authority.review_item(run_id, thread_id);
-CREATE INDEX collaboration_delivery_message_idx ON authority.collaboration_delivery(run_id, message_id);
 
 COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
 COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';
@@ -311,5 +296,4 @@ COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';
 COMMENT ON COLUMN authority.collaboration_message.body IS '@type {CollaborationMessageBody}';
 COMMENT ON COLUMN authority.review_item.body IS '@type {ReviewItemBody}';
-COMMENT ON COLUMN authority.collaboration_delivery.payload IS '@type {CollaborationDeliveryPayload}';
 COMMENT ON COLUMN authority.operator_event.payload IS '@type {OperatorEventPayload}';

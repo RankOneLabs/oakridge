@@ -21,12 +21,12 @@ async function launched(): Promise<RunId> {
 }
 const counts = async (run_id: string) => {
   const [run, events, units, receipts] = await Promise.all([
-    authority.db.selectFrom("authority.run").select(["version", "status", "root_unit_id"]).where("id", "=", run_id).executeTakeFirst(),
+    authority.db.selectFrom("authority.run").select(["status", "root_unit_id"]).where("id", "=", run_id).executeTakeFirst(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.ingress_receipt").select("id").where("run_id", "=", run_id).execute(),
   ]);
-  return { version: run?.version ?? null, status: run?.status.kind ?? null, events: events.length, units: units.length, receipts: receipts.length };
+  return { status: run?.status.kind ?? null, events: events.length, units: units.length, receipts: receipts.length };
 };
 
 test("a fault on the receipt rolls back the event, writer, delta, intent stops and wanted log written before it", async () => {
@@ -52,12 +52,11 @@ test("a rejected launch stores its receipt and nothing else, leaving no run row"
   const { run_id, result } = await launch(authority, { bundle_id, request_id, input: { topic: 42 } });
   const runs = await listRuns(authority.db, { after: null, limit: 100, is_archived: false });
   expect({ kind: result.ok && result.value.kind, after: await counts(run_id), listed: runs.items.some((read) => read.run.id === run_id) })
-    .toEqual({ kind: "rejected", after: { version: null, status: null, events: 0, units: 0, receipts: 1 }, listed: false });
+    .toEqual({ kind: "rejected", after: { status: null, events: 0, units: 0, receipts: 1 }, listed: false });
 });
 
 test("a fault mid-write rolls back the event, writer, delta and receipt together", async () => {
   const run_id = await launched();
-  const before = await authority.db.selectFrom("authority.run").select("version").where("id", "=", run_id).executeTakeFirstOrThrow();
   // A step result naming an attempt on a unit that does not exist fails its foreign key after the run row is updated.
   const faulty = { request: async (operation: "compile" | "step", input: never) => {
     const response = await authority.core.request(operation, input);
@@ -70,11 +69,11 @@ test("a fault mid-write rolls back the event, writer, delta and receipt together
   const result = await commitEvent({ db: authority.db, core: faulty, wake: () => undefined }, { run_id, ingress_id,
     event: { kind: "cancel_requested" }, writer: { kind: "operator", subject: "credential:test" } });
   const [after, events, receipt] = await Promise.all([
-    authority.db.selectFrom("authority.run").select(["version", "status"]).where("id", "=", run_id).executeTakeFirstOrThrow(),
+    authority.db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.ingress_receipt").select("id").where("ingress_id", "=", `operator:${ingress_id}`).execute(),
   ]);
-  expect({ is_error: !result.ok, version: after.version, status: after.status.kind, events: events.length, receipts: receipt.length })
-    .toEqual({ is_error: true, version: before.version, status: "active", events: 1, receipts: 0 });
+  expect({ is_error: !result.ok, status: after.status.kind, events: events.length, receipts: receipt.length })
+    .toEqual({ is_error: true, status: "active", events: 1, receipts: 0 });
 });
 

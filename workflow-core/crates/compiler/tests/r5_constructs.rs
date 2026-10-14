@@ -44,8 +44,8 @@ pub fn operations() -> Vec<CodeOperation> {
             version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
             output_schema: TypeExpression::Record(BTreeMap::from([(
-                "observations".into(),
-                ty("list({url: text, state: text})"),
+                "state".into(),
+                ty("enum(open, merged, closed_unmerged)"),
             )])),
             error_codes: vec![],
         },

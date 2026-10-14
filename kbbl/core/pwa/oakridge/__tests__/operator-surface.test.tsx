@@ -81,7 +81,7 @@ function emptyAdmittingStringField(bundle: OperatorDefinitionBundle): SampledRoo
 const cursorPage = (items: readonly unknown[]): Response => Response.json({ items, next_cursor: null });
 const committed = (run_id: string): Response => Response.json({ kind: "committed", run_id, event_id: "event-1" }, { status: 201 });
 /** A pinned definition whose root input is untyped here, so the launch form offers raw JSON. */
-const demo = (digest = "sha-1", key = "demo") => ({ bundle_id: `bundle-${digest}`, digest, archived_at: null, bundle: { key, version: 1, root: "$root",
+const demo = (digest = "sha-1", key = "demo") => ({ bundle_id: `bundle-${digest}`, digest, archived_at: null, bundle: { key, root: "$root",
   schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } });
 const isLaunch = (url: string, init?: RequestInit): boolean => url === "/oakridge/api/api/runs" && init?.method === "POST";
 
@@ -118,7 +118,7 @@ test("with several pinned definitions the operator must choose one before launch
   });
   vi.stubGlobal("fetch", fetch);
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
-  await screen.findByText(/beta v1/);
+  await screen.findByText(/beta · /);
   expect(screen.getByLabelText<HTMLSelectElement>("Definition digest").value).toBe("");
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Launch" }).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "sha-2" } });
@@ -182,7 +182,7 @@ test("launches a run using the pinned digest and entered root input", async () =
   vi.stubGlobal("fetch", fetch);
   const onCreated = vi.fn();
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
-  await screen.findByText(/demo v1/);
+  await screen.findByText(/demo · /);
   fireEvent.change(screen.getByLabelText("Root input JSON"), { target: { value: '{"request":"hello"}' } });
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
@@ -207,7 +207,7 @@ test.each([503, 408, 429])("a %s launch response retains the original request fo
   }));
   const onCreated = vi.fn();
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
-  await screen.findByText(/demo v1/);
+  await screen.findByText(/demo · /);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await screen.findByText(/Launch delivery is uncertain/);
   fireEvent.click(screen.getByRole("button", { name: "Retry launch" }));
@@ -220,7 +220,7 @@ test("a rejected launch unlocks the form for a corrected input", async () => {
     ? cursorPage([demo()])
     : Response.json({ error: "invalid root input" }, { status: 422 })));
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
-  await screen.findByText(/demo v1/);
+  await screen.findByText(/demo · /);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await screen.findByText(/invalid root input/);
   expect(screen.getByLabelText<HTMLTextAreaElement>("Root input JSON").disabled).toBe(false);
@@ -232,7 +232,7 @@ test("launch is not sent when its request identity cannot be persisted", async (
   vi.stubGlobal("fetch", fetch);
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
   renderWithQuery(<OperatorLaunchView onBack={() => undefined} onCreated={() => undefined} onEdit={() => undefined} />);
-  await screen.findByText(/demo v1/);
+  await screen.findByText(/demo · /);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await screen.findByText(/storage unavailable/);
   expect(fetch).toHaveBeenCalledTimes(1);
@@ -289,7 +289,7 @@ test("launching a run refreshes the run list and the inbox", async () => {
   const spy = invalidatedKeys(cache);
   const onCreated = vi.fn();
   renderWithClient(cache, <OperatorLaunchView onBack={() => undefined} onCreated={onCreated} onEdit={() => undefined} />);
-  await screen.findByText(/demo v1/);
+  await screen.findByText(/demo · /);
   fireEvent.click(screen.getByRole("button", { name: "Launch" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith("run-1"));
   expectInvalidated(spy, ["operator", "runs"], ["operator", "inbox"]);

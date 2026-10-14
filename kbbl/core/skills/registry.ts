@@ -4,8 +4,7 @@ import { gatedReviewSkills } from "./gated-review";
 import { FIXTURE_SKILLS } from "./fixtures";
 
 /**
- * App-owned skill aggregation for one agent profile (§16.2). The legacy
- * runtime skill probes are gone with the provider adapters; the sources
+ * App-owned skill aggregation for one agent profile (§16.2). The sources
  * are kbbl's own: the gated-review shortcuts (or the fixture set when
  * config.skills.fixtures is on), filtered by visibility and the global
  * hidden denylist, annotated with the confirm gate. Agent-provided slash

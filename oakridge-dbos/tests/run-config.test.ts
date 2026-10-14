@@ -32,3 +32,8 @@ test("a launch with a malformed config is malformed; one without a config has no
   const none = parseLaunchRequest(base);
   expect([bad.ok, none.ok ? none.value.config : "failed"]).toEqual([false, null]);
 });
+
+test("a stage named like an Object.prototype member has no settings chosen for it", () => {
+  expect(selectSessionSettings({ sessions: { planning: planner } }, "constructor", { harness: "codex", model: "gpt-5.5" }))
+    .toEqual({ harness: "codex", model: "gpt-5.5", effort: null });
+});

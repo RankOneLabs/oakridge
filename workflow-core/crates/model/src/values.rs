@@ -141,18 +141,6 @@ pub enum Action {
         mode: Mode,
         cause: Cause,
     },
-    Start {
-        unit: UnitId,
-        #[serde(with = "crate::wire_numbers::json")]
-        #[schemars(with = "Value")]
-        input: Value,
-    },
-    Complete {
-        unit: UnitId,
-        #[serde(with = "crate::wire_numbers::json")]
-        #[schemars(with = "Value")]
-        outcome: Value,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -254,7 +242,6 @@ pub struct StepSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct StepResult {
     pub snapshot: StepSnapshot,
-    pub statuses: Vec<(UnitId, UnitStatus)>,
     pub wanted: Vec<(UnitId, Vec<Action>)>,
     /// What each wanted `RunWorker` runs with, evaluated against the stepped
     /// state, so the run layer can pin it without evaluating expressions.
@@ -266,16 +253,29 @@ pub struct StepResult {
 
 /// An operator review a decision is legal on now (part 1 §5.2: the latest
 /// revision of its artifact has no decision of this review), and its inputs,
-/// an unresolved read as null. `target` is that latest revision.
+/// an unresolved read as null. `target` is that latest revision, the one the
+/// review reviews; each decision carries the revision it decides on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedReview {
     pub unit: UnitId,
     pub review: SymbolKey,
     pub target: RevisionId,
+    /// The review's decisions legal now, in key order.
+    pub decisions: Vec<ResolvedDecision>,
     #[serde(with = "crate::wire_numbers::json")]
     #[schemars(with = "Value")]
     pub inputs: Value,
+}
+
+/// One decision of an awaiting review and the revision an `OperatorDecided`
+/// of it must name: the latest of its `on` artifact, else of the review's
+/// `of`. Listed only while that revision has no decision of the review.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedDecision {
+    pub decision: SymbolKey,
+    pub target: RevisionId,
 }
 
 /// The inputs of one wanted `RunWorker` (part 1 §2.5). `inputs` holds the
@@ -318,19 +318,8 @@ pub enum StepError {
 }
 
 #[cfg(test)]
-mod v2_shape_tests {
-    use super::{Action, Event, StepSnapshot, UnitStatus};
-
-    #[test]
-    fn unit_and_action_contracts_have_no_failure_or_ask_variants() {
-        let unit = serde_json::to_string(&schemars::schema_for!(UnitStatus)).unwrap();
-        let action = serde_json::to_string(&schemars::schema_for!(Action)).unwrap();
-        let snapshot = serde_json::to_string(&schemars::schema_for!(StepSnapshot)).unwrap();
-        assert!(!unit.contains("\"failed\""));
-        assert!(!action.contains("\"fail\""));
-        assert!(!action.contains("\"ask\""));
-        assert!(!snapshot.contains("NeedsOperator"));
-    }
+mod tests {
+    use super::Event;
 
     #[test]
     fn event_contract_has_the_seven_kinds_swept_by_evaluator_invariants() {

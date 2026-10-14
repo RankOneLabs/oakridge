@@ -17,7 +17,7 @@ const isUniqueViolation = (cause: unknown): boolean =>
 
 /** Registry and visibility writes announce themselves on the operator stream in the same transaction. */
 async function announce(trx: DatabaseTransaction, run_id: RunId | null, run_key: string, payload: OperatorEventPayload): Promise<void> {
-  await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key, event_key: payload.kind,
+  await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key,
     payload: jsonText(payload) }).execute();
 }
 

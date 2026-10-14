@@ -25,16 +25,22 @@
         "name": "ident",
         "head_owner": "ident",
         "head_branch": "text",
-        "base_branch": "text"
+        "base_branch": "text",
+        "pr_url": "text"
       }
     },
     "output_schema": {
-      "observations": "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, merged_at: optional(text)})"
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
+      "head_sha": "optional(text)",
+      "merged_at": "optional(text)"
     },
     "error_codes": [
       "discovery_unsupported",
       "auth",
-      "provider_rejected"
+      "provider_rejected",
+      "pull_request_mismatch"
     ]
   },
   {

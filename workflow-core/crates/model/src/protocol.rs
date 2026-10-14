@@ -9,12 +9,10 @@ pub const PROTOCOL_VERSION: u32 = 4;
 pub const WIRE_MAX_JSON_DEPTH: usize = 127;
 /// Containers the frame wraps around the deepest JSON value slot. Values are
 /// plain JSON, one container per `max_depth` unit. The deepest slot is a
-/// response's wanted action: frame, `result`, `value` (the output), `value`
-/// (the step result), `wanted`, the `[unit, actions]` pair, the actions list,
-/// then the action whose `input` or `outcome` is the value: 8. A snapshot
-/// unit's `outcome` sits at the same depth (frame, `result`, output, step
-/// result, `snapshot`, `units`, unit, `status`). Requests are shallower: a
-/// step's snapshot outcome is at 6, and a compile's workflow source at 2.
+/// response's snapshot unit `outcome`: frame, `result`, `value` (the output),
+/// `value` (the step result), `snapshot`, `units`, the unit, then its
+/// `status`: 8. Requests are shallower: a step's snapshot outcome is at 6,
+/// and a compile's workflow source at 2.
 pub const WIRE_ENVELOPE_CONTAINERS: usize = 8;
 /// The `max_depth` a workflow's values may reach. Any value at this depth fits
 /// the wire with room to spare (28 + 8 = 36 <= 127), so a legal value is

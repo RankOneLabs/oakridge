@@ -6,7 +6,7 @@ import { resolveViewer } from "../../artifactRegistry";
 import { createOperatorThread } from "../../client";
 import { queryKeys } from "../../queryKeys";
 import { useThreads } from "../../hooks/useThreads";
-import { usePingThread } from "../../hooks/usePingThread";
+import { useAddThreadMessage } from "../../hooks/useAddThreadMessage";
 import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
@@ -25,11 +25,10 @@ export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, 
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [isPing, setIsPing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const client = useQueryClient();
   const threads = useThreads(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId, selected !== null);
-  const message = usePingThread(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId);
+  const message = useAddThreadMessage(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId);
   if (!selected) return <ArtifactReviewShell title="Artifact" onBack={onBack}><p role="status">This revision is no longer among the unit's latest revisions.</p></ArtifactReviewShell>;
   const Viewer = resolveViewer(selected.artifact.schema);
   const unit = selectUnitDetail(units, selected.unit_id);
@@ -56,10 +55,9 @@ export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, 
         <Button type="submit">Start thread</Button></form>
       {selectedThreadId && <form onSubmit={(event) => { event.preventDefault(); if (!text.trim()) return;
         void message.mutateAsync({ run_id: selected.revision.run_id, unit_id: selected.unit_id, thread_id: selectedThreadId,
-          request_key: randomUuid(), text: text.trim(), ping: isPing }).then(() => { setText(""); setSelectedThreadId(null); })
+          request_key: randomUuid(), text: text.trim() }).then(() => { setText(""); setSelectedThreadId(null); })
           .catch((cause: unknown) => setError(String(cause)));
       }}><label>Reply<textarea value={text} onChange={(event) => setText(event.target.value)} /></label>
-        <label><input type="checkbox" checked={isPing} onChange={(event) => setIsPing(event.target.checked)} />Ping agent</label>
         <Button type="submit" disabled={message.isPending}>Send reply</Button></form>}
       {error && <p role="alert">{error}</p>}
     </section>

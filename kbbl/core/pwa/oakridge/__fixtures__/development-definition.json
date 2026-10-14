@@ -1,6 +1,5 @@
 {
   "key": "development",
-  "version": 1,
   "root": "$root",
   "schemas": [
     {
@@ -141,38 +140,10 @@
       }
     },
     {
-      "key": "pr_observations",
+      "key": "pr_status",
       "shape": {
         "kind": "record",
         "fields": [
-          {
-            "key": "observations",
-            "schema": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text})"
-          }
-        ]
-      }
-    },
-    {
-      "key": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text})",
-      "shape": {
-        "kind": "list",
-        "item": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text}",
-        "max_items": 9007199254740991
-      }
-    },
-    {
-      "key": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text}",
-      "shape": {
-        "kind": "record",
-        "fields": [
-          {
-            "key": "base_branch",
-            "schema": "text"
-          },
-          {
-            "key": "head_branch",
-            "schema": "text"
-          },
           {
             "key": "head_sha",
             "schema": "optional(text)"
@@ -182,28 +153,12 @@
             "schema": "optional(text)"
           },
           {
-            "key": "name",
-            "schema": "ident"
-          },
-          {
             "key": "number",
             "schema": "integer"
           },
           {
-            "key": "owner",
-            "schema": "ident"
-          },
-          {
-            "key": "provider",
-            "schema": "text"
-          },
-          {
-            "key": "source",
-            "schema": "text"
-          },
-          {
             "key": "state",
-            "schema": "text"
+            "schema": "enum(open, merged, closed_unmerged)"
           },
           {
             "key": "url",
@@ -218,6 +173,17 @@
         "kind": "integer",
         "min": -9007199254740991,
         "max": 9007199254740991
+      }
+    },
+    {
+      "key": "enum(open, merged, closed_unmerged)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "open",
+          "merged",
+          "closed_unmerged"
+        ]
       }
     },
     {
@@ -1068,7 +1034,7 @@
       "artifacts": []
     },
     {
-      "key": "repository",
+      "key": "prepare/repository",
       "stage": "prepare",
       "label": "Repository",
       "input_schema": "{repository: repository}",
@@ -1104,7 +1070,7 @@
       ]
     },
     {
-      "key": "brief",
+      "key": "briefs/brief",
       "stage": "brief",
       "label": "Brief",
       "input_schema": "{analysis: analysis_body, cohort: plan_cohort, plan: plan_body, spec: text, workspaces: list(prepared)}",
@@ -1116,7 +1082,7 @@
       ]
     },
     {
-      "key": "cohort",
+      "key": "implementation/cohort",
       "stage": "cohort",
       "label": "Cohort",
       "input_schema": "{admission: boolean, brief: brief_body, repository: repository, workspace: workspace}",
@@ -1139,7 +1105,23 @@
         },
         {
           "key": "pr_state",
-          "schema": "pr_observations"
+          "schema": "pr_status"
+        }
+      ]
+    },
+    {
+      "key": "integration/repository",
+      "stage": "integration",
+      "label": "Repository",
+      "input_schema": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
+      "artifacts": [
+        {
+          "key": "pr",
+          "schema": "pr_body"
+        },
+        {
+          "key": "pr_state",
+          "schema": "pr_status"
         }
       ]
     }

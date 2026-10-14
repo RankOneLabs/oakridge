@@ -1,8 +1,9 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { RunEventCursor } from "../projections/run-event";
-import { selectOperatorFrame } from "../projections/operator-event";
+import { selectOperatorFrame, type StreamFrameData } from "../projections/operator-event";
 import type { Database } from "../storage/database";
+import { errorResponse, MalformedRequestError } from "./errors";
 import { readEventStreamBoundary, readOperatorEventsAfter } from "../storage/read-store";
 
 /** The SSE id is the base64url JSON cursor; Last-Event-ID hands it back on reconnect. */
@@ -33,7 +34,7 @@ export function installEventStream(app: Hono, deps: { readonly db: Database; rea
   app.get("/events", async (c) => {
     const resume = c.req.header("last-event-id");
     let cursor: RunEventCursor | null = resume ? decodeEventCursor(resume) : null;
-    if (resume && cursor === null) return c.json({ error: "malformed_request", detail: "invalid event cursor" }, 400);
+    if (resume && cursor === null) return errorResponse(new MalformedRequestError("invalid event cursor"));
     return streamSSE(c, async (stream) => {
       // Fix the starting point before signalling ready, so every commit after ready is delivered.
       const boundary = await readEventStreamBoundary(deps.db);
@@ -46,8 +47,8 @@ export function installEventStream(app: Hono, deps: { readonly db: Database; rea
         for (const row of rows) {
           cursor = { commit_txid: row.commit_txid, id: row.id };
           const frame = selectOperatorFrame(row);
-          const replay = is_reconnect && row.was_visible_at_subscription;
-          await stream.writeSSE({ event: frame.event, id: encodeEventCursor(cursor), data: JSON.stringify({ ...frame.data, replay }) });
+          const data: StreamFrameData = { ...frame.data, replay: is_reconnect && row.was_visible_at_subscription };
+          await stream.writeSSE({ event: frame.event, id: encodeEventCursor(cursor), data: JSON.stringify(data) });
           last_write = Date.now();
         }
         if (rows.length === PAGE) continue;

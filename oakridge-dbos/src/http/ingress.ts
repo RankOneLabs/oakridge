@@ -7,7 +7,7 @@ import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, 
 import { readSessionAttempt } from "../storage/read-store";
 import { findLaunchableDefinition, hasProject } from "../storage/registry-store";
 import { operatorWriterFromCredential } from "./control-auth";
-import { errorResponse, fault, MalformedRequestError, MissingEntityError, requestBody } from "./errors";
+import { errorResponse, fault, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
 
 /**
  * Ingress (part 1 §7.1): HTTP to events. Each route checks authentication and
@@ -93,7 +93,7 @@ export function publicationSecretHash(request: Pick<Request, "headers">): string
 }
 /** The writer of a publication and the attempt it names; an operator's edit names none. */
 interface Publisher { readonly writer: Writer; readonly by: string | null }
-const refusedSecret = (): Response => Response.json({ error: "publication secret refused", code: "unauthorized" }, { status: 401 });
+const refusedSecret = (): Response => errorResponse(new UnauthorizedError("publication secret refused"));
 
 export interface IngressDependencies extends CommitDependencies {
   /** Whether a request on the publish route carries the operator's credential (see `operatorCredentialCheck`). */

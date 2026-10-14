@@ -45,7 +45,7 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
     revisions: revisions.map((revision) => ({ id: revision.id, unit: revision.unit_id, artifact: revision.artifact,
       body: revision.body, by: revision.by_id, predecessor: revision.predecessor_id, subject: revision.subject })),
     decisions: decisions.map((decision) => ({ id: decision.id, unit: decision.unit_id, review: decision.review,
-      decision: decision.decision, effect: decision.effect as "approve" | "request_changes", target: decision.target_revision_id, payload: decision.payload })),
+      decision: decision.decision, effect: decision.effect, target: decision.target_revision_id, payload: decision.payload })),
     retry_events: retries.flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
       ? [[retry.unit_id, retry.payload.worker, retry.ingress_id]] : []),
   };

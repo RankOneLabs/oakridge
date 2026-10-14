@@ -30,7 +30,6 @@ export type OperatorEventPayload =
 export interface OperatorEventRow {
   readonly id: string;
   readonly commit_txid: string;
-  readonly event_key: OperatorEventPayload["kind"];
   readonly payload: OperatorEventPayload;
 }
 
@@ -39,15 +38,21 @@ export interface OperatorEventDeliveryRow extends OperatorEventRow {
   readonly was_visible_at_subscription: boolean;
 }
 
-export type OperatorFrame =
+/** What an invalidate frame tells subscribers to refetch. */
+export interface StreamInvalidation { readonly kind: "invalidate"; readonly target: "run" | "runs" | "definitions" | "projects"; readonly run_id: RunId | null }
+export type StreamFrame =
   | { readonly event: "run_event"; readonly data: RunEvent }
-  | { readonly event: "invalidate"; readonly data: { readonly kind: "invalidate"; readonly target: "run" | "runs" | "definitions" | "projects"; readonly run_id: RunId | null } };
+  | { readonly event: "invalidate"; readonly data: StreamInvalidation };
+/** A frame's data as GET /events sends it: `replay` marks a row a reconnecting subscriber had already seen. */
+export type StreamFrameData = StreamFrame["data"] & { readonly replay: boolean };
 
-export function selectOperatorFrame(row: OperatorEventRow): OperatorFrame {
-  if (row.event_key === "run_event" && row.payload.kind === "run_event") return { event: "run_event", data: row.payload.data };
-  if (row.event_key === "invalidate" && row.payload.kind === "invalidate") return { event: "invalidate", data: { kind: "invalidate", ...row.payload.data } };
-  // A fault changes what the run's attention shows, not its state: the run's views refresh.
-  if (row.event_key === "commit_fault" && row.payload.kind === "commit_fault")
-    return { event: "invalidate", data: { kind: "invalidate", target: "run", run_id: row.payload.data.run_id } };
-  throw new Error(`operator event ${row.id} has a mismatched payload`);
+/** The frame an outbox row streams as, read from its payload. */
+export function selectOperatorFrame(row: OperatorEventRow): StreamFrame {
+  const { payload } = row;
+  switch (payload.kind) {
+    case "run_event": return { event: "run_event", data: payload.data };
+    case "invalidate": return { event: "invalidate", data: { kind: "invalidate", ...payload.data } };
+    // A fault changes what the run's attention shows, not its state: the run's views refresh.
+    case "commit_fault": return { event: "invalidate", data: { kind: "invalidate", target: "run", run_id: payload.data.run_id } };
+  }
 }

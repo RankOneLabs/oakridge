@@ -13,20 +13,11 @@ function collectSourceFiles(dir: string): string[] {
 }
 
 const sourceFiles = collectSourceFiles(PWA_DIR);
-const shellFiles = sourceFiles.filter((file) => {
-  const relative = path.relative(PWA_DIR, file);
-  return relative.startsWith(`oakridge${path.sep}`) || relative.startsWith(`review${path.sep}`);
-});
+const shellFiles = sourceFiles.filter((file) => path.relative(PWA_DIR, file).startsWith(`oakridge${path.sep}`));
 
 describe("Oakridge styling criteria", () => {
   it("renders raw buttons only in the Button atom", () => {
     const offenders = shellFiles.filter((file) => /<button\b/.test(fs.readFileSync(file, "utf8")));
-    expect(offenders.map((file) => path.relative(PWA_DIR, file))).toEqual([]);
-  });
-
-  it("does not emit retired Oakridge button and chip classes", () => {
-    const legacyClass = /(?:className|class)\s*=\s*(?:["'`]|\{)[^\n]*(?:or-btn|or-chip|or-decision-button|or-secondary-button|or-link)\b/;
-    const offenders = sourceFiles.filter((file) => legacyClass.test(fs.readFileSync(file, "utf8")));
     expect(offenders.map((file) => path.relative(PWA_DIR, file))).toEqual([]);
   });
 

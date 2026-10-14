@@ -7,7 +7,7 @@ import { fetchOperatorDefinitionDetail, fetchOperatorDefinitions } from "../clie
 import { makeDefinitionDetail, makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
 import { WorkflowDefListView } from "../views/WorkflowDefListView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
-import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
+import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
 
 vi.mock("../client", () => ({ fetchOperatorDefinitions: vi.fn(), fetchOperatorDefinitionDetail: vi.fn(),
   compileOperatorDefinition: vi.fn(), pinOperatorDefinition: vi.fn(), setOperatorDefinitionArchived: vi.fn() }));
@@ -19,7 +19,7 @@ function show(ui: ReactElement) {
 const list = (onNew = vi.fn(), onSelect = vi.fn(), onClone = vi.fn()) =>
   show(<WorkflowDefListView onBack={() => undefined} onNew={onNew} onSelect={onSelect} onClone={onClone} />);
 const editor = (cloneFromId: string | null = null) =>
-  show(<WorkflowDefEditorView cloneFromId={cloneFromId} onBack={() => undefined} onCreated={() => undefined} />);
+  show(<OperatorDefinitionEditorView cloneFromId={cloneFromId} onBack={() => undefined} onPinned={() => undefined} />);
 
 beforeEach(() => {
   vi.mocked(fetchOperatorDefinitions).mockResolvedValue([]);
@@ -39,7 +39,7 @@ describe("pinned definition catalog", () => {
       makeDefinitionSummary(), makeDefinitionSummary({ bundle_id: "bundle-2", digest: "digest-2" }),
     ]);
     list();
-    expect((await screen.findAllByRole("button", { name: /development v/ })).length).toBe(2);
+    expect((await screen.findAllByRole("button", { name: "development" })).length).toBe(2);
   });
 
   it("shows the empty catalog", async () => {
@@ -73,7 +73,7 @@ describe("pinned definition catalog", () => {
     const onSelect = vi.fn();
     vi.mocked(fetchOperatorDefinitions).mockResolvedValue([makeDefinitionSummary()]);
     list(vi.fn(), onSelect);
-    fireEvent.click(await screen.findByRole("button", { name: /development v/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "development" }));
     expect(onSelect).toHaveBeenCalledWith("bundle-1");
   });
 });

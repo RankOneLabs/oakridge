@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { selectRunStalls, selectStalledWorkers } from "../src/projections/attention";
 import type { CommitFaultNotice } from "../src/projections/operator-event";
+import { selectAttemptViews } from "../src/projections/unit-view";
 import type { AttemptRecord, RunRecord, UnitRecord } from "../src/storage/schema-records";
 
 const unit = { id: "run/analysis", status: { kind: "active" } } as Pick<UnitRecord, "id" | "status">;
@@ -9,25 +10,38 @@ const attempt = (fields: Partial<AttemptRecord>): AttemptRecord => ({ action_id:
   publication_secret_hash: null, created_at: new Date(0), ...fields } as AttemptRecord);
 const failed = attempt({ status: { kind: "failed", code: "worker_exit", detail: "session stopped" }, ended_at: 1 });
 
-test("an active unit's worker whose latest attempt failed, with nothing wanted for it, is stalled", () => {
-  expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [], wanted: [{ unit_id: unit.id, actions: [] }] })).toEqual([
+test("an active unit's worker whose latest attempt failed, with no retry pending, is stalled", () => {
+  expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [] })).toEqual([
     { unit_id: "run/analysis", worker: "writer", action_id: "a1", seq: 1, code: "worker_exit", detail: "session stopped" },
   ]);
 });
 
 test("a pending retry clears the stall for its worker", () => {
   const retry = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" } });
-  expect(selectStalledWorkers({ units: [unit], attempts: [failed, retry], retries: [{ unit_id: unit.id, worker: "writer", retry_id: "e1" }], wanted: [] })).toEqual([]);
+  expect(selectStalledWorkers({ units: [unit], attempts: [failed, retry], retries: [{ unit_id: unit.id, worker: "writer", retry_id: "e1" }] })).toEqual([]);
 });
 
-test("a worker the latest wanted set still wants is not stalled", () => {
-  const wanted = [{ unit_id: unit.id, actions: [{ kind: "run_worker" as const, unit: unit.id, worker: "writer", mode: { kind: "initial" as const }, cause: { kind: "missing" as const } }] }];
-  expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [], wanted })).toEqual([]);
+test("a retry requested but not yet opened clears the stall for its worker", () => {
+  expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [{ unit_id: unit.id, worker: "writer", retry_id: "e1" }] })).toEqual([]);
 });
 
 test("a failed attempt on a unit that is no longer active is not a stall", () => {
   const done = { ...unit, status: { kind: "done", outcome: {} } } as Pick<UnitRecord, "id" | "status">;
-  expect(selectStalledWorkers({ units: [done], attempts: [failed], retries: [], wanted: [] })).toEqual([]);
+  expect(selectStalledWorkers({ units: [done], attempts: [failed], retries: [] })).toEqual([]);
+});
+
+test("a later attempt failing after a retry that succeeded stalls the worker again: the retry is spent", () => {
+  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" }, status: { kind: "succeeded" }, ended_at: 2 });
+  const revised = attempt({ action_id: "a3" as AttemptRecord["action_id"], mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" },
+    status: { kind: "failed", code: "worker_exit", detail: "revise stopped" }, ended_at: 3 });
+  expect(selectStalledWorkers({ units: [unit], attempts: [failed, retried, revised], retries: [{ unit_id: unit.id, worker: "writer", retry_id: "e1" }] })
+    .map((stalled) => [stalled.action_id, stalled.detail])).toEqual([["a3", "revise stopped"]]);
+});
+
+test("the worker's last opened attempt is its current one", () => {
+  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" }, status: { kind: "succeeded" } });
+  const revised = attempt({ action_id: "a3" as AttemptRecord["action_id"], cause: { kind: "changes_requested", decision: "d1" } });
+  expect(selectAttemptViews([failed, retried, revised]).map((view) => view.is_current)).toEqual([false, false, true]);
 });
 
 // ------------------------------------------------------------ run stalls -----

@@ -1,6 +1,6 @@
 import type { Selectable } from "kysely";
 import type { DB } from "./db-types";
-import type { ActionId, CollaborationDeliveryId, CollaborationMessageId, CollaborationThreadId, DecisionId, DefinitionBundleId, EffectIntentId, EventId, OperatorEventId, ProjectId, ReviewItemId, RevisionId, RunId, UnitId } from "../domain/primitives";
+import type { ActionId, CollaborationMessageId, CollaborationThreadId, DecisionId, DefinitionBundleId, EffectIntentId, EventId, OperatorEventId, ProjectId, ReviewItemId, RevisionId, RunId, UnitId } from "../domain/primitives";
 
 export type { ActionId, DecisionId, DefinitionBundleId, EffectIntentId, EventId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 export type { CommitReceipt } from "./json-column-types";
@@ -36,4 +36,3 @@ export type OperatorEventRecord = Branded<Row<"authority.operator_event">, { id:
 export type CollaborationThreadRecord = Branded<Row<"authority.collaboration_thread">, { id: CollaborationThreadId; run_id: RunId; unit_id: UnitId; artifact_revision_id: RevisionId }>;
 export type CollaborationMessageRecord = Branded<Row<"authority.collaboration_message">, { id: CollaborationMessageId; run_id: RunId; unit_id: UnitId; thread_id: CollaborationThreadId }>;
 export type ReviewItemRecord = Branded<Row<"authority.review_item">, { id: ReviewItemId; run_id: RunId; unit_id: UnitId; artifact_revision_id: RevisionId; thread_id: CollaborationThreadId }>;
-export type CollaborationDeliveryRecord = Branded<Row<"authority.collaboration_delivery">, { id: CollaborationDeliveryId; run_id: RunId; unit_id: UnitId; message_id: CollaborationMessageId }>;

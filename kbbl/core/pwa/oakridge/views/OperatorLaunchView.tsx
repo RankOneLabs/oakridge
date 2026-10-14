@@ -12,7 +12,7 @@ import type { OperatorLaunchRequest, OperatorSchema, OperatorDefinitionBundle } 
 import { buildRootInput, inputRecord, isOptionalSchema, type FieldDrafts, type InputField } from "../lib/operator-input";
 import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
-import { readBriefNotesFile } from "../lib/brief-notes";
+import { readSpecFile } from "../lib/spec-file";
 import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfigState } from "../../hooks/useServerConfig";
 import { coerceRoleSelection, initialSelectionForRole } from "../lib/runtime-selection";
 import { selectDefinitionStages, selectRunConfig } from "../lib/launch-role-settings";
@@ -135,7 +135,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
         {selected === "" && <option value="" disabled>Select a definition…</option>}
         {pending && !definitions.data?.some((item) => item.digest === pending.digest)
           && <option value={pending.digest}>{pending.digest}</option>}
-        {definitions.data?.map((item) => <option key={item.digest} value={item.digest}>{item.bundle.key} v{item.bundle.version} · {item.digest}</option>)}
+        {definitions.data?.map((item) => <option key={item.digest} value={item.digest}>{item.bundle.key} · {item.digest}</option>)}
       </select>
       {fields && !rawMode && pending === null && !isPickingProject
         && <Button variant="secondary" onClick={() => setIsPickingProject(true)}>Start from project…</Button>}
@@ -188,7 +188,7 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
               if (!file) return;
               const readVersion = ++specFileReadVersion.current;
               setLoadedSpecFile(null);
-              void readBriefNotesFile(file).then((result) => {
+              void readSpecFile(file).then((result) => {
                 if (readVersion !== specFileReadVersion.current) return;
                 if (!result.ok) { setError(result.error.detail); return; }
                 setFieldDrafts((current) => ({ ...current, spec: result.value.text }));

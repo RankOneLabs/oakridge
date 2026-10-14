@@ -3,6 +3,7 @@ import type { CoreClient } from "../core-client/client";
 import type { WorkerResult } from "../core-client/core-types";
 import { decodeEffectInstruction, selectEverySeconds, type EffectInstruction } from "../domain/effect-instruction";
 import type { RunId } from "../domain/primitives";
+import { isTerminalStatus } from "../domain/unit-status";
 import { bounded, resolveObserve, resolveStart, resolveStop, type WorkerFailure } from "../effects/outcomes";
 import type { EffectProvider, ExternalHandle, ProviderResult, SessionMaterial } from "../effects/provider";
 import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
@@ -10,8 +11,8 @@ import { renderSessionTask, selectSessionTaskContext } from "../effects/session-
 import type { OperationOutcome } from "../operations/outcome";
 import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
-import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure, settleIntent,
-  type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
+import { abandonIntent, claimStart, isStartOwed, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure,
+  settleIntent, type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
 import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readSessionHistory } from "../storage/read-store";
 import { readPromptTexts } from "../storage/registry-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
@@ -242,6 +243,7 @@ type ReportInput = ExecutorReport;
 type AttemptKey = EffectInstruction["attempt"];
 const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string | null> => {
   const { db, core } = current();
+  // A step does not wake the run: its carrier calls wakeRun from the workflow, once its reports are in.
   const committed = await reportWorker({ db, core, wake: () => undefined }, input);
   if (!committed.ok) throw new Error(`${committed.error.operation}: ${committed.error.detail}`);
   const outcome = committed.value;
@@ -277,8 +279,7 @@ export function selectIsAttemptEnded(latest: LatestAttempt | null, seq: number):
  * just as its unit went inactive). The stop of its session is still owed.
  * An end landing between this read and the report is settled by `report`.
  */
-async function endAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<void> {
-  const { attempt } = intent.instruction;
+async function endAttempt(intent: CarriedIntent, failure: WorkerFailure, attempt: AttemptKey = intent.instruction.attempt): Promise<void> {
   if (selectIsAttemptEnded(await latestAttemptStep(attempt.action_id), attempt.seq)) return;
   await report({ run_id: intent.run_id, attempt, report: { kind: "ended", result: failure } });
 }
@@ -302,8 +303,7 @@ interface RunAdvance { readonly is_terminal: boolean; readonly pending_starts: r
 const advanceRunStep = DBOS.registerStep(async (run_id: string): Promise<RunAdvance> => {
   const { db } = current();
   const [standing, intents] = await Promise.all([readRunStanding(db, run_id), listOwedIntents(db, run_id)]);
-  const status = standing?.status.kind;
-  return { is_terminal: status === undefined || status === "done" || status === "cancelled",
+  return { is_terminal: standing === null || isTerminalStatus(standing.status),
     pending_starts: intents.filter((intent) => intent.status !== "stop_requested").map((intent) => intent.id),
     pending_stops: intents.filter((intent) => intent.status === "stop_requested").map((intent) => intent.id) };
 }, { name: "oakridgeAdvanceRun", retriesAllowed: true, maxAttempts: 5 });
@@ -372,8 +372,8 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
 async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
   const timing = current().timing;
   const intent_id = intent.id;
+  if (!isStartOwed(intent.status)) return intent.status;
   let status: EffectStatus | null = intent.status;
-  if (status !== "pending" && status !== "acknowledged") return status;
   const prepared = await prepareSessionStep(intent.instruction);
   if (prepared.kind === "invalid")
     return failAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: prepared.detail });
@@ -420,7 +420,7 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
     // Any observation without an answer counts toward the bound, an unreachable kbbl as much as a 5xx; only an answer resets it.
     unavailable = outcome.kind === "retry" ? unavailable + 1 : 0;
     if (unavailable >= Math.max(1, timing.max_observe_unavailable_attempts)) {
-      return abandonAttempt(intent, { kind: "failed", code: "observation_unavailable",
+      return abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.observation_unavailable,
         detail: `observation unavailable after ${unavailable} consecutive attempts${outcome.kind === "retry" ? `: ${outcome.detail}` : ""}` });
     }
     await DBOS.sleepSeconds(timing.observe_interval_seconds);
@@ -455,7 +455,7 @@ async function runOperation(intent: CarriedIntent): Promise<OperationResult> {
 async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
   const worker = intent.instruction.worker;
   if (worker.kind !== "code") return null;
-  if (intent.status !== "pending" && intent.status !== "acknowledged") return intent.status;
+  if (!isStartOwed(intent.status)) return intent.status;
   const interval = worker.every === null ? null : selectEverySeconds(worker.every);
   if (worker.every !== null && interval === null)
     return failAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: `every ${worker.every} is not a duration` });
@@ -495,6 +495,8 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
     const failure = ended?.seq === seq && ended.status.kind === "failed" ? ended.status : result.kind === "failed" ? result : null;
     if (failure !== null || interval === null)
       return settleStep({ intent_id: intent.id, status: failure ? "failed" : "stopped", last_error: failure ? `${failure.code}: ${failure.detail}` : null });
+    // The watch lives on, so carryStart's wake is far off: what this run published may want new workers now.
+    await wakeRun(intent.run_id);
     await DBOS.sleepSeconds(interval);
     const reloaded = await loadIntentStep(intent.id);
     status = reloaded.kind === "carried" ? reloaded.intent.status : null;
@@ -516,8 +518,7 @@ async function carryStop(intent_id: string, carried?: CarriedStop): Promise<Effe
   if (intent.status !== "stop_requested") return intent.status;
   // Why the attempt failed, when the executor requested the stop; kept past the stop's own retries, across generations.
   const reason = carried === undefined ? intent.last_error : carried.reason;
-  // A code operation leaves nothing running outside: its loop ends when it sees the stop.
-  if (intent.instruction.worker.kind === "code") return settleStep({ intent_id, status: "stopped", last_error: reason });
+  if (intent.instruction.worker.kind === "code") return carryCodeStop(intent, reason);
   // A start never claimed never reached kbbl, so nothing can be running; ensuring the session only to close it would spawn the agent.
   if (intent.tries === 0 && intent.handle === null) return confirmStop(intent, reason);
   let handle = intent.handle;
@@ -534,14 +535,43 @@ async function carryStop(intent_id: string, carried?: CarriedStop): Promise<Effe
   }
 }
 /**
+ * A code operation runs inside its start carrier, so nothing outside needs
+ * stopping, but its attempt still has to end. While this engine's start
+ * carrier is live it may be executing the operation, and its loop ends the
+ * attempt when it sees the stop: the stop waits for that rather than settle
+ * under a running operation. Once no carrier is live (it finished, or was
+ * fenced as another engine's and is never resumed), nothing else will end an
+ * attempt still open, so the stop ends it. A watch's open attempt may be a
+ * later seq than the one its instruction names.
+ */
+async function carryCodeStop(intent: CarriedIntent, reason: string | null): Promise<EffectStatus | null> {
+  const timing = current().timing;
+  const { action_id } = intent.instruction.attempt;
+  for (let polls = 0; ; polls++) {
+    const latest = await latestAttemptStep(action_id);
+    const open = latest !== null && !selectIsAttemptEnded(latest, latest.seq) ? { action_id, seq: latest.seq } : null;
+    if (open === null || !await isStartCarrierLive(intent.id)) return confirmStop(intent, reason, open ?? intent.instruction.attempt);
+    if (polls >= timing.carrier_max_iterations && await rollOver("stop", intent.id, { reason })) return intent.status;
+    await DBOS.sleepSeconds(timing.observe_interval_seconds);
+    const reloaded = await loadIntentStep(intent.id);
+    if (reloaded.kind !== "carried") return null;
+    if (reloaded.intent.status !== "stop_requested") return reloaded.intent.status;
+  }
+}
+/** Whether this engine's start carrier for the intent is live: it may be running the operation now, and ends its attempt itself. */
+async function isStartCarrierLive(intent_id: string): Promise<boolean> {
+  const status = (await currentCarrier("start", intent_id))?.status.status;
+  return status === "PENDING" || status === "ENQUEUED";
+}
+/**
  * Nothing of the attempt runs any more. A stop commit requested (its unit is no
  * longer active, or its watch was replaced) ends the attempt as stopped, unless
  * its carrier ended it first; one the executor requested has already reported
  * how its attempt ended.
  */
-async function confirmStop(intent: CarriedIntent, reason: string | null): Promise<EffectStatus | null> {
+async function confirmStop(intent: CarriedIntent, reason: string | null, attempt: AttemptKey = intent.instruction.attempt): Promise<EffectStatus | null> {
   if (intent.stop_origin === "commit")
-    await endAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" });
+    await endAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" }, attempt);
   const settled = await settleStep({ intent_id: intent.id, status: "stopped", last_error: reason });
   await wakeRun(intent.run_id);
   return settled;
@@ -586,7 +616,6 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<vo
     start_step: forkStartStep(steps), application_version: DBOS.applicationVersion });
 }
 
-const isStartOwed = (status: EffectStatus): boolean => status === "pending" || status === "acknowledged";
 /**
  * End an owed start that no carrier will finish. An unclaimed intent never
  * reached the provider and fails outright; any other may have a live
@@ -600,7 +629,7 @@ async function endOwedStart(intent: CarriedIntent, failure: WorkerFailure): Prom
 async function settleExpiredEffect(intent_id: string): Promise<void> {
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind !== "carried" || !isStartOwed(loaded.intent.status)) return;
-  await endOwedStart(loaded.intent, { kind: "failed", code: "execution_deadline_exceeded", detail: `execution deadline exceeded for ${intent_id}` });
+  await endOwedStart(loaded.intent, { kind: "failed", code: PROVIDER_ERROR_CODES.execution_deadline_exceeded, detail: `execution deadline exceeded for ${intent_id}` });
 }
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>

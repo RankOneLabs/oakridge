@@ -1,19 +1,16 @@
 import type { OperatorRunView, OperatorUnitView } from "../../operator-contracts";
-import { selectCompletedUnitDetails, selectFinalIntegrationUnit, selectRunProgress, selectWaitingUnits } from "../../lib/run-overview";
+import { selectCompletedUnitDetails, selectRunProgress, selectWaitingUnits } from "../../lib/run-overview";
 import { OperatorTypedValue } from "../molecules/OperatorTypedValue";
 import { RunStageRow } from "../molecules/RunStageRows";
 import { ParkedGateList } from "./ParkedGateList";
-import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
 interface Props { readonly run: OperatorRunView; readonly units: readonly OperatorUnitView[]; readonly onOpenUnit: (id: string) => void }
 export function RunOverviewPane({ run, units, onOpenUnit }: Props) {
   const progress = selectRunProgress(run);
-  const finalIntegration = selectFinalIntegrationUnit(units);
   return <section data-testid="or-run-overview"><h2>Overview</h2>
     <p>{progress.complete} of {progress.total} units complete · {progress.needs_attention} need attention</p>
     <ul>{run.units.map((unit) => <RunStageRow key={unit.unit_id} unit={unit} onOpen={onOpenUnit} />)}</ul>
     <ParkedGateList units={units} onOpenUnit={onOpenUnit} />
-    {finalIntegration && <FinalIntegrationPanel unit={finalIntegration} />}
     {selectWaitingUnits(units).map((unit) => <section key={unit.unit_id}>
       <h3>{unit.label}</h3><p>{unit.attention?.kind === "waiting" ? unit.attention.reason : ""}</p>
     </section>)}

@@ -1,10 +1,11 @@
 import type { AttemptStatus, Cause, DecisionEffect, Mode, Review, Stage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
+import { isTerminalStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
 import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
-import { selectAttention, type Attention, type UnitAttention } from "./attention";
+import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
 import { EMPTY_PAYLOAD, schemaKey, selectDecisionPayloadType, typeSchemaKey } from "./schema-view";
-import { ROOT_UNIT_KEY, selectUnitLabel, titleCase } from "./unit-label";
+import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, titleCase } from "./unit-label";
 
 /** Artifact bodies, unit inputs and outcomes, and decision payloads are plain JSON. */
 export type BodyValue = JsonValue;
@@ -94,22 +95,20 @@ export interface UnitView {
   readonly artifacts: readonly ArtifactView[];
 }
 
-export const isTerminalStatus = (status: UnitStatus): boolean => status.kind === "done" || status.kind === "cancelled";
-
 /** Attempts, oldest first, each numbered among its worker's attempts on its unit. */
 export function selectAttemptViews(attempts: readonly AttemptRecord[]): readonly AttemptView[] {
   const counts = new Map<string, number>();
-  const workerOf = (attempt: AttemptRecord): string => `${attempt.unit_id}:${attempt.worker}`;
+  const latest = selectLatestAttempts(attempts);
   const numbered = attempts.map((attempt) => {
-    const number = (counts.get(workerOf(attempt)) ?? 0) + 1;
-    counts.set(workerOf(attempt), number);
+    const number = (counts.get(selectAttemptWorkerKey(attempt)) ?? 0) + 1;
+    counts.set(selectAttemptWorkerKey(attempt), number);
     return { attempt, number };
   });
   return numbered.map(({ attempt, number }) => ({ id: `${attempt.action_id}:${attempt.seq}`, unit_id: attempt.unit_id,
     worker: attempt.worker, number, status: attempt.status.kind,
     failure: attempt.status.kind === "failed" ? { code: attempt.status.code, detail: attempt.status.detail } : null,
     mode: attempt.mode.kind, cause: attempt.cause, kbbl_session_id: attempt.kbbl_session_id,
-    created_at: attempt.created_at, is_current: number === counts.get(workerOf(attempt)) }));
+    created_at: attempt.created_at, is_current: latest.get(selectAttemptWorkerKey(attempt)) === attempt }));
 }
 
 /** One artifact's revisions, oldest first, numbered from 1. */
@@ -150,13 +149,13 @@ function decisionKey(stage: Stage, review: string, decision: string): string {
   return reuses > 1 ? `${review}:${decision}` : decision;
 }
 
-function reviewDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, stage: Stage, attention: UnitAttention): readonly DecisionDefinition[] {
+function reviewDecisions(stage: Stage, attention: UnitAttention): readonly DecisionDefinition[] {
   return attention.awaiting.flatMap((awaiting) => {
     const review: Review | undefined = stage.reviews?.[awaiting.review];
     if (!review) return [];
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
-      // The review's target is its `of` revision; a decision `on` another artifact decides that artifact's latest.
-      const target = decision.on == null ? awaiting.target : revisionsOf(read.revisions, unit.id, decision.on).at(-1)?.id;
+      // The core names each decision's target; a decision it does not list is not legal now.
+      const target = awaiting.decisions.find((resolved) => resolved.decision === key)?.target;
       if (target === undefined) return [];
       return [{ key: decisionKey(stage, awaiting.review, key), label: decision.label, payload_schema: schemaKey(selectDecisionPayloadType(decision)),
         fields: Object.entries(decision.fields ?? {}).map(([field, label]) => ({ key: field, label })),
@@ -172,15 +171,15 @@ const CANCEL: DecisionDefinition = { key: "cancel", label: "Cancel run", payload
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {
   const stage = unit.stage === null ? undefined : read.definition.workflow.stages[unit.stage];
-  const cancel = unit.unit_key === ROOT_UNIT_KEY && !isTerminalStatus(read.run.status) ? [CANCEL] : [];
-  return [...(stage ? reviewDecisions(read, unit, stage, attention) : []), ...retryDecisions(attention), ...cancel];
+  const cancel = selectUnitKey(unit) === ROOT_UNIT_KEY && !isTerminalStatus(read.run.status) ? [CANCEL] : [];
+  return [...(stage ? reviewDecisions(stage, attention) : []), ...retryDecisions(attention), ...cancel];
 }
 /** Decisions that ask for the operator: everything but the run's own cancel (part 2: counts come from asks). */
 export const isAsk = (decision: DecisionDefinition): boolean => decision.submit.kind !== "cancel";
 
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
-  return { unit_id: unit.id, run_id: unit.run_id, unit_key: unit.unit_key, label: selectUnitLabel(unit, read.definition.workflow),
-    stage: unit.stage, collection_key: unit.collection_key, input: unit.input as BodyValue,
+  return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, read.definition.workflow),
+    stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),

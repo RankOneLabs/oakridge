@@ -24,7 +24,7 @@ async function launched(): Promise<RunId> {
   return run_id;
 }
 const announce = (db: Pick<DatabaseTransaction, "insertInto">, key: string, payload: OperatorEventPayload) =>
-  db.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: null, run_key: key, event_key: payload.kind, payload: jsonText(payload) }).execute();
+  db.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: null, run_key: key, payload: jsonText(payload) }).execute();
 
 interface RawFrame { readonly id: string; readonly event: string; readonly data: { readonly replay: boolean; readonly [key: string]: unknown } }
 /** Reads SSE frames from an already subscribed stream. */

@@ -21,7 +21,7 @@ test("the invocation deadline aborts an in-flight GitHub fetch", async () => {
   })) as unknown as typeof fetch;
   const controller = new AbortController();
   const reader = new GithubPullRequestReader({ token: "test" }, http);
-  const operation = reader.find_for_branches({ owner: "owner", name: "repo", head_owner: "owner", head_branch: "head", base_branch: "base" }, { signal: controller.signal })
+  const operation = reader.get({ owner: "owner", name: "repo", number: 1 }, { signal: controller.signal })
     .then((value) => ({ kind: "acknowledged" as const, value }));
   const result = await bounded(operation, 100, controller);
   expect({ kind: result.kind, was_aborted }).toEqual({ kind: "uncertain", was_aborted: true });

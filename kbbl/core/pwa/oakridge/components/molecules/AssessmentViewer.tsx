@@ -12,7 +12,7 @@ export function AssessmentViewer({ body }: ViewerProps) {
   const verdict = selectFieldText(body, "verdict") ?? "assessment";
   const verdictLabel = `${verdict.charAt(0).toUpperCase()}${verdict.slice(1).replaceAll("_", " ")}`;
   return <article className="flex flex-col gap-4" data-testid="or-assessment-viewer">
-    <StatusBadge status={verdict} label={verdictLabel} testId="or-assessment-verdict" />
+    <StatusBadge subject={{ kind: "artifact_value", status: verdict }} label={verdictLabel} testId="or-assessment-verdict" />
     <ArtifactSection title="findings" testId="or-assessment-findings">
       <div data-testid="or-assessment-attention"><ol>{assessment.needs_attention.map((finding, index) =>
         <li key={index}><OperatorTypedValue value={finding} /></li>)}</ol></div>

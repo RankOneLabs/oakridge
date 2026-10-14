@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
-import type { CollaborationDeliveryRecord, CollaborationMessageRow, CollaborationThreadRow, ReviewItemRow } from "../domain/delegated-session";
+import type { CollaborationMessageRow, CollaborationThreadRow, ReviewItemRow } from "../domain/delegated-session";
 import { selectCollaborationThreadView, type CollaborationThreadView } from "../projections/collaboration-view";
 import type { DB } from "./db-types";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
-import type { CollaborationDeliveryPayload, CollaborationMessageBody, CollaborationThreadContext, ReviewItemBody } from "./json-column-types";
+import type { CollaborationMessageBody, CollaborationThreadContext, ReviewItemBody } from "./json-column-types";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
 
@@ -80,8 +80,7 @@ export interface MessageInput {
 }
 export async function addCollaborationMessage(db: Database, input: MessageInput): Promise<CollaborationWriteResult<CollaborationMessageRow>> {
   const matches = (row: CollaborationMessageRow): boolean => row.run_id === input.run_id && row.unit_id === input.unit_id
-    && row.thread_id === input.thread_id && row.body.text === input.body.text && row.body.author === input.body.author
-    && (row.body.ping ?? false) === (input.body.ping ?? false);
+    && row.thread_id === input.thread_id && row.body.text === input.body.text && row.body.author === input.body.author;
   return db.transaction().execute(async (trx) => {
     const prior = await readMessage(trx, input.id);
     if (prior) return matches(prior) ? { kind: "replayed", value: prior } : { kind: "conflict" };
@@ -100,12 +99,6 @@ export async function addCollaborationMessage(db: Database, input: MessageInput)
 async function readMessage(db: Reader, id: string): Promise<CollaborationMessageRow | null> {
   const row = await db.selectFrom("authority.collaboration_message").selectAll().where("id", "=", id).executeTakeFirst();
   return row ? { ...row, created_at: createdAt(row.created_at) } : null;
-}
-
-/** The revision a thread is attached to, when the thread belongs to the run and unit named. */
-export async function readThreadRevision(db: Reader, input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string }): Promise<string | null> {
-  const thread = await readThread(db, input.thread_id);
-  return thread && thread.run_id === input.run_id && thread.unit_id === input.unit_id ? thread.artifact_revision_id : null;
 }
 
 export interface ReviewItemInput {
@@ -139,26 +132,6 @@ async function readReviewItem(db: Reader, id: string): Promise<ReviewItemRow | n
   return row ? reviewItemRow(row) : null;
 }
 
-export interface DeliveryInput {
-  readonly id: string; readonly run_id: string; readonly unit_id: string;
-  readonly message_id: string; readonly payload: CollaborationDeliveryPayload;
-}
-/**
- * One delivery outcome per id; a repeat returns the outcome first recorded.
- * The run row is share-locked like every other collaboration write, so run
- * deletion either finishes first (null: the run is gone) or waits for it.
- */
-export async function recordCollaborationDelivery(db: Database, input: DeliveryInput): Promise<CollaborationDeliveryRecord | null> {
-  return db.transaction().execute(async (trx) => {
-    const run = await trx.selectFrom("authority.run").select("id").where("id", "=", input.run_id).forShare().executeTakeFirst();
-    if (!run) return null;
-    const row = await trx.insertInto("authority.collaboration_delivery").values({ ...input, payload: jsonText(input.payload) })
-      .onConflict((conflict) => conflict.column("id").doNothing()).returningAll().executeTakeFirst()
-      ?? await trx.selectFrom("authority.collaboration_delivery").selectAll().where("id", "=", input.id).executeTakeFirstOrThrow();
-    return { ...row, created_at: createdAt(row.created_at) };
-  });
-}
-
 /** The threads on a revision and on every revision before it, oldest first; only the latest revision's are writable. */
 export async function readCollaborationThreads(db: Reader, input: { readonly run_id: string; readonly unit_id: string; readonly revision_id: string }):
   Promise<readonly CollaborationThreadView[]> {
@@ -177,21 +150,15 @@ export async function readCollaborationThreads(db: Reader, input: { readonly run
     .sort((left, right) => (depth.get(right.artifact_revision_id) ?? 0) - (depth.get(left.artifact_revision_id) ?? 0));
   if (threads.length === 0) return [];
   const thread_ids = threads.map((thread) => thread.id);
-  const [messages, review_items, deliveries] = await Promise.all([
+  const [messages, review_items] = await Promise.all([
     db.selectFrom("authority.collaboration_message").selectAll().where("run_id", "=", input.run_id).where("thread_id", "=", anyOf(thread_ids))
       .orderBy("thread_id").orderBy("created_at").orderBy("id").execute(),
     db.selectFrom("authority.review_item").selectAll().where("run_id", "=", input.run_id).where("thread_id", "=", anyOf(thread_ids))
       .orderBy("thread_id").orderBy("created_at").orderBy("id").execute(),
-    db.selectFrom("authority.collaboration_delivery as delivery")
-      .innerJoin("authority.collaboration_message as message", (join) =>
-        join.onRef("message.run_id", "=", "delivery.run_id").onRef("message.id", "=", "delivery.message_id"))
-      .selectAll("delivery").select("message.thread_id").where("delivery.run_id", "=", input.run_id).where("message.thread_id", "=", anyOf(thread_ids))
-      .orderBy("message.thread_id").orderBy("delivery.created_at", "desc").orderBy("delivery.id", "desc").execute(),
   ]);
   return threads.map((thread) => selectCollaborationThreadView({ ...thread, latest_revision_id: latest?.id ?? null },
     messages.filter((row) => row.thread_id === thread.id).map((row) => ({ ...row, created_at: createdAt(row.created_at) })),
-    review_items.flatMap((row) => { const item = row.thread_id === thread.id ? reviewItemRow(row) : null; return item ? [item] : []; }),
-    deliveries.filter((row) => row.thread_id === thread.id).map(({ thread_id: _thread, ...row }) => ({ ...row, created_at: createdAt(row.created_at) }))));
+    review_items.flatMap((row) => { const item = row.thread_id === thread.id ? reviewItemRow(row) : null; return item ? [item] : []; })));
 }
 
 /** The revision and its predecessors, newest first, within one unit: one recursive query, however long the chain. */

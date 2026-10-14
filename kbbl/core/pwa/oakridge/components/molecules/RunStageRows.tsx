@@ -7,7 +7,7 @@ interface Props { readonly unit: OperatorRunUnitSummary; readonly onOpen: (unitI
 export function RunStageRow({ unit, onOpen }: Props) {
   return <li className="flex items-center gap-3 border-b border-[var(--border-subtle)] py-2" data-testid="or-stage-row">
     <Button variant="secondary" onClick={() => onOpen(unit.unit_id)}>{unit.label}</Button>
-    <StatusBadge status={selectUnitStatus(unit)} />
+    <StatusBadge subject={{ kind: "unit", status: selectUnitStatus(unit) }} />
     {unit.asks.length > 0 && <span className="text-xs">{unit.asks.length} actions</span>}
   </li>;
 }

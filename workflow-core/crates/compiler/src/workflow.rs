@@ -685,17 +685,6 @@ fn compile_group(
                 }
             }
         }
-        let allowed: BTreeSet<_> = match &unit.after {
-            UnitDependencies::Fixed(after) => after.iter().map(|key| key.0.as_str()).collect(),
-            _ => BTreeSet::new(),
-        };
-        for expression in unit.input.values() {
-            if let Some((other, _)) = expression.split_once(".outcome") {
-                if !allowed.contains(other) {
-                    return Err(reject(3, format!("unit {key} reads {other} outside after")));
-                }
-            }
-        }
     }
     // A member's id is `group/<key>`, its key runtime data, so a sibling's
     // id (or another collection's member's) could be any member's.

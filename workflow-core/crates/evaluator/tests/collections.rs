@@ -114,11 +114,16 @@ fn a_member_input_is_evaluated_against_its_own_each() {
 }
 
 /// `ident` would refuse these at ingress; a `text` key reaches the member
-/// guard, which is the one the rework had to keep.
+/// guard, which applies the same ident rule, length bound included.
 #[test]
-fn a_key_with_a_slash_or_control_character_is_rejected() {
-    for key in ["a/b", "a\u{7}b", ""] {
-        let error = launch(json!([member(key, json!([]), "T")])).unwrap_err();
+fn a_key_that_is_not_an_ident_is_rejected() {
+    for key in [
+        "a/b".to_owned(),
+        "a\u{7}b".to_owned(),
+        String::new(),
+        "k".repeat(101),
+    ] {
+        let error = launch(json!([member(&key, json!([]), "T")])).unwrap_err();
         assert!(
             matches!(&error, StepError::Rejected { reason } if reason.contains("illegal or duplicate key")),
             "{key:?} produced {error:?}"

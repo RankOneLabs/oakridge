@@ -8,6 +8,7 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { launchRunId } from "../src/storage/commit";
+import { selectCollectionKey } from "../src/projections/unit-label";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { scratchDatabase } from "./authority-fixture";
@@ -35,25 +36,34 @@ function developmentWorkflow(): Workflow {
   return JSON.parse(text.replaceAll('"every": "2m"', '"every": "1s"')) as Workflow;
 }
 
+/** The url GitHub gives pull request `number` of the e2e repository. */
+const pullUrl = (number: number): string => `https://github.com/oakridge-e2e/app/pull/${number}`;
+/** Each branch's pull request number. */
+const PULL_NUMBERS: { readonly [branch: string]: number } = { "cohort-a": 1, "cohort-b": 2, integration: 3 };
+
 /**
  * A forge whose pull requests the agents open and the test merges, served as
- * GitHub's pull request list to the production reader: what the PR watches
- * publish is what that reader makes of it.
+ * GitHub's pull request endpoint to the production reader: what the PR
+ * watches publish is what that reader makes of it.
  */
 class StubForge {
-  readonly pulls = new Map<string, { readonly url: string; state: "open" | "merged"; readonly base: string }>();
-  open(branch: string, url: string, base: string): void { if (!this.pulls.has(branch)) this.pulls.set(branch, { url, state: "open", base }); }
-  merge(branch: string): void { const pull = this.pulls.get(branch); if (pull) pull.state = "merged"; }
-  /** `GET /repos/:owner/:name/pulls?head=:owner::branch&base=:base`. */
-  readonly list = (async (input: string | URL | Request) => {
-    const url = new URL(String(input));
-    const [head_owner = "", head_branch = ""] = (url.searchParams.get("head") ?? "").split(":");
-    const pull = this.pulls.get(head_branch);
-    return Response.json(pull && pull.base === url.searchParams.get("base") ? [{ number: 1, html_url: pull.url,
+  readonly pulls = new Map<number, { readonly branch: string; state: "open" | "merged"; readonly base: string }>();
+  open(branch: string, base: string): string {
+    const number = PULL_NUMBERS[branch] ?? 0;
+    if (!this.pulls.has(number)) this.pulls.set(number, { branch, state: "open", base });
+    return pullUrl(number);
+  }
+  merge(branch: string): void { const pull = this.pulls.get(PULL_NUMBERS[branch] ?? 0); if (pull) pull.state = "merged"; }
+  /** `GET /repos/oakridge-e2e/app/pulls/:number`. */
+  readonly get = (async (input: string | URL | Request) => {
+    const number = Number(new URL(String(input)).pathname.split("/").at(-1));
+    const pull = this.pulls.get(number);
+    if (!pull) return Response.json({ message: "Not Found" }, { status: 404 });
+    return Response.json({ number, html_url: pullUrl(number),
       state: pull.state === "merged" ? "closed" : "open", merged_at: pull.state === "merged" ? "2026-10-12T00:00:00Z" : null,
-      head: { ref: head_branch, sha: "abc123", repo: { full_name: `${head_owner}/app` } }, base: { ref: pull.base } }] : []);
+      head: { ref: pull.branch, sha: "abc123", repo: { full_name: "oakridge-e2e/app" } }, base: { ref: pull.base } });
   }) as unknown as typeof fetch;
-  readonly reader = new GithubPullRequestReader({ token: "e2e" }, this.list);
+  readonly reader = new GithubPullRequestReader({ token: "e2e" }, this.get);
 }
 
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
@@ -83,20 +93,20 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         await publish("brief", { cohort_id: member, repository_key: "app", title: `Cohort ${member}`, depends_on: dependenciesOf(member),
           goal: "Build it.", files_in_scope: [], decisions_made: [], approaches_rejected: [], acceptance_criteria: ["it works"], next_action: "build" });
         break;
-      case "builder":
+      case "builder": {
         timeline.set(`build:${member}`, Date.now());
-        forge.open(`cohort-${member}`, `https://forge.test/app/pull/${member}`, "develop");
+        const pr_url = forge.open(`cohort-${member}`, "develop");
         await publish("build_result", { repository_key: "app", summary: `Built ${member}.`, changed_files: [`${member}.ts`],
           tests: { passed: 1, failed: 0, output: null, summary: null, cargo_test_output: null }, delegated_session_metadata: null, known_issues: [] });
-        await publish("pr", { pr_url: `https://forge.test/app/pull/${member}`, branch: `cohort-${member}`, summary: `Cohort ${member}.`, review_status: "ready" });
+        await publish("pr", { pr_url, branch: `cohort-${member}`, summary: `Cohort ${member}.`, review_status: "ready" });
         break;
+      }
       case "assessor":
         await publish("assessment", { verdict: "pass", findings: [{ criterion: "it works", status: "met", evidence: "tests", description: null }],
           test_evidence: null, recommended_next_actions: [] }, turn.subject());
         break;
       case "integrator":
-        forge.open("integration", "https://forge.test/app/pull/integration", "main");
-        await publish("pr", { pr_url: "https://forge.test/app/pull/integration", branch: "integration", summary: "Both cohorts.", review_status: "ready" });
+        await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
         break;
       default:
         throw new Error(`no script for worker ${workerOf(turn)}`);
@@ -155,7 +165,8 @@ const DECISIONS: { readonly [review: string]: string } = { analysis_review: "acc
 
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
 async function operate(run_id: string, decided: Set<string>, admitted: string[]): Promise<void> {
-  const units = await db.selectFrom("authority.unit").select(["id", "unit_key", "collection_key", "review_prompts"]).where("run_id", "=", run_id).execute();
+  const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "review_prompts"]).where("run_id", "=", run_id).execute())
+    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
   for (const unit of units) {
     for (const [review, awaiting] of Object.entries(unit.review_prompts)) {
       const key = `${unit.id}:${review}:${awaiting.target}`;
@@ -193,7 +204,8 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     return row.status.kind === "done" ? row.status : null;
   }, 120_000);
 
-  const units = await db.selectFrom("authority.unit").select(["id", "unit_key", "collection_key", "stage"]).where("run_id", "=", run_id).execute();
+  const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage"]).where("run_id", "=", run_id).execute())
+    .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
   const unitOf = (stage: string, member?: string) => units.find((unit) => unit.stage === stage && (member === undefined || unit.collection_key === member))?.id ?? "";
   const schemaOf = async (unit: string, artifact: string): Promise<string> =>
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
@@ -219,7 +231,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     pr_states_change: [unitOf("cohort", "a"), unitOf("cohort", "b"), unitOf("integration")].map((unit) => isChangesOnly(statesOf(unit))),
   }).toEqual({
     cohorts: ["a", "b"],
-    integrations: [{ repository_key: "app", pr_url: "https://forge.test/app/pull/integration", is_merged: true }],
+    integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
     admitted: ["a", "b"],
     b_built_after_a_merged: true,
     schemas: BODY_SCHEMAS,

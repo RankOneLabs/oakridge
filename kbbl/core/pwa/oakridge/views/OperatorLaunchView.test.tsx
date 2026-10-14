@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { OperatorLaunchView } from "./OperatorLaunchView";
 import { fetchOperatorDefinitions } from "../client";
-import { makeBriefNotesFile, makeDefinitionSummary } from "../__fixtures__/read-models";
+import { makeSpecFile, makeDefinitionSummary } from "../__fixtures__/read-models";
 
 vi.mock("../client", () => ({ fetchOperatorDefinitions: vi.fn(async () => []), fetchOperatorProjects: async () => [], launchOperatorRun: vi.fn() }));
 
@@ -50,9 +50,9 @@ test("an older file read cannot replace the newly selected spec file", async () 
   renderView();
   const picker = await screen.findByLabelText<HTMLInputElement>("Load spec from file");
   let finishOldRead: (text: string) => void = () => { throw new Error("old read was not started"); };
-  const oldFile = makeBriefNotesFile("old.md", 5, () => new Promise<string>((resolve) => { finishOldRead = resolve; }));
+  const oldFile = makeSpecFile("old.md", 5, () => new Promise<string>((resolve) => { finishOldRead = resolve; }));
   fireEvent.change(picker, { target: { files: [oldFile] } });
-  fireEvent.change(picker, { target: { files: [makeBriefNotesFile("new.md", 5, "New spec")] } });
+  fireEvent.change(picker, { target: { files: [makeSpecFile("new.md", 5, "New spec")] } });
   await screen.findByText("Loaded new.md");
   await act(async () => { finishOldRead("Old spec"); });
   expect(screen.getByLabelText<HTMLInputElement>("spec").value).toBe("New spec");
@@ -66,7 +66,7 @@ test("switching definitions discards an unfinished spec file read", async () => 
   fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "digest-1" } });
   const picker = await screen.findByLabelText<HTMLInputElement>("Load spec from file");
   let finishRead: (text: string) => void = () => { throw new Error("read was not started"); };
-  fireEvent.change(picker, { target: { files: [makeBriefNotesFile("old.md", 5,
+  fireEvent.change(picker, { target: { files: [makeSpecFile("old.md", 5,
     () => new Promise<string>((resolve) => { finishRead = resolve; }))] } });
   fireEvent.change(screen.getByLabelText("Definition digest"), { target: { value: "digest-2" } });
   await act(async () => { finishRead("Old spec"); });

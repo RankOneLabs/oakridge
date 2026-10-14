@@ -1,24 +1,30 @@
 import { describe, expect, it } from "vitest";
-import type { ChipTone } from "../../components/atoms/Chip";
 import { selectStatusTone } from "./status-tone";
 
 describe("selectStatusTone", () => {
-  it("preserves the tones for the former run, artifact, assessment, and PR status values", () => {
-    const cases: readonly [string, ChipTone][] = [
-      ["pending", "muted"], ["running", "info"], ["parked", "warning"],
-      ["failed", "danger"], ["complete", "success"], ["cancelled", "muted"],
-      ["stuck", "warning"], ["draft", "warning"], ["approved", "success"],
-      ["rejected", "danger"], ["blocking", "danger"], ["warning", "warning"],
-      ["info", "info"], ["implementable", "success"], ["blocked", "danger"],
-      ["ambiguous", "warning"], ["met", "success"], ["partial", "warning"],
-      ["not_met", "danger"], ["pass", "success"], ["pass_with_notes", "warning"],
-      ["fail", "danger"], ["ready", "info"], ["changes_requested", "warning"],
-      ["merged", "success"], ["closed", "muted"],
-    ];
-    for (const [status, tone] of cases) expect(selectStatusTone(status)).toBe(tone);
+  it("marks a unit needing the operator as a warning and a finished one as success", () => {
+    expect(selectStatusTone({ kind: "unit", status: "attention" })).toBe("warning");
+    expect(selectStatusTone({ kind: "unit", status: "complete" })).toBe("success");
   });
 
-  it("uses muted for an unknown status", () => {
-    expect(selectStatusTone("superseded")).toBe("muted");
+  it("never shows a cancelled unit as complete", () => {
+    expect(selectStatusTone({ kind: "unit", status: "cancelled" })).toBe("muted");
+  });
+
+  it("shows a stalled inbox item as danger", () => {
+    expect(selectStatusTone({ kind: "inbox_item", status: "stalled" })).toBe("danger");
+  });
+
+  it("shows a failed attempt as danger", () => {
+    expect(selectStatusTone({ kind: "attempt", status: "failed" })).toBe("danger");
+  });
+
+  it("maps the development definition's verdicts", () => {
+    expect(["pass", "pass_with_notes", "fail"].map((status) => selectStatusTone({ kind: "artifact_value", status })))
+      .toEqual(["success", "warning", "danger"]);
+  });
+
+  it("uses muted for an artifact value no definition enum maps", () => {
+    expect(selectStatusTone({ kind: "artifact_value", status: "superseded" })).toBe("muted");
   });
 });

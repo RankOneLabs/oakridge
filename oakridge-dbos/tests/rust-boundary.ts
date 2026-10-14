@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import type { Group, Workflow } from "../src/core-client/core-types";
 
 export interface RustToken { readonly kind: "word" | "string" | "symbol"; readonly text: string }
 /** Tokenize comments, raw/escaped strings and multiline imports before inspecting capabilities. */
@@ -121,8 +122,16 @@ export function rustCapabilityViolations(source: string): readonly string[] {
   if (/\b(include|include_str|include_bytes|env|option_env)\s*!/.test(text) || /\bextern\s+(crate\b|\{)/.test(text)) violations.push("unresolved external code or environment capability");
   return violations;
 }
-export function workflowLiteralViolations(source: string): readonly string[] {
-  const names = new Set(["dev_flow", "dev-flow", "development", "spec", "plan", "brief", "build", "assessment", "final_integration"]);
+const groupNames = (group: Group): readonly string[] =>
+  Object.entries(group.units).flatMap(([key, unit]) => [key, ...(unit.group ? groupNames(unit.group) : [])]);
+/** Words of the definition language itself (the `repository(...)` workspace form, a worker's `workspace` field) that a workflow may also use as a name. */
+const LANGUAGE_WORDS: ReadonlySet<string> = new Set(["repository", "workspace"]);
+/** Every name a workflow declares: itself, its units, its stages, and each stage's workers, reviews and artifacts. */
+export const selectDeclaredNames = (workflow: Workflow): ReadonlySet<string> => new Set([workflow.workflow, ...groupNames(workflow.run),
+  ...Object.entries(workflow.stages).flatMap(([key, stage]) =>
+    [key, ...Object.keys(stage.workers), ...Object.keys(stage.reviews ?? {}), ...Object.keys(stage.artifacts)])]
+  .filter((name) => !LANGUAGE_WORDS.has(name)));
+export function workflowLiteralViolations(source: string, names: ReadonlySet<string>): readonly string[] {
   // Reject literals anywhere in the library, so a constant outside a multiline
   // branch cannot smuggle a workflow identifier into the interpreter.
   return productionTokens(source).filter((token) => token.kind === "string" && names.has(token.text)).map((token) => token.text);

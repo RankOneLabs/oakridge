@@ -41,6 +41,15 @@ test("a try failure records the error and the next try time", async () => {
     .toEqual({ last_error: "kbbl unavailable", next_try_at: next_try_at.getTime() });
 });
 
+test("a try failure that lands after the intent settled keeps the error it settled with", async () => {
+  const { intent_id } = await launchedIntent();
+  await settleIntent(authority.db, { intent_id, status: "stopped", last_error: "confirmed" });
+  const status = await recordTryFailure(authority.db, { intent_id, last_error: "late", next_try_at: new Date(Date.now() + 60_000) });
+  const intent = await readIntent(authority.db, intent_id);
+  expect({ status, last_error: intent?.last_error, next_try_at: intent?.next_try_at ?? null })
+    .toEqual({ status: "stopped", last_error: "confirmed", next_try_at: null });
+});
+
 test("acknowledging keeps a stop requested meanwhile", async () => {
   const { run_id, intent_id } = await launchedIntent();
   await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });

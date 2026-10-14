@@ -32,7 +32,7 @@ test("a launch commits the run, its units, the event with its writer, the receip
     authority.db.selectFrom("authority.event").select(["payload", "writer"]).where("run_id", "=", run_id).orderBy("created_at").execute(),
     authority.db.selectFrom("authority.ingress_receipt").select("result").where("run_id", "=", run_id).execute(),
     intents(run_id),
-    authority.db.selectFrom("authority.operator_event").select("event_key").where("run_id", "=", run_id).execute(),
+    authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id).execute(),
   ]);
   const instruction = decodeEffectInstruction(intent_rows[0]?.payload);
   expect({ root: run.root_unit_id, status: run.status.kind, writers: events.map((event) => event.writer.kind),

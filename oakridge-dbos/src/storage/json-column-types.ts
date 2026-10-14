@@ -4,7 +4,7 @@
  * scripts/generate-storage-records.ts imports them into db-types.ts.
  */
 import type { ColumnType } from "kysely";
-import type { Action, Event, Workflow } from "../core-client/core-types";
+import type { Action, Event, ResolvedDecision, Workflow } from "../core-client/core-types";
 
 /**
  * A jsonb value serialized for a write. pg would send an array as a Postgres
@@ -24,8 +24,12 @@ export type RuntimeValue = unknown;
 export type CoreEvent = Event;
 export type DefinitionBundleSource = Workflow;
 export type WantedActions = readonly Action[];
-/** An operator review awaiting a decision: the revision it decides on, and its prompt rendered with its resolved inputs. */
-export interface ReviewPrompt { readonly target: string; readonly prompt: string }
+/**
+ * An operator review awaiting a decision: the revision it reviews, each decision legal now with the revision
+ * that decision names (a decision `on` another artifact names that artifact's latest), and its prompt
+ * rendered with its resolved inputs.
+ */
+export interface ReviewPrompt { readonly target: string; readonly decisions: readonly ResolvedDecision[]; readonly prompt: string }
 /** Review key -> its awaiting prompt, on the unit. */
 export type ReviewPrompts = { readonly [review: string]: ReviewPrompt };
 /** Prompt path -> content digest, pinned when the definition is compiled (D9). */
@@ -52,10 +56,7 @@ export interface StallRecord {
 }
 
 export interface CollaborationThreadContext { readonly title: string; readonly anchor: string | null }
-export interface CollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }
+export interface CollaborationMessageBody { readonly text: string; readonly author: string }
 export interface ReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
-export type CollaborationDeliveryPayload =
-  | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
-  | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
 /** The GitHub repository a project's checkout pushes to. */
 export interface ForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
