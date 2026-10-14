@@ -29,8 +29,8 @@ At the recorded baseline tip, W2's action-to-attempt join was at `oakridge-dbos/
 | --- | --- |
 | `selectDeltaPlan` at `commit.ts:369` (applied by `writeDelta` at `:385`) | Unit status or input changed. |
 | `selectDeltaPlan` at `commit.ts:375` (applied by `writeDelta` at `:385`) | Attempt row changed. |
-| `selectCommitPlan` at `commit.ts:520` (written by `applyCommitPlan` at `:556`) | Rendered prompts unchanged. |
-| `selectChangedWanted` at `commit.ts:570` (written by `applyCommitPlan` at `:558`) | Wanted set differs from the last logged set. |
+| `selectCommitPlan` at `commit.ts:518` (written by `applyCommitPlan` at `:554`) | Rendered prompts unchanged. |
+| `selectChangedWanted` at `commit.ts:569` (written by `applyCommitPlan` at `:556`) | Wanted set differs from the last logged set. |
 
 W3's 500-line bound applies to `workflow-core/crates/evaluator` only. At `897dfa68`, `workflow-core/crates/compiler/src/workflow.rs` has 1,029 lines and `workflow-core/crates/compiler/src/expressions.rs` has 969. Both are W5's files and outside W3's bound. Section 4 asserts the repository-wide reading once all nine cohorts merge.
 

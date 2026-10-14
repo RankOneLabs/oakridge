@@ -36,11 +36,16 @@ export interface RunEventSource {
   /** Reviews on the unit that began awaiting the operator with this event. */
   readonly newly_awaiting: readonly string[];
 }
-export function selectRunEvent(source: RunEventSource): RunEvent {
+export type RunEventFields = Omit<RunEvent, "occurred_at">;
+/** Select the operator event before storage supplies the committed event timestamp. */
+export function selectRunEventFields(source: Omit<RunEventSource, "occurred_at">): RunEventFields {
   const [review] = source.newly_awaiting;
   const awaiting = review === undefined ? null
     : { review, label: `${selectUnitLabel(source.unit, source.tree)}: awaiting ${review} review` };
   return { event_id: source.event_id, run_id: source.run_id, unit_id: source.unit.id, unit_key: selectUnitKey(source.unit), kind: source.kind, awaiting,
     is_terminal: isTerminalStatus(source.unit.status),
-    run_status: source.run_status.kind, occurred_at: source.occurred_at.toISOString() };
+    run_status: source.run_status.kind };
+}
+export function selectRunEvent(source: RunEventSource): RunEvent {
+  return { ...selectRunEventFields(source), occurred_at: source.occurred_at.toISOString() };
 }

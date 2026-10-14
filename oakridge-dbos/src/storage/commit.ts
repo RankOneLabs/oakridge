@@ -8,7 +8,7 @@ import { isTerminalStatus } from "../domain/unit-status";
 import { renderTemplate } from "../domain/prompt-template";
 import type { ActionId, DefinitionBundleId, IngressId, ProjectId, RunId, TracedError, UnitId, Result } from "../domain/primitives";
 import type { CommitFaultNotice } from "../projections/operator-event";
-import { selectRunEvent } from "../projections/run-event";
+import { selectRunEventFields, type RunEvent, type RunEventFields } from "../projections/run-event";
 import { selectUnitTree } from "../projections/unit-label";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWorkers } from "./json-column-types";
@@ -421,7 +421,6 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly prompt_texts: ReadonlyMap<string, string>;
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
-  readonly occurred_at: Date;
 }
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
   const { request, step, source, prompts } = input;
@@ -447,7 +446,7 @@ async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInp
   ]);
   return { request, digest: input.digest, unit_id: input.unit_id, source, prompts, config: input.config,
     intent_actions: intent_rows.map((row) => row.action_id), review_rows, prompt_texts,
-    logged_wanted: new Map(logged_rows.map((row) => [row.unit_id, row.actions])), event_id: crypto.randomUUID(), occurred_at: new Date() };
+    logged_wanted: new Map(logged_rows.map((row) => [row.unit_id, row.actions])), event_id: crypto.randomUUID() };
 }
 
 interface PlannedIntent { readonly unit_id: string; readonly action_id: ActionId; readonly seq: number;
@@ -458,7 +457,6 @@ export interface CommitPlan {
   readonly request: CommitRequest;
   readonly unit_id: string | null;
   readonly event_id: string;
-  readonly occurred_at: Date;
   readonly delta: DeltaPlan;
   readonly publication_secret: { readonly action_id: ActionId; readonly seq: number; readonly hash: string } | null;
   readonly intents: readonly PlannedIntent[];
@@ -466,12 +464,12 @@ export interface CommitPlan {
   readonly inactive_units: readonly string[];
   readonly review_updates: readonly ReviewUpdate[];
   readonly changed_wanted: readonly WantedForUnit[];
-  readonly run_event: ReturnType<typeof selectRunEvent>;
+  readonly run_event_fields: RunEventFields;
 }
 
 /** All validation and write decisions are made from values, with no database handle. */
 export function selectCommitPlan(before: StepSnapshot, step: StepResult, existing: CommitExisting): Result<CommitPlan, CommitViolation> {
-  const { request, source, prompts, config, event_id, occurred_at } = existing;
+  const { request, source, prompts, config, event_id } = existing;
   const { run_id } = request;
   if (request.publication_secret_hash && request.event.kind !== "worker_started")
     return violation(run_id, `a publication secret hash rides only on worker_started, not ${request.event.kind}`);
@@ -524,15 +522,15 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   }
   const addressed = step.snapshot.units.find((unit) => unit.id === (existing.unit_id ?? step.snapshot.run.root));
   if (!addressed) return violation(run_id, `event ${event_id} addresses no unit of the run`);
-  const run_event = selectRunEvent({ event_id, run_id, kind: request.event.kind, occurred_at,
+  const run_event_fields = selectRunEventFields({ event_id, run_id, kind: request.event.kind,
     run_status: step.snapshot.run.status,
     tree: selectUnitTree(step.snapshot.units.map((unit) => ({ id: unit.id, parent_id: unit.parent ?? null, declaration: unit.declaration })), source),
     unit: { id: addressed.id as UnitId, parent_id: addressed.parent ?? null, declaration: addressed.declaration, stage: addressed.stage ?? null,
       status: addressed.status }, newly_awaiting: newly_awaiting.get(addressed.id) ?? [] });
-  return { ok: true, value: { run_id, request, unit_id: existing.unit_id, event_id, occurred_at,
+  return { ok: true, value: { run_id, request, unit_id: existing.unit_id, event_id,
     delta: selectDeltaPlan(before, step.snapshot), publication_secret, intents, replaced_actions,
     inactive_units: step.snapshot.units.filter((unit) => isTerminalStatus(unit.status)).map((unit) => unit.id),
-    review_updates, changed_wanted: selectChangedWanted(selectWanted(step), existing.logged_wanted), run_event } };
+    review_updates, changed_wanted: selectChangedWanted(selectWanted(step), existing.logged_wanted), run_event_fields } };
 }
 
 /** Write the already selected plan. No storage read or domain decision belongs here. */
@@ -542,9 +540,9 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
   if (plan.publication_secret) await trx.updateTable("authority.attempt").set({ publication_secret_hash: plan.publication_secret.hash })
     .where("run_id", "=", run_id).where("action_id", "=", plan.publication_secret.action_id)
     .where("seq", "=", plan.publication_secret.seq).execute();
-  await trx.insertInto("authority.event").values({ id: plan.event_id, run_id, unit_id: plan.unit_id,
-    ingress_id: plan.request.ingress_id, payload: jsonText(plan.request.event), writer: jsonText(plan.request.writer),
-    created_at: plan.occurred_at }).execute();
+  const event = await trx.insertInto("authority.event").values({ id: plan.event_id, run_id, unit_id: plan.unit_id,
+    ingress_id: plan.request.ingress_id, payload: jsonText(plan.request.event), writer: jsonText(plan.request.writer) })
+    .returning("created_at").executeTakeFirstOrThrow();
   for (const intent of plan.intents) await trx.insertInto("authority.effect_intent").values({ id: crypto.randomUUID(), run_id,
     unit_id: intent.unit_id, action_id: intent.action_id, seq: intent.seq, payload: jsonText(intent.instruction) }).execute();
   for (const action_id of plan.replaced_actions) await trx.updateTable("authority.effect_intent")
@@ -557,8 +555,9 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
     .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();
   if (plan.changed_wanted.length) await trx.insertInto("authority.wanted_log").values(plan.changed_wanted.map(({ unit_id, actions }) =>
     ({ id: crypto.randomUUID(), run_id, unit_id, event_id: plan.event_id, actions: jsonText(actions) }))).execute();
+  const run_event: RunEvent = { ...plan.run_event_fields, occurred_at: event.created_at.toISOString() };
   await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id, run_key: run_id,
-    payload: jsonText({ kind: "run_event", data: plan.run_event }) }).execute();
+    payload: jsonText({ kind: "run_event", data: run_event }) }).execute();
 }
 
 /** The action a periodic worker's new watch replaces; null for any other action, or a first watch. */

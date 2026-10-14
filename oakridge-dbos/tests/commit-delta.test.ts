@@ -44,7 +44,7 @@ test("the pure plan rejects a publication secret on an event that cannot carry o
       publication_secret_hash: "hash" },
     digest: "digest", unit_id: null, source: { workflow: "test", input: "text", run: { units: {}, outcome: {} }, stages: {} },
     prompts: {}, config: null, intent_actions: [], review_rows: [], prompt_texts: new Map(), logged_wanted: new Map(),
-    event_id: "event-1", occurred_at: new Date(0),
+    event_id: "event-1",
   });
   expect(plan).toEqual({ ok: false, error: { operation: "select_commit_plan", entity_id: "run",
     detail: "a publication secret hash rides only on worker_started, not cancel_requested" } });
