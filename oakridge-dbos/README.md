@@ -43,8 +43,11 @@ that carry every run without knowing its stages:
   (`DELETE /sessions/:sid`). A fresh session is fenced; a resumed one is
   closed, so a later attempt can revive it. A start never claimed never reached
   kbbl, so its stop settles without calling it. A stop commit requested
-  (`stop_origin = commit`) ends the attempt as `attempt_stopped`; one the
-  executor requested has already reported how its attempt ended.
+  (`stop_origin = commit`) ends the attempt as `attempt_stopped`, unless its
+  start carrier already reported the end (a turn that finished just as its
+  unit went inactive); one the executor requested has already reported how its
+  attempt ended. Commit keeps the first end of an attempt; a later one is
+  refused, and logged only if the attempt has not ended.
 
 An operator review awaiting a decision has its prompt rendered by commit,
 from the inputs `step` resolved for it, and kept on its unit

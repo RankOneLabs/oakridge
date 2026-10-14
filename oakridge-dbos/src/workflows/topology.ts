@@ -250,16 +250,41 @@ const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string 
   return `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
 }, { name: "oakridgeReportWorker", retriesAllowed: true, maxAttempts: 5 });
 
-/** Report to commit; a refusal is returned (and logged), never thrown: step decides what an event means. */
+/**
+ * Report to commit; a refusal is returned (and logged), never thrown: step
+ * decides what an event means. An end refused because another report ended
+ * the attempt first (a stop racing the turn's own end) is the one end commit
+ * keeps per attempt, so it is not logged.
+ */
 async function report(input: ReportInput): Promise<string | null> {
   const refused = await reportStep(input);
-  if (refused) DBOS.logger.warn(`attempt ${input.attempt.action_id}#${input.attempt.seq}: ${input.report.kind} report not applied: ${refused}`);
+  if (refused === null) return null;
+  const { action_id, seq } = input.attempt;
+  const is_ended_by_another = input.report.kind === "ended" && selectIsAttemptEnded(await latestAttemptStep(action_id), seq);
+  if (!is_ended_by_another) DBOS.logger.warn(`attempt ${action_id}#${seq}: ${input.report.kind} report not applied: ${refused}`);
   return refused;
 }
 const failureText = (result: WorkerResult): string | null => result.kind === "failed" ? `${result.code}: ${result.detail}` : null;
+/** Whether an action's attempt `seq` has ended, given the action's latest attempt: it has a result, or a later attempt follows it. */
+export function selectIsAttemptEnded(latest: LatestAttempt | null, seq: number): boolean {
+  if (latest === null || latest.seq < seq) return false;
+  return latest.seq > seq || latest.status.kind === "succeeded" || latest.status.kind === "failed";
+}
+/**
+ * Report that the intent's attempt ended with `failure`, unless it already
+ * ended: commit keeps one end per attempt, and a stop or a sweep of an owed
+ * start can reach an attempt its carrier ended first (a turn that succeeded
+ * just as its unit went inactive). The stop of its session is still owed.
+ * An end landing between this read and the report is settled by `report`.
+ */
+async function endAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<void> {
+  const { attempt } = intent.instruction;
+  if (selectIsAttemptEnded(await latestAttemptStep(attempt.action_id), attempt.seq)) return;
+  await report({ run_id: intent.run_id, attempt, report: { kind: "ended", result: failure } });
+}
 /** The attempt failed and no execution exists (the provider definitely refused it): report it and settle the intent. */
 async function failAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
-  await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: failure } });
+  await endAttempt(intent, failure);
   return settleStep({ intent_id: intent.id, status: "failed", last_error: failureText(failure) });
 }
 /**
@@ -268,7 +293,7 @@ async function failAttempt(intent: CarriedIntent, failure: WorkerFailure): Promi
  * the intent to the cleanup carrier, which settles it only on a confirmed stop.
  */
 async function abandonAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
-  await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: failure } });
+  await endAttempt(intent, failure);
   return abandonStep({ intent_id: intent.id, last_error: `${failure.code}: ${failure.detail}` });
 }
 
@@ -510,12 +535,13 @@ async function carryStop(intent_id: string, carried?: CarriedStop): Promise<Effe
 }
 /**
  * Nothing of the attempt runs any more. A stop commit requested (its unit is no
- * longer active, or its watch was replaced) ends an attempt nothing else will;
- * one the executor requested has already reported how its attempt ended.
+ * longer active, or its watch was replaced) ends the attempt as stopped, unless
+ * its carrier ended it first; one the executor requested has already reported
+ * how its attempt ended.
  */
 async function confirmStop(intent: CarriedIntent, reason: string | null): Promise<EffectStatus | null> {
-  if (intent.stop_origin === "commit") await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended",
-    result: { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" } } });
+  if (intent.stop_origin === "commit")
+    await endAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" });
   const settled = await settleStep({ intent_id: intent.id, status: "stopped", last_error: reason });
   await wakeRun(intent.run_id);
   return settled;

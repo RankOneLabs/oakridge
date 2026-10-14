@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { sql } from "kysely";
 import type { EffectInstruction } from "../src/domain/effect-instruction";
 import type { EffectProvider, ExternalHandle, ProviderResult, TerminalObservation } from "../src/effects/provider";
 import { HANDLE_KINDS } from "../src/effects/provider-catalog";
 import { createProductionComposition } from "../src/runtime/compose";
-import { intentWorkflowId, wakeRun } from "../src/workflows/topology";
+import { cleanupWorkflowId, intentWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launchRunId } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
@@ -15,7 +15,8 @@ import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
 interface Script {
   /** One answer for every start, or each start's answer by its call index. */
   readonly start: ProviderResult<ExternalHandle> | ((call: number) => Promise<ProviderResult<ExternalHandle>>);
-  readonly observe: ProviderResult<TerminalObservation>;
+  /** One answer for every observation, or each observation's answer as it is asked. */
+  readonly observe: ProviderResult<TerminalObservation> | (() => Promise<ProviderResult<TerminalObservation>>);
   /** Stop answers in order; the last repeats. */
   readonly stops: readonly ProviderResult<{ readonly stopped: true }>[];
 }
@@ -38,7 +39,10 @@ const provider: EffectProvider = {
     const start = typeof scripted === "function" ? await scripted(call) : scripted;
     return start.kind === "acknowledged" ? { kind: "acknowledged", value: { handle: start.value, publication_secret_hash: "0".repeat(64) } } : start;
   },
-  async observe(instruction) { return scriptOf(instruction).observe; },
+  async observe(instruction) {
+    const scripted = scriptOf(instruction).observe;
+    return typeof scripted === "function" ? scripted() : scripted;
+  },
   async stop(instruction, handle) {
     const calls = stop_calls.get(runOf(instruction)) ?? [];
     stop_calls.set(runOf(instruction), [...calls, handle]);
@@ -233,3 +237,66 @@ test("a start carrier that finished while its intent is still owed ends the atte
     run_errors: workflows.filter((workflow) => workflow.status === "ERROR").length, stopped: stop_calls.get(run_id)?.some((handle) => handle?.session_id === "s-orphan") ?? false })
     .toEqual({ status: "stopped", origin: "executor", run_errors: 0, stopped: true });
 }, 30_000);
+
+test("a stop commit requested after the turn ended closes the session without ending the attempt again", async () => {
+  const request_id = crypto.randomUUID();
+  // Settling this run's intents is refused until kbbl is asked to stop, so the cancel lands while the ended turn's intent is still owed.
+  await sql`CREATE TABLE public.settle_fault_run (run_id text PRIMARY KEY);
+    CREATE FUNCTION public.fail_settle() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.status = 'stopped' AND OLD.status <> 'stopped' AND EXISTS (SELECT 1 FROM public.settle_fault_run WHERE run_id = NEW.run_id)
+        THEN RAISE EXCEPTION 'settle refused'; END IF;
+      RETURN NEW; END $$;
+    CREATE TRIGGER fail_settle BEFORE UPDATE ON authority.effect_intent FOR EACH ROW EXECUTE FUNCTION public.fail_settle()`.execute(db);
+  await sql`INSERT INTO public.settle_fault_run VALUES (${launchRunId(request_id)})`.execute(db);
+  const run_id = await launchScripted({ start: { kind: "acknowledged", value: session("s-ended") },
+    observe: { kind: "acknowledged", value: { kind: "terminal", result: { kind: "succeeded" } } }, stops: [STOPPED] }, request_id);
+  const firstAttempt = () => db.selectFrom("authority.attempt").select(["action_id", "status"]).where("run_id", "=", run_id).where("seq", "=", 1)
+    .orderBy("action_id").executeTakeFirstOrThrow();
+  for (let poll = 0; poll < 150 && !["succeeded", "failed"].includes((await firstAttempt()).status.kind); poll++) await Bun.sleep(100);
+  const ended = await firstAttempt();
+  const intent_id = (await db.selectFrom("authority.effect_intent").select("id").where("action_id", "=", ended.action_id).executeTakeFirstOrThrow()).id;
+  expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
+  for (let poll = 0; poll < 150 && !stop_calls.get(run_id)?.length; poll++) await Bun.sleep(100);
+  await sql`DELETE FROM public.settle_fault_run`.execute(db);
+  const statusOf = async () => (await db.selectFrom("authority.effect_intent").select("status").where("id", "=", intent_id).executeTakeFirstOrThrow()).status;
+  for (let poll = 0; poll < 300 && await statusOf() !== "stopped"; poll++) await Bun.sleep(100);
+  const reports = (await DBOS.listWorkflowSteps(cleanupWorkflowId(intent_id)) ?? []).filter((step) => step.name === "oakridgeReportWorker");
+  expect({ status: await statusOf(), attempt: (await firstAttempt()).status, refused: reports.map((step) => step.output).filter((output) => output !== null),
+    stopped: stop_calls.get(run_id)?.some((handle) => handle?.session_id === "s-ended") ?? false })
+    .toEqual({ status: "stopped", attempt: ended.status, refused: [], stopped: true });
+}, 60_000);
+
+test("a turn's end that lands after its stop ended the attempt is refused without a warning", async () => {
+  const RUNNING = { kind: "acknowledged", value: { kind: "running" } } as const;
+  let run_id = "";
+  let is_holding = false;
+  let is_held = false;
+  const firstAttempt = () => db.selectFrom("authority.attempt").select("status").where("run_id", "=", run_id).where("seq", "=", 1)
+    .orderBy("action_id").executeTakeFirstOrThrow();
+  // Once held, the observation in flight answers only after the stop has ended the attempt: the turn's end loses the race.
+  const observe = async (): Promise<ProviderResult<TerminalObservation>> => {
+    if (!is_holding) return RUNNING;
+    is_held = true;
+    for (let poll = 0; poll < 150 && (await firstAttempt()).status.kind !== "failed"; poll++) await Bun.sleep(100);
+    return { kind: "acknowledged", value: { kind: "terminal", result: { kind: "succeeded" } } };
+  };
+  run_id = await launchScripted({ start: { kind: "acknowledged", value: session("s-raced") }, observe, stops: [STOPPED] });
+  await until(run_id, (status) => status === "acknowledged");
+  const warn = spyOn(DBOS.logger, "warn");
+  try {
+    is_holding = true;
+    for (let poll = 0; poll < 150 && !is_held; poll++) await Bun.sleep(50);
+    expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
+    await until(run_id, isSettled);
+    // The start carrier's refused end may land after the intent settles, in any of its generations: wait for them all to finish.
+    const { id: intent_id, action_id } = await db.selectFrom("authority.effect_intent").select(["id", "action_id"]).where("run_id", "=", run_id)
+      .executeTakeFirstOrThrow();
+    const carriers = () => DBOS.listWorkflows({ workflowName: "oakridgeEffectWorkflow", workflow_id_prefix: intentWorkflowId(intent_id) });
+    for (let poll = 0; poll < 150 && (await carriers()).some((carrier) => carrier.status !== "SUCCESS"); poll++) await Bun.sleep(100);
+    const reports = (await Promise.all((await carriers()).map(async (carrier) => await DBOS.listWorkflowSteps(carrier.workflowID) ?? [])))
+      .flat().filter((step) => step.name === "oakridgeReportWorker");
+    expect({ attempt: (await firstAttempt()).status.kind, refused: reports.map((step) => step.output).filter((output) => output !== null).length,
+      warnings: warn.mock.calls.map(([entry]) => String(entry)).filter((entry) => entry.includes(action_id)) })
+      .toEqual({ attempt: "failed", refused: 1, warnings: [] });
+  } finally { warn.mockRestore(); }
+}, 60_000);
