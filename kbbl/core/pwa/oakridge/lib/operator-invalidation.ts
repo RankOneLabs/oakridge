@@ -2,6 +2,12 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { OperatorStreamInvalidation } from "../operator-contracts";
 import { queryKeys } from "../queryKeys";
 
+/**
+ * The production invalidateQueries audit includes this module and exempts the
+ * two event-stream hooks (useOakridgeInvalidationStream and useOakridgeRunEventStream).
+ * Test files do not count; four PWA test files call or spy on invalidateQueries.
+ */
+
 const INVALIDATION_TARGETS: readonly OperatorStreamInvalidation["target"][] = ["run", "runs", "definitions", "projects"];
 
 const isInvalidationTarget = (value: unknown): value is OperatorStreamInvalidation["target"] =>
@@ -23,7 +29,7 @@ export function invalidateOperatorTarget(client: QueryClient, frame: OperatorStr
     case "run": if (frame.run_id !== null) invalidateRun(client, frame.run_id); return;
     case "runs": invalidateRunLists(client); return;
     case "definitions": invalidateDefinitions(client); return;
-    case "projects": void client.invalidateQueries({ queryKey: queryKeys.projects }); return;
+    case "projects": invalidateProjects(client); return;
   }
 }
 
@@ -31,6 +37,18 @@ export function invalidateOperatorTarget(client: QueryClient, frame: OperatorStr
 export function invalidateRun(client: QueryClient, runId: string): void {
   void client.invalidateQueries({ queryKey: queryKeys.run(runId) });
   invalidateRunLists(client);
+}
+
+export function invalidateRunDetail(client: QueryClient, runId: string): void {
+  void client.invalidateQueries({ queryKey: queryKeys.run(runId) });
+}
+
+export function invalidateThreads(client: QueryClient, runId: string, unitId: string, revisionId: string): void {
+  void client.invalidateQueries({ queryKey: queryKeys.threads(runId, unitId, revisionId) });
+}
+
+export function invalidateProjects(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: queryKeys.projects });
 }
 
 /** A launch or accepted decision changes what the run list and the inbox show. */
@@ -42,4 +60,10 @@ export function invalidateRunLists(client: QueryClient): void {
 /** A newly pinned definition joins the catalog the launch and definitions views read. */
 export function invalidateDefinitions(client: QueryClient): void {
   void client.invalidateQueries({ queryKey: queryKeys.definitions });
+}
+
+/** Poll mutable operator reads without refetching digest-addressed definition content. */
+export function invalidateOperatorFallback(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: queryKeys.operator,
+    predicate: ({ queryKey }) => !queryKeys.definitionDetails.every((part, index) => queryKey[index] === part) });
 }

@@ -1,7 +1,5 @@
-import { queryKeys } from "../queryKeys";
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchOperatorInbox } from "../client";
+import { useRef } from "react";
+import { useReviewInbox } from "../hooks/useReviewInbox";
 import { Button } from "../../components/atoms/Button";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 import { WorkItem } from "../components/organisms/WorkItem";
@@ -13,11 +11,10 @@ interface ReviewInboxViewProps {
 }
 
 export function ReviewInboxView({ onSelectUnit }: ReviewInboxViewProps) {
-  const query = useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox });
-  const [queue, setQueue] = useState<readonly OperatorDecisionQueueEntry[]>([]);
-  useEffect(() => {
-    if (query.data) setQueue((previous) => selectStableOperatorDecisionQueue(previous, query.data.items));
-  }, [query.data]);
+  const query = useReviewInbox();
+  const order = useRef<readonly OperatorDecisionQueueEntry[]>([]);
+  const queue = query.data ? selectStableOperatorDecisionQueue(order.current, query.data.items) : order.current;
+  order.current = queue;
   if (!query.data) return query.error
     ? <FeedbackMessage tone="danger" testId="or-review-inbox-error">{String(query.error)}</FeedbackMessage>
     : <FeedbackMessage testId="or-review-inbox-loading">Loading review work…</FeedbackMessage>;

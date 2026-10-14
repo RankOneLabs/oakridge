@@ -79,6 +79,10 @@ export type OperatorInboxItem =
 
 export interface OperatorInboxPage { readonly items: readonly OperatorInboxItem[]; readonly next_cursor: string | null }
 
+export interface OperatorRunInboxBatch { readonly items: readonly OperatorRunInboxBatchEntry[] }
+
+export interface OperatorRunInboxBatchEntry { readonly run_id: string; readonly items: readonly OperatorInboxItem[] }
+
 export interface OperatorArtifactDetail {
   readonly run_id: string;
   readonly unit_id: string;

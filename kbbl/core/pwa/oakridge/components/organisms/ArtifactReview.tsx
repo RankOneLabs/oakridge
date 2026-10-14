@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import type { OperatorSchema, OperatorUnitView } from "../../operator-contracts";
 import { selectArtifactInUnits, selectUnitDetail } from "../../lib/run-overview";
 import { resolveViewer } from "../../artifactRegistry";
-import { createOperatorThread } from "../../client";
-import { queryKeys } from "../../queryKeys";
+import { useCreateOperatorThread } from "../../hooks/useCreateOperatorThread";
 import { useThreads } from "../../hooks/useThreads";
 import { useAddThreadMessage } from "../../hooks/useAddThreadMessage";
 import { randomUuid } from "../../../lib/random-uuid";
@@ -26,7 +24,7 @@ export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, 
   const [text, setText] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const client = useQueryClient();
+  const createThread = useCreateOperatorThread();
   const threads = useThreads(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId, selected !== null);
   const message = useAddThreadMessage(selected?.revision.run_id ?? "", selected?.unit_id ?? "", revisionId);
   if (!selected) return <ArtifactReviewShell title="Artifact" onBack={onBack}><p role="status">This revision is no longer among the unit's latest revisions.</p></ArtifactReviewShell>;
@@ -47,9 +45,9 @@ export function ArtifactReview({ revisionId, units, schemas, onBack, onRefresh, 
         {thread.capabilities.can_write && <Button variant="secondary" onClick={() => setSelectedThreadId(thread.id)}>Reply</Button>}
       </article>)}
       <form onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return;
-        void createOperatorThread({ run_id: selected.revision.run_id, unit_id: selected.unit_id, revision_id: revisionId,
+        void createThread.mutateAsync({ run_id: selected.revision.run_id, unit_id: selected.unit_id, revision_id: revisionId,
           title: title.trim(), anchor: null, request_key: randomUuid() }).then(() => {
-          setTitle(""); void client.invalidateQueries({ queryKey: queryKeys.threads(selected.revision.run_id, selected.unit_id, revisionId) });
+          setTitle("");
         }).catch((cause: unknown) => setError(String(cause)));
       }}><label>New thread title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
         <Button type="submit">Start thread</Button></form>

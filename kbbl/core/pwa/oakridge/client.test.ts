@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorDefinitions, fetchOperatorUnit,
+import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorRunInboxes, fetchOperatorDefinitions, fetchOperatorUnit,
   launchOperatorRun, submitOperatorDecision } from "./client";
 import { makeIngressCommitted, makeDecisionSubmission, makeDefinitionSummary, makeAttemptView,
   makeOakridgeConfig, makeRunView, makeUnitView, makeLaunchRequest } from "./__fixtures__/read-models";
@@ -21,6 +21,16 @@ test("run and definition consumers follow every cursor page", async () => {
     "/oakridge/api/api/runs", "/oakridge/api/api/runs?cursor=next",
     "/oakridge/api/api/definitions", "/oakridge/api/api/definitions?cursor=next",
   ]);
+});
+
+test("run attention reads 120 listed runs in two bounded requests", async () => {
+  const fetch = vi.fn(async (url: string) => Response.json({ items: new URL(url, "http://localhost").searchParams.get("ids")
+    ?.split(",").map((run_id) => ({ run_id, items: [] })) ?? [] }));
+  vi.stubGlobal("fetch", fetch);
+  const ids = Array.from({ length: 120 }, (_, index) => `run-${index}`);
+  const batch = await fetchOperatorRunInboxes(ids);
+  expect({ sizes: fetch.mock.calls.map(([url]) => new URL(url, "http://localhost").searchParams.get("ids")?.split(",").length),
+    run_ids: batch.items.map((item) => item.run_id) }).toEqual({ sizes: [100, 20], run_ids: ids });
 });
 
 test("the served fallback refresh interval survives into the config the PWA uses", async () => {

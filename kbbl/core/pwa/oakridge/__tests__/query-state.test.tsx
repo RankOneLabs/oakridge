@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { useRun } from "../hooks/useRun";
 import { ReviewInboxView } from "../views/ReviewInboxView";
@@ -9,6 +9,9 @@ import { useOakridgeInvalidationStream } from "../hooks/useOakridgeInvalidationS
 import { useOakridgeRunEventStream } from "../hooks/useOakridgeRunEventStream";
 import { selectEventNotification } from "../lib/run-notifications";
 import { useReviewInbox } from "../hooks/useReviewInbox";
+import { usePinnedDefinition } from "../hooks/usePinnedDefinition";
+import { fetchOperatorDefinitions } from "../client";
+import { queryKeys } from "../queryKeys";
 import { savePendingDecision } from "../lib/operator-drafts";
 import { makeDecision, makeDecisionSubmission, makeInboxDecision, makeInboxPage, makeRunEvent, makeUnitView } from "../__fixtures__/read-models";
 import type { LiveStreamFrame } from "../../../live-stream";
@@ -26,8 +29,8 @@ class EventSourceStub {
   emit(frame: LiveStreamFrame): void { this.listeners.get("live")?.(new MessageEvent("live", { data: JSON.stringify(frame) })); }
 }
 
-function StreamConsumer({ onToast }: { readonly onToast: (toast: unknown) => void }) {
-  useOakridgeInvalidationStream(true);
+function StreamConsumer({ onToast, fallbackRefreshMs }: { readonly onToast: (toast: unknown) => void; readonly fallbackRefreshMs?: number }) {
+  useOakridgeInvalidationStream(true, fallbackRefreshMs);
   useOakridgeRunEventStream(true, (event) => {
     const toast = selectEventNotification(event);
     if (toast) onToast(toast);
@@ -40,6 +43,11 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 function RunConsumer() { useRun("run-one"); return null; }
 function InboxConsumer() { useReviewInbox(); return null; }
+function DefinitionConsumer() {
+  usePinnedDefinition("bundle-one");
+  useQuery({ queryKey: queryKeys.definitionList(false), queryFn: () => fetchOperatorDefinitions(false) });
+  return null;
+}
 function runResponse(url: string): Response {
   if (url.endsWith("/runs/run-one")) return Response.json({ run_id: "run-one", units: [{ unit_id: "unit-one", unit_key: "root", label: "Current unit" }] });
   if (url.endsWith("/definition")) return Response.json({ source: { root: "root", schemas: [] } });
@@ -85,7 +93,7 @@ test("StrictMode recovery delivers one pending decision with its retained reques
   const response = new Promise<Response>((resolve) => { complete = resolve; });
   const fetch = vi.fn((_url: string, _init?: RequestInit) => response);
   vi.stubGlobal("fetch", fetch);
-  render(<StrictMode><OperatorDecisionForm unit={unit} decision={decision} schemas={[]} onRefresh={() => undefined} /></StrictMode>);
+  render(<QueryClientProvider client={client()}><StrictMode><OperatorDecisionForm unit={unit} decision={decision} schemas={[]} onRefresh={() => undefined} /></StrictMode></QueryClientProvider>);
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).request_id).toBe("stable-id");
   complete(Response.json({ kind: "committed", run_id: "run-one", event_id: "event-1" }));
@@ -133,4 +141,27 @@ test("a session snapshot does not refetch an active run", async () => {
   await new Promise((resolve) => setTimeout(resolve, 25));
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-one"))).toHaveLength(1);
   mounted.unmount();
+});
+
+test("the fallback timer refreshes definition metadata without refetching pinned content", async () => {
+  EventSourceStub.instances = [];
+  vi.stubGlobal("EventSource", EventSourceStub);
+  const interval = vi.spyOn(window, "setInterval");
+  const fetch = vi.fn(async (url: string) => Response.json(url.endsWith("/definitions")
+    ? { items: [], next_cursor: null } : { bundle_id: "bundle-one" }));
+  vi.stubGlobal("fetch", fetch);
+  const mounted = render(<QueryClientProvider client={client()}><DefinitionConsumer />
+    <StreamConsumer onToast={() => undefined} fallbackRefreshMs={60_000} /></QueryClientProvider>);
+  const count = (suffix: string) => fetch.mock.calls.filter(([url]) => url.endsWith(suffix)).length;
+  try {
+    await waitFor(() => expect([count("/definitions"), count("/definitions/bundle-one")]).toEqual([1, 1]));
+    const tick = interval.mock.calls.find(([, delay]) => delay === 60_000)?.[0];
+    if (typeof tick !== "function") throw new Error("fallback timer was not installed");
+    act(() => tick());
+    await waitFor(() => expect(count("/definitions")).toBe(2));
+    expect(count("/definitions/bundle-one")).toBe(1);
+  } finally {
+    mounted.unmount();
+    interval.mockRestore();
+  }
 });

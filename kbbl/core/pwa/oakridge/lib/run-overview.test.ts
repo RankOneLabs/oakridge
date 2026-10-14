@@ -6,7 +6,7 @@ import {
 import { selectActionableUnits } from "./decision-queue";
 import { selectRunAttempts } from "./run-sessions";
 import {
-  selectArtifactInUnits, selectLoadedUnits, selectRunArtifacts, selectRunProgress, selectRunUnit, selectUnitDetail,
+  selectArtifactInUnits, selectRunArtifacts, selectRunProgress, selectRunUnit, selectUnitDetail,
   selectUnitDetailStatus, selectUnitStatus,
 } from "./run-overview";
 
@@ -18,11 +18,11 @@ describe("generated run overview", () => {
       makeRunUnitSummary({ unit_id: "assess" }),
       makeRunUnitSummary({ unit_id: "dropped", status: { kind: "cancelled" }, is_terminal: true }),
     ] });
-    expect(selectRunProgress(run)).toEqual({ total: 4, complete: 1, needs_attention: 1 });
+    expect(selectRunProgress(run)).toEqual({ total: 4, complete: 1 });
   });
 
   it("reports zero progress for a run with no units", () => {
-    expect(selectRunProgress(makeRunView())).toEqual({ total: 0, complete: 0, needs_attention: 0 });
+    expect(selectRunProgress(makeRunView())).toEqual({ total: 0, complete: 0 });
   });
 
   it("opens an available merge confirmation on its own unit", () => {
@@ -102,11 +102,6 @@ describe("run workspace unit and artifact selection", () => {
   it("does not display a deleted unit detail from a stale route ID", () => {
     expect(selectUnitDetail(units, "deleted-unit")).toBeNull();
     expect(selectUnitDetail(units, "brief-unit")?.unit_id).toBe("brief-unit");
-  });
-
-  it("keeps successfully loaded units when another unit read is unavailable", () => {
-    expect(selectLoadedUnits([units[0], undefined, units[1]])).toEqual(units);
-    expect(selectLoadedUnits([undefined])).toEqual([]);
   });
 
   it("selects no unit when the definition's root is unknown and no unit is routed", () => {

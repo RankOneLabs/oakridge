@@ -1,7 +1,9 @@
 import { queryKeys } from "../queryKeys";
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createOperatorProject, fetchOperatorProjects, updateOperatorProject } from "../client";
+import { useQuery } from "@tanstack/react-query";
+import { fetchOperatorProjects } from "../client";
+import { useCreateOperatorProject } from "../hooks/useCreateOperatorProject";
+import { useUpdateOperatorProject } from "../hooks/useUpdateOperatorProject";
 import { Button } from "../../components/atoms/Button";
 import type { OperatorProjectView } from "../operator-contracts";
 import { EMPTY_PROJECT_FORM, selectProjectDraft, type ProjectFormValues } from "../lib/project-draft";
@@ -11,7 +13,8 @@ const formValuesOf = (project: OperatorProjectView): ProjectFormValues => ({ nam
 
 interface Props { readonly onBack: () => void }
 export function OperatorProjectsView({ onBack }: Props) {
-  const client = useQueryClient();
+  const createProject = useCreateOperatorProject();
+  const updateProject = useUpdateOperatorProject();
   const projects = useQuery({ queryKey: queryKeys.projects, queryFn: fetchOperatorProjects });
   const [editing, setEditing] = useState<string | null>(null);
   const [values, setValues] = useState<ProjectFormValues>(EMPTY_PROJECT_FORM);
@@ -24,9 +27,8 @@ export function OperatorProjectsView({ onBack }: Props) {
     setError(null); setIsSaving(true);
     try {
       const draft = selectProjectDraft(values);
-      if (editing === null) await createOperatorProject(draft); else await updateOperatorProject(editing, draft);
+      if (editing === null) await createProject.mutateAsync(draft); else await updateProject.mutateAsync({ projectId: editing, draft });
       setEditing(null); setValues(EMPTY_PROJECT_FORM);
-      void client.invalidateQueries({ queryKey: queryKeys.projects });
     } catch (cause) { setError(String(cause)); } finally { setIsSaving(false); }
   };
   return <main className="or-page" data-testid="or-projects">

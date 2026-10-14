@@ -20,7 +20,7 @@ const isDecide = (url: string, init?: RequestInit): boolean => url.endsWith("/de
 test("a string that admits an empty value submits as the empty string", async () => {
   const fetch = vi.fn(async (_url: string, _init?: RequestInit) => committed());
   vi.stubGlobal("fetch", fetch);
-  render(<OperatorDecisionForm unit={noteUnit} decision={noteDecision} schemas={noteSchemas(0)} onRefresh={() => undefined} />);
+  render(<QueryClientProvider client={new QueryClient()}><OperatorDecisionForm unit={noteUnit} decision={noteDecision} schemas={noteSchemas(0)} onRefresh={() => undefined} /></QueryClientProvider>);
   expect(screen.getByLabelText<HTMLTextAreaElement>("note").required).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Submit Act" }));
   await screen.findByText("Decision accepted.");
@@ -30,7 +30,7 @@ test("a string that admits an empty value submits as the empty string", async ()
 test("a string with a positive minimum is refused empty and never sent", async () => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
-  render(<OperatorDecisionForm unit={noteUnit} decision={noteDecision} schemas={noteSchemas(1)} onRefresh={() => undefined} />);
+  render(<QueryClientProvider client={new QueryClient()}><OperatorDecisionForm unit={noteUnit} decision={noteDecision} schemas={noteSchemas(1)} onRefresh={() => undefined} /></QueryClientProvider>);
   fireEvent.submit(screen.getByTestId("operator-command-form"));
   expect((await screen.findByRole("alert")).textContent).toMatch(/note is required/);
   expect(fetch).not.toHaveBeenCalled();
@@ -41,11 +41,12 @@ function serveRun(onDecision: () => Response = () => Response.json({ error: "une
   const state = { refreshes: 0 };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (isDecide(url, init)) return onDecision();
+    if (url.endsWith("/runs/run-one/inbox")) return Response.json({ items: [], next_cursor: null });
     if (url.endsWith("/runs/run-one")) return Response.json(makeRunView({ run_id: "run-one", units: [makeRunUnitSummary({ unit_id: "unit-one", unit_key: "root", label: "Root", asks: ["act"] })] }));
-    if (url.endsWith("/definition")) return Response.json({ bundle: { root: "root", schemas: noteSchemas(0), units: [] } });
+    if (url.endsWith("/definitions/bundle-1")) return Response.json({ bundle: { root: "root", schemas: noteSchemas(0), units: [] } });
     if (url.endsWith("/history")) return Response.json({ unit_id: "unit-one", events: [], next_cursor: null });
     state.refreshes += 1;
-    return Response.json(noteUnit);
+    return Response.json(url.endsWith("/units") ? [noteUnit] : noteUnit);
   });
   vi.stubGlobal("fetch", fetch);
   return { state, fetch };
