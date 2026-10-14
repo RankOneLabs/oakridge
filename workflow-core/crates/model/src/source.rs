@@ -102,7 +102,6 @@ pub enum Expression {
         path: Vec<String>,
     },
     Record {
-        schema: SchemaId,
         fields: Vec<FieldExpression>,
     },
     List {
@@ -143,7 +142,6 @@ pub enum Expression {
     },
     Map {
         source: Box<Expression>,
-        schema: SchemaId,
         value: Box<Expression>,
     },
     Field {

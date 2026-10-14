@@ -863,7 +863,6 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
         },
         StageExpr::MapOf { source, value } => Expression::Map {
             source: boxed(source),
-            schema: SchemaId::from("map"),
             value: boxed(value),
         },
         StageExpr::Contains { source, value } => Expression::Contains {
@@ -896,7 +895,6 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
             dependencies_field: dependencies_field.clone(),
         },
         StageExpr::Record(fields) => Expression::Record {
-            schema: SchemaId::from("record"),
             fields: fields
                 .iter()
                 .map(|(key, value)| FieldExpression {

@@ -431,7 +431,7 @@ fn compile_stage(
                 .unwrap_or_default(),
             ..base.clone()
         };
-        let (inputs, workspace) = match worker {
+        let checked_worker = match worker {
             Worker::Agent {
                 prompts: modes,
                 inputs,
@@ -460,7 +460,6 @@ fn compile_stage(
                         return Err(reject(8, format!("reviewed artifact {of} absent")));
                     }
                 }
-                // A request_changes targets its `on`, defaulting to the reviewed artifact.
                 let needs_revise = creates.iter().any(|artifact| {
                     !stage.artifacts[&artifact.0].validate.is_empty()
                         || stage
@@ -497,7 +496,14 @@ fn compile_stage(
                     };
                     prompt(path, inputs, prompts, engine_inputs)?;
                 }
-                (input_fields, workspace)
+                CheckedWorker::Agent {
+                    key: WorkerKey::from(worker_key.as_str()),
+                    inputs: input_fields,
+                    creates: creates.clone(),
+                    reviews: reviews.clone(),
+                    workspace,
+                    when: when.map(|(expression, _)| expression),
+                }
             }
             Worker::Code {
                 operation,
@@ -542,28 +548,29 @@ fn compile_stage(
                 ) {
                     return Err(reject(12, format!("operation {operation} output mismatch")));
                 }
-                (input_fields, None)
+                CheckedWorker::Code {
+                    key: WorkerKey::from(worker_key.as_str()),
+                    inputs: input_fields,
+                    creates: creates.clone(),
+                    every: every.clone(),
+                    when: when.map(|(expression, _)| expression),
+                }
             }
         };
-        workers.push(CheckedWorker {
-            key: WorkerKey::from(worker_key.as_str()),
-            inputs,
-            workspace,
-            when: when.map(|(expression, _)| expression),
-        });
+        workers.push(checked_worker);
     }
     for artifact in stage.artifacts.keys() {
         if !owners.contains_key(artifact) {
             return Err(reject(7, format!("artifact {artifact} has no creator")));
         }
     }
-    let mut validations = Vec::new();
+    let mut artifacts = Vec::new();
     for (artifact_key, artifact) in &stage.artifacts {
         let own = Scope {
             body: Some((artifact_key, &artifact.schema)),
             ..base.clone()
         };
-        let checks = artifact
+        let validations = artifact
             .validate
             .iter()
             .map(|rule| {
@@ -571,12 +578,16 @@ fn compile_stage(
                 if expression.value_type != TypeExpression::Name("boolean".into()) {
                     return Err(reject(8, "validation check must be boolean"));
                 }
-                Ok(expression)
+                Ok(CheckedArtifactValidation {
+                    expression,
+                    message: rule.message.clone(),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        validations.push(CheckedArtifactValidation {
-            artifact: SymbolKey::from(artifact_key.as_str()),
-            checks,
+        artifacts.push(CheckedArtifact {
+            key: SymbolKey::from(artifact_key.as_str()),
+            schema: resolve_type(&artifact.schema, &workflow.schemas),
+            validations,
         });
     }
     let mut reviews = Vec::new();
@@ -598,12 +609,47 @@ fn compile_stage(
             error.entity_id = "check 8".into();
             error
         })?;
-        reviews.push(CheckedReview {
-            key: SymbolKey::from(review_key.as_str()),
-            of: review.of.clone(),
-            inputs: review_inputs,
-            when,
-        });
+        let key = SymbolKey::from(review_key.as_str());
+        let checked_review = match review.by {
+            ReviewBy::Operator => CheckedReview::Operator {
+                key,
+                of: review.of.clone(),
+                inputs: review_inputs,
+                when,
+                decisions: review
+                    .decisions
+                    .iter()
+                    .map(|(key, decision)| {
+                        (
+                            key.clone(),
+                            CheckedDecision {
+                                effect: decision.effect.clone(),
+                                on: decision.on.clone(),
+                                payload: decision
+                                    .payload
+                                    .as_ref()
+                                    .map(|ty| resolve_type(ty, &workflow.schemas)),
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+            ReviewBy::Engine => {
+                let (decision_key, decision) = review.decisions.iter().next().unwrap();
+                CheckedReview::Engine {
+                    key,
+                    of: review.of.clone(),
+                    when: when.unwrap(),
+                    decision: CheckedEngineDecision {
+                        key: SymbolKey::from(decision_key.as_str()),
+                        effect: decision.effect.clone(),
+                        on: decision.on.clone(),
+                        feedback: decision.feedback.clone().unwrap(),
+                    },
+                }
+            }
+        };
+        reviews.push(checked_review);
         for decision in review.decisions.values() {
             let target = decision.on.as_ref().unwrap_or(&review.of);
             let Some(owner) = owners.get(&target.0) else {
@@ -638,7 +684,7 @@ fn compile_stage(
             workers,
             done_when,
             outcome,
-            validations,
+            artifacts,
             reviews,
         },
         outcome_type,
@@ -824,7 +870,15 @@ fn compile_group(
         checked_units.push(CheckedUnit {
             key: SymbolKey::from(key.as_str()),
             input: checked_input,
-            after: after_keys,
+            stage: unit.stage.clone(),
+            pool: unit.pool.clone(),
+            after: match &unit.after {
+                UnitDependencies::None => CheckedUnitDependencies::None,
+                UnitDependencies::Fixed(keys) => {
+                    CheckedUnitDependencies::Fixed { keys: keys.clone() }
+                }
+                UnitDependencies::Each(_) => CheckedUnitDependencies::Each,
+            },
             collection,
             group: nested,
         });
@@ -884,7 +938,6 @@ fn compile_group(
                         },
                         path: vec![],
                     }),
-                    schema: SchemaId::from("map"),
                     value: Box::new(Expression::Reference {
                         root: ReferenceRoot::Item,
                         path: suffix
@@ -906,6 +959,7 @@ fn compile_group(
     let outcome_type = checked_record(&checked_outcome);
     Ok((
         CheckedGroup {
+            pools: group.pools.clone(),
             units: checked_units,
             outcome: checked_outcome,
         },
@@ -963,8 +1017,8 @@ pub fn compile_workflow_with_limits(
     let encoded = serde_json::to_vec(source).map_err(|error| reject(11, error.to_string()))?;
     let digest = BundleDigest(format!("{:x}", Sha256::digest(encoded)));
     Ok(CheckedWorkflow {
-        source: source.clone(),
         digest,
+        input: resolve_type(&source.input, &source.schemas),
         stages,
         root,
     })
