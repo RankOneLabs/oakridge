@@ -149,3 +149,49 @@ fn a_comparison_inside_a_call_does_not_split_the_outer_expression() {
     // The inner comparison is checked as a comparison, not as a length argument.
     assert_eq!(&*error.entity_id, "check 9", "{error:?}");
 }
+
+#[test]
+fn not_accepts_parenthesized_operand() {
+    let program = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("not(published(draft))"),
+    )]))
+    .unwrap();
+    let draft = program.stages[0]
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.key.0 == "draft")
+        .unwrap();
+    assert_eq!(draft.validations[0].expression.value_type, Type::Boolean);
+}
+
+#[test]
+fn nested_call_inside_comparison_is_typed() {
+    let program = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("len(input.topic) > len(\"a\")"),
+    )]))
+    .unwrap();
+    let draft = program.stages[0]
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.key.0 == "draft")
+        .unwrap();
+    assert_eq!(draft.validations[0].expression.value_type, Type::Boolean);
+}
+
+#[test]
+fn unterminated_string_reports_its_span() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("\"unterminated"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(
+        errors[0].path.0,
+        "stages.document.artifacts.draft.validate.0.check"
+    );
+    assert_eq!(errors[0].span, SourceSpan { start: 0, end: 13 });
+}
