@@ -27,7 +27,7 @@ export function RunWorkspace({ runId, routePane, unitId, onBack }: Props) {
   const inFlight = useRef(new Set<string>());
   const runQuery = useRun(runId);
   const attentionQuery = useRunAttention(runId);
-  const attention = selectRunAttention(attentionQuery.data?.items ?? []);
+  const attention = attentionQuery.data ? selectRunAttention(attentionQuery.data.items) : null;
   const decision = useSubmitOperatorDecision();
   const bundleId = runQuery.data?.definition_bundle_id ?? null;
   const definition = usePinnedDefinition(bundleId);
@@ -68,19 +68,21 @@ export function RunWorkspace({ runId, routePane, unitId, onBack }: Props) {
   const navigate = (target: RoutePaneTarget | string | null) => { window.location.hash = formatRunWorkspaceHash(runId, target); };
   const refresh = () => invalidateRunDetail(client, runId);
   return <main className="or-run-workspace" data-testid="or-run-workspace">
-    <RunIdentityHeader run={run} attentionCount={attention.count} onBack={onBack} />
+    <RunIdentityHeader run={run} attentionCount={attention?.count ?? null} isAttentionLoading={attentionQuery.isPending} onBack={onBack} />
     {recovery && <p role="status">{recovery}</p>}
     {runQuery.isError && <p role="alert">Refresh failed: {String(runQuery.error)}. Showing the last snapshot.</p>}
+    {attentionQuery.isError && <p role="alert">Could not load run attention: {String(attentionQuery.error)}. Run details remain available.</p>}
     {definition.isError && <p role="alert">Could not load pinned definition: {String(definition.error)}</p>}
     {unitQuery.isError && <p role="alert">Some units could not be refreshed. Showing the ones that loaded.</p>}
     <div className="or-run-workspace__body">
-      <RunWorkspaceSidebar run={run} units={units} attention={attention} onOpenUnit={(id) => navigate(id)}
+      <RunWorkspaceSidebar run={run} units={units} attention={attention} isAttentionLoading={attentionQuery.isPending} onOpenUnit={(id) => navigate(id)}
         onOpenArtifact={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
       <div className="or-run-workspace__panes" data-testid="or-run-panes">
         {routePane?.kind === "artifact" ? <ArtifactReview revisionId={routePane.artifact_id} units={units} schemas={schemas}
           onBack={() => navigate(unitId)} onRefresh={refresh} onRevised={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
           : routePane?.kind === "session" ? <RunSessionPane sessionId={routePane.session_id} onOpenSession={(id) => navigate({ kind: "session", session_id: id })} />
-          : <><RunOverviewPane run={run} units={units} attentionCount={attention.count} onOpenUnit={(id) => navigate(id)} />
+          : <><RunOverviewPane run={run} units={units} attentionCount={attention?.count ?? null}
+            isAttentionLoading={attentionQuery.isPending} onOpenUnit={(id) => navigate(id)} />
             {detail ? <RunDetail unit={detail} schemas={schemas} onRefresh={refresh} />
               : unitQuery.isError ? <p role="alert">Could not load unit: {String(unitQuery.error)}</p>
               : selected || definition.isPending ? <p role="status">Loading unit…</p>

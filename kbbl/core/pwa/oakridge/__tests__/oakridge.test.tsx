@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 
-import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRunInbox, fetchOperatorRuns } from "../client";
+import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRunInbox, fetchOperatorRunInboxes, fetchOperatorRuns } from "../client";
 import {
   makeDecision, makeInboxDecision, makeOakridgeConfig, makeInboxPage,
   makeRunView, makeRunUnitSummary, makeUnitView,
@@ -13,7 +13,7 @@ import { ReviewInboxView } from "../views/ReviewInboxView";
 import { RunOverviewPane } from "../components/organisms/RunOverviewPane";
 import { OakridgeShell } from "../OakridgeShell";
 
-vi.mock("../client", () => ({ fetchOakridgeConfig: vi.fn(), fetchOperatorRuns: vi.fn(), fetchOperatorInbox: vi.fn(), fetchOperatorRunInbox: vi.fn(),
+vi.mock("../client", () => ({ fetchOakridgeConfig: vi.fn(), fetchOperatorRuns: vi.fn(), fetchOperatorInbox: vi.fn(), fetchOperatorRunInbox: vi.fn(), fetchOperatorRunInboxes: vi.fn(),
   setOperatorRunArchived: vi.fn() }));
 
 const show = (ui: ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.mocked(fetchOperatorRuns).mockResolvedValue([]);
   vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage());
   vi.mocked(fetchOperatorRunInbox).mockResolvedValue(makeInboxPage());
+  vi.mocked(fetchOperatorRunInboxes).mockImplementation(async (runIds) => ({ items: runIds.map((run_id) => ({ run_id, items: [] })) }));
   vi.mocked(fetchOakridgeConfig).mockResolvedValue(makeOakridgeConfig());
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -54,9 +55,24 @@ describe("generated run catalog", () => {
 
   it("shows generated inbox attention instead of a parked gate count", async () => {
     vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView({ run_id: "run-2" })]);
-    vi.mocked(fetchOperatorRunInbox).mockResolvedValue(makeInboxPage({ items: [makeInboxDecision({ run_id: "run-2" })] }));
+    vi.mocked(fetchOperatorRunInboxes).mockResolvedValue({ items: [{ run_id: "run-2", items: [makeInboxDecision({ run_id: "run-2" })] }] });
     list();
     await waitFor(() => expect(screen.getByTestId("or-cohort-lifecycle-card").textContent).toContain("1 need attention"));
+  });
+
+  it("requests attention for listed runs together", async () => {
+    vi.mocked(fetchOperatorRuns).mockResolvedValue(Array.from({ length: 120 }, (_, index) => makeRunView({ run_id: `run-${index}` })));
+    list();
+    await waitFor(() => expect(fetchOperatorRunInboxes).toHaveBeenCalledOnce());
+    expect(vi.mocked(fetchOperatorRunInboxes).mock.calls[0]?.[0]).toHaveLength(120);
+  });
+
+  it("shows a batch attention read failure without hiding run cards", async () => {
+    vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView()]);
+    vi.mocked(fetchOperatorRunInboxes).mockRejectedValue(new Error("attention offline"));
+    list();
+    expect((await screen.findByText(/Could not load run attention:.*attention offline/)).getAttribute("role")).toBe("alert");
+    expect(screen.getByTestId("or-cohort-lifecycle-card").textContent).toContain("Attention unavailable");
   });
 
   it("shows an empty state", async () => {

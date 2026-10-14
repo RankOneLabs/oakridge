@@ -11,6 +11,7 @@ import { RunListView } from "../views/RunListView";
 import type { OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import type { ArtifactId } from "../../lib/ids";
 import { invalidateRunDetail } from "../lib/operator-invalidation";
+import { queryKeys } from "../queryKeys";
 
 const result = makeBuildResultFixture({ summary: "Build completed" });
 const unit = makeUnitWithArtifact({ body: result.body, artifact_key: "build_result",
@@ -18,8 +19,10 @@ const unit = makeUnitWithArtifact({ body: result.body, artifact_key: "build_resu
 const run = makeRunView({ units: [makeRunUnitSummary({ asks: ["approve"] })] });
 
 function stubWorkspace(options: { readonly run?: OperatorRunView; readonly unit?: OperatorUnitView;
-  readonly failed?: "run" | "unit" | "definition" } = {}) {
+  readonly failed?: "run" | "unit" | "definition" | "attention" } = {}) {
   const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/runs/run-1/inbox")) return options.failed === "attention"
+      ? Response.json({ detail: "attention unavailable" }, { status: 503 }) : Response.json(makeInboxPage());
     if (url.endsWith("/runs/run-1")) return options.failed === "run"
       ? Response.json({ detail: "run unavailable" }, { status: 503 }) : Response.json(options.run ?? run);
     if (url.endsWith("/definitions/bundle-1")) return options.failed === "definition"
@@ -71,7 +74,8 @@ it("an archived run absent from the global inbox shows the same two asks in its 
     makeInboxDecision({ run_id: "run-1", unit_id: "unit-1", key: "approve" }),
     makeInboxDecision({ run_id: "run-1", unit_id: "unit-1", key: "request_changes" }),
   ] });
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  const fetch = vi.fn(async (url: string) => {
+    if (url.includes("/run-inboxes?ids=")) return Response.json({ items: [{ run_id: "run-1", items: attention.items }] });
     if (url.endsWith("/runs/run-1/inbox")) return Response.json(attention);
     if (url.endsWith("/runs/run-1")) return Response.json(archived);
     if (url.endsWith("/runs?archived=true")) return Response.json({ items: [archived], next_cursor: null });
@@ -82,15 +86,28 @@ it("an archived run absent from the global inbox shows the same two asks in its 
     if (url.endsWith("/threads")) return Response.json([]);
     if (url.endsWith("/inbox")) return Response.json(makeInboxPage());
     throw new Error(url);
-  }));
+  });
+  vi.stubGlobal("fetch", fetch);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><RunListView onSelectRun={() => undefined} onNewRun={() => undefined}
     onDefinitions={() => undefined} onProjects={() => undefined} /></QueryClientProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
   await waitFor(() => expect(screen.getByTestId("or-cohort-lifecycle-card").textContent).toContain("2 need attention"));
+  expect(client.getQueryData(queryKeys.runAttention("run-1"))).toEqual(attention);
   show(null, client);
   await waitFor(() => expect(screen.getByTestId("or-run-identity").textContent).toContain("2 need attention"));
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/runs/run-1/inbox"))).toHaveLength(0);
   expect(screen.getByTestId("or-run-sidebar").textContent).toContain("2 need attention");
+});
+
+it("keeps run details visible and labels attention unavailable after a failed first read", async () => {
+  stubWorkspace({ failed: "attention" });
+  show();
+  expect((await screen.findByRole("alert")).textContent).toContain("attention unavailable");
+  expect(screen.getByTestId("or-run-identity").textContent).toContain("Attention unavailable");
+  expect(screen.getByTestId("or-run-overview").textContent).toContain("Attention unavailable");
+  expect(screen.getByTestId("or-run-sidebar").textContent).toContain("Attention unavailable");
+  expect(screen.getByTestId("or-run-overview").textContent).not.toContain("0 need attention");
 });
 
 it("uses one enumerated run accent on the identity header", async () => {

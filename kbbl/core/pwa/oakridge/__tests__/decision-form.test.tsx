@@ -41,6 +41,7 @@ function serveRun(onDecision: () => Response = () => Response.json({ error: "une
   const state = { refreshes: 0 };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (isDecide(url, init)) return onDecision();
+    if (url.endsWith("/runs/run-one/inbox")) return Response.json({ items: [], next_cursor: null });
     if (url.endsWith("/runs/run-one")) return Response.json(makeRunView({ run_id: "run-one", units: [makeRunUnitSummary({ unit_id: "unit-one", unit_key: "root", label: "Root", asks: ["act"] })] }));
     if (url.endsWith("/definitions/bundle-1")) return Response.json({ bundle: { root: "root", schemas: noteSchemas(0), units: [] } });
     if (url.endsWith("/history")) return Response.json({ unit_id: "unit-one", events: [], next_cursor: null });

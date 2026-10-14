@@ -61,3 +61,9 @@ export function invalidateRunLists(client: QueryClient): void {
 export function invalidateDefinitions(client: QueryClient): void {
   void client.invalidateQueries({ queryKey: queryKeys.definitions });
 }
+
+/** Poll mutable operator reads without refetching digest-addressed definition content. */
+export function invalidateOperatorFallback(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: queryKeys.operator,
+    predicate: ({ queryKey }) => !queryKeys.definitionDetails.every((part, index) => queryKey[index] === part) });
+}
