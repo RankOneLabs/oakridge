@@ -65,7 +65,9 @@ pub(super) fn advance_reduced(
     context: &mut EvaluationContext<'_>,
 ) -> Result<StepResult, StepError> {
     if !matches!(state.run.status, UnitStatus::Cancelled) {
-        while let Some(deltas) = next_move(program, &state, context)? {
+        let mut active_scan = ActiveScan::All;
+        while let Some(deltas) = next_move(program, &state, context, active_scan)? {
+            active_scan = active_scan_after_move(&state, &deltas);
             apply_all(&mut state, context, deltas);
         }
         if let Some(status) = state

@@ -218,14 +218,59 @@ pub(super) fn engine_decision(
     }
     Ok(None)
 }
+/// Active units to revisit before selecting the next candidate. Activating a
+/// stage changes only that stage's evidence; a completion or decision may
+/// affect earlier units, so those moves restart the full scan.
+#[derive(Clone, Copy)]
+pub(super) enum ActiveScan {
+    All,
+    Unit(usize),
+    Skip,
+}
+
+pub(super) fn active_scan_after_move(state: &StepSnapshot, deltas: &[Delta]) -> ActiveScan {
+    for delta in deltas {
+        if let Delta::UnitStatus {
+            index,
+            status: UnitStatus::Active,
+        } = delta
+        {
+            if state.units[*index].stage.is_some() {
+                return ActiveScan::Unit(*index);
+            }
+        }
+    }
+    if deltas.iter().all(|delta| {
+        matches!(
+            delta,
+            Delta::UnitStatus {
+                status: UnitStatus::Blocked { .. },
+                ..
+            }
+        )
+    }) {
+        ActiveScan::Skip
+    } else {
+        ActiveScan::All
+    }
+}
+
 /// Return one observable move. The caller applies it and repeats until there is
 /// no move left. Active units keep their snapshot order; candidates use ID order.
 pub(super) fn next_move(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
     context: &mut EvaluationContext<'_>,
+    active_scan: ActiveScan,
 ) -> Result<Option<Vec<Delta>>, StepError> {
     for (index, unit) in state.units.iter().enumerate() {
+        if !match active_scan {
+            ActiveScan::All => true,
+            ActiveScan::Unit(only) => index == only,
+            ActiveScan::Skip => false,
+        } {
+            continue;
+        }
         if !matches!(unit.status, UnitStatus::Active) {
             continue;
         }
@@ -345,7 +390,6 @@ pub(super) fn next_move(
                         .then_some(vec![Delta::UnitStatus { index, status }]));
                 }
             }
-            let mut state_after = state.clone();
             let mut deltas = Vec::new();
             if unit.input.is_null() {
                 let parent = state
@@ -357,17 +401,15 @@ pub(super) fn next_move(
                     checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
                 let input = eval_fields(&declared.input, parent, state, None, context)?
                     .ok_or_else(|| invalid("unit input unresolved"))?;
-                let delta = Delta::UnitInput { index, input };
-                apply(&mut state_after, context, delta.clone());
-                deltas.push(delta);
+                deltas.push(Delta::UnitInput { index, input });
             }
-            let delta = Delta::UnitStatus {
+            deltas.push(Delta::UnitStatus {
                 index,
                 status: UnitStatus::Active,
-            };
-            apply(&mut state_after, context, delta.clone());
-            deltas.push(delta);
+            });
             if unit.stage.is_none() {
+                let mut state_after = state.clone();
+                apply_all(&mut state_after, context, deltas.clone());
                 deltas.extend(start_group(program, &state_after, &unit.id, context)?);
             }
             Ok(Some(deltas))

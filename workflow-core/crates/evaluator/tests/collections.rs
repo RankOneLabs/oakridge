@@ -102,6 +102,15 @@ fn a_key_read_through_a_nested_path_materializes_every_member() {
 }
 
 #[test]
+fn a_large_fan_out_schedules_workers_within_the_default_evaluation_budget() {
+    let members: Vec<_> = (0..1_500)
+        .map(|index| member(&format!("item-{index:04}"), json!([]), "text"))
+        .collect();
+    let result = launch(Value::Array(members)).unwrap();
+    assert_eq!(result.wanted.len(), 1_500);
+}
+
+#[test]
 fn a_member_input_is_evaluated_against_its_own_each() {
     let result = launch(json!([member("only", json!([]), "text for only")])).unwrap();
     let unit = result
