@@ -144,6 +144,11 @@ export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead |
   return consistent(db, (trx) => runRead(trx, run_id));
 }
 
+/** The inbox projection for one run without loading revision bodies or launch input. */
+export async function readRunSummary(db: Kysely<DB>, run_id: string): Promise<RunSummaryRead | null> {
+  return consistent(db, async (trx) => (await runSummaryReads(trx, [run_id]))[0] ?? null);
+}
+
 export interface RunPageQuery { readonly after: { readonly created_at: string; readonly id: string } | null; readonly limit: number; readonly is_archived: boolean }
 export interface RunReadPage { readonly items: readonly RunSummaryRead[]; readonly next: { readonly created_at: Date; readonly id: string } | null }
 /** Newest first; one listing is either the archived runs or the active ones. */

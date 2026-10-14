@@ -124,6 +124,8 @@ describe("each read model carries exactly its contract's fields", () => {
   test("a unit, its attempts, artifacts, revisions and decisions", async () => {
     const { run_id, unit } = await drafted();
     const view = await get<UnitView>(unitPath(run_id, unit));
+    const batch = await get<readonly UnitView[]>(`/api/runs/${segment(run_id)}/units`);
+    expect(batch.find((candidate) => candidate.unit_id === unit)).toEqual(view);
     holds("UnitView", view);
     holds("AttemptView", view.attempts[0]);
     holds("ArtifactView", view.artifacts[0]);
@@ -280,6 +282,39 @@ describe("derived fields", () => {
       cursor = inbox.next_cursor;
     }
     expect({ done: run_ids.has(done.run_id), archived: run_ids.has(archived.run_id), some: run_ids.size > 0 }).toEqual({ done: false, archived: false, some: true });
+  });
+
+  test("a run's scoped inbox retains both asks after archive and beyond the default inbox page", async () => {
+    const run = await drafted();
+    const scoped = `/api/runs/${segment(run.run_id)}/inbox`;
+    const view = await get<RunView>(`/api/runs/${segment(run.run_id)}`);
+    const attention = await get<InboxPage>(scoped);
+    expect({ asks: view.units.find((unit) => unit.unit_id === run.unit)?.asks.length,
+      decisions: attention.items.filter((item) => item.kind === "decision").length }).toEqual({ asks: 2, decisions: 2 });
+
+    await app.request(`/api/runs/${segment(run.run_id)}/archive`, { method: "POST" });
+    expect((await get<InboxPage>(scoped)).items.filter((item) => item.kind === "decision")).toHaveLength(2);
+    await app.request(`/api/runs/${segment(run.run_id)}/unarchive`, { method: "POST" });
+
+    const fillers = Array.from({ length: 110 }, (_, index) => ({ id: `00000000-w9-${String(index).padStart(3, "0")}`,
+      definition_bundle_id: review_loop, root_unit_id: `00000000-w9-${String(index).padStart(3, "0")}` }));
+    try {
+      await authority.db.transaction().execute(async (trx) => {
+        await trx.insertInto("authority.run").values(fillers).execute();
+        await trx.insertInto("authority.unit").values(fillers.map((row) => ({ id: row.id, run_id: row.id,
+          declaration: "$root", input: JSON.stringify({ topic: "page filler" }) as never,
+          status: JSON.stringify({ kind: "not_started" }) as never }))).execute();
+      });
+      const first = await get<InboxPage>("/api/inbox");
+      expect(first.next_cursor).not.toBeNull();
+      expect(first.items.some((item) => item.run_id === run.run_id)).toBe(false);
+      expect((await get<InboxPage>(scoped)).items.filter((item) => item.kind === "decision")).toHaveLength(2);
+    } finally {
+      await authority.db.transaction().execute(async (trx) => {
+        await trx.deleteFrom("authority.unit").where("run_id", "in", fillers.map((row) => row.id)).execute();
+        await trx.deleteFrom("authority.run").where("id", "in", fillers.map((row) => row.id)).execute();
+      });
+    }
   });
 
   test("history is the unit's events newest first, each with its ingress id and writer", async () => {

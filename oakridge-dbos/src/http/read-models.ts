@@ -3,12 +3,12 @@ import type { UnitId } from "../domain/primitives";
 import { selectArtifactDetail } from "../projections/artifact-view";
 import { selectDefinitionDetail, selectDefinitionSummary, selectPinnedDefinition } from "../projections/definition-view";
 import { selectUnitDiagnostics, selectUnitHistory } from "../projections/history-view";
-import { selectInboxPage } from "../projections/inbox";
+import { selectInboxPage, selectRunInboxItems } from "../projections/inbox";
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
 import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold,
-  readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
+  readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
@@ -106,6 +106,18 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (after instanceof MalformedRequestError) return errorResponse(after);
     const page = await listLiveRuns(db, { after, limit });
     return c.json(selectInboxPage(page.items, page.next === null ? null : encodeCursor(page.next)));
+  } catch (cause) { return fault(cause); } });
+
+  /** One run's attention, including archived and runs outside the global inbox page. */
+  app.get("/api/runs/:run_id/inbox", async (c) => { try {
+    const read = await readRunSummary(db, c.req.param("run_id"));
+    return found(c, read && { items: selectRunInboxItems(read), next_cursor: null }, "run");
+  } catch (cause) { return fault(cause); } });
+
+  /** Read all units from one consistent run snapshot for workspace recovery. */
+  app.get("/api/runs/:run_id/units", async (c) => { try {
+    const read = await readRun(db, c.req.param("run_id"));
+    return found(c, read && read.units.map((unit) => selectRunUnitView(read, unit.id)), "run");
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/runs/:run_id/definition", async (c) => { try {
