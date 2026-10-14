@@ -13,6 +13,7 @@ export const PROVIDER_ERROR_CODES = {
   discovery_unsupported: "discovery_unsupported",
   auth: "auth",
   provider_rejected: "provider_rejected",
+  pull_request_mismatch: "pull_request_mismatch",
   worktree_unrecoverable: "worktree_unrecoverable",
   head_changed: "head_changed",
   // The executor's own.
@@ -28,6 +29,8 @@ export const PROVIDER_ERROR_CODES = {
   attempt_stopped: "attempt_stopped",
   session_unrecorded: "session_unrecorded",
   carrier_ended: "carrier_ended",
+  observation_unavailable: "observation_unavailable",
+  execution_deadline_exceeded: "execution_deadline_exceeded",
 } as const;
 
 export type HandleKind = typeof HANDLE_KINDS[keyof typeof HANDLE_KINDS];

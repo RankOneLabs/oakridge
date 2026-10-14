@@ -32,9 +32,9 @@ test("a run whose intents are settled is deleted with every row, and the stream 
     authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).execute(),
     authority.db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
-    authority.db.selectFrom("authority.operator_event").select(["run_id", "event_key"]).where("run_key", "=", run_id).orderBy("commit_txid").orderBy("id").execute(),
+    authority.db.selectFrom("authority.operator_event").select(["run_id", "payload"]).where("run_key", "=", run_id).orderBy("commit_txid").orderBy("id").execute(),
   ]);
-  expect({ deleted, rows: runs.length + units.length + events.length, stream: stream.map((row) => [row.run_id, row.event_key]).at(-1),
+  expect({ deleted, rows: runs.length + units.length + events.length, stream: stream.map((row) => [row.run_id, row.payload.kind]).at(-1),
     has_run_reference: stream.some((row) => row.run_id !== null) })
     .toEqual({ deleted: { kind: "deleted" }, rows: 0, stream: [null, "invalidate"], has_run_reference: false });
 });

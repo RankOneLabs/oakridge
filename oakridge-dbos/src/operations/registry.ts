@@ -21,9 +21,10 @@ export const OPERATION_REGISTRY = [
   {
     key: "pull_request.observe",
     version: 1,
-    input_schema: { query: { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text" } },
-    output_schema: { observations: "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, merged_at: optional(text)})" },
-    error_codes: [PROVIDER_ERROR_CODES.discovery_unsupported, PROVIDER_ERROR_CODES.auth, PROVIDER_ERROR_CODES.provider_rejected],
+    input_schema: { query: { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text", pr_url: "text" } },
+    output_schema: { state: "enum(open, merged, closed_unmerged)", number: "integer", url: "text", head_sha: "optional(text)", merged_at: "optional(text)" },
+    error_codes: [PROVIDER_ERROR_CODES.discovery_unsupported, PROVIDER_ERROR_CODES.auth, PROVIDER_ERROR_CODES.provider_rejected,
+      PROVIDER_ERROR_CODES.pull_request_mismatch],
   },
   {
     // Publishes its input as the artifact it creates. `$value` is the type

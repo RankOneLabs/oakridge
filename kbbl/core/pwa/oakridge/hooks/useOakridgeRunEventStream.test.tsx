@@ -44,7 +44,7 @@ test("invalidation and run-event hooks share a source while replay refreshes wit
   const live = makeRunEvent({ event_id: "event-8" });
   act(() => {
     source?.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: JSON.stringify({ ...replay, replay: true }) } });
-    source?.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: JSON.stringify(live) } });
+    source?.emit({ topic: "/oakridge/api/events", frame: { event: "run_event", data: JSON.stringify({ ...live, replay: false }) } });
   });
   expect(received.map((event) => event.event_id)).toEqual(["event-8"]);
   expect(invalidations).toHaveBeenCalledWith({ queryKey: queryKeys.run("run-one") });

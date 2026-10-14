@@ -34,7 +34,7 @@ const CONTRACT_FIELDS = {
   DefinitionSummary: ["archived_at", "bundle", "bundle_id", "digest"],
   PinnedDefinition: ["archived_at", "bundle", "bundle_id", "checked_program", "digest"],
   DefinitionDetail: ["archived_at", "bundle", "bundle_id", "digest", "graph", "workflow"],
-  DefinitionBundle: ["key", "root", "schemas", "units", "version"],
+  DefinitionBundle: ["key", "root", "schemas", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],
   ArtifactDefinition: ["key", "schema"],
   Schema: ["key", "shape"],
@@ -106,7 +106,7 @@ async function fanned(): Promise<RunId> {
 }
 async function runEvents(run_id: string): Promise<readonly RunEvent[]> {
   const rows = await authority.db.selectFrom("authority.operator_event").select(["payload"]).where("run_id", "=", run_id)
-    .where("event_key", "=", "run_event").orderBy("commit_txid").orderBy("created_at").execute();
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "run_event")).orderBy("commit_txid").orderBy("created_at").execute();
   return rows.flatMap((row) => row.payload.kind === "run_event" ? [row.payload.data] : []);
 }
 
@@ -308,7 +308,7 @@ describe("derived fields", () => {
     const [as_draft, as_rejected, as_approved] = await Promise.all([detail(draft), detail(rejected), detail(approved)]);
     expect({ statuses: [as_draft.status, as_rejected.status, as_approved.status], schema: as_draft.schema, is_reviewable: as_draft.is_reviewable,
       revisions: as_draft.revisions.length, decisions: as_rejected.decisions.map((decision) => decision.decision) })
-      .toEqual({ statuses: ["draft", "rejected", "approved"], schema: "{body: text, title: text}", is_reviewable: true, revisions: 1, decisions: ["request_changes"] });
+      .toEqual({ statuses: ["draft", "changes_requested", "approved"], schema: "{body: text, title: text}", is_reviewable: true, revisions: 1, decisions: ["request_changes"] });
   });
 
   test("a launch's event addresses the root; an event that leaves a review awaiting names it", async () => {

@@ -4,7 +4,7 @@ import type { RoleSelection } from "./runtime-selection";
 export interface RoleSelections { readonly planner: RoleSelection; readonly worker: RoleSelection }
 
 /** The stages the planner settings drive; every other stage takes the worker settings. */
-export const PLANNER_STAGES: ReadonlySet<string> = new Set(["analysis", "planning", "briefs"]);
+const PLANNER_STAGES: ReadonlySet<string> = new Set(["analysis", "planning", "brief"]);
 
 /** The stages a definition's units run, each once. */
 export const selectDefinitionStages = (bundle: OperatorDefinitionBundle | undefined): readonly string[] =>

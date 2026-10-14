@@ -185,7 +185,10 @@ Effect instructions carry no secret, so they are stored unsealed. Set
 that may write; loopback origins need an explicit entry. Writes require
 `application/json`. The backend and kbbl proxy accept the same operator token
 as Bearer or through kbbl's HttpOnly control cookie; the proxy keeps the cookie
-local and forwards the verified token to the backend.
+local and forwards the verified token to the backend. With no token on a
+loopback bind, the backend answers only requests whose `Host` names loopback
+(`localhost`, `127.0.0.0/8`, `[::1]`), so a DNS-rebound page cannot read it;
+kbbl's proxy addresses it by its loopback URL.
 
 Stop the service; run `pg_dump` to a file nothing in this repository reads;
 drop and recreate the Oakridge database empty; deploy the core WASM, DBOS

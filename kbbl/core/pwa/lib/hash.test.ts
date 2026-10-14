@@ -62,11 +62,11 @@ describe("readHashRoute oakridge routes", () => {
   });
 });
 
-describe("run scope routes", () => {
-  it("parses a run route that names a scope", () => {
-    expect(withHash("#oakridge/run/run-1/unit/scope-1")).toEqual({
+describe("run routes", () => {
+  it("parses a run route that names a unit", () => {
+    expect(withHash("#oakridge/run/run-1/unit/unit-1")).toEqual({
       view: "oakridge",
-      route: { sub: "run", id: "run-1", unit_id: "scope-1", pane: null },
+      route: { sub: "run", id: "run-1", unit_id: "unit-1", pane: null },
     });
   });
 
@@ -77,16 +77,16 @@ describe("run scope routes", () => {
     });
   });
 
-  it.each(["session/sid-1", "artifact/rev-1"])("routes an unscoped %s link to the run list", (path) => {
+  it.each(["session/sid-1", "artifact/rev-1"])("routes a %s link outside a run to the run list", (path) => {
     expect(withHash(`#oakridge/${path}`)).toEqual({ view: "oakridge", route: { sub: "runs" } });
   });
 
   const ROUND_TRIPS: ReadonlyArray<readonly [string, string, string | null]> = [
     ["a bare run", "run-1", null],
-    ["a scope", "run-1", "scope-1"],
+    ["a unit", "run-1", "unit-1"],
     // Both halves need encoding: an id containing a slash would otherwise read
     // as an extra path segment and shift every segment after it.
-    ["ids that need URL encoding", "run/one", "scope/one"],
+    ["ids that need URL encoding", "run/one", "unit/one"],
   ];
 
   it.each(ROUND_TRIPS)("round-trips %s", (_label, runId, unitId) => {
@@ -94,6 +94,17 @@ describe("run scope routes", () => {
       view: "oakridge",
       route: { sub: "run", id: runId, unit_id: unitId, pane: null },
     });
+  });
+
+  it("keeps an unknown pane suffix at the run overview", () => {
+    expect(withHash("#oakridge/run/run-1/terminal/unknown")).toEqual({
+      view: "oakridge", route: { sub: "run", id: "run-1", unit_id: null, pane: null },
+    });
+  });
+
+  it("keeps artifact and session targets distinct even when their IDs match", () => {
+    expect(formatRunWorkspaceHash("run-1", { kind: "session", session_id: "same" as never }))
+      .not.toBe(formatRunWorkspaceHash("run-1", { kind: "artifact", artifact_id: "same" as never }));
   });
 
   it("round-trips an artifact pane and both project routes", () => {

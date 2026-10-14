@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import type { CoreClient } from "../src/core-client/client";
 import type { Event } from "../src/core-client/core-types";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
@@ -46,6 +47,32 @@ test("a second event on a run waits for the first to commit before it reaches st
   const events = await authority.db.selectFrom("authority.event").select("ingress_id").where("run_id", "=", run_id).orderBy("created_at").execute();
   expect({ steps_while_held, steps, kinds: results.map((result) => result.ok && result.value.kind), events: events.map((event) => event.ingress_id).slice(1) })
     .toEqual({ steps_while_held: 1, steps: 2, kinds: ["committed", "committed"], events: ["executor:started", "executor:published"] });
+});
+
+test("an event is stamped when commit writes it under the run lock, not when its transaction began", async () => {
+  const run_id = await launched();
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let signal_in_step: () => void = () => undefined;
+  const in_step = new Promise<void>((resolve) => { signal_in_step = resolve; });
+  // The real core, with the step held open after its transaction began and took the run row.
+  const gated = { request: async (operation: "compile" | "step", input: never) => {
+    if (operation === "step") { signal_in_step(); await held; }
+    return authority.core.request(operation, input);
+  } } as unknown as CoreClient;
+  const action = await writerAction(run_id);
+  const commit = commitEvent({ db: authority.db, core: gated, wake: () => undefined },
+    { run_id, ingress_id: "stamped", event: { kind: "worker_started", action, kbbl_session_id: "sid" }, writer: executor(action) });
+  await in_step;
+  await Bun.sleep(50);
+  // The database's own clock, read while the commit is held: no skew against the process clock.
+  const { rows: [held_at] } = await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(authority.db);
+  release();
+  const result = await commit;
+  const event = await authority.db.selectFrom("authority.event").select("created_at").where("run_id", "=", run_id)
+    .where("ingress_id", "=", "executor:stamped").executeTakeFirstOrThrow();
+  expect({ kind: result.ok && result.value.kind, after_hold: new Date(event.created_at) > new Date(held_at!.now) })
+    .toEqual({ kind: "committed", after_hold: true });
 });
 
 test("concurrent events on one run serialize on the run row", async () => {

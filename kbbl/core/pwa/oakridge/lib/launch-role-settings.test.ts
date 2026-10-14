@@ -14,6 +14,11 @@ describe("launch role settings", () => {
     } });
   });
 
+  it("drives the development definition's brief stage with the planner settings", () => {
+    const config = selectRunConfig(selectDefinitionStages(makeDefinitionSummary().bundle), { planner, worker });
+    expect(config.sessions.brief).toEqual({ harness: "claude-code", model: "opus", effort: "high" });
+  });
+
   it("lists each stage the definition's units run once", () => {
     expect(selectDefinitionStages(makeDefinitionSummary().bundle).length)
       .toBe(new Set(makeDefinitionSummary().bundle.units.flatMap((unit) => unit.stage ?? [])).size);

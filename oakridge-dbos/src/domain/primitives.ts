@@ -1,13 +1,8 @@
 export type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
-export type WorkflowRunId = Brand<string, "WorkflowRunId">;
-export type StageInstanceId = Brand<string, "StageInstanceId">;
-export type ArtifactId = Brand<string, "ArtifactId">;
 export type ProjectId = Brand<string, "ProjectId">;
-export type ExecutionId = Brand<string, "ExecutionId">;
 /** Authority row identities; storage/schema-records.ts applies them to the generated rows. */
 export type RunId = Brand<string, "RunId">;
 export type RevisionId = Brand<string, "RevisionId">;
-export type PoolId = Brand<string, "PoolId">;
 export type UnitId = Brand<string, "UnitId">;
 /** A core action key: one per RunWorker action, shared by every attempt of a periodic worker. */
 export type ActionId = Brand<string, "ActionId">;
@@ -15,16 +10,10 @@ export type EventId = Brand<string, "EventId">;
 export type DecisionId = Brand<string, "DecisionId">;
 export type EffectIntentId = Brand<string, "EffectIntentId">;
 export type DefinitionBundleId = Brand<string, "DefinitionBundleId">;
-export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
-export type RunTransitionId = Brand<string, "RunTransitionId">;
-export type CohortId = Brand<string, "CohortId">;
-export type AttemptId = Brand<string, "AttemptId">;
-export type SessionId = Brand<string, "SessionId">;
 export type OperatorEventId = Brand<string, "OperatorEventId">;
 export type CollaborationThreadId = Brand<string, "CollaborationThreadId">;
 export type CollaborationMessageId = Brand<string, "CollaborationMessageId">;
 export type ReviewItemId = Brand<string, "ReviewItemId">;
-export type CollaborationDeliveryId = Brand<string, "CollaborationDeliveryId">;
 
 type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };

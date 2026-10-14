@@ -9,7 +9,6 @@ import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { githubIdentityFromRemote } from "../src/runtime/project-identity";
 import { selectControlPlaneAccess } from "../src/http/control-auth";
-import { silentDurationMs } from "../src/adapters/kbbl";
 import type { Workflow } from "../src/core-client/core-types";
 
 const root = resolve(import.meta.dir, "../..");
@@ -38,7 +37,7 @@ test("every named leaf operation remains present", () => {
 test("the domain directory holds only leaf support types", () => {
   expect(readdirSync(resolve(root, "oakridge-dbos/src/domain")).sort()).toEqual([
     "delegated-session.ts", "effect-instruction.ts", "primitives.ts", "projects.ts", "prompt-template.ts",
-    "pull-request.ts", "repository-provisioning.ts", "run-config.ts", "workflow.ts",
+    "pull-request.ts", "repository-provisioning.ts", "run-config.ts", "unit-status.ts",
   ]);
 });
 
@@ -48,10 +47,9 @@ test("retained operations import and execute", async () => {
   await openDatabase("postgres://localhost/oakridge").destroy();
   expect((await new BunGitCommandRunner().run(root, ["rev-parse", "--is-inside-work-tree"])).exit_code).toBe(0);
   const reader = new GithubPullRequestReader({ token: "test" }, (async () => new Response(null, { status: 404 })) as unknown as typeof fetch);
-  expect(await reader.read("owner", "repo", 1)).toEqual({ ok: true, value: null });
+  expect(await reader.get({ owner: "owner", name: "repo", number: 1 })).toEqual({ ok: true, value: null });
   expect(githubIdentityFromRemote("https://github.com/owner/repo.git")?.name).toBe("repo");
   expect(selectControlPlaneAccess({ host: "127.0.0.1", token: undefined, allow_insecure_non_loopback: false }).kind).toBe("loopback_open");
-  expect(silentDurationMs({}, Date.now())).toBeNull();
 });
 
 test("sample workers declare their kind", () => {

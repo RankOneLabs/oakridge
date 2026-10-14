@@ -13,7 +13,7 @@ const source = resolve(root, "workflow-core/fixtures/bundles/development.json");
 const output = resolve(root, "kbbl/core/pwa/oakridge/__fixtures__/development-definition.json");
 
 const workflow = JSON.parse(readFileSync(source, "utf8")) as Workflow;
-const generated = `${JSON.stringify(selectDefinitionBundle(workflow, 1), null, 2)}\n`;
+const generated = `${JSON.stringify(selectDefinitionBundle(workflow), null, 2)}\n`;
 
 if (process.argv.includes("--check")) {
   if (readFileSync(output, "utf8") !== generated)

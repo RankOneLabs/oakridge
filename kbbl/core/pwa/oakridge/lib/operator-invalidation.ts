@@ -1,22 +1,36 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { OperatorStreamInvalidation } from "../operator-contracts";
 import { queryKeys } from "../queryKeys";
 
-/** The authority's invalidate frame targets only the query family it changed. */
-export interface OperatorInvalidationFrame {
-  readonly kind: "invalidate";
-  readonly target: "run" | "runs" | "definitions" | "projects";
-  readonly run_id: string | null;
-  readonly replay: boolean;
+const INVALIDATION_TARGETS: readonly OperatorStreamInvalidation["target"][] = ["run", "runs", "definitions", "projects"];
+
+const isInvalidationTarget = (value: unknown): value is OperatorStreamInvalidation["target"] =>
+  INVALIDATION_TARGETS.some((target) => target === value);
+
+/** An `invalidate` frame's data, or null for one this PWA does not understand. */
+export function parseInvalidationFrame(data: string): OperatorStreamInvalidation | null {
+  try {
+    const value: unknown = JSON.parse(data);
+    if (!value || typeof value !== "object" || !("kind" in value) || value.kind !== "invalidate") return null;
+    if (!("target" in value) || !isInvalidationTarget(value.target)) return null;
+    if (!("run_id" in value) || (value.run_id !== null && typeof value.run_id !== "string")) return null;
+    return { kind: "invalidate", target: value.target, run_id: value.run_id };
+  } catch { return null; }
 }
 
-export function invalidateOperatorEvent(client: QueryClient, frame: OperatorInvalidationFrame): void {
-  if (frame.target === "run" && frame.run_id !== null) {
-    void client.invalidateQueries({ queryKey: queryKeys.run(frame.run_id) });
-    invalidateRunLists(client);
+export function invalidateOperatorTarget(client: QueryClient, frame: OperatorStreamInvalidation): void {
+  switch (frame.target) {
+    case "run": if (frame.run_id !== null) invalidateRun(client, frame.run_id); return;
+    case "runs": invalidateRunLists(client); return;
+    case "definitions": invalidateDefinitions(client); return;
+    case "projects": void client.invalidateQueries({ queryKey: queryKeys.projects }); return;
   }
-  if (frame.target === "runs") invalidateRunLists(client);
-  if (frame.target === "definitions") invalidateDefinitions(client);
-  if (frame.target === "projects") void client.invalidateQueries({ queryKey: queryKeys.projects });
+}
+
+/** A committed event on a run refreshes that run and both shared lists. */
+export function invalidateRun(client: QueryClient, runId: string): void {
+  void client.invalidateQueries({ queryKey: queryKeys.run(runId) });
+  invalidateRunLists(client);
 }
 
 /** A launch or accepted decision changes what the run list and the inbox show. */

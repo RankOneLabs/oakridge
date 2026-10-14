@@ -137,8 +137,8 @@ fn a_handoff_template_cannot_read_a_mode_only_engine_input() {
     }
 }
 
-/// Sample B (fan-out) with `edit` applied to its source: the compile error's detail.
-fn fan_out_compile_error(edit: impl FnOnce(&mut Value)) -> String {
+/// Sample B (fan-out) with `edit` applied to its source, compiled.
+fn compile_fan_out(edit: impl FnOnce(&mut Value)) -> Result<(), DomainError> {
     use std::collections::BTreeMap;
     use workflow_compiler::{compile_workflow, decode_workflow};
     let mut value: Value =
@@ -146,11 +146,41 @@ fn fan_out_compile_error(edit: impl FnOnce(&mut Value)) -> String {
     edit(&mut value);
     let prompts = BTreeMap::from([("fan-out/item.md".to_owned(), "{{text}}".to_owned())]);
     let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
-    compile_workflow(&source, &prepare_operation(), &prompts)
-        .map(|_| ())
-        .unwrap_err()
-        .detail
-        .to_string()
+    compile_workflow(&source, &prepare_operation(), &prompts).map(|_| ())
+}
+
+/// Sample B (fan-out) with `edit` applied to its source: the compile error's detail.
+fn fan_out_compile_error(edit: impl FnOnce(&mut Value)) -> String {
+    compile_fan_out(edit).unwrap_err().detail.to_string()
+}
+
+/// A `work` input that reads `prepare`'s outcome inside a list function.
+const NESTED_OUTCOME_READ: &str = "filter(input.items, item.key != prepare.outcome.workspace.head)";
+
+#[test]
+fn a_unit_input_reads_an_after_units_outcome_inside_a_list_function() {
+    let compiled = compile_fan_out(|value| {
+        value["run"]["units"]["work"]["input"]["items"] = NESTED_OUTCOME_READ.into();
+    });
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn a_unit_input_cannot_read_an_outcome_outside_after_inside_a_list_function() {
+    let error = compile_fan_out(|value| {
+        let work = &mut value["run"]["units"]["work"];
+        work["after"] = serde_json::json!([]);
+        work["input"]["workspace"] = "input.repository".into();
+        work["input"]["items"] = NESTED_OUTCOME_READ.into();
+    })
+    .unwrap_err();
+    assert_eq!(
+        (&*error.entity_id, &*error.detail),
+        (
+            "check 3",
+            "unit outcome prepare absent or outside read scope"
+        )
+    );
 }
 
 fn tail_unit(after: Value) -> Value {

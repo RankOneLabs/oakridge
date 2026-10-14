@@ -3,7 +3,7 @@ import type { RunConfig } from "../src/domain/run-config";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { KbblClient, REVIVE_HEADER, silentDurationMs } from "../src/adapters/kbbl";
+import { KbblClient, REVIVE_HEADER } from "../src/adapters/kbbl";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
 import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
@@ -117,12 +117,6 @@ test("a close names its attempt, fencing only when asked, and an unknown session
     kinds: ["acknowledged", "acknowledged", "acknowledged"],
     urls: ["http://kbbl.test/sessions/sid-1?fenced_by=action-1", "http://kbbl.test/sessions/sid-1?closed_by=action-2",
       "http://kbbl.test/sessions/gone?closed_by=action-3"] });
-});
-
-test("silence is measured from kbbl's last activity, and absent activity is not silence", () => {
-  const now = Date.parse("2026-10-12T12:01:00.000Z");
-  expect([silentDurationMs({ session: { lastActivityTs: "2026-10-12T12:00:00.000Z" } }, now), silentDurationMs({ pending: true }, now)])
-    .toEqual([60_000, null]);
 });
 
 // ---------------------------------------------------------- provider -------

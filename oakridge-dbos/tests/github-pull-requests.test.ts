@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
+import { GithubPullRequestReader, selectPullRequest } from "../src/runtime/github-pull-requests";
 
 const githubPayload = (overrides: Record<string, unknown> = {}) => ({
   number: 440, html_url: "https://github.com/RankOneLabs/oakridge/pull/440",
   state: "open", merged: false, merged_at: null,
-  head: { ref: "cohort/foundation", sha: "abc123" }, base: { ref: "epic/tiers" },
+  head: { ref: "cohort/foundation", sha: "abc123", repo: { full_name: "RankOneLabs/oakridge" } }, base: { ref: "epic/tiers" },
   ...overrides,
 });
 
@@ -18,15 +18,12 @@ const readerReturning = (status: number, payload: unknown, headers: Record<strin
   return { reader: new GithubPullRequestReader({ token: "test-token" }, http), calls };
 };
 
-test("an open pull request reads as open", async () => {
-  const { reader, calls } = readerReturning(200, githubPayload());
-  const read = await reader.read("RankOneLabs", "oakridge", 440);
-  const observation = read.ok ? read.value : null;
-  expect(observation?.state).toBe("open");
-  expect(observation?.source).toBe("poll");
-  expect(observation?.head_branch).toBe("cohort/foundation");
-  expect(observation?.base_branch).toBe("epic/tiers");
-  expect(calls[0]).toBe("https://api.github.com/repos/RankOneLabs/oakridge/pulls/440");
+const ref = { owner: "RankOneLabs", name: "oakridge", number: 440 };
+
+test("an open pull request reads as open, with its head and base", () => {
+  const pull_request = selectPullRequest(githubPayload());
+  expect(pull_request && [pull_request.state, pull_request.head_owner, pull_request.head_branch, pull_request.base_branch])
+    .toEqual(["open", "RankOneLabs", "cohort/foundation", "epic/tiers"]);
 });
 
 /**
@@ -34,95 +31,65 @@ test("an open pull request reads as open", async () => {
  * alone would file every successful merge as a close without merge, which is a
  * mismatch — so the run would refuse the very evidence it is waiting for.
  */
-test("a merged pull request reads as merged even though GitHub calls it closed", async () => {
-  const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: true, merged_at: "2026-08-18T11:00:00Z" }));
-  const read = await reader.read("RankOneLabs", "oakridge", 440);
-  const observation = read.ok ? read.value : null;
-  expect(observation?.state).toBe("merged");
-  expect(observation?.merged_at).toBe("2026-08-18T11:00:00Z");
+test("a merged pull request reads as merged even though GitHub calls it closed", () => {
+  const pull_request = selectPullRequest(githubPayload({ state: "closed", merged: true, merged_at: "2026-08-18T11:00:00Z" }));
+  expect(pull_request && [pull_request.state, pull_request.merged_at]).toEqual(["merged", "2026-08-18T11:00:00Z"]);
 });
 
-test("a pull request closed without merging reads as closed_unmerged", async () => {
-  const { reader } = readerReturning(200, githubPayload({ state: "closed", merged: false, merged_at: null }));
-  const read = await reader.read("RankOneLabs", "oakridge", 440);
-  const observation = read.ok ? read.value : null;
-  expect(observation?.state).toBe("closed_unmerged");
+test("a pull request closed without merging reads as closed_unmerged", () => {
+  expect(selectPullRequest(githubPayload({ state: "closed", merged: false, merged_at: null }))?.state).toBe("closed_unmerged");
 });
 
-/**
- * A repository the token cannot see is not evidence of anything. Returning
- * nothing leaves the cohort waiting for the operator, which is the fallback.
- */
-test("a pull request that cannot be read yields no observation", async () => {
+test("a pull request whose head repository is gone reads with no head owner", () => {
+  expect(selectPullRequest(githubPayload({ head: { ref: "cohort/foundation", sha: "abc123", repo: null } }))?.head_owner).toBeNull();
+});
+
+test("a payload missing the fields an observation needs yields no pull request", () => {
+  expect(selectPullRequest(githubPayload({ head: null }))).toBeNull();
+});
+
+test("the reader fetches the pull request by number", async () => {
+  const { reader, calls } = readerReturning(200, githubPayload({ state: "closed", merged: true, merged_at: "2026-08-18T11:00:00Z" }));
+  const found = await reader.get(ref);
+  expect({ calls, state: found.ok ? found.value?.state : null })
+    .toEqual({ calls: ["https://api.github.com/repos/RankOneLabs/oakridge/pulls/440"], state: "merged" });
+});
+
+test("a 404 is no such pull request, not an error", async () => {
   const { reader } = readerReturning(404, { message: "Not Found" });
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: true, value: null });
+  expect(await reader.get(ref)).toEqual({ ok: true, value: null });
 });
 
-test("a payload missing the fields an observation needs yields no observation", async () => {
-  const { reader } = readerReturning(200, githubPayload({ head: null }));
-  expect((await reader.read("RankOneLabs", "oakridge", 440)).ok).toBe(false);
-});
-
-test("a GitHub 503 is distinguishable from a missing pull request", async () => {
+test("a GitHub 503 is unavailable", async () => {
   const { reader } = readerReturning(503, { message: "Unavailable" });
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual({ ok: false, error: {
-    kind: "unavailable", status: 503, detail: "GitHub pull request read failed (503)",
-  } });
+  const found = await reader.get(ref);
+  expect(found.ok ? null : [found.error.kind, found.error.status]).toEqual(["unavailable", 503]);
 });
 
 /** GitHub answers a primary or secondary rate limit with 403; it passes, so the observation is retried, not failed as auth. */
 for (const [limit, headers] of [["primary", { "x-ratelimit-remaining": "0" }], ["secondary", { "retry-after": "60" }]] as const) {
   test(`a 403 for a ${limit} rate limit is unavailable, not an auth failure`, async () => {
     const { reader } = readerReturning(403, { message: "API rate limit exceeded" }, headers);
-    const read = await reader.read("RankOneLabs", "oakridge", 440);
-    expect(read.ok ? null : read.error.kind).toBe("unavailable");
+    const found = await reader.get(ref);
+    expect(found.ok ? null : found.error.kind).toBe("unavailable");
   });
 }
 
 test("a 403 that is not a rate limit is an auth failure", async () => {
   const { reader } = readerReturning(403, { message: "Resource not accessible by integration" }, { "x-ratelimit-remaining": "4999" });
-  const read = await reader.read("RankOneLabs", "oakridge", 440);
-  expect(read.ok ? null : read.error.kind).toBe("auth");
+  const found = await reader.get(ref);
+  expect(found.ok ? null : found.error.kind).toBe("auth");
 });
 
-test("a rate-limited discovery is unavailable", async () => {
-  const { reader } = readerReturning(403, { message: "secondary rate limit" }, { "retry-after": "60" });
-  const found = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs", head_branch: "cohort/foundation", base_branch: "epic/tiers" });
+test("a pull request body missing its fields is unavailable", async () => {
+  const { reader } = readerReturning(200, githubPayload({ html_url: null }));
+  const found = await reader.get(ref);
   expect(found.ok ? null : found.error.kind).toBe("unavailable");
 });
 
-for (const [head_owner, head_repository] of [["RankOneLabs", "RankOneLabs/oakridge"], ["fork-owner", "fork-owner/oakridge"], ["fork-owner", "Fork-Owner/oakridge-renamed"]] as const) {
-  test(`discovery pages through the list and filters the ${head_repository} head repository`, async () => {
-    const calls: string[] = [];
-    const candidate = githubPayload({ head: { ref: "cohort/foundation", sha: "abc123", repo: { full_name: head_repository } } });
-    const http = (async (input: string | URL | Request) => {
-      const url = new URL(String(input));
-      calls.push(url.toString());
-      if (url.searchParams.get("page") === "1") return Response.json(Array.from({ length: 100 }, (_, number) => ({ ...candidate, number: number + 1, head: { ...candidate.head, repo: { full_name: "other/oakridge" } } })));
-      return Response.json([candidate]);
-    }) as unknown as typeof fetch;
-    const reader = new GithubPullRequestReader({ token: "test-token" }, http);
-    const result = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner, head_branch: "cohort/foundation", base_branch: "epic/tiers" });
-    expect(result.ok && result.value.map((item) => item.number)).toEqual([440]);
-    expect(calls.some((url) => url.includes(`head=${encodeURIComponent(`${head_owner}:cohort/foundation`)}`) && url.includes("page=2"))).toBe(true);
-  });
-}
-
-/** The list carries each pull request's state and merge time: reading each again would spend the rate limit on every poll. */
-test("discovery reads a merge from the list without reading the pull request again", async () => {
-  const calls: string[] = [];
-  const merged = githubPayload({ state: "closed", merged_at: "2026-08-18T11:00:00Z",
-    head: { ref: "cohort/foundation", sha: "abc123", repo: { full_name: "RankOneLabs/oakridge" } } });
-  delete (merged as { merged?: unknown }).merged;
-  const http = (async (input: string | URL | Request) => { calls.push(String(input)); return Response.json([merged]); }) as unknown as typeof fetch;
-  const reader = new GithubPullRequestReader({ token: "test-token" }, http);
-  const result = await reader.find_for_branches({ owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs", head_branch: "cohort/foundation", base_branch: "epic/tiers" });
-  expect({ states: result.ok && result.value.map((item) => item.state), calls: calls.length }).toEqual({ states: ["merged"], calls: 1 });
-});
-
-test("an observation carries no read time, so the same pull request read twice is the same observation", async () => {
+test("a pull request carries no read time, so the same pull request read twice is the same", async () => {
   const { reader } = readerReturning(200, githubPayload());
-  const first = await reader.read("RankOneLabs", "oakridge", 440);
+  const first = await reader.get(ref);
   await Bun.sleep(5);
-  expect(await reader.read("RankOneLabs", "oakridge", 440)).toEqual(first);
+  expect(await reader.get(ref)).toEqual(first);
 });

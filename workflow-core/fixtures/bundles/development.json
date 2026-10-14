@@ -32,8 +32,12 @@
       "key": "ident",
       "workspace": "workspace"
     },
-    "pr_observations": {
-      "observations": "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, merged_at: optional(text)})"
+    "pr_status": {
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
+      "head_sha": "optional(text)",
+      "merged_at": "optional(text)"
     },
     "completed_cohort": {
       "cohort_id": "ident",
@@ -559,7 +563,7 @@
           "schema": "assessment_body"
         },
         "pr_state": {
-          "schema": "pr_observations"
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -610,7 +614,7 @@
           "operation": "pull_request.observe",
           "when": "published(pr)",
           "inputs": {
-            "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.build_base}"
+            "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.build_base, pr_url: latest(pr).pr_url}"
           },
           "every": "2m",
           "creates": [
@@ -662,7 +666,7 @@
         "pr_closed": {
           "of": "build_result",
           "by": "engine",
-          "when": "published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"closed_unmerged\"",
+          "when": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
           "decisions": {
             "replace_pr": {
               "effect": "request_changes",
@@ -672,7 +676,7 @@
           }
         }
       },
-      "done_when": "approved(assessment) and published(build_result) and published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"merged\"",
+      "done_when": "approved(assessment) and published(build_result) and published(pr) and published(pr_state) and latest(pr_state).state == \"merged\"",
       "outcome": {
         "cohort_id": "input.brief.cohort_id",
         "repository_key": "input.brief.repository_key",
@@ -694,7 +698,7 @@
           "schema": "pr_body"
         },
         "pr_state": {
-          "schema": "pr_observations"
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -718,7 +722,7 @@
           "operation": "pull_request.observe",
           "when": "published(pr)",
           "inputs": {
-            "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.final_base}"
+            "query": "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.final_base, pr_url: latest(pr).pr_url}"
           },
           "every": "2m",
           "creates": [
@@ -754,7 +758,7 @@
         "pr_closed": {
           "of": "pr",
           "by": "engine",
-          "when": "input.final_merge_policy == \"require_merge\" and published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"closed_unmerged\"",
+          "when": "input.final_merge_policy == \"require_merge\" and published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
           "decisions": {
             "replace_pr": {
               "effect": "request_changes",
@@ -764,11 +768,11 @@
           }
         }
       },
-      "done_when": "approved(pr) and published(pr_state) and (lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"closed_unmerged\"))",
+      "done_when": "approved(pr) and published(pr_state) and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))",
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",
-        "is_merged": "lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"merged\""
+        "is_merged": "latest(pr_state).state == \"merged\""
       }
     }
   }

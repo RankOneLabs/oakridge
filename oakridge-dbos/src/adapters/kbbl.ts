@@ -1,4 +1,3 @@
-import type { JsonValue } from "../domain/primitives";
 import type { ProviderResult } from "../effects/provider";
 import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionStatus } from "../../../kbbl/core/acp/resumable-wire";
 
@@ -77,18 +76,6 @@ function parseEnd(raw: unknown): SessionEnd | null {
   if (raw.kind !== "failed" || typeof raw.code !== "string" || raw.code === "") return null;
   return { kind: "failed", code: raw.code, detail: typeof raw.detail === "string" && raw.detail !== "" ? raw.detail : raw.code };
 }
-
-/**
- * How long a session has been silent, or null when the reading carries no
- * parseable activity time: an unknown time is not silence.
- */
-export const silentDurationMs = (pending: JsonValue, now: number): number | null => {
-  if (!isFields(pending) || !isFields(pending.session)) return null;
-  const last_activity = pending.session.lastActivityTs;
-  if (typeof last_activity !== "string") return null;
-  const observed_at = Date.parse(last_activity);
-  return Number.isNaN(observed_at) ? null : Math.max(0, now - observed_at);
-};
 
 /** The attempt closing its own session, and whether the session ends for good. */
 export interface SessionCloser { readonly action_id: string; readonly is_fence: boolean }

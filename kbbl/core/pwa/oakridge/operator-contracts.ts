@@ -92,7 +92,7 @@ export interface OperatorArtifactDetail {
   readonly decisions: readonly OperatorRevisionDecision[];
 }
 
-export type OperatorArtifactRevisionStatus = "draft" | "approved" | "rejected";
+export type OperatorArtifactRevisionStatus = "draft" | "approved" | "changes_requested";
 
 export interface OperatorUnitHistory { readonly unit_id: string; readonly events: readonly OperatorEventHistory[]; readonly next_cursor: string | null }
 
@@ -114,8 +114,6 @@ export interface OperatorCollaborationThreadView {
   readonly capabilities: { readonly can_write: boolean };
   readonly messages: readonly OperatorCollaborationMessageRow[];
   readonly review_items: readonly OperatorReviewItemRow[];
-  readonly deliveries: readonly OperatorCollaborationDeliveryRecord[];
-  readonly last_delivery_failure_reason: string | null;
 }
 
 export interface OperatorProjectDraft {
@@ -149,6 +147,10 @@ export interface OperatorRunEvent {
   /** ISO-8601, as the event log recorded it. */
   readonly occurred_at: string;
 }
+
+export type OperatorStreamFrameData = OperatorStreamFrame["data"] & { readonly replay: boolean };
+
+export interface OperatorStreamInvalidation { readonly kind: "invalidate"; readonly target: "run" | "runs" | "definitions" | "projects"; readonly run_id: string | null }
 
 export interface OperatorSessionHold {
   readonly session_id: string;
@@ -240,7 +242,6 @@ export interface OperatorDecisionDefinition {
 
 export interface OperatorDefinitionBundle {
   readonly key: string;
-  readonly version: number;
   /** The root unit's key, as the run view lists it. */
   readonly root: string;
   readonly schemas: readonly OperatorSchema[];
@@ -327,15 +328,13 @@ export interface OperatorReviewItemRow {
   readonly body: OperatorReviewItemBody; readonly created_at: string;
 }
 
-export interface OperatorCollaborationDeliveryRecord {
-  readonly id: string; readonly run_id: string; readonly unit_id: string; readonly message_id: string;
-  readonly payload: OperatorCollaborationDeliveryPayload;
-  readonly created_at: string;
-}
-
 export interface OperatorForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
 
 export interface OperatorAwaitingReviewNotice { readonly review: string; readonly label: string }
+
+export type OperatorStreamFrame =
+  | { readonly event: "run_event"; readonly data: OperatorRunEvent }
+  | { readonly event: "invalidate"; readonly data: OperatorStreamInvalidation };
 
 export interface OperatorRunConfig { readonly sessions: { readonly [stage: string]: OperatorSessionSettings } }
 
@@ -358,6 +357,7 @@ export interface OperatorDecisionField { readonly key: string; readonly label: s
 export interface OperatorSchema { readonly key: string; readonly shape: OperatorSchemaShape }
 
 export interface OperatorUnitDefinition {
+  /** Its declaration path (`integration/repository`), as the definition graph keys it; `$root` for the root. Unique in the bundle. */
   readonly key: string;
   readonly stage: string | null;
   readonly label: string;
@@ -381,13 +381,9 @@ export type OperatorAuthorityEffectStatus = "acknowledged" | "failed" | "pending
 
 export interface OperatorCollaborationThreadContext { readonly title: string; readonly anchor: string | null }
 
-export interface OperatorCollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }
+export interface OperatorCollaborationMessageBody { readonly text: string; readonly author: string }
 
 export interface OperatorReviewItemBody { readonly title: string; readonly detail: string; readonly status: string }
-
-export type OperatorCollaborationDeliveryPayload =
-  | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
-  | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
 
 export interface OperatorSessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }
 

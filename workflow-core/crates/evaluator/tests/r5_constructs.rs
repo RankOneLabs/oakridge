@@ -34,8 +34,8 @@ fn program() -> CheckedWorkflow {
             version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
             output_schema: TypeExpression::Record(BTreeMap::from([(
-                "observations".into(),
-                ty("list({url: text, state: text})"),
+                "state".into(),
+                ty("enum(open, merged, closed_unmerged)"),
             )])),
             error_codes: vec![],
         },
@@ -113,10 +113,7 @@ impl Run {
             .iter()
             .filter(|(id, _)| id.0 == unit)
             .flat_map(|(_, actions)| actions.iter())
-            .filter_map(|action| match action {
-                Action::RunWorker { worker, mode, .. } => Some((worker.0.clone(), mode.clone())),
-                _ => None,
-            })
+            .map(|Action::RunWorker { worker, mode, .. }| (worker.0.clone(), mode.clone()))
             .collect()
     }
     fn wants(&self, unit: &str, worker: &str) -> bool {
@@ -241,13 +238,8 @@ impl Run {
     }
     fn observe(&mut self, state: &str) {
         self.start(COHORT, "pr_watch");
-        self.publish(
-            COHORT,
-            "pr_watch",
-            "pr_state",
-            json!({ "observations": [{ "url": PR_URL, "state": state }] }),
-        )
-        .unwrap();
+        self.publish(COHORT, "pr_watch", "pr_state", json!({ "state": state }))
+            .unwrap();
         self.end(COHORT, "pr_watch");
     }
 }
@@ -649,4 +641,124 @@ fn an_engine_review_waits_for_the_revise_it_asked_for_to_publish_everything() {
     .unwrap();
     run.end(COHORT, "builder");
     assert_eq!(pr_closed(&run), 1);
+}
+
+/// The cohort's builder replaces its closed PR: build and PR republished,
+/// the PR at a new url, so the watch's inputs change.
+fn through_replaced_pr() -> Run {
+    let mut run = Run::through_build(false);
+    run.observe("closed_unmerged");
+    run.start(COHORT, "builder");
+    run.publish(COHORT, "builder", "build", json!({ "summary": "rebuilt" }))
+        .unwrap();
+    run.publish(
+        COHORT,
+        "builder",
+        "pr",
+        json!({ "pr_url": "https://forge/pr/2", "branch": "cohort-a" }),
+    )
+    .unwrap();
+    run.end(COHORT, "builder");
+    run
+}
+fn pr_closed_targets(run: &Run) -> Vec<RevisionId> {
+    run.state
+        .decisions
+        .iter()
+        .filter(|d| d.review.0 == "pr_closed")
+        .map(|d| d.target.clone())
+        .collect()
+}
+
+#[test]
+fn a_replaced_pr_is_judged_only_once_the_replacing_watch_has_observed_it() {
+    let mut run = through_replaced_pr();
+    // The latest pr_state still reads the closed PR, but that watch is replaced.
+    assert_eq!(
+        run.latest(COHORT, "pr_state").unwrap().body,
+        json!({ "state": "closed_unmerged" })
+    );
+    assert!(matches!(
+        &run.state
+            .attempts
+            .iter()
+            .rev()
+            .find(|a| a.worker.0 == "pr_watch")
+            .unwrap()
+            .cause,
+        Cause::Periodic {
+            replaces: Some(_),
+            ..
+        }
+    ));
+    assert_eq!(pr_closed_targets(&run).len(), 1);
+    run.observe("open");
+    assert_eq!(pr_closed_targets(&run).len(), 1);
+}
+
+#[test]
+fn a_replacing_pr_that_closes_unmerged_requests_changes_on_the_new_build() {
+    let mut run = through_replaced_pr();
+    run.observe("closed_unmerged");
+    let rebuilt = run.latest(COHORT, "build").unwrap().id.clone();
+    let targets = pr_closed_targets(&run);
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[1], rebuilt);
+}
+
+#[test]
+fn a_merge_observed_of_a_replaced_pr_does_not_complete_the_cohort() {
+    let mut run = Run::through_build(false);
+    run.start(COHORT, "assessor");
+    run.publish(
+        COHORT,
+        "assessor",
+        "assessment",
+        json!({ "verdict": "pass" }),
+    )
+    .unwrap();
+    run.end(COHORT, "assessor");
+    // The PR moves to a new url before the assessment is accepted; the old watch saw a merge.
+    run.observe("merged");
+    run.decide(
+        COHORT,
+        "assessment_review",
+        "request_build_changes",
+        "build",
+        json!({ "feedback": "redo" }),
+    )
+    .unwrap();
+    run.start(COHORT, "builder");
+    run.publish(COHORT, "builder", "build", json!({ "summary": "redone" }))
+        .unwrap();
+    run.publish(
+        COHORT,
+        "builder",
+        "pr",
+        json!({ "pr_url": "https://forge/pr/2", "branch": "cohort-a" }),
+    )
+    .unwrap();
+    run.end(COHORT, "builder");
+    run.start(COHORT, "assessor");
+    run.publish(
+        COHORT,
+        "assessor",
+        "assessment",
+        json!({ "verdict": "pass" }),
+    )
+    .unwrap();
+    run.end(COHORT, "assessor");
+    run.decide(
+        COHORT,
+        "assessment_review",
+        "accept",
+        "assessment",
+        json!({}),
+    )
+    .unwrap();
+    assert!(matches!(run.status(COHORT), UnitStatus::Active));
+    run.observe("open");
+    assert!(matches!(run.status(COHORT), UnitStatus::Active));
+    run.observe("merged");
+    assert!(matches!(run.status(COHORT), UnitStatus::Done { .. }));
 }

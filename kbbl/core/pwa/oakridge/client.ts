@@ -2,10 +2,9 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorReviewItemRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
 import type { OperatorDecisionSubmission } from "./lib/operator-drafts";
 
-export { selectFailureDetail } from "./lib/client-errors";
 const API = "/oakridge/api";
 
 async function request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {
@@ -54,10 +53,8 @@ export const fetchOperatorThreads = (runId: string, unitId: string, revisionId: 
 export const createOperatorThread = (input: { readonly run_id: string; readonly unit_id: string; readonly revision_id: string; readonly request_key: string; readonly title: string; readonly anchor: string | null }): Promise<OperatorCollaborationThreadRow> =>
   post(revisionThreadsPath(input.run_id, input.unit_id, input.revision_id), { request_key: input.request_key, title: input.title, anchor: input.anchor });
 /** The backend records the message's author from the credential that posts it. */
-export const addOperatorMessage = (input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string; readonly request_key: string; readonly text: string; readonly ping: boolean }): Promise<{ readonly message: OperatorCollaborationMessageRow }> =>
-  post(`${unitThreadPath(input.run_id, input.unit_id, input.thread_id)}/messages`, { request_key: input.request_key, text: input.text, ping: input.ping });
-export const addOperatorReviewItem = (input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string; readonly request_key: string; readonly title: string; readonly detail: string; readonly status: string }): Promise<OperatorReviewItemRow> =>
-  post(`${unitThreadPath(input.run_id, input.unit_id, input.thread_id)}/review-items`, { request_key: input.request_key, title: input.title, detail: input.detail, status: input.status });
+export const addOperatorMessage = (input: { readonly run_id: string; readonly unit_id: string; readonly thread_id: string; readonly request_key: string; readonly text: string }): Promise<{ readonly message: OperatorCollaborationMessageRow }> =>
+  post(`${unitThreadPath(input.run_id, input.unit_id, input.thread_id)}/messages`, { request_key: input.request_key, text: input.text });
 export const fetchOperatorDefinitions = (is_archived = false): Promise<OperatorDefinitionSummary[]> => readAllPages(is_archived ? "/api/definitions?archived=true" : "/api/definitions");
 export const fetchOperatorDefinitionDetail = (bundleId: string): Promise<OperatorDefinitionDetail> => get(`/api/definitions/${encodeURIComponent(bundleId)}`);
 export const setOperatorRunArchived = (runId: string, is_archived: boolean): Promise<unknown> => is_archived

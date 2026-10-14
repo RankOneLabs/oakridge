@@ -1,11 +1,13 @@
 import { sql, type Kysely } from "kysely";
 import type { UnitStatus, Workflow } from "../core-client/core-types";
 import type { RunId, UnitId } from "../domain/primitives";
+import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
 import type { SessionHold } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
+import { OWED_STATUSES } from "./executor-store";
 import type { CompiledWorkflow, StallRecord, WantedActions } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
@@ -24,12 +26,10 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 // ----------------------------------------------------------------- runs -----
 
 /** The definition a run is pinned to, as the projections read it. */
-export interface PinnedSource { readonly digest: string; readonly version: number; readonly workflow: Workflow }
+export interface PinnedSource { readonly digest: string; readonly workflow: Workflow }
 /** An operator retry, in the order it was requested. */
 /** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
 export interface RetryRequest { readonly unit_id: string; readonly worker: string; readonly retry_id: string }
-/** The actions the latest event that stepped a unit left wanted for it. */
-export interface UnitWanted { readonly unit_id: string; readonly actions: WantedActions }
 /** An event step refused because the run could not advance past it; `unit_id` is the unit the event addressed. */
 export interface StallRefusal { readonly unit_id: string | null; readonly ingress_id: string; readonly reason: string; readonly stall: StallRecord }
 /** A faulted commit recorded against a run, and when it was recorded. */
@@ -54,7 +54,6 @@ export interface RunSummaryRead {
   readonly attempts: readonly AttemptRecord[];
   readonly revisions: readonly RevisionRef[];
   readonly retries: readonly RetryRequest[];
-  readonly wanted: readonly UnitWanted[];
   /** Refusals that recorded where the run stopped advancing, in the order they were refused. */
   readonly stalls: readonly StallRefusal[];
   /** Faulted commits recorded against the run, in the order they faulted. */
@@ -74,10 +73,9 @@ export interface RunRead extends RunSummaryRead {
   readonly decisions: readonly ReviewDecisionRecord[];
 }
 
-const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id", "run.status", "run.version",
+const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id", "run.status",
   "run.created_at", "run.archived_at"] as const;
-const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "unit_key", "collection_key", "declaration", "stage", "pool", "status",
-  "review_prompts", "version"] as const;
+const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "pool", "status", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "created_at"] as const;
 const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
 
@@ -90,23 +88,19 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   if (run_ids.length === 0) return [];
   const ids = anyOf(run_ids);
   // Action ids are hashes: attempts and revisions read in the order commit wrote them.
-  const [runs, units, attempts, revisions, retries, wanted, stalls, faults] = await Promise.all([
+  const [runs, units, attempts, revisions, retries, stalls, faults] = await Promise.all([
     trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
-      .select(RUN_SUMMARY_COLUMNS).select(["bundle.digest", "bundle.version as bundle_version", "bundle.source"])
+      .select(RUN_SUMMARY_COLUMNS).select(["bundle.digest", "bundle.source"])
       .where("run.id", "=", ids).where("run.root_unit_id", "is not", null).execute(),
     trx.selectFrom("authority.unit").select(UNIT_SUMMARY_COLUMNS).where("run_id", "=", ids).orderBy("id").execute(),
     trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
     trx.selectFrom("authority.artifact_revision").select(REVISION_REF_COLUMNS).where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.event").select(["run_id", "unit_id", "ingress_id", "payload"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "retry_requested")).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
-      join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
-      .distinctOn(["wanted.run_id", "wanted.unit_id"]).select(["wanted.run_id", "wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", ids)
-      .orderBy("wanted.run_id").orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute(),
     trx.selectFrom("authority.ingress_receipt").select(["run_id", "unit_id", "ingress_id", "result"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("result", "->>").key("kind"), "=", "rejected"))
       .where((eb) => eb(eb.ref("result", "->").key("stall"), "is not", null)).execute(),
-    trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where("event_key", "=", "commit_fault")
+    trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault"))
       .orderBy("created_at").orderBy("id").execute(),
   ]);
   // A stall or fault stands only while nothing has committed after it: only a run with one needs its latest events.
@@ -117,12 +111,11 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   return run_ids.flatMap((run_id) => {
     const found = runs.find((run) => run.id === run_id);
     if (!found) return [];
-    const { digest, bundle_version, source, ...run } = found;
-    return [{ run: run as RunSummaryRecord, definition: { digest, version: bundle_version, workflow: source },
+    const { digest, source, ...run } = found;
+    return [{ run: run as RunSummaryRecord, definition: { digest, workflow: source },
       units: of(units, run_id) as UnitSummaryRecord[], attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as RevisionRef[],
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, retry_id: retry.ingress_id }] : []),
-      wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })),
       stalls: of(stalls, run_id).flatMap(({ unit_id, ingress_id, result }) => result.kind === "rejected" && result.stall
         ? [{ unit_id, ingress_id, reason: result.reason, stall: result.stall }] : [])
         .sort((left, right) => left.stall.refused_at.localeCompare(right.stall.refused_at)),
@@ -187,7 +180,7 @@ export interface LiveRunPage { readonly items: readonly RunSummaryRead[]; readon
 export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise<LiveRunPage> {
   return consistent(db, async (trx) => {
     let page = trx.selectFrom("authority.run").select("id").where("root_unit_id", "is not", null).where("archived_at", "is", null)
-      .where((eb) => eb(eb.ref("status", "->>").key("kind"), "not in", ["done", "cancelled"]));
+      .where((eb) => eb(eb.ref("status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES));
     if (query.after !== null) page = page.where("id", ">", query.after);
     const rows = await page.orderBy("id").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
@@ -208,9 +201,9 @@ export async function listRunsNeedingWork(db: Reader, filter: { readonly run_id?
   if (filter.run_id !== undefined) runs = runs.where("run.id", "=", filter.run_id);
   const rows = await runs
     .where((eb) => eb.or([
-      eb(eb.ref("run.status", "->>").key("kind"), "not in", ["done", "cancelled"]),
+      eb(eb.ref("run.status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES),
       eb.exists(eb.selectFrom("authority.effect_intent as intent").select("intent.id").whereRef("intent.run_id", "=", "run.id")
-        .where("intent.status", "in", ["pending", "acknowledged", "stop_requested"])),
+        .where("intent.status", "in", OWED_STATUSES)),
     ])).orderBy("run.id").execute();
   return rows.map((row) => row.id as RunId);
 }
@@ -350,10 +343,10 @@ export async function readUnitDiagnostics(db: Kysely<DB>, location: UnitLocation
 // ---------------------------------------------------------- definitions -----
 
 /** A pinned definition bundle as recorded. */
-export interface DefinitionRead { readonly bundle_id: string; readonly digest: string; readonly version: number; readonly source: Workflow; readonly archived_at: Date | null }
+export interface DefinitionRead { readonly bundle_id: string; readonly digest: string; readonly source: Workflow; readonly archived_at: Date | null }
 export interface PinnedDefinitionRead extends DefinitionRead { readonly checked_program: CompiledWorkflow }
 export interface DefinitionReadPage { readonly items: readonly DefinitionRead[]; readonly next: string | null }
-const DEFINITION_COLUMNS = ["id as bundle_id", "digest", "version", "source", "archived_at"] as const;
+const DEFINITION_COLUMNS = ["id as bundle_id", "digest", "source", "archived_at"] as const;
 
 /** One listing is either the archived definitions or the active ones. */
 export async function listDefinitions(db: Reader, query: { readonly after: string | null; readonly limit: number; readonly is_archived: boolean }): Promise<DefinitionReadPage> {
@@ -370,7 +363,7 @@ export async function readDefinition(db: Reader, bundle_id: string): Promise<Def
 
 export async function readPinnedDefinition(db: Reader, run_id: string): Promise<PinnedDefinitionRead | null> {
   return await db.selectFrom("authority.definition_bundle as bundle").innerJoin("authority.run as run", "run.definition_bundle_id", "bundle.id")
-    .select(["bundle.id as bundle_id", "bundle.digest", "bundle.version", "bundle.source", "bundle.archived_at", "bundle.checked_program"])
+    .select(["bundle.id as bundle_id", "bundle.digest", "bundle.source", "bundle.archived_at", "bundle.checked_program"])
     .where("run.id", "=", run_id).executeTakeFirst() ?? null;
 }
 
@@ -384,12 +377,12 @@ export async function readPinnedDefinition(db: Reader, run_id: string): Promise<
  */
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
   const { after, subscription_snapshot } = input;
-  const rows = await db.selectFrom("authority.operator_event").select(["id", "event_key", "payload", "commit_txid",
+  const rows = await db.selectFrom("authority.operator_event").select(["id", "payload", "commit_txid",
     sql<boolean>`coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${subscription_snapshot}::pg_snapshot), false)`.as("was_visible_at_subscription")])
     .where((eb) => eb(eb.refTuple("commit_txid", "id"), ">", eb.tuple(eb.cast<number>(eb.val(after.commit_txid), "bigint"), after.id)))
     .where("commit_txid", "<", sql<number>`pg_snapshot_xmin(pg_current_snapshot())::text::bigint`)
     .orderBy("commit_txid").orderBy("id").limit(input.limit).execute();
-  return rows.map((row) => ({ id: row.id, event_key: row.payload.kind, payload: row.payload, commit_txid: String(row.commit_txid),
+  return rows.map((row) => ({ id: row.id, payload: row.payload, commit_txid: String(row.commit_txid),
     was_visible_at_subscription: row.was_visible_at_subscription }));
 }
 

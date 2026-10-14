@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RunDetailView } from "../views/RunDetailView";
+import { RunWorkspace } from "../components/organisms/RunWorkspace";
 import { afterEach, expect, test, vi } from "vitest";
 import { OperatorDecisionForm } from "../components/organisms/OperatorDecisionForm";
 import type { OperatorSchema } from "../operator-contracts";
@@ -52,7 +52,7 @@ function serveRun(onDecision: () => Response = () => Response.json({ error: "une
 }
 const mountRun = () => {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={cache}><RunDetailView runId="run-one" routePane={null} unitId={null} onBack={() => undefined} /></QueryClientProvider>);
+  render(<QueryClientProvider client={cache}><RunWorkspace runId="run-one" routePane={null} unitId={null} onBack={() => undefined} /></QueryClientProvider>);
   return cache;
 };
 

@@ -44,7 +44,7 @@ test("an unregistered operation or a malformed input fails the attempt rather th
 test("pull_request.observe without a reader fails as discovery_unsupported", async () => {
   const runner = createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: null });
   const outcome = await runner.run({ operation: "pull_request.observe",
-    inputs: { query: { owner: "o", name: "n", head_owner: "o", head_branch: "b", base_branch: "main" } } });
+    inputs: { query: { owner: "o", name: "n", head_owner: "o", head_branch: "b", base_branch: "main", pr_url: "https://github.com/o/n/pull/1" } } });
   expect(outcome.kind === "failed" ? outcome.code : outcome.kind).toBe("discovery_unsupported");
 });
 

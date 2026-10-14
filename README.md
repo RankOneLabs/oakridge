@@ -10,7 +10,7 @@ and process observations.
 
 ## Layout
 
-- `workflow-core/` — Rust model, compiler, evaluator and CLI.
+- `workflow-core/` — Rust model, compiler, evaluator (built to WASM) and contract generator.
 - `oakridge-dbos/` — TypeScript durable run authority and HTTP API.
 - `workflow-config/` — the development workflow, samples and prompts.
 - `kbbl/` — operator PWA and interactive ACP sessions.
@@ -26,7 +26,7 @@ event_id}`.
 
 ```bash
 bun install --frozen-lockfile
-cargo build --locked --manifest-path workflow-core/Cargo.toml -p workflow-cli
+cargo build --locked --target wasm32-unknown-unknown --manifest-path workflow-core/Cargo.toml -p workflow-evaluator
 bash scripts/generate-core-contracts.sh --check
 bun workflow-config/src/generate.ts --check
 bun run typecheck
@@ -37,7 +37,7 @@ bun run --filter oakridge-dbos test:unit
 
 The DBOS integration suite requires `OAKRIDGE_TEST_DATABASE_URL` pointing to a
 PostgreSQL 15+ instance with permission to create and drop test databases. Run
-`bun run --filter oakridge-dbos test:integration` after building the Rust CLI.
+`bun run --filter oakridge-dbos test:integration` after building the core WASM.
 It boots the production composition against fresh databases and drives the
 shipped bundles through provider operations. The real-agent ACP smoke
 test requires `KBBL_ACP_REAL_AGENT` and is reported as skipped by the normal
@@ -57,8 +57,8 @@ when a definition is first pinned; runs render from the stored copy.
 `OAKRIDGE_GITHUB_TOKEN` (or `GITHUB_TOKEN`) authenticates pull request
 observation. The DBOS application version defaults to a 16-character SHA-256
 digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
-`0001_core.sql` baseline digest and the digest of the core binary it
-spawns (see `oakridge-dbos/README.md`).
+`0001_core.sql` baseline digest and the digest of the core WASM module it
+loads (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
@@ -72,16 +72,16 @@ Each selected action has a pinned `deadline_ms` that bounds an individual
 provider call. A DBOS execution timeout also bounds the entire start and
 observation workflow; an expired parked effect is settled as rejected on
 recovery. A clean stop parks workflows for the next boot. Infrastructure
-errors in the run loop fork a successor from the failed step; periodic
-rollover preserves its scan cursor and run generation. Provider failures
-become declared evidence and follow the pinned bundle's failure policy.
+errors in the run loop fork a successor from the failed step, and periodic
+rollover starts the next generation. A provider failure fails its attempt;
+the operator retries it.
 
 ## Database cutover
 
 1. Stop the Oakridge service.
 2. Run `pg_dump` to a file nothing in this repository reads.
 3. Drop and recreate the Oakridge database empty.
-4. Deploy the new stack: Rust CLI, DBOS backend and kbbl PWA.
+4. Deploy the new stack: core WASM, DBOS backend and kbbl PWA.
 5. Admit traffic after the new stack is healthy.
 
 The kbbl SQLite ACP ledger is separate. It is also created fresh at cutover:

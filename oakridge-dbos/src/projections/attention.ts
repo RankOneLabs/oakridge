@@ -1,14 +1,23 @@
-import type { BlockedReason, Event } from "../core-client/core-types";
-import type { RetryRequest, RunSummaryRead, UnitWanted } from "../storage/read-store";
+import type { BlockedReason, Event, ResolvedDecision } from "../core-client/core-types";
+import type { RetryRequest, RunSummaryRead } from "../storage/read-store";
+import { isTerminalStatus } from "../domain/unit-status";
 import type { AttemptRecord, UnitRecord } from "../storage/schema-records";
-import { selectUnitLabel } from "./unit-label";
+import { selectUnitLabel, selectUnitTree } from "./unit-label";
 
 /**
  * What needs the operator, derived from state (part 1 §12: there is no
  * stored ask). The unit view, the inbox, the inspect view and the event
  * stream all read attention through this module.
  */
-export interface AwaitingReview { readonly unit_id: string; readonly review: string; readonly target: string; readonly prompt: string }
+export interface AwaitingReview {
+  readonly unit_id: string;
+  readonly review: string;
+  /** The revision the review reviews. */
+  readonly target: string;
+  /** The review's decisions legal now, each with the revision it must name, as the core resolved them. */
+  readonly decisions: readonly ResolvedDecision[];
+  readonly prompt: string;
+}
 export interface StalledWorker { readonly unit_id: string; readonly worker: string; readonly action_id: string; readonly seq: number; readonly code: string; readonly detail: string }
 /**
  * Where the run could not advance (D-V4): step refused an event because
@@ -32,7 +41,7 @@ export interface UnitAttention {
   readonly run_stalls: readonly RunStall[];
   /** Operator reviews a decision is legal on now, as commit rendered them onto the unit. */
   readonly awaiting: readonly AwaitingReview[];
-  /** Workers whose latest attempt failed, with no retry pending and nothing wanted for them. */
+  /** Workers whose latest attempt failed, with no retry pending for them. */
   readonly stalled: readonly StalledWorker[];
   readonly blocked: BlockedReason | null;
 }
@@ -42,42 +51,46 @@ export interface UnitAttention {
  */
 export type Attention = { readonly kind: "waiting"; readonly reason: string } | { readonly kind: "stalled"; readonly detail: string };
 
+/** A worker on one unit, as its attempts and retry requests name it. */
+interface WorkerOnUnit { readonly unit_id: string; readonly worker: string }
+/** The key a worker's attempts and retries on one unit share. */
+export const selectAttemptWorkerKey = (worker: WorkerOnUnit): string => `${worker.unit_id}:${worker.worker}`;
+
 /**
- * The attempt a worker is judged by: a retry the operator requested last wins
- * over earlier attempts, an open attempt over a closed one, and otherwise the
- * highest seq. Attempts arrive in the order commit opened them.
+ * The attempt each worker is judged by, as the core judges it: its last on
+ * the unit in the order commit opened them. Attempts arrive in that order.
  */
-function selectLatestAttempts(attempts: readonly AttemptRecord[], retries: readonly RetryRequest[]): ReadonlyMap<string, AttemptRecord> {
-  const retry_event = new Map(retries.map((retry) => [`${retry.unit_id}:${retry.worker}`, retry.retry_id]));
-  const latest = new Map<string, AttemptRecord>();
-  for (const attempt of attempts) {
-    const key = `${attempt.unit_id}:${attempt.worker}`;
-    const previous = latest.get(key);
-    const wanted_retry = retry_event.get(key);
-    const is_current_retry = attempt.cause.kind === "retry" && attempt.cause.event === wanted_retry;
-    const was_current_retry = previous?.cause.kind === "retry" && previous.cause.event === wanted_retry;
-    const is_open = attempt.status.kind === "pending" || attempt.status.kind === "running";
-    const was_open = previous?.status.kind === "pending" || previous?.status.kind === "running";
-    if (!previous || is_current_retry && !was_current_retry || is_current_retry === was_current_retry
-      && (is_open && !was_open || is_open === was_open && attempt.seq >= previous.seq))
-      latest.set(key, attempt);
-  }
-  return latest;
+export function selectLatestAttempts(attempts: readonly AttemptRecord[]): ReadonlyMap<string, AttemptRecord> {
+  return new Map(attempts.map((attempt) => [selectAttemptWorkerKey(attempt), attempt]));
+}
+
+/**
+ * A retry the core has yet to spend on the worker: its latest requested retry,
+ * while no attempt carries it (a retry authorizes exactly one attempt).
+ * Retries arrive in the order they were requested.
+ */
+function hasUnspentRetry(worker: WorkerOnUnit, sources: Pick<StallSources, "attempts" | "retries">): boolean {
+  const key = selectAttemptWorkerKey(worker);
+  const latest = sources.retries.filter((retry) => selectAttemptWorkerKey(retry) === key).at(-1);
+  if (!latest) return false;
+  return !sources.attempts.some((attempt) => selectAttemptWorkerKey(attempt) === key
+    && attempt.cause.kind === "retry" && attempt.cause.event === latest.retry_id);
 }
 
 interface StallSources {
   readonly units: readonly Pick<UnitRecord, "id" | "status">[];
   readonly attempts: readonly AttemptRecord[];
   readonly retries: readonly RetryRequest[];
-  readonly wanted: readonly UnitWanted[];
 }
-/** A failed attempt leaves its unit active; its worker is stalled while nothing wants it again. */
+/**
+ * A worker is stalled where the core would accept a retry of it: its unit is
+ * active, its latest attempt failed, and no retry is pending for it.
+ */
 export function selectStalledWorkers(sources: StallSources): readonly StalledWorker[] {
-  const wanted = new Map(sources.wanted.map((item) => [item.unit_id, item.actions]));
   const active = new Set(sources.units.filter((unit) => unit.status.kind === "active").map((unit) => unit.id));
-  return [...selectLatestAttempts(sources.attempts, sources.retries).values()].flatMap((attempt) => {
+  return [...selectLatestAttempts(sources.attempts).values()].flatMap((attempt) => {
     if (attempt.status.kind !== "failed" || !active.has(attempt.unit_id)) return [];
-    if ((wanted.get(attempt.unit_id) ?? []).some((action) => action.kind === "run_worker" && action.worker === attempt.worker)) return [];
+    if (hasUnspentRetry(attempt, sources)) return [];
     return [{ unit_id: attempt.unit_id, worker: attempt.worker, action_id: attempt.action_id, seq: attempt.seq,
       code: attempt.status.code, detail: attempt.status.detail }];
   }).sort((left, right) => left.unit_id.localeCompare(right.unit_id) || left.worker.localeCompare(right.worker));
@@ -99,7 +112,7 @@ type RunStallSources = Pick<RunSummaryRead, "run" | "units" | "stalls" | "faults
  * reason keeps only its latest occurrence, in that occurrence's place.
  */
 export function selectRunStalls(read: RunStallSources): readonly RunStall[] {
-  if (read.run.status.kind === "done" || read.run.status.kind === "cancelled") return [];
+  if (isTerminalStatus(read.run.status)) return [];
   const root = read.run.root_unit_id ?? read.run.id;
   const shownOn = (unit_id: string | null): string => unit_id !== null && read.units.some((unit) => unit.id === unit_id) ? unit_id : root;
   const stalls = read.stalls.filter((refusal) => latestEventOn(read, refusal.unit_id) === refusal.stall.after_event)
@@ -118,6 +131,9 @@ export function selectRunStalls(read: RunStallSources): readonly RunStall[] {
   return [...latest.values()];
 }
 
+/** The line a stalled worker shows: the worker, and how its latest attempt failed. */
+export const selectStalledWorkerDetail = (worker: Pick<StalledWorker, "worker" | "detail">): string => `${worker.worker} failed: ${worker.detail}`;
+
 /** The line a run stall shows: why the run stopped, and the event it refused. */
 export function selectRunStallDetail(stall: RunStall): string {
   return stall.kind === "stalled" ? `${stall.reason} (refused ${stall.event.kind})`
@@ -130,7 +146,7 @@ export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention
   const run_stalls = selectRunStalls(read);
   return read.units.map((unit) => ({ unit_id: unit.id, run_stalls: run_stalls.filter((stall) => stall.unit_id === unit.id),
     awaiting: Object.entries(unit.review_prompts).sort(([left], [right]) => left.localeCompare(right))
-      .map(([review, awaiting]) => ({ unit_id: unit.id, review, target: awaiting.target, prompt: awaiting.prompt })),
+      .map(([review, awaiting]) => ({ unit_id: unit.id, review, target: awaiting.target, decisions: awaiting.decisions, prompt: awaiting.prompt })),
     stalled: stalled.filter((worker) => worker.unit_id === unit.id),
     blocked: unit.status.kind === "blocked" ? unit.status.reason : null }));
 }
@@ -138,9 +154,10 @@ export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention
 /** A blocked unit's reason, naming the units it waits on by their labels. */
 function blockedReason(reason: BlockedReason, read: RunSummaryRead): string {
   if (reason.kind === "capacity") return `waiting for capacity in ${reason.pool}`;
+  const tree = selectUnitTree(read.units, read.definition.workflow);
   const labels = reason.units.map((id) => {
     const unit = read.units.find((candidate) => candidate.id === id);
-    return unit ? selectUnitLabel(unit, read.definition.workflow) : id;
+    return unit ? selectUnitLabel(unit, tree) : id;
   });
   return `waiting on ${labels.join(", ")}`;
 }
@@ -150,7 +167,7 @@ export function selectAttention(attention: UnitAttention, read: RunSummaryRead):
   const run_stall = attention.run_stalls.at(-1);
   if (run_stall) return { kind: "stalled", detail: selectRunStallDetail(run_stall) };
   const [stalled] = attention.stalled;
-  if (stalled) return { kind: "stalled", detail: `${stalled.worker} failed: ${stalled.detail}` };
+  if (stalled) return { kind: "stalled", detail: selectStalledWorkerDetail(stalled) };
   const [awaiting] = attention.awaiting;
   if (awaiting) return { kind: "waiting", reason: `awaiting ${awaiting.review} review` };
   if (attention.blocked) return { kind: "waiting", reason: blockedReason(attention.blocked, read) };

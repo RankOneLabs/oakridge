@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ArtifactId } from "../../../lib/ids";
-import { formatRunWorkspaceHash } from "../../../lib/hash";
+import { formatRunWorkspaceHash, type RoutePaneTarget } from "../../../lib/hash";
 import { fetchOperatorDefinition, fetchOperatorUnit, submitOperatorDecision } from "../../client";
 import { useRun } from "../../hooks/useRun";
 import { queryKeys } from "../../queryKeys";
@@ -9,7 +9,6 @@ import { selectLoadedUnits, selectRunUnit, selectUnitDetail, selectUnitQueryInde
 import { selectPendingDecisionsForRecovery } from "../../lib/run-attention";
 import { clearOperatorDraft, clearPendingDecision, listPendingDecisions, operatorDraftIdentity } from "../../lib/operator-drafts";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
-import type { RoutePaneTarget } from "../../lib/run-workspace";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
 import { RunOverviewPane } from "./RunOverviewPane";
@@ -81,7 +80,9 @@ export function RunWorkspace({ runId, routePane, unitId, onBack }: Props) {
           : <><RunOverviewPane run={run} units={units} onOpenUnit={(id) => navigate(id)} />
             {detail ? <RunDetail unit={detail} schemas={schemas} onRefresh={refresh} />
               : selectedQuery?.isError ? <p role="alert">Could not load unit: {String(selectedQuery.error)}</p>
-              : <p role="status">Loading unit…</p>}</>}
+              : selected || definition.isPending ? <p role="status">Loading unit…</p>
+              : definition.data ? <p role="alert">This run has no unit under its definition's root key.</p>
+              : null}</>}
       </div>
     </div>
   </main>;

@@ -71,8 +71,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     await DBOS.launch();
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
-    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(),
-      control_token: access.kind === "token_required" ? access.token : null });
+    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access });
     return { app, application_version, async close() {
       try { await parkRunningWorkflows(); }
       finally { try { await DBOS.shutdown(); } finally { core.close(); await db.destroy(); } }

@@ -15,6 +15,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "adapters/kbbl.ts",
   "domain/effect-instruction.ts",
   "domain/run-config.ts",
+  "domain/unit-status.ts",
   "domain/primitives.ts",
   "domain/prompt-template.ts",
   "effects/agent-provider.ts",

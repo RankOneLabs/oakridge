@@ -5,13 +5,12 @@ import type { ReactElement } from "react";
 
 import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRuns } from "../client";
 import {
-  makeDecision, makeInboxDecision, makeOakridgeConfig, makePrSummaryFixture, makeInboxPage,
-  makeRunView, makeRunUnitSummary, makeUnitView, makeUnitWithArtifact,
+  makeDecision, makeInboxDecision, makeOakridgeConfig, makeInboxPage,
+  makeRunView, makeRunUnitSummary, makeUnitView,
 } from "../__fixtures__/read-models";
 import { RunListView } from "../views/RunListView";
 import { ReviewInboxView } from "../views/ReviewInboxView";
 import { RunOverviewPane } from "../components/organisms/RunOverviewPane";
-import { FinalIntegrationPanel } from "../components/organisms/FinalIntegrationPanel";
 import { OakridgeShell } from "../OakridgeShell";
 
 vi.mock("../client", () => ({ fetchOakridgeConfig: vi.fn(), fetchOperatorRuns: vi.fn(), fetchOperatorInbox: vi.fn(),
@@ -86,14 +85,6 @@ describe("unit overview and review work", () => {
     show(<RunOverviewPane run={run} units={[unit]} onOpenUnit={() => undefined} />);
     expect(screen.getAllByTestId("or-stage-row")).toHaveLength(1);
     expect(screen.getByTestId("or-gate-card").textContent).toContain("Approve");
-  });
-
-  it("shows the checked final integration output", () => {
-    const summary = makePrSummaryFixture();
-    const unit = makeUnitWithArtifact({ body: summary.body, artifact_key: "final_pr_summary",
-      unit: { unit_key: "final_integration", label: "Final integration" } });
-    show(<FinalIntegrationPanel unit={unit} />);
-    expect(screen.getByTestId("or-final-integration").textContent).toContain("final_pr_summary");
   });
 
   it("routes an inbox decision to its run and unit", async () => {

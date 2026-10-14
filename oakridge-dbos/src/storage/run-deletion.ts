@@ -24,7 +24,6 @@ export async function deleteRun(db: Database, run_id: RunId): Promise<DeleteRunR
     if (!run) return { kind: "missing" };
     const eligibility = await deletionEligibility(trx, run_id);
     if (eligibility.kind === "refused") return eligibility;
-    await trx.deleteFrom("authority.collaboration_delivery").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.review_item").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.collaboration_message").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.collaboration_thread").where("run_id", "=", run_id).execute();
@@ -39,7 +38,7 @@ export async function deleteRun(db: Database, run_id: RunId): Promise<DeleteRunR
     await trx.updateTable("authority.run").set({ root_unit_id: null }).where("id", "=", run_id).execute();
     await trx.deleteFrom("authority.unit").where("run_id", "=", run_id).execute();
     await trx.deleteFrom("authority.run").where("id", "=", run_id).execute();
-    await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: null, run_key: run_id, event_key: "invalidate",
+    await trx.insertInto("authority.operator_event").values({ id: crypto.randomUUID(), run_id: null, run_key: run_id,
       payload: jsonText({ kind: "invalidate", data: { target: "run", run_id } }) }).execute();
     return { kind: "deleted" };
   });

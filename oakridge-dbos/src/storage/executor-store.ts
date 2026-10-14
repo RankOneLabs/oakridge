@@ -18,6 +18,11 @@ export type EffectIntent = EffectIntentRecord;
 /** The terminal statuses: the intent owns no external execution. */
 export const SETTLED_STATUSES = ["stopped", "failed"] as const satisfies readonly EffectStatus[];
 export type SettledStatus = typeof SETTLED_STATUSES[number];
+/** The statuses whose start is still owed: not yet settled, and no stop requested. */
+export const START_OWED_STATUSES = ["pending", "acknowledged"] as const satisfies readonly EffectStatus[];
+/** The statuses a run still owes the outside world for: a start to carry, or a stop to confirm. */
+export const OWED_STATUSES = [...START_OWED_STATUSES, "stop_requested"] as const satisfies readonly EffectStatus[];
+export const isStartOwed = (status: EffectStatus): boolean => (START_OWED_STATUSES as readonly EffectStatus[]).includes(status);
 
 export async function readIntent(db: Reader, intent_id: string): Promise<EffectIntent | null> {
   return (await db.selectFrom("authority.effect_intent").selectAll().where("id", "=", intent_id).executeTakeFirst() ?? null) as EffectIntent | null;
@@ -27,7 +32,7 @@ export interface OwedIntent { readonly id: string; readonly status: EffectStatus
 /** Intents a run still owes the outside world: starts to carry and stops to confirm. */
 export async function listOwedIntents(db: Reader, run_id: string): Promise<readonly OwedIntent[]> {
   return db.selectFrom("authority.effect_intent").select(["id", "status"]).where("run_id", "=", run_id)
-    .where("status", "in", ["pending", "acknowledged", "stop_requested"]).orderBy("id").execute();
+    .where("status", "in", OWED_STATUSES).orderBy("id").execute();
 }
 
 /** Per-run work holds the run row; this is the one serialization mechanism for a run. */
@@ -36,6 +41,9 @@ async function lockRunOf(trx: DatabaseTransaction, intent_id: string): Promise<b
   if (!owner) return false;
   await trx.selectFrom("authority.run").select("id").where("id", "=", owner.run_id).forUpdate().execute();
   return true;
+}
+async function readStatus(trx: DatabaseTransaction, intent_id: string): Promise<EffectStatus | null> {
+  return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", intent_id).executeTakeFirst())?.status ?? null;
 }
 
 export type StartClaim = { readonly kind: "claimed"; readonly tries: number } | { readonly kind: "exhausted"; readonly tries: number }
@@ -57,11 +65,18 @@ export async function claimStart(db: Database, input: { readonly intent_id: stri
   });
 }
 
-/** A start that did not get a definite answer: when the next try may run, and why this one did not succeed. */
+/**
+ * A start or stop that did not get a definite answer: when the next try may
+ * run, and why this one did not succeed. A settled intent keeps the error it
+ * settled with.
+ */
 export async function recordTryFailure(db: Database, input: { readonly intent_id: string; readonly last_error: string; readonly next_try_at: Date }): Promise<EffectStatus | null> {
-  const row = await db.updateTable("authority.effect_intent").set({ last_error: input.last_error, next_try_at: input.next_try_at, updated_at: new Date() })
-    .where("id", "=", input.intent_id).returning("status").executeTakeFirst();
-  return row?.status ?? null;
+  return db.transaction().execute(async (trx) => {
+    if (!await lockRunOf(trx, input.intent_id)) return null;
+    await trx.updateTable("authority.effect_intent").set({ last_error: input.last_error, next_try_at: input.next_try_at, updated_at: new Date() })
+      .where("id", "=", input.intent_id).where("status", "not in", SETTLED_STATUSES).execute();
+    return readStatus(trx, input.intent_id);
+  });
 }
 
 /** The provider accepted the start. A stop requested meanwhile is kept: its carrier owns the execution now. */
@@ -70,8 +85,7 @@ export async function markAcknowledged(db: Database, intent_id: string): Promise
     if (!await lockRunOf(trx, intent_id)) return null;
     const row = await trx.updateTable("authority.effect_intent").set({ status: "acknowledged", last_error: null, updated_at: new Date() })
       .where("id", "=", intent_id).where("status", "=", "pending").returning("status").executeTakeFirst();
-    if (row) return row.status;
-    return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", intent_id).executeTakeFirst())?.status ?? null;
+    return row ? row.status : readStatus(trx, intent_id);
   });
 }
 
@@ -84,8 +98,8 @@ export async function abandonIntent(db: Database, input: { readonly intent_id: s
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return null;
     await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
-      .where("id", "=", input.intent_id).where("status", "in", ["pending", "acknowledged"]).execute();
-    return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", input.intent_id).executeTakeFirst())?.status ?? null;
+      .where("id", "=", input.intent_id).where("status", "in", START_OWED_STATUSES).execute();
+    return readStatus(trx, input.intent_id);
   });
 }
 
@@ -95,7 +109,7 @@ export async function settleIntent(db: Database, input: { readonly intent_id: st
     if (!await lockRunOf(trx, input.intent_id)) return null;
     await trx.updateTable("authority.effect_intent").set({ status: input.status, last_error: input.last_error, next_try_at: null, updated_at: new Date() })
       .where("id", "=", input.intent_id).where("status", "not in", SETTLED_STATUSES).execute();
-    return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", input.intent_id).executeTakeFirst())?.status ?? null;
+    return readStatus(trx, input.intent_id);
   });
 }
 

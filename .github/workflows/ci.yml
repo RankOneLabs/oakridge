@@ -100,8 +100,6 @@ jobs:
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
-      # The PWA keeps its 9b12e34c test ids and stylesheet and reads only the v2 contract.
-      - run: bun kbbl/scripts/check-pwa-port.ts
 
   kbbl-tests:
     name: kbbl backend tests (bun)

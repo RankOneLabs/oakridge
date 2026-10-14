@@ -15,6 +15,10 @@ test("a nested {error: {...}} body is read through", () => {
     .toBe("name is required");
 });
 
+test("a rejected ingress surfaces its reason, not its kind", () => {
+  expect(selectFailureDetail({ kind: "rejected", reason: "review is not open" }, "fallback")).toBe("review is not open");
+});
+
 test("a bare {error} or {kind} still names the failure when no detail exists", () => {
   expect(selectFailureDetail({ error: "offline" }, "fallback")).toBe("offline");
   expect(selectFailureDetail({ kind: "conflict" }, "fallback")).toBe("conflict");

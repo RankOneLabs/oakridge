@@ -16,13 +16,13 @@ const unit = makeUnitWithArtifact({ body: result.body, artifact_key: "build_resu
 const run = makeRunView({ units: [makeRunUnitSummary({ asks: ["approve"] })] });
 
 function stubWorkspace(options: { readonly run?: OperatorRunView; readonly unit?: OperatorUnitView;
-  readonly failed?: "run" | "scope" | "definition" } = {}) {
+  readonly failed?: "run" | "unit" | "definition" } = {}) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/runs/run-1")) return options.failed === "run"
       ? Response.json({ detail: "run unavailable" }, { status: 503 }) : Response.json(options.run ?? run);
     if (url.endsWith("/definition")) return options.failed === "definition"
       ? Response.json({ detail: "definition unavailable" }, { status: 503 }) : Response.json(makeDefinitionSummary());
-    if (url.endsWith("/units/unit-1")) return options.failed === "scope"
+    if (url.endsWith("/units/unit-1")) return options.failed === "unit"
       ? Response.json({ detail: "unit unavailable" }, { status: 503 }) : Response.json(options.unit ?? unit);
     if (url.endsWith("/history")) return Response.json(makeUnitHistory());
     if (url.endsWith("/threads")) return Response.json([]);
@@ -78,7 +78,7 @@ it("shows a run load failure as an alert", async () => {
 });
 
 it("keeps the overview visible when the selected unit read fails", async () => {
-  stubWorkspace({ failed: "scope" });
+  stubWorkspace({ failed: "unit" });
   show();
   expect((await screen.findByText(/Could not load unit:.*unit unavailable/)).getAttribute("role")).toBe("alert");
   expect(screen.getByTestId("or-run-overview")).toBeTruthy();

@@ -12,7 +12,7 @@ export const selectBodyField = (value: OperatorBodyValue | null, key: string): O
 
 export const selectBodyText = (value: OperatorBodyValue | null): string | null => typeof value === "string" ? value : null;
 
-export const selectBodyItems = (value: OperatorBodyValue | null): readonly OperatorBodyValue[] => isBodyList(value) ? value : [];
+const selectBodyItems = (value: OperatorBodyValue | null): readonly OperatorBodyValue[] => isBodyList(value) ? value : [];
 
 export const selectFieldText = (value: OperatorBodyValue | null, key: string): string | null => selectBodyText(selectBodyField(value, key));
 

@@ -4,14 +4,14 @@ import { operatorDraftIdentity } from "../../lib/operator-drafts";
 import { OperatorDecisionForm } from "./OperatorDecisionForm";
 import { OperatorTypedValue } from "../molecules/OperatorTypedValue";
 import { StatusBadge } from "../atoms/StatusBadge";
-import { selectUnitBadgeStatus, selectUnitStatusLabel } from "../../lib/run-overview";
+import { selectUnitDetailStatus, selectUnitStatusLabel } from "../../lib/run-overview";
 import { OperatorHistoryPane } from "../../views/OperatorHistoryPane";
 
 interface Props { readonly unit: OperatorUnitView; readonly schemas: readonly OperatorSchema[]; readonly onRefresh: () => void }
 export function RunDetail({ unit, schemas, onRefresh }: Props) {
   return <section data-testid="or-run-detail"><header className="flex items-center gap-2">
     <h2 data-testid="or-run-detail-title">{unit.label}</h2>
-    <StatusBadge status={selectUnitBadgeStatus(unit.status, unit.decisions.length > 0)} testId="or-run-detail-status" />
+    <StatusBadge subject={{ kind: "unit", status: selectUnitDetailStatus(unit) }} testId="or-run-detail-status" />
   </header>
     <h3>State</h3><p data-testid="or-run-detail-state">{selectUnitStatusLabel(unit.status)}</p>
     {unit.outcome && <><h3>Outcome</h3><OperatorTypedValue value={unit.outcome} /></>}

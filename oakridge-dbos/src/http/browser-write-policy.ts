@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { errorResponse, ForbiddenError, UnsupportedMediaTypeError } from "./errors";
 import { matchRoute } from "./routes";
 
 /** Browser writes are identified by the authority's route table. */
@@ -24,9 +25,9 @@ export function browserWriteRejection(policy: BrowserWritePolicy, request: Pick<
   const route = matchRoute(request.method, path);
   if (!route || route.method === "GET") return null;
   const content_type = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (content_type !== "application/json") return Response.json({ error: "JSON content type required" }, { status: 415 });
+  if (content_type !== "application/json") return errorResponse(new UnsupportedMediaTypeError("JSON content type required"));
   const origin = request.headers.get("origin");
-  if (origin !== null && !policy.allowed_origins.has(origin)) return Response.json({ error: "origin forbidden" }, { status: 403 });
+  if (origin !== null && !policy.allowed_origins.has(origin)) return errorResponse(new ForbiddenError("origin forbidden"));
   return null;
 }
 

@@ -13,7 +13,7 @@ import { deleteRun } from "../storage/run-deletion";
 import { listPromptCatalog } from "../../../workflow-config/src/prompt-catalog";
 import { browserWriteMiddleware, type BrowserWritePolicy } from "./browser-write-policy";
 import { collaborationHandlers } from "./collaboration";
-import { classifiedRoutesMiddleware, controlTokenMiddleware, operatorCredentialCheck } from "./control-auth";
+import { classifiedRoutesMiddleware, controlTokenMiddleware, loopbackHostMiddleware, operatorCredentialCheck, type ServedControlPlaneAccess } from "./control-auth";
 import { errorResponse, fault, InvalidPayloadError, MalformedRequestError, MissingEntityError, requestBody } from "./errors";
 import { installEventStream } from "./events";
 import { installIngress } from "./ingress";
@@ -29,8 +29,8 @@ export interface DefinitionApiDependencies {
 }
 export interface HttpAppDependencies extends Omit<DefinitionApiDependencies, "is_operator_request"> {
   readonly application_version: string;
-  /** Null when the bind is loopback (or explicitly insecure) and no token is configured. */
-  readonly control_token: string | null;
+  /** A token every operator route demands, or none: a loopback bind (open to loopback-addressed requests only) or an explicitly insecure one. */
+  readonly access: ServedControlPlaneAccess;
   readonly write_policy: BrowserWritePolicy;
 }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
@@ -53,16 +53,19 @@ function isWorkflowOutline(value: unknown): value is Workflow {
 /**
  * The whole HTTP surface: every route in `HTTP_ROUTES`, behind the middleware
  * that refuses a route the table does not classify and, with a token
- * configured, an operator route without it.
+ * configured, an operator route without it. With none on a loopback bind, a
+ * request addressed to any but a loopback name is refused.
  */
 export function createHttpApp(deps: HttpAppDependencies): Hono {
+  const control_token = deps.access.kind === "token_required" ? deps.access.token : null;
   const app = new Hono();
+  if (deps.access.kind === "loopback_open") app.use("*", loopbackHostMiddleware());
   app.use("*", httpBodyLimit());
   app.use("*", classifiedRoutesMiddleware());
   app.use("*", redactingReadResponses());
   app.use("*", browserWriteMiddleware(deps.write_policy));
-  if (deps.control_token !== null) app.use("*", controlTokenMiddleware(deps.control_token, deps.write_policy));
-  installDefinitionApi(app, { ...deps, is_operator_request: operatorCredentialCheck(deps.control_token, deps.write_policy) });
+  if (control_token !== null) app.use("*", controlTokenMiddleware(control_token, deps.write_policy));
+  installDefinitionApi(app, { ...deps, is_operator_request: operatorCredentialCheck(control_token, deps.write_policy) });
   installEventStream(app, { db: deps.db });
   app.get("/health", (context) => context.json({ status: "ok", application_version: deps.application_version, core: deps.core.health }));
   app.delete("/runs/:run_id", async (context) => {
@@ -100,7 +103,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       if (!compiled.ok) return errorResponse(new InvalidPayloadError(compiled.error.detail));
       if (!is_pinned) return Response.json(compiled.value);
       const pinned = await pinDefinition(deps.db, { source, compiled: compiled.value, prompts: prompts.value });
-      return Response.json(selectDefinitionSummary({ bundle_id: pinned.bundle.id, digest: pinned.bundle.digest, version: pinned.bundle.version,
+      return Response.json(selectDefinitionSummary({ bundle_id: pinned.bundle.id, digest: pinned.bundle.digest,
         source: pinned.bundle.source, archived_at: pinned.bundle.archived_at }), { status: pinned.kind === "pinned" ? 201 : 200 });
     } catch (cause) { return fault(cause); }
   };

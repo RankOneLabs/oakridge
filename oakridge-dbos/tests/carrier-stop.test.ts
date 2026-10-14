@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { sql } from "kysely";
+import type { Workflow } from "../src/core-client/core-types";
 import type { EffectInstruction } from "../src/domain/effect-instruction";
 import type { EffectProvider, ExternalHandle, ProviderResult, TerminalObservation } from "../src/effects/provider";
 import { HANDLE_KINDS } from "../src/effects/provider-catalog";
+import { isFields } from "../src/operations/outcome";
+import type { OperationRunner } from "../src/operations/runner";
 import { createProductionComposition } from "../src/runtime/compose";
 import { cleanupWorkflowId, intentWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launchRunId } from "../src/storage/commit";
@@ -51,21 +54,48 @@ const provider: EffectProvider = {
   },
 };
 
+/** Code operations publish their `value` input, each held while a test holds them. */
+let operation_hold: Promise<void> | null = null;
+let signal_operation_entered = (): void => undefined;
+const operation_runner: OperationRunner = {
+  async run(call) {
+    signal_operation_entered();
+    if (operation_hold) await operation_hold;
+    return isFields(call.inputs) ? { kind: "succeeded", body: call.inputs.value } : { kind: "failed", code: "invalid_instruction", detail: "no value" };
+  },
+};
+function holdOperations(): { readonly entered: Promise<void>; release(): void } {
+  let release = (): void => undefined;
+  operation_hold = new Promise<void>((resolve) => { release = resolve; });
+  const entered = new Promise<void>((resolve) => { signal_operation_entered = resolve; });
+  return { entered, release: () => { operation_hold = null; release(); } };
+}
+/** One unit whose only worker is a code operation. */
+const CODE_JOB: Workflow = {
+  workflow: "code_job", input: { topic: "text" },
+  run: { units: { job: { stage: "job", input: { topic: "input.topic" } } }, outcome: {} },
+  stages: { job: { input: { topic: "text" }, artifacts: { note: { schema: "text" } },
+    workers: { noter: { kind: "code", operation: "value.publish", inputs: { value: "input.topic" }, creates: ["note"] } },
+    done_when: "false", outcome: {} } },
+};
+
 let scratch: Awaited<ReturnType<typeof scratchDatabase>>;
 let db: Database;
 let composition: Awaited<ReturnType<typeof createProductionComposition>>;
 let digest: string;
+let code_digest: string;
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 beforeAll(async () => {
   scratch = await scratchDatabase();
   db = openDatabase(scratch.url);
   await migrateEmptyDatabase(db);
-  composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", effect_provider: provider,
+  composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", effect_provider: provider, operation_runner,
     // A carrier bound below the unavailable bound, so a run of unanswered observations spans a rollover;
     // and a deadline every rolled-over carrier must keep.
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 2, wake_timeout_seconds: 0.5,
       carrier_max_iterations: 1, execution_deadline_ms: 600_000 } });
   ({ digest } = await (await composition.app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string });
+  ({ digest: code_digest } = await (await composition.app.request("/api/definitions", json(CODE_JOB))).json() as { readonly digest: string });
 }, 30_000);
 afterAll(async () => {
   await composition.close();
@@ -76,6 +106,10 @@ afterAll(async () => {
 async function launchScripted(script: Script, request_id: string = crypto.randomUUID()): Promise<string> {
   scripts.set(launchRunId(request_id), script);
   const launched = await composition.app.request("/api/runs", json({ digest, input: { topic: "Oakridge" }, request_id }));
+  return (await launched.json() as { readonly run_id: string }).run_id;
+}
+async function launchCode(): Promise<string> {
+  const launched = await composition.app.request("/api/runs", json({ digest: code_digest, input: { topic: "Oakridge" }, request_id: crypto.randomUUID() }));
   return (await launched.json() as { readonly run_id: string }).run_id;
 }
 const intentsOf = (run_id: string) => db.selectFrom("authority.effect_intent").select(["id", "status", "stop_origin"]).where("run_id", "=", run_id).execute();
@@ -300,3 +334,34 @@ test("a turn's end that lands after its stop ended the attempt is refused withou
       .toEqual({ attempt: "failed", refused: 1, warnings: [] });
   } finally { warn.mockRestore(); }
 }, 60_000);
+
+test("a stop of a code attempt waits for its live carrier to end the attempt rather than settle under the running operation", async () => {
+  const hold = holdOperations();
+  try {
+    const run_id = await launchCode();
+    await hold.entered;
+    expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
+    await Bun.sleep(1_000);
+    const while_running = { intent: (await intentOf(run_id)).status, attempt: (await attemptOf(run_id)).status.kind };
+    hold.release();
+    await until(run_id, isSettled);
+    const ended = (await attemptOf(run_id)).status;
+    expect({ while_running, ended_by: ended.kind === "failed" ? ended.code : ended.kind })
+      .toEqual({ while_running: { intent: "stop_requested", attempt: "running" }, ended_by: "output_rejected" });
+  } finally { hold.release(); }
+}, 30_000);
+
+test("a code attempt whose start carrier was fenced mid-operation is ended by its stop", async () => {
+  const hold = holdOperations();
+  try {
+    const run_id = await launchCode();
+    await hold.entered;
+    const { id: intent_id } = (await intentsOf(run_id))[0]!;
+    expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
+    // Fenced as another engine's carrier is at boot: cancelled with its operation in flight, and never resumed.
+    await DBOS.cancelWorkflow(intentWorkflowId(intent_id));
+    await until(run_id, isSettled);
+    expect({ intent: (await intentOf(run_id)).status, attempt: (await attemptOf(run_id)).status })
+      .toEqual({ intent: "stopped", attempt: { kind: "failed", code: "attempt_stopped", detail: "stopped because its unit is no longer active" } });
+  } finally { hold.release(); }
+}, 30_000);

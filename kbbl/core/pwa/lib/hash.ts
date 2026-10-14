@@ -1,5 +1,4 @@
 import type { ArtifactId, Sid } from "./ids";
-import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
 
 export function readHashSid(): string | null {
   const hash = window.location.hash.slice(1);
@@ -54,6 +53,14 @@ export function readHashSessionTarget(): SessionHashTarget | null {
   const params = new URLSearchParams(window.location.hash.slice(1));
   return params.get("focus") === "pending-permission" ? "pending-permission" : null;
 }
+
+/**
+ * The run-workspace panes that name a domain entity, and so the only ones a URL
+ * can carry: `#oakridge/run/:id/session/:sid` and `#oakridge/run/:id/artifact/:artifactId`.
+ */
+export type RoutePaneTarget =
+  | { kind: "session"; session_id: Sid }
+  | { kind: "artifact"; artifact_id: ArtifactId };
 
 export type OakridgeSubRoute =
   | { sub: "runs" }

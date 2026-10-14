@@ -151,8 +151,8 @@ test("a commit fault is recorded against the run, surfaces as a stall on its uni
   const { run_id, unit, writer } = await inconsistent();
   const committed = await reportWorker(deps(), { run_id, attempt: { action_id: writer, seq: 1 },
     report: { kind: "started", session_id: null, publication_secret_hash: null } });
-  const rows = await authority.db.selectFrom("authority.operator_event").select(["id", "commit_txid", "event_key", "payload"])
-    .where("run_id", "=", run_id).where("event_key", "=", "commit_fault").execute();
+  const rows = await authority.db.selectFrom("authority.operator_event").select(["id", "commit_txid", "payload"])
+    .where("run_id", "=", run_id).where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   const [row] = rows;
   expect({ faulted: !committed.ok, stalled: (await inboxOf(run_id)).map((item): string[] => [item.kind, item.unit_id]),
     frame: row ? selectOperatorFrame({ ...row, commit_txid: String(row.commit_txid) } as OperatorEventRow) : null })
@@ -175,7 +175,7 @@ test("a commit fault on a worker report names its unit", async () => {
   const { run_id, unit, writer } = await inconsistent();
   await reportWorker(deps(), { run_id, attempt: { action_id: writer, seq: 1 }, report: { kind: "started", session_id: null, publication_secret_hash: null } });
   const fault = await authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
-    .where("event_key", "=", "commit_fault").executeTakeFirstOrThrow();
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).executeTakeFirstOrThrow();
   expect(fault.payload.kind === "commit_fault" && { unit: fault.payload.data.unit_id as string | null, event: fault.payload.data.event.kind })
     .toEqual({ unit, event: "worker_started" });
 });
@@ -198,6 +198,6 @@ test("a retried request whose fault still stands records it once", async () => {
   for (let retry = 0; retry < 3; retry += 1)
     await reportWorker(deps(), { run_id, attempt: { action_id: writer, seq: 1 }, report: { kind: "started", session_id: null, publication_secret_hash: null } });
   const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
-    .where("event_key", "=", "commit_fault").execute();
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect(faults.length).toBe(1);
 });

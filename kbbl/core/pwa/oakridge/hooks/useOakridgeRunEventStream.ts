@@ -1,18 +1,21 @@
 import { useEffect, useRef } from "react";
 import { LiveSubscription } from "../../lib/live-stream";
-import type { OperatorRunEvent } from "../operator-contracts";
+import type { OperatorRunEvent, OperatorStreamFrameData } from "../operator-contracts";
 import { useQueryClient } from "@tanstack/react-query";
-import { invalidateOperatorFrame } from "./useOakridgeInvalidationStream";
+import { invalidateRun } from "../lib/operator-invalidation";
 
-function parseOperatorEvent(data: string): OperatorRunEvent | null {
+type StreamedRunEvent = OperatorRunEvent & Pick<OperatorStreamFrameData, "replay">;
+
+function parseOperatorEvent(data: string): StreamedRunEvent | null {
   try {
     const value: unknown = JSON.parse(data);
     return value && typeof value === "object" && "run_id" in value && typeof value.run_id === "string"
-      && "unit_id" in value && typeof value.unit_id === "string" ? value as OperatorRunEvent : null;
+      && "unit_id" in value && typeof value.unit_id === "string" && "replay" in value && typeof value.replay === "boolean"
+      ? value as StreamedRunEvent : null;
   } catch { return null; }
 }
 
-/** Committed events from the authority (GET /events), relayed through kbbl's shared live connection. */
+/** Committed events from the authority (GET /events), relayed through kbbl's shared live connection. Each refreshes its run. */
 export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event: OperatorRunEvent) => void): void {
   const client = useQueryClient();
   const subscriberRef = useRef(subscriber);
@@ -23,8 +26,9 @@ export function useOakridgeRunEventStream(isEnabled: boolean, subscriber: (event
     subscription.addEventListener("run_event", (message) => {
       const event = parseOperatorEvent(message.data);
       if (!event) return;
-      if ("replay" in event && event.replay === true) invalidateOperatorFrame(client, event);
-      else subscriberRef.current(event);
+      invalidateRun(client, event.run_id);
+      // A replayed event already happened before this connection; it refreshes but does not notify.
+      if (!event.replay) subscriberRef.current(event);
     });
     return () => subscription.close();
   }, [client, isEnabled]);

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
 import { parseType, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
 
 const workflow: Workflow = {
-  workflow: "dev_flow",
+  workflow: "development",
   input: { spec: "text", repositories: "list(repository)" },
   schemas: { repository: { owner: "ident", name: "ident", path: "optional(repo_path)" }, plan_body: { summary: "text" }, plan: "plan_body" },
   run: { units: { planning: { stage: "planning", input: {} } }, outcome: {} },
@@ -62,7 +64,7 @@ test("a decision's payload: its declared type, its text fields, and feedback for
 
 test("every schema the bundle references is listed exactly once", () => {
   const keys = schemas.map((schema) => schema.key);
-  const bundle = selectDefinitionBundle(workflow, 3);
+  const bundle = selectDefinitionBundle(workflow);
   const referenced = [...bundle.units.map((unit) => unit.input_schema), ...bundle.units.flatMap((unit) => unit.artifacts.map((artifact) => artifact.schema)),
     ...schemas.flatMap((schema) => schema.shape.kind === "record" ? schema.shape.fields.map((field) => field.schema)
       : schema.shape.kind === "list" || schema.shape.kind === "optional" ? [schema.shape.item] : [])];
@@ -70,10 +72,17 @@ test("every schema the bundle references is listed exactly once", () => {
 });
 
 test("the bundle lists the root with the run input and each staged unit with its artifacts", () => {
-  const bundle = selectDefinitionBundle(workflow, 3);
-  expect({ key: bundle.key, version: bundle.version, root: bundle.root,
+  const bundle = selectDefinitionBundle(workflow);
+  expect({ key: bundle.key, root: bundle.root,
     units: bundle.units.map((unit) => [unit.key, unit.input_schema, unit.label, unit.artifacts.map((artifact) => [artifact.key, artifact.schema])]) })
-    .toEqual({ key: "dev_flow", version: 3, root: "$root", units: [
-      ["$root", "{repositories: list(repository), spec: text}", "Dev Flow", []],
+    .toEqual({ key: "development", root: "$root", units: [
+      ["$root", "{repositories: list(repository), spec: text}", "Development", []],
       ["planning", "{}", "Planning", [["notes", "{count: integer, done: boolean}"], ["plan", "plan"]]]] });
+});
+
+test("a member key two groups reuse keeps a bundle unit per declaration, so the development bundle lists every stage", () => {
+  const development = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
+  expect(selectDefinitionBundle(development).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
+    ["prepare/repository", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs/brief", "brief"],
+    ["implementation/cohort", "cohort"], ["integration/repository", "integration"]]);
 });

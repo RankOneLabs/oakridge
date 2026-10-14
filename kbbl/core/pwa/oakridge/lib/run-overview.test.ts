@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  makeBuildBriefFixture, makeDecision, makeRunView, makeRunUnitSummary, makeUnitView, makeUnitWithArtifact,
+  makeBuildBriefFixture, makeBuildResultFixture, makeDecision, makeRunView, makeRunUnitSummary, makeUnitView, makeUnitWithArtifact,
 } from "../__fixtures__/read-models";
 import { selectActionableUnits } from "./decision-queue";
 import { selectRunAttempts } from "./run-sessions";
-import { selectRunArtifacts, selectRunProgress, selectUnitStatus } from "./run-overview";
+import {
+  selectArtifactInUnits, selectLoadedUnits, selectRunArtifacts, selectRunProgress, selectRunUnit, selectUnitDetail,
+  selectUnitDetailStatus, selectUnitStatus,
+} from "./run-overview";
 
 describe("generated run overview", () => {
   it("counts completed and actionable units", () => {
@@ -43,6 +46,16 @@ describe("generated run overview", () => {
     expect(selectUnitStatus(makeRunUnitSummary({ status: { kind: "done", outcome: {} }, is_terminal: true, asks: ["approve"] }))).toBe("complete");
   });
 
+  it("shows a live root offering only the run's cancel as running, not attention", () => {
+    const cancel = makeDecision({ key: "cancel", label: "Cancel run", submit: { kind: "cancel" } });
+    expect(selectUnitDetailStatus(makeUnitView({ decisions: [cancel] }))).toBe("running");
+  });
+
+  it("shows a loaded unit with an ask beside the cancel as attention", () => {
+    const cancel = makeDecision({ key: "cancel", label: "Cancel run", submit: { kind: "cancel" } });
+    expect(selectUnitDetailStatus(makeUnitView({ decisions: [makeDecision(), cancel] }))).toBe("attention");
+  });
+
   it("never shows a cancelled unit as complete", () => {
     expect(selectUnitStatus(makeRunUnitSummary({ status: { kind: "cancelled" }, is_terminal: true }))).toBe("cancelled");
   });
@@ -55,5 +68,51 @@ describe("generated run overview", () => {
 
   it("keeps the attempt list empty when no unit has an attempt", () => {
     expect(selectRunAttempts([makeUnitView()])).toEqual([]);
+  });
+});
+
+describe("run workspace unit and artifact selection", () => {
+  const brief = makeBuildBriefFixture();
+  const result = makeBuildResultFixture();
+  const units = [
+    makeUnitWithArtifact({ body: brief.body, artifact_key: "brief", revision_id: "brief-revision",
+      unit: { unit_id: "brief-unit" } }),
+    makeUnitWithArtifact({ body: result.body, artifact_key: "build_result", revision_id: "result-revision",
+      unit: { unit_id: "build-unit" } }),
+  ];
+
+  it("indexes the current artifact revisions from all loaded units", () => {
+    expect(selectRunArtifacts(units).map((entry) => entry.revision.id)).toEqual(["brief-revision", "result-revision"]);
+  });
+
+  it("does not resolve an artifact revision absent from current unit projections", () => {
+    expect(selectArtifactInUnits(units, "deleted-revision")).toBeNull();
+    expect(selectArtifactInUnits(units, "result-revision")?.unit_id).toBe("build-unit");
+  });
+
+  it("uses an explicit unit route before the root fallback", () => {
+    const run = makeRunView({ units: [
+      makeRunUnitSummary({ unit_id: "root", unit_key: "development" }),
+      makeRunUnitSummary({ unit_id: "build", unit_key: "build" }),
+    ] });
+    expect(selectRunUnit(run, "build", "development")?.unit_id).toBe("build");
+    expect(selectRunUnit(run, "missing", "development")?.unit_id).toBe("root");
+  });
+
+  it("does not display a deleted unit detail from a stale route ID", () => {
+    expect(selectUnitDetail(units, "deleted-unit")).toBeNull();
+    expect(selectUnitDetail(units, "brief-unit")?.unit_id).toBe("brief-unit");
+  });
+
+  it("keeps successfully loaded units when another unit read is unavailable", () => {
+    expect(selectLoadedUnits([units[0], undefined, units[1]])).toEqual(units);
+    expect(selectLoadedUnits([undefined])).toEqual([]);
+  });
+
+  it("selects no unit when the definition's root is unknown and no unit is routed", () => {
+    const run = makeRunView({ units: [makeRunUnitSummary({ unit_id: "child", unit_key: "build" })] });
+    expect(selectRunUnit(run, null, null)).toBeNull();
+    expect(selectRunUnit(run, null, "development")).toBeNull();
+    expect(selectUnitDetail([makeUnitView({ unit_id: "child" })], null)).toBeNull();
   });
 });

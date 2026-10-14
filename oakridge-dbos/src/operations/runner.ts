@@ -2,7 +2,7 @@ import type { GitCommandRunner } from "../domain/repository-provisioning";
 import { PROVIDER_ERROR_CODES } from "../effects/provider-catalog";
 import type { PullRequestReader } from "../runtime/github-pull-requests";
 import { isFields, type OperationCallOptions, type OperationOutcome } from "./outcome";
-import { decodePullRequestObserveInput, observePullRequests } from "./pull-request-observe";
+import { decodePullRequestObserveInput, observePullRequest } from "./pull-request-observe";
 import { OPERATION_KEYS, type OperationKey } from "./registry";
 import { decodeRepositoryPrepareInput, prepareRepository } from "./repository-prepare";
 
@@ -32,7 +32,7 @@ export function createOperationRunner(services: OperationServices): OperationRun
     },
     [OPERATION_KEYS.pull_request_observe]: async (inputs, options) => {
       const input = decodePullRequestObserveInput(inputs);
-      return input ? observePullRequests(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_observe);
+      return input ? observePullRequest(services.pull_requests, input, options) : invalidInput(OPERATION_KEYS.pull_request_observe);
     },
     // Step resolved the input against the workflow's type, and commit checks the output against the artifact's schema.
     [OPERATION_KEYS.value_publish]: async (inputs) => isFields(inputs) && "value" in inputs

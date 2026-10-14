@@ -25,7 +25,7 @@ beforeAll(async () => {
   authority = await openAuthority();
   ({ digest } = await pinSample(authority));
   app = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
-    control_token: CONTROL_TOKEN, write_policy: browserWritePolicy([]) });
+    access: { kind: "token_required", token: CONTROL_TOKEN }, write_policy: browserWritePolicy([]) });
 });
 afterAll(async () => { await authority.close(); });
 
@@ -163,7 +163,7 @@ test("D2: the control token on the publish route is the operator's edit, which n
 
 test("D2: on a loopback-open control plane a publish with no secret is the operator's, and a wrong secret is still refused", async () => {
   const open = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
-    control_token: null, write_policy: browserWritePolicy([]) });
+    access: { kind: "loopback_open" }, write_policy: browserWritePolicy([]) });
   const run_id = await sessionRun("open-secret");
   const put = (authorization: string | null) => Promise.resolve(open.request(path("runs", run_id, "units", unitOf(run_id, "document"), "artifacts", "draft"),
     { method: "PUT", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body: JSON.stringify(draft()) }));

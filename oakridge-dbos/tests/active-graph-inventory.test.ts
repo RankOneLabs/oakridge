@@ -28,7 +28,7 @@ test("active schema and symbols reflect the authority", () => {
     "authority.unit_dependency", "authority.attempt", "authority.artifact_revision", "authority.review_decision",
     "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
     "authority.collaboration_thread",
-    "authority.collaboration_message", "authority.review_item", "authority.collaboration_delivery", "authority.operator_event",
+    "authority.collaboration_message", "authority.review_item", "authority.operator_event",
   ]);
   const activeSource = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
   expect(activeSource).toContain("commitEvent");

@@ -8,7 +8,7 @@ export function RunSidebarSessions({ attempts, onOpen }: Props) {
     {attempts.length === 0 && <p>No attempts yet.</p>}
     <ul>{attempts.map(({ unit_id, attempt }) => <li key={attempt.id} className="flex items-center gap-2">
       <Button variant="secondary" onClick={() => onOpen(unit_id)}>{attempt.worker} #{attempt.number}</Button>
-      <StatusBadge status={attempt.status} />
+      <StatusBadge subject={{ kind: "attempt", status: attempt.status }} />
     </li>)}</ul>
   </section>;
 }

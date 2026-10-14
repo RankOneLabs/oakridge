@@ -726,9 +726,11 @@ pub(crate) fn infer(
                     format!("collection {unit} outcome is read only through map"),
                 ));
             }
+            // A unit input's scope holds exactly the outcomes of its `after`
+            // units, so a miss there is a read outside `after` (check 3).
             let ty = scope.outcomes.get(unit).ok_or_else(|| {
                 reject(
-                    1,
+                    3,
                     format!("unit outcome {unit} absent or outside read scope"),
                 )
             })?;

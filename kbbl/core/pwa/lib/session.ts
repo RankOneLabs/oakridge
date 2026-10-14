@@ -19,12 +19,6 @@ export function generateSlug(): string {
   return `${a}-${n}-${num}`;
 }
 
-export function toPositiveSafeInt(raw: string | null): number | null {
-  if (raw === null || !/^[1-9][0-9]*$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) ? n : null;
-}
-
 export function workdirBasename(p: string): string {
   if (!p) return "";
   // Split on both POSIX and Windows separators so a path coming from a

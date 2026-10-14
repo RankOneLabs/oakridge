@@ -51,7 +51,7 @@ test("a run reads with its units and pinned definition; listings page newest fir
   const read = await readRun(authority.db, newer);
   const active = await listRuns(authority.db, { after: null, limit: 1, is_archived: false });
   const archived = await listRuns(authority.db, { after: null, limit: 100, is_archived: true });
-  expect({ units: read?.units.map((unit) => unit.unit_key), digest: read?.definition.digest, first: active.items[0]?.run.id,
+  expect({ units: read?.units.map((unit) => unit.declaration), digest: read?.definition.digest, first: active.items[0]?.run.id,
     has_next: active.next !== null, archived: archived.items.map((item) => item.run.id) })
     .toEqual({ units: ["$root", "document"], digest, first: newer, has_next: true, archived: [older] });
 });
@@ -100,7 +100,7 @@ test("the operator stream returns events after a cursor and holds back transacti
     await open;
   } finally { await blocker.destroy(); }
   const delivered = await readOperatorEventsAfter(authority.db, { after: boundary.cursor, limit: 100, subscription_snapshot: boundary.snapshot });
-  expect(delivered.map((row) => [row.event_key, row.was_visible_at_subscription])).toEqual([["run_event", false]]);
+  expect(delivered.map((row) => [row.payload.kind, row.was_visible_at_subscription])).toEqual([["run_event", false]]);
 });
 
 /** A run whose writer published two drafts, the editor requested changes on the first, and one event was refused. */
@@ -120,14 +120,13 @@ async function reviewedRun(): Promise<{ readonly run_id: RunId; readonly unit: s
 test("a run reads everything recorded against it, in the order commit wrote it", async () => {
   const { run_id, unit, action } = await reviewedRun();
   const read = await readRun(authority.db, run_id);
-  expect({ units: read?.units.map((item) => [item.unit_key, item.review_prompts]), dependencies: read?.dependencies,
+  expect({ units: read?.units.map((item) => [item.declaration, item.review_prompts]), dependencies: read?.dependencies,
     attempts: read?.attempts.map((attempt) => [attempt.worker, attempt.mode.kind, attempt.status.kind]),
     revisions: read?.revisions.map((revision) => String(revision.id)), decisions: read?.decisions.map((decision) => decision.decision),
-    wanted: read?.wanted.map((item) => [item.unit_id, item.actions.map((wanted) => wanted.kind === "run_worker" ? wanted.worker : wanted.kind)]),
     writer: read?.attempts[0]?.action_id === action, missing: await readRun(authority.db, "run-missing") })
     .toEqual({ units: [["$root", {}], ["document", {}]], dependencies: [],
       attempts: [["writer", "initial", "succeeded"], ["critic", "review", "pending"], ["writer", "revise", "pending"]],
-      revisions: [`${unit}:draft:1`], decisions: ["request_changes"], wanted: [[unit, ["writer"]]], writer: true, missing: null });
+      revisions: [`${unit}:draft:1`], decisions: ["request_changes"], writer: true, missing: null });
 });
 
 test("a run reads the retries the operator requested", async () => {
@@ -195,9 +194,8 @@ test("a page of runs reads in one batch, each run holding only its own rows", as
   const foreign = page.items.flatMap((item) => [...item.units, ...item.attempts, ...item.revisions]
     .filter((row) => row.run_id !== item.run.id));
   expect({ order: page.items.map((item) => item.run.id).indexOf(second) < page.items.map((item) => item.run.id).indexOf(first),
-    first_retries: of(first)?.retries.length, second_retries: of(second)?.retries.length, foreign: foreign.length,
-    wanted: of(second)?.wanted.every((item) => item.unit_id.startsWith(second)) })
-    .toEqual({ order: true, first_retries: 1, second_retries: 0, foreign: 0, wanted: true });
+    first_retries: of(first)?.retries.length, second_retries: of(second)?.retries.length, foreign: foreign.length })
+    .toEqual({ order: true, first_retries: 1, second_retries: 0, foreign: 0 });
 });
 
 test("run lists and the inbox read no revision body, decision, unit input or launch input, and no latest events without a stall", async () => {

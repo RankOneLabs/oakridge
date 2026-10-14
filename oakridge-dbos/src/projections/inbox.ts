@@ -1,7 +1,7 @@
 import type { RunId, UnitId } from "../domain/primitives";
 import type { RunSummaryRead } from "../storage/read-store";
-import { selectAttention, selectRunAttention, selectRunStallDetail } from "./attention";
-import { selectUnitLabel } from "./unit-label";
+import { selectAttention, selectRunAttention, selectRunStallDetail, selectStalledWorkerDetail } from "./attention";
+import { selectUnitLabel, selectUnitTree } from "./unit-label";
 import { isAsk, selectAvailableDecisions, type DecisionSubmit } from "./unit-view";
 
 /**
@@ -21,6 +21,7 @@ export interface InboxPage { readonly items: readonly InboxItem[]; readonly next
 
 /** A run's inbox items, unit by unit: the run's stalls, each decision that asks for the operator, each stalled worker, and the unit's wait. */
 export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] {
+  const tree = selectUnitTree(read.units, read.definition.workflow);
   return selectRunAttention(read).flatMap((attention) => {
     const unit = read.units.find((candidate) => candidate.id === attention.unit_id);
     if (!unit) return [];
@@ -30,9 +31,9 @@ export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] 
         prompt: decision.submit.kind === "review" ? attention.awaiting.find((awaiting) =>
           decision.submit.kind === "review" && awaiting.review === decision.submit.review)?.prompt ?? null : null }));
     const run_stalls = attention.run_stalls.map((stall): InboxItem => ({ ...base, kind: "stalled", detail: selectRunStallDetail(stall) }));
-    const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: `${worker.worker} failed: ${worker.detail}` }));
+    const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: selectStalledWorkerDetail(worker) }));
     const line = attention.stalled.length === 0 && attention.run_stalls.length === 0 ? selectAttention(attention, read) : null;
-    const waiting: InboxItem[] = line?.kind === "waiting" ? [{ ...base, kind: "waiting", reason: line.reason, label: selectUnitLabel(unit, read.definition.workflow) }] : [];
+    const waiting: InboxItem[] = line?.kind === "waiting" ? [{ ...base, kind: "waiting", reason: line.reason, label: selectUnitLabel(unit, tree) }] : [];
     return [...run_stalls, ...decisions, ...stalled, ...waiting];
   });
 }

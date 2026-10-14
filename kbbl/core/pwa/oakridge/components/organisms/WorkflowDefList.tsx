@@ -5,7 +5,7 @@ interface Props { readonly definitions: readonly OperatorDefinitionSummary[]; re
   readonly onClone: (id: string) => void; readonly onArchive: (id: string) => void; readonly isArchived: boolean }
 export function WorkflowDefList({ definitions, onSelect, onClone, onArchive, isArchived }: Props) {
   return <ul data-testid="or-def-list">{definitions.map((definition) => <li key={definition.bundle_id} className="flex items-center gap-3 py-2">
-    <Button variant="secondary" onClick={() => onSelect(definition.bundle_id)}>{definition.bundle.key} v{definition.bundle.version}</Button>
+    <Button variant="secondary" onClick={() => onSelect(definition.bundle_id)}>{definition.bundle.key}</Button>
     <code>{definition.digest}</code>
     <Button variant="secondary" onClick={() => onClone(definition.bundle_id)}>Clone</Button>
     <Button variant="secondary" onClick={() => onArchive(definition.bundle_id)}>{isArchived ? "Unarchive" : "Archive"}</Button>

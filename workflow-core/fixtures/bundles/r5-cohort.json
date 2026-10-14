@@ -4,7 +4,7 @@
   "schemas": {
     "brief_body": { "title": "text", "depends_on": "list(ident)", "repository_key": "ident" },
     "pr_body": { "pr_url": "text", "branch": "text" },
-    "observations": { "observations": "list({url: text, state: text})" },
+    "pr_status": { "state": "enum(open, merged, closed_unmerged)" },
     "plan_body": { "cohorts": "list({id: ident, depends_on: list(ident), repository_key: ident})" }
   },
   "run": {
@@ -46,7 +46,7 @@
         "build": { "schema": { "summary": "text" } },
         "pr": { "schema": "pr_body" },
         "assessment": { "schema": { "verdict": "enum(pass, fail)" } },
-        "pr_state": { "schema": "observations" }
+        "pr_state": { "schema": "pr_status" }
       },
       "workers": {
         "admit": { "kind": "code", "operation": "value.publish", "inputs": { "value": "input.brief" }, "creates": ["brief"] },
@@ -76,12 +76,12 @@
         },
         "pr_closed": {
           "of": "build", "by": "engine",
-          "when": "published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"closed_unmerged\"",
+          "when": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
           "decisions": { "replace": { "effect": "request_changes", "label": "Replace the PR",
                                       "feedback": "The PR was closed without merging. Open a new one." } }
         }
       },
-      "done_when": "approved(assessment) and published(pr) and published(pr_state) and lookup(latest(pr_state).observations, url, latest(pr).pr_url).state == \"merged\"",
+      "done_when": "approved(assessment) and published(pr) and published(pr_state) and latest(pr_state).state == \"merged\"",
       "outcome": { "pr": "latest(pr)" }
     }
   }

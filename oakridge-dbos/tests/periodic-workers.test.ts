@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { Cause, Workflow, WorkerResult } from "../src/core-client/core-types";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { RunId } from "../src/domain/primitives";
-import { observePullRequests } from "../src/operations/pull-request-observe";
+import { observePullRequest } from "../src/operations/pull-request-observe";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
@@ -30,14 +30,16 @@ const WATCH: Workflow = {
     },
     done_when: "false", outcome: {} } },
 };
-const QUERY = { owner: "oakridge-e2e", name: "app", head_owner: "oakridge-e2e", head_branch: "cohort-a", base_branch: "develop" };
-const OBSERVATIONS = "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, merged_at: optional(text)})";
+const QUERY = { owner: "oakridge-e2e", name: "app", head_owner: "oakridge-e2e", head_branch: "cohort-a", base_branch: "develop",
+  pr_url: "https://github.com/oakridge-e2e/app/pull/7" };
+const QUERY_SCHEMA = { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text", pr_url: "text" };
+const PR_STATUS = { state: "enum(open, merged, closed_unmerged)", number: "integer", url: "text", head_sha: "optional(text)", merged_at: "optional(text)" };
 /** `pr_watch` alone, its query given at launch. */
 const PR_WATCH: Workflow = {
-  workflow: "pr_watch", input: { query: { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text" } },
+  workflow: "pr_watch", input: { query: QUERY_SCHEMA },
   run: { units: { watch: { stage: "watch", input: { query: "input.query" } } }, outcome: {} },
-  stages: { watch: { input: { query: { owner: "ident", name: "ident", head_owner: "ident", head_branch: "text", base_branch: "text" } },
-    artifacts: { pr_state: { schema: { observations: OBSERVATIONS } } },
+  stages: { watch: { input: { query: QUERY_SCHEMA },
+    artifacts: { pr_state: { schema: PR_STATUS } },
     workers: { pr_watch: { kind: "code", operation: "pull_request.observe", inputs: { query: "input.query" }, every: "1s", creates: ["pr_state"] } },
     done_when: "false", outcome: {} } },
 };
@@ -147,15 +149,13 @@ test("an unchanged pull request observation publishes no new revision and its at
   const { bundle_id } = await pinWorkflow(authority, PR_WATCH);
   const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { query: QUERY } });
   const unit = unitOf(run_id, "watch");
-  const listing = [{ number: 7, html_url: "https://forge.test/app/pull/7", state: "open", merged_at: null,
-    head: { ref: QUERY.head_branch, sha: "abc123", repo: { full_name: `${QUERY.head_owner}/app` } }, base: { ref: QUERY.base_branch } }];
-  // GitHub's list, and each pull request's own endpoint.
-  const reader = new GithubPullRequestReader({ token: "test" }, (async (input: string | URL | Request) =>
-    Response.json(new URL(String(input)).pathname.endsWith("/pulls/7") ? listing[0] : listing)) as unknown as typeof fetch);
+  const pull_request = { number: 7, html_url: QUERY.pr_url, state: "open", merged_at: null,
+    head: { ref: QUERY.head_branch, sha: "abc123", repo: { full_name: `${QUERY.head_owner}/app` } }, base: { ref: QUERY.base_branch } };
+  const reader = new GithubPullRequestReader({ token: "test" }, (async () => Response.json(pull_request)) as unknown as typeof fetch);
   const [watch] = await attemptsOf(run_id, "pr_watch");
   if (!watch) throw new Error("launch opened no watch");
   for (const seq of [1, 2]) {
-    const observed = await observePullRequests(reader, { query: QUERY });
+    const observed = await observePullRequest(reader, { query: QUERY });
     if (observed.kind !== "succeeded") throw new Error(`observation failed: ${JSON.stringify(observed)}`);
     await runAttempt(run_id, { action_id: watch.action_id, seq }, { unit, artifact: "pr_state", body: observed.body });
     await Bun.sleep(5);
