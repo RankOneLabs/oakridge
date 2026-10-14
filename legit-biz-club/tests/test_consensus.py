@@ -233,8 +233,8 @@ async def test_consensus_emits_proposal_applied_with_outcome_payload(
     tmp_path: Path,
 ) -> None:
     """The proposal_applied event mirrors the incremental coordinator's
-    payload shape (agent_id / proposal_id / reason / new_version) so a
-    kbbl observer can treat both event sources uniformly. Without this
+    payload shape (agent_id / proposal_id / reason / new_version) so an
+    observer can treat both event sources uniformly. Without this
     event, the consensus commit is invisible to a `proposal_applied`-
     only consumer — only the picked decision shows up."""
     agents = _make_agents(tmp_path, 3)
@@ -773,7 +773,7 @@ async def test_emit_failures_do_not_abort_consensus(tmp_path: Path) -> None:
     HTTP emit shouldn't kill a consensus run."""
 
     async def flaky(_kind: str, _payload: dict[str, object]) -> None:
-        raise RuntimeError("simulated kbbl outage")
+        raise RuntimeError("simulated sink outage")
 
     agents = _make_agents(tmp_path, 2)
     project = _make_project(tmp_path, agents)

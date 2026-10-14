@@ -244,12 +244,12 @@ async def test_constructor_validates_mediator_agents(tmp_path: Path) -> None:
 
 
 async def test_emit_failures_do_not_abort_loop(tmp_path: Path) -> None:
-    """Production emit is wired to an HTTP call; a transient kbbl outage
+    """A failing emit sink
     must not stop a coordination run mid-flight after the proposal
     already mediated successfully."""
 
     async def flaky_emit(_kind: str, _payload: dict[str, object]) -> None:
-        raise RuntimeError("simulated kbbl outage")
+        raise RuntimeError("simulated sink outage")
 
     agents = _make_agents(tmp_path, 2)
     project = _make_project(tmp_path, agents)

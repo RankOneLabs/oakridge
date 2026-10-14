@@ -6,10 +6,7 @@ approves what generalizes into the agent's persistent memory.
 :class:`MemoryCommitter` is the Python API the operator (or a script
 driven by the operator) calls to commit approved observations.
 
-No kbbl involvement. Memory commit is internal to legit-biz-club —
-kbbl handles tool-call approvals during sessions, not memory commits
-at project end. These are different operator surfaces and don't share
-machinery.
+Memory commit is internal to legit-biz-club.
 
 Persistence is via jig's :class:`SqliteStore`. Each commit writes one
 ``MemoryEntry`` whose ``content`` is the observation text and whose

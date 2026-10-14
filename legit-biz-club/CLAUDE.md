@@ -3,8 +3,8 @@
 # legit-biz-club
 
 The workspace layer of oakridge: multi-agent collaboration over a shared
-artifact, built on jig (agent kit) and consumed by kbbl (operator
-surface).
+artifact, built on jig (agent kit) and observed by
+`lbc-dashboard`.
 
 **Status:** v1 build complete. All five phases (foundation, incremental
 coordination, convergence, evals + memory commit, study harness) shipped
@@ -13,19 +13,15 @@ the v1 study — is research output and lives outside this package.
 
 ## Shape
 
-Python library; no CLI. Consumers (kbbl, study scripts) call the Python
+Python library; no CLI. Consumers (lbc-dashboard, study scripts) call the Python
 API directly. See `README.md` for the per-module layout under
 `src/legit_biz_club/` — core, composition, coordination, eval, memory,
-study, adapters.
+study.
 
 ## Dependencies
 
 - `jig[anthropic,openai,ollama]` — agent kit, multi-provider
-- `pydantic`, `httpx`
-
-The `adapters/kbbl/` module is a Python HTTP client against kbbl's TS
-server. All cross-language calls go through it; do not hand-roll HTTP
-elsewhere.
+- `pydantic`
 
 ## Commands
 
