@@ -16,7 +16,7 @@ test("an active unit's worker whose latest attempt failed, with nothing wanted f
 
 test("a pending retry clears the stall for its worker", () => {
   const retry = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" } });
-  expect(selectStalledWorkers({ units: [unit], attempts: [failed, retry], retries: [{ unit_id: unit.id, worker: "writer", event_id: "e1" }], wanted: [] })).toEqual([]);
+  expect(selectStalledWorkers({ units: [unit], attempts: [failed, retry], retries: [{ unit_id: unit.id, worker: "writer", retry_id: "e1" }], wanted: [] })).toEqual([]);
 });
 
 test("a worker the latest wanted set still wants is not stalled", () => {

@@ -45,7 +45,7 @@ test("a second event on a run waits for the first to commit before it reaches st
   const results = await Promise.all([first, second]);
   const events = await authority.db.selectFrom("authority.event").select("ingress_id").where("run_id", "=", run_id).orderBy("created_at").execute();
   expect({ steps_while_held, steps, kinds: results.map((result) => result.ok && result.value.kind), events: events.map((event) => event.ingress_id).slice(1) })
-    .toEqual({ steps_while_held: 1, steps: 2, kinds: ["committed", "committed"], events: ["started", "published"] });
+    .toEqual({ steps_while_held: 1, steps: 2, kinds: ["committed", "committed"], events: ["executor:started", "executor:published"] });
 });
 
 test("concurrent events on one run serialize on the run row", async () => {

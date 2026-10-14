@@ -505,6 +505,20 @@ mod v2_step {
             .find(|(u, w, _)| u == unit && w == worker)
             .map(|(_, _, id)| id)
     }
+    /// A retry authorizes exactly one attempt: once any attempt of the worker
+    /// carries it, it is spent.
+    fn is_retry_spent(
+        state: &StepSnapshot,
+        unit: &UnitId,
+        worker: &WorkerKey,
+        retry: &EventId,
+    ) -> bool {
+        state.attempts.iter().any(|attempt| {
+            attempt.unit == *unit
+                && attempt.worker == *worker
+                && matches!(&attempt.cause, Cause::Retry { event } if event == retry)
+        })
+    }
     fn can_run(state: &StepSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
         let Some(previous) = attempt(state, unit, worker) else {
             return Some(None);
@@ -512,8 +526,9 @@ mod v2_step {
         match previous.status {
             AttemptStatus::Pending | AttemptStatus::Running => None,
             AttemptStatus::Failed { .. } => {
+                // A later failure waits for a new retry once the latest is spent.
                 let retry = latest_retry(state, unit, worker)?;
-                if matches!(previous.cause, Cause::Retry { ref event } if event == retry) {
+                if is_retry_spent(state, unit, worker, retry) {
                     None
                 } else {
                     Some(Some(Cause::Retry {
@@ -1406,6 +1421,9 @@ mod v2_step {
                 });
             }
             Event::RetryRequested { unit, worker } => {
+                // Only a replay of a retry already registered is a no-op: the
+                // run layer stores every accepted retry request as a retry, so
+                // a distinct request either registers one or is rejected.
                 if state.retry_events.iter().any(|(u, w, id)| {
                     u == unit && w == worker && incoming.ingress_id.as_deref() == Some(&id.0)
                 }) {
@@ -1413,29 +1431,21 @@ mod v2_step {
                 }
                 let previous = attempt(state, unit, worker)
                     .ok_or_else(|| rejected("worker has no attempt"))?;
-                if let Cause::Retry { event } = &previous.cause {
-                    if latest_retry(state, unit, worker) == Some(event)
-                        && !matches!(previous.status, AttemptStatus::Failed { .. })
-                    {
-                        return Ok(());
-                    }
-                }
                 if !matches!(previous.status, AttemptStatus::Failed { .. }) {
                     return Err(rejected("latest attempt has not failed"));
                 }
-                if let Some(last) = latest_retry(state, unit, worker) {
-                    if matches!(&previous.cause, Cause::Retry { event } if event != last) {
-                        return Ok(());
-                    }
-                    if incoming.ingress_id.as_deref() == Some(&last.0) {
-                        return Ok(());
-                    }
+                if latest_retry(state, unit, worker)
+                    .is_some_and(|last| !is_retry_spent(state, unit, worker, last))
+                {
+                    return Err(rejected("a retry is already requested"));
                 }
+                // The ingress id is the retry's identity in every later
+                // snapshot, so a retry without one could not be recognized.
                 let id = EventId(
                     incoming
                         .ingress_id
                         .clone()
-                        .unwrap_or_else(|| format!("retry:{}", state.retry_events.len() + 1)),
+                        .ok_or_else(|| rejected("a retry request needs an ingress id"))?,
                 );
                 state.retry_events.push((unit.clone(), worker.clone(), id));
             }
@@ -2737,6 +2747,151 @@ mod v2_step {
             .unwrap();
             assert_eq!(retry.wanted[0].1.len(), 1);
             assert_eq!(retry.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn a_failed_retry_attempt_waits_for_another_retry() {
+            let program = program();
+            let mut state = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let fail = |state: &StepSnapshot, action: ActionKey, id: &str| {
+                let started = step(
+                    &program,
+                    state,
+                    &incoming(
+                        Event::WorkerStarted {
+                            action: action.clone(),
+                            kbbl_session_id: None,
+                        },
+                        &format!("{id}:start"),
+                    ),
+                )
+                .unwrap();
+                step(
+                    &program,
+                    &started.snapshot,
+                    &incoming(
+                        Event::WorkerEnded {
+                            action,
+                            result: WorkerResult::Failed {
+                                code: "oops".into(),
+                                detail: "failed".into(),
+                            },
+                        },
+                        &format!("{id}:end"),
+                    ),
+                )
+                .unwrap()
+            };
+            state = fail(&state, state.attempts[0].action_id.clone(), "first").snapshot;
+            state = step(
+                &program,
+                &state,
+                &incoming(
+                    Event::RetryRequested {
+                        unit: UnitId::from("run/document"),
+                        worker: WorkerKey::from("writer"),
+                    },
+                    "retry",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let retried = state.attempts.last().unwrap().action_id.clone();
+            let failed_again = fail(&state, retried, "second");
+            assert!(failed_again
+                .wanted
+                .iter()
+                .all(|(_, actions)| actions.is_empty()));
+            assert_eq!(failed_again.snapshot.attempts.len(), 2);
+        }
+        #[test]
+        fn a_retry_request_while_the_retry_attempt_is_live_is_rejected_and_registers_nothing() {
+            let program = program();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap();
+            let action = launched.snapshot.attempts[0].action_id.clone();
+            let mut state = launched.snapshot;
+            for (event, id) in [
+                (
+                    Event::WorkerStarted {
+                        action: action.clone(),
+                        kbbl_session_id: None,
+                    },
+                    "start",
+                ),
+                (
+                    Event::WorkerEnded {
+                        action,
+                        result: WorkerResult::Failed {
+                            code: "oops".into(),
+                            detail: "failed".into(),
+                        },
+                    },
+                    "end",
+                ),
+            ] {
+                state = step(&program, &state, &incoming(event, id))
+                    .unwrap()
+                    .snapshot;
+            }
+            let retry = |id: &str| {
+                incoming(
+                    Event::RetryRequested {
+                        unit: UnitId::from("run/document"),
+                        worker: WorkerKey::from("writer"),
+                    },
+                    id,
+                )
+            };
+            let retried = step(&program, &state, &retry("retry-1")).unwrap().snapshot;
+            let replayed = step(&program, &retried, &retry("retry-1"))
+                .unwrap()
+                .snapshot;
+            assert_eq!(replayed, retried);
+            assert!(step(&program, &retried, &retry("retry-2")).is_err());
+        }
+        #[test]
+        fn a_retry_request_without_an_ingress_id_is_rejected() {
+            let program = program();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap();
+            let retry = Incoming {
+                event: Event::RetryRequested {
+                    unit: UnitId::from("run/document"),
+                    worker: WorkerKey::from("writer"),
+                },
+                writer: Writer::Engine,
+                ingress_id: None,
+            };
+            assert!(step(&program, &launched.snapshot, &retry).is_err());
         }
         #[test]
         fn periodic_worker_uses_one_action_id_and_three_distinct_attempt_sequences() {

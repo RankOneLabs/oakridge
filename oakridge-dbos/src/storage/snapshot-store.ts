@@ -28,7 +28,8 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("id").execute(),
     db.selectFrom("authority.review_decision").select(["id", "unit_id", "review", "decision", "effect", "target_revision_id", "payload"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids)).orderBy("created_at").orderBy("id").execute(),
-    db.selectFrom("authority.event").select(["id", "unit_id", "payload"])
+    // A retry's identity is its ingress id: the core names it by that id when it is requested.
+    db.selectFrom("authority.event").select(["ingress_id", "unit_id", "payload"])
       .where("run_id", "=", run_id).where("unit_id", "=", anyOf(ids))
       .where((eb) => eb.ref("payload", "->>").key("kind"), "=", "retry_requested")
       .orderBy("created_at").orderBy("id").execute(),
@@ -45,8 +46,8 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
       body: revision.body, by: revision.by_id, predecessor: revision.predecessor_id, subject: revision.subject })),
     decisions: decisions.map((decision) => ({ id: decision.id, unit: decision.unit_id, review: decision.review,
       decision: decision.decision, effect: decision.effect as "approve" | "request_changes", target: decision.target_revision_id, payload: decision.payload })),
-    retry_events: retries.flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null
-      ? [[retry.unit_id, retry.payload.worker, retry.id]] : []),
+    retry_events: retries.flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
+      ? [[retry.unit_id, retry.payload.worker, retry.ingress_id]] : []),
   };
 }
 

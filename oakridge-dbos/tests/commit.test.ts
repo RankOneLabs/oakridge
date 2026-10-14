@@ -220,3 +220,112 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
     no_critique_yet: drafted.editor?.prompt.includes("critique none"), critique: critiqued.editor?.prompt.includes("tighten the opening"), decided: await prompts() })
     .toEqual({ target: `${unit}:draft:1`, topic: true, draft: true, no_critique_yet: true, critique: true, decided: {} });
 });
+
+// ---------------------------------------------------- commit correctness -----
+
+const attemptsOf = (run_id: RunId, worker: string) => authority.db.selectFrom("authority.attempt").select(["action_id", "seq", "status", "cause"])
+  .where("run_id", "=", run_id).where("worker", "=", worker).orderBy("created_at").execute();
+const failed = { kind: "failed", code: "oops", detail: "failed" } as const;
+async function failLatest(run_id: RunId, worker: string): Promise<void> {
+  const submit = submitter(authority);
+  const action = (await attemptsOf(run_id, worker)).at(-1)!.action_id;
+  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: null }, writer: executor(action) });
+  await submit({ run_id, event: { kind: "worker_ended", action, result: failed }, writer: executor(action) });
+}
+
+test("a unit that starts after its dependency persists the input it resolved, and its validation reads it", async () => {
+  const stage = (input: Record<string, string>, inputs: Record<string, string>, validate: { check: string; message: string }[]) => ({
+    input, artifacts: { draft: { schema: "text", validate } },
+    workers: { writer: { kind: "agent", prompts: { initial: "review-loop/write.md", revise: "review-loop/revise.md" }, inputs, creates: ["draft"] } },
+    done_when: "published(draft)", outcome: { draft: "latest(draft)" } });
+  const workflow = { workflow: "chain", input: { topic: "text" },
+    run: { units: { first: { stage: "first", input: { topic: "input.topic" } },
+      second: { stage: "second", after: ["first"], input: { topic: "input.topic", draft: "first.outcome.draft" } } },
+    outcome: { draft: "second.outcome.draft" } },
+    stages: { first: stage({ topic: "text" }, { topic: "input.topic" }, []),
+      second: stage({ topic: "text", draft: "text" }, { topic: "input.topic", draft: "input.draft" },
+        [{ check: "draft == input.draft", message: "the draft must repeat the first stage's draft" }]) } } as unknown as Workflow;
+  const { bundle_id: chain } = await pinWorkflow(authority, workflow);
+  const { run_id, result } = await launch(authority, { bundle_id: chain, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
+  const submit = submitter(authority);
+  const publish = async (key: string) => {
+    const action = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
+    await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: null }, writer: executor(action) });
+    await submit({ run_id, event: { kind: "revision_published", unit: unitOf(run_id, key), artifact: "draft", body: "hello", predecessor: null, subject: null,
+      by: action }, writer: executor(action) });
+  };
+  await publish("first");
+  const second = await authority.db.selectFrom("authority.unit").select(["input", "status"]).where("run_id", "=", run_id)
+    .where("id", "=", unitOf(run_id, "second")).executeTakeFirstOrThrow();
+  await publish("second");
+  const decisions = await authority.db.selectFrom("authority.review_decision").select("review").where("run_id", "=", run_id).execute();
+  expect({ status: second.status.kind, input: second.input, decisions: decisions.map((decision) => decision.review) })
+    .toEqual({ status: "active", input: { topic: "Oakridge", draft: "hello" }, decisions: [] });
+});
+
+test("a retry attempt that fails waits for another retry request", async () => {
+  const run_id = await launched();
+  await failLatest(run_id, "writer");
+  await submitter(authority)({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
+  await failLatest(run_id, "writer");
+  const attempts = await attemptsOf(run_id, "writer");
+  expect({ attempts: attempts.map((attempt) => attempt.status.kind), intents: (await intents(run_id)).length })
+    .toEqual({ attempts: ["failed", "failed"], intents: 2 });
+});
+
+test("a second retry request while the retry attempt runs is rejected, and its later failure starts nothing", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  await failLatest(run_id, "writer");
+  await submit({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
+  const retried = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
+  await submit({ run_id, event: { kind: "worker_started", action: retried, kbbl_session_id: null }, writer: executor(retried) });
+  const second = await submit({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
+  await submit({ run_id, event: { kind: "worker_ended", action: retried, result: failed }, writer: executor(retried) });
+  const attempts = await attemptsOf(run_id, "writer");
+  expect({ second: second.ok && second.value.kind, attempts: attempts.map((attempt) => attempt.status.kind) })
+    .toEqual({ second: "rejected", attempts: ["failed", "failed"] });
+});
+
+test("a retry that already ran is not reused when a later attempt fails", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  await failLatest(run_id, "writer");
+  await submit({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
+  const retried = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
+  await submit({ run_id, event: { kind: "worker_started", action: retried, kbbl_session_id: null }, writer: executor(retried) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, predecessor: null, subject: null,
+    by: retried }, writer: executor(retried) });
+  await submit({ run_id, event: { kind: "worker_ended", action: retried, result: { kind: "succeeded" } }, writer: executor(retried) });
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes", target: `${unit}:draft:1`,
+    payload: { feedback: "shorter" } } });
+  await failLatest(run_id, "writer");
+  const attempts = await attemptsOf(run_id, "writer");
+  expect(attempts.map((attempt) => [attempt.cause.kind, attempt.status.kind]))
+    .toEqual([["missing", "failed"], ["retry", "succeeded"], ["changes_requested", "failed"]]);
+});
+
+test("an event naming a unit the run does not have is a stored rejection, not a fault", async () => {
+  const run_id = await launched();
+  const ingress_id = crypto.randomUUID();
+  const decided = await submitter(authority)({ run_id, ingress_id, event: { kind: "operator_decided", unit: unitOf(run_id, "nope"), review: "editor",
+    decision: "approve", target: "nope:draft:1", payload: {} } });
+  const receipt = await authority.db.selectFrom("authority.ingress_receipt").select(["unit_id", "result"]).where("run_id", "=", run_id)
+    .where("ingress_id", "=", `operator:${ingress_id}`).executeTakeFirstOrThrow();
+  expect({ outcome: decided.ok && decided.value.kind, unit: receipt.unit_id, result: receipt.result.kind })
+    .toEqual({ outcome: "rejected", unit: null, result: "rejected" });
+});
+
+test("an operator cannot claim the ingress id the executor reports an attempt under", async () => {
+  const run_id = await launched();
+  const action = await writerAction(run_id);
+  const submit = submitter(authority);
+  const reported = `worker_ended:${action}:1`;
+  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: null }, writer: executor(action) });
+  const squatted = await submit({ run_id, ingress_id: reported, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
+  const ended = await submit({ run_id, ingress_id: reported, event: { kind: "worker_ended", action, result: failed }, writer: executor(action) });
+  expect({ squatted: squatted.ok && squatted.value.kind, ended: ended.ok && ended.value.kind }).toEqual({ squatted: "rejected", ended: "committed" });
+});

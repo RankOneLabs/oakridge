@@ -70,8 +70,9 @@ export function requestDigest(request: Pick<CommitRequest, "event" | "writer" | 
  * rolled back. The executor is woken after commit.
  */
 export async function commitEvent(deps: CommitDependencies, request: CommitRequest): Promise<CommitResult> {
+  const scoped = { ...request, ingress_id: scopeIngressId(request.writer, request.ingress_id) };
   try {
-    const outcome = await deps.db.transaction().execute((trx) => commitInTransaction(trx, deps.core, request));
+    const outcome = await deps.db.transaction().execute((trx) => commitInTransaction(trx, deps.core, scoped));
     if (outcome.kind === "committed") deps.wake(request.run_id);
     return { ok: true, value: outcome };
   } catch (error) {
@@ -79,6 +80,19 @@ export async function commitEvent(deps: CommitDependencies, request: CommitReque
     const conflict = concurrencyConflict(error);
     if (conflict) return { ok: true, value: { kind: "conflict", detail: conflict } };
     return { ok: false, error: { operation: "commit_event", entity_id: request.run_id, detail: String(error) } };
+  }
+}
+
+/**
+ * Ingress ids are chosen by their writer, so each writer gets its own
+ * namespace: an operator or an agent cannot claim the id the executor will
+ * report an attempt under, and one session cannot claim another's.
+ */
+export function scopeIngressId(writer: Writer, ingress_id: string | null): string | null {
+  if (ingress_id === null) return null;
+  switch (writer.kind) {
+    case "session": return `session:${writer.session}:${ingress_id}`;
+    case "operator": case "executor": case "engine": return `${writer.kind}:${ingress_id}`;
   }
 }
 
@@ -111,20 +125,23 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
       : { kind: "conflict", detail: "ingress id reused with different content" };
   }
   const unit_id = await affectedUnit(trx, run_id, request.event);
-  const reject = async (reason: string): Promise<CommitOutcome> => {
-    await storeReceipt(trx, { request, unit_id: unit_id.ok ? unit_id.value : null, digest, result: { kind: "rejected", reason } });
+  // The receipt names a unit only once the unit is known to exist: its foreign key would refuse any other.
+  const reject = async (reason: string, receipt_unit: string | null): Promise<CommitOutcome> => {
+    await storeReceipt(trx, { request, unit_id: receipt_unit, digest, result: { kind: "rejected", reason } });
     return { kind: "rejected", reason };
   };
-  if (!unit_id.ok) return reject(unit_id.reason);
+  if (!unit_id.ok) return reject(unit_id.reason, null);
   const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "prompts"])
     .where("id", "=", run.definition_bundle_id).executeTakeFirst();
   if (!definition) throw fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`);
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
-  if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`);
+  if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`, null);
   const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
-  if (stepped.kind === "rejected") return reject(stepped.reason);
+  if (stepped.kind === "rejected") return reject(stepped.reason, unit_id.value);
   const step = stepped.step;
+  const violation = selectDeltaViolation(snapshot, step.snapshot);
+  if (violation !== null) throw fault(run_id, `step changed state commit does not write: ${violation}`);
   await writeDelta(trx, run_id, snapshot, step.snapshot);
   if (request.event.kind === "worker_started" && request.publication_secret_hash)
     await storePublicationSecret(trx, { run_id, action_id: request.event.action, hash: request.publication_secret_hash, after: step.snapshot });
@@ -202,7 +219,40 @@ function collectionKey(unit: StepSnapshot["units"][number]): string | null {
   return member === unit.declaration ? null : member;
 }
 
-/** Write what step changed: run, new units and edges, unit statuses, attempts, revisions and decisions. */
+/**
+ * What writeDelta does not write must not change: it writes new rows, unit
+ * status, a unit's input when it first resolves, and an attempt's status,
+ * end and session. Anything else step changes would be silently lost, so it
+ * is named here and the commit faults instead. Null when nothing is lost.
+ */
+export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot): string | null {
+  if (after.run.id !== before.run.id) return `run ${before.run.id} changed its id to ${after.run.id}`;
+  const units = new Map(after.units.map((unit) => [unit.id, unit]));
+  for (const old of before.units) {
+    const unit = units.get(old.id);
+    if (!unit) return `unit ${old.id} was removed`;
+    const { status: _old_status, input: old_input, ...old_fixed } = old;
+    const { status: _status, input, ...fixed } = unit;
+    if (canonical(old_fixed) !== canonical(fixed)) return `unit ${old.id} changed its declaration, parent, stage, pool or dependencies`;
+    if (old_input !== null && canonical(old_input) !== canonical(input)) return `unit ${old.id} changed an input it had already resolved`;
+  }
+  const attempts = new Map(after.attempts.map((attempt) => [`${attempt.action_id}#${attempt.seq}`, attempt]));
+  for (const old of before.attempts) {
+    const attempt = attempts.get(`${old.action_id}#${old.seq}`);
+    if (!attempt) return `attempt ${old.action_id}#${old.seq} was removed`;
+    if (attempt.unit !== old.unit || attempt.worker !== old.worker || canonical(attempt.mode) !== canonical(old.mode)
+      || canonical(attempt.cause) !== canonical(old.cause)) return `attempt ${old.action_id}#${old.seq} changed its unit, worker, mode or cause`;
+  }
+  const revisions = new Map(after.revisions.map((revision) => [revision.id, revision]));
+  for (const old of before.revisions)
+    if (canonical(revisions.get(old.id) ?? null) !== canonical(old)) return `revision ${old.id} was changed or removed`;
+  const decisions = new Map(after.decisions.map((decision) => [decision.id, decision]));
+  for (const old of before.decisions)
+    if (canonical(decisions.get(old.id) ?? null) !== canonical(old)) return `decision ${old.id} was changed or removed`;
+  return null;
+}
+
+/** Write what step changed: run, new units and edges, unit statuses and inputs, attempts, revisions and decisions. */
 async function writeDelta(trx: DatabaseTransaction, run_id: string, before: StepSnapshot, after: StepSnapshot): Promise<void> {
   await trx.updateTable("authority.run").set((eb) => ({ root_unit_id: after.run.root, input: jsonText(after.run.input ?? null),
     status: jsonText(after.run.status), version: eb("version", "+", 1) })).where("id", "=", run_id).execute();
@@ -214,11 +264,13 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, before: Step
     pool: unit.pool ?? null, input: jsonText(unit.input), status: jsonText(unit.status) }).execute();
   for (const unit of created) for (const depends_on_id of unit.after)
     await trx.insertInto("authority.unit_dependency").values({ run_id, unit_id: unit.id, depends_on_id }).execute();
+  // A unit created waiting resolves its input when it starts, possibly in a later step than the one that created it.
   for (const unit of after.units) {
     const old = known.get(unit.id);
-    if (old && canonical(old.status) !== canonical(unit.status)) await trx.updateTable("authority.unit")
-      .set((eb) => ({ status: jsonText(unit.status), version: eb("version", "+", 1) }))
-      .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
+    if (old && (canonical(old.status) !== canonical(unit.status) || canonical(old.input) !== canonical(unit.input)))
+      await trx.updateTable("authority.unit")
+        .set((eb) => ({ status: jsonText(unit.status), input: jsonText(unit.input), version: eb("version", "+", 1) }))
+        .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
   }
   const old_attempts = new Map(before.attempts.map((attempt) => [`${attempt.action_id}#${attempt.seq}`, attempt]));
   for (const attempt of after.attempts) {

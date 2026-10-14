@@ -26,7 +26,8 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 /** The definition a run is pinned to, as the projections read it. */
 export interface PinnedSource { readonly digest: string; readonly version: number; readonly workflow: Workflow }
 /** An operator retry, in the order it was requested. */
-export interface RetryRequest { readonly unit_id: string; readonly worker: string; readonly event_id: string }
+/** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
+export interface RetryRequest { readonly unit_id: string; readonly worker: string; readonly retry_id: string }
 /** The actions the latest event that stepped a unit left wanted for it. */
 export interface UnitWanted { readonly unit_id: string; readonly actions: WantedActions }
 /**
@@ -63,7 +64,7 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
     trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
     trx.selectFrom("authority.artifact_revision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.review_decision").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("id").execute(),
-    trx.selectFrom("authority.event").select(["id", "run_id", "unit_id", "payload"]).where("run_id", "=", ids)
+    trx.selectFrom("authority.event").select(["id", "run_id", "unit_id", "ingress_id", "payload"]).where("run_id", "=", ids)
       .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "retry_requested")).orderBy("created_at").orderBy("id").execute(),
     trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
       join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
@@ -79,8 +80,8 @@ async function runReads(trx: DatabaseTransaction, run_ids: readonly string[]): P
       units: of(units, run_id) as UnitRecord[], dependencies: of(dependencies, run_id) as UnitDependencyRecord[],
       attempts: of(attempts, run_id) as AttemptRecord[], revisions: of(revisions, run_id) as ArtifactRevisionRecord[],
       decisions: of(decisions, run_id) as ReviewDecisionRecord[],
-      retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null
-        ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, event_id: retry.id }] : []),
+      retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
+        ? [{ unit_id: retry.unit_id, worker: retry.payload.worker, retry_id: retry.ingress_id }] : []),
       wanted: of(wanted, run_id).map(({ unit_id, actions }) => ({ unit_id, actions })) }];
   });
 }

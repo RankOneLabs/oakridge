@@ -30,7 +30,7 @@ export type Attention = { readonly kind: "waiting"; readonly reason: string } | 
  * highest seq. Attempts arrive in the order commit opened them.
  */
 function selectLatestAttempts(attempts: readonly AttemptRecord[], retries: readonly RetryRequest[]): ReadonlyMap<string, AttemptRecord> {
-  const retry_event = new Map(retries.map((retry) => [`${retry.unit_id}:${retry.worker}`, retry.event_id]));
+  const retry_event = new Map(retries.map((retry) => [`${retry.unit_id}:${retry.worker}`, retry.retry_id]));
   const latest = new Map<string, AttemptRecord>();
   for (const attempt of attempts) {
     const key = `${attempt.unit_id}:${attempt.worker}`;
