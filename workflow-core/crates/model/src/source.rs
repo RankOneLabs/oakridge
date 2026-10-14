@@ -7,7 +7,11 @@ use std::collections::BTreeMap;
 /// Half-open UTF-8 byte range in a source expression.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceSpan {
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub start: usize,
+    #[serde(with = "crate::wire_numbers::index")]
+    #[schemars(schema_with = "crate::wire_numbers::index::schema")]
     pub end: usize,
 }
 
@@ -19,6 +23,117 @@ pub struct SourcePath(pub String);
 impl std::fmt::Display for SourcePath {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(formatter)
+    }
+}
+/// The compiler check that rejected a source location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckKind {
+    Name,
+    Collection,
+    Scope,
+    Outcome,
+    DependencyCycle,
+    Workspace,
+    Worker,
+    Review,
+    ExpressionType,
+    Prompt,
+    Schema,
+    Operation,
+}
+impl CheckKind {
+    pub fn from_number(number: u8) -> Self {
+        match number {
+            2 => Self::Collection,
+            3 => Self::Scope,
+            4 => Self::Outcome,
+            5 => Self::DependencyCycle,
+            6 => Self::Workspace,
+            7 => Self::Worker,
+            8 => Self::Review,
+            9 => Self::ExpressionType,
+            10 => Self::Prompt,
+            11 => Self::Schema,
+            12 => Self::Operation,
+            _ => Self::Name,
+        }
+    }
+    pub fn number(self) -> u8 {
+        match self {
+            Self::Name => 1,
+            Self::Collection => 2,
+            Self::Scope => 3,
+            Self::Outcome => 4,
+            Self::DependencyCycle => 5,
+            Self::Workspace => 6,
+            Self::Worker => 7,
+            Self::Review => 8,
+            Self::ExpressionType => 9,
+            Self::Prompt => 10,
+            Self::Schema => 11,
+            Self::Operation => 12,
+        }
+    }
+}
+
+/// A located compiler diagnostic. Spans are half-open byte ranges in the
+/// source value named by `path`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CompileError {
+    pub check: CheckKind,
+    pub path: SourcePath,
+    pub span: SourceSpan,
+    pub detail: String,
+}
+
+impl CompileError {
+    pub fn new(
+        check: CheckKind,
+        path: impl Into<String>,
+        span: SourceSpan,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            check,
+            path: SourcePath(path.into()),
+            span,
+            detail: detail.into(),
+        }
+    }
+    pub fn from_domain(error: DomainError, path: impl Into<String>, span: SourceSpan) -> Self {
+        let number = error
+            .entity_id
+            .strip_prefix("check ")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(11);
+        let parsed_span = error.path.split_once("..").and_then(|(start, end)| {
+            Some(SourceSpan {
+                start: start.parse().ok()?,
+                end: end.parse().ok()?,
+            })
+        });
+        let contextual = if !error.path.starts_with("check ") && parsed_span.is_none() {
+            Some(error.path.to_string())
+        } else {
+            None
+        };
+        Self::new(
+            CheckKind::from_number(number),
+            contextual.unwrap_or_else(|| path.into()),
+            parsed_span.unwrap_or(span),
+            error.detail.to_string(),
+        )
+    }
+    pub fn as_domain_error(&self) -> DomainError {
+        let mut error = DomainError::new(
+            DomainErrorKind::InvalidWorkflow,
+            format!("check {}", self.check.number()),
+            self.detail.clone(),
+        );
+        error.path = self.path.0.clone().into();
+        error.actual = format!("{}..{}", self.span.start, self.span.end).into();
+        error
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

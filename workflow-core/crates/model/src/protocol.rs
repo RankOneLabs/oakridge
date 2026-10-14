@@ -107,6 +107,7 @@ pub struct TransportError {
 pub enum ResponseResult {
     Ok(Output),
     DomainError(DomainError),
+    CompileErrors(Vec<CompileError>),
     TransportError(TransportError),
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

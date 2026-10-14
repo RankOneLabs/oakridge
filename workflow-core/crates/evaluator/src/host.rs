@@ -141,7 +141,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             workflow,
             operations,
             prompts,
-        } => workflow_compiler::compile_workflow_with_limits(
+        } => workflow_compiler::compile_workflow_with_limits_detailed(
             &workflow,
             &operations,
             &prompts,
@@ -159,7 +159,8 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             };
             state.insert(program);
             Output::Compiled(output)
-        }),
+        })
+        .map_err(ResponseResult::CompileErrors),
         Operation::Step {
             workflow_digest,
             snapshot,
@@ -192,7 +193,11 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     }
                 })
             })
-            .map(|result| Output::Stepped(Box::new(result))),
+            .map(|result| Output::Stepped(Box::new(result)))
+            .map_err(|mut error| {
+                error.operation = operation_name.into();
+                ResponseResult::DomainError(error)
+            }),
     };
     Response {
         version: PROTOCOL_VERSION,
@@ -200,10 +205,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         truncated: false,
         result: match result {
             Ok(output) => ResponseResult::Ok(output),
-            Err(mut error) => {
-                error.operation = operation_name.into();
-                ResponseResult::DomainError(error)
-            }
+            Err(error) => error,
         },
     }
 }

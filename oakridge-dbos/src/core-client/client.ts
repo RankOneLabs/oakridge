@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
-import type { CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
+import type { CompileError, CompiledWorkflow, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
 import { OPERATION_REGISTRY } from "../operations/registry";
 
@@ -10,7 +10,10 @@ export const MAX_SNAPSHOT_BYTES = 64 * 1_048_576;
 
 export type CoreResult<T> = { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly kind: "domain"; readonly detail: CoreDomainError }
+      | { readonly kind: "compile"; readonly detail: readonly CompileError[] }
       | { readonly kind: "transport"; readonly detail: CoreTransportError } };
+export type CoreStartupResult = { readonly ok: true; readonly value: CoreClient }
+  | { readonly ok: false; readonly error: { readonly kind: "transport"; readonly detail: CoreTransportError } };
 export interface CoreClientOptions { readonly wasm_path?: string }
 export interface CoreChildHealth { readonly pid: null; readonly uptime_ms: number; readonly restart_count: 0; readonly last_stderr_lines: readonly string[] }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
@@ -39,9 +42,9 @@ export class CoreClient {
     this.core = new WebAssembly.Instance(module, {}).exports as unknown as CoreWasmExports;
   }
 
-  static start(options: CoreClientOptions = {}): CoreResult<CoreClient> {
+  static start(options: CoreClientOptions = {}): CoreStartupResult {
     try { return { ok: true, value: new CoreClient(options.wasm_path ?? CORE_WASM_PATH) }; }
-    catch (cause) { return transport("malformed_request", `failed to load core WASM: ${String(cause)}`); }
+    catch (cause) { return { ok: false, error: { kind: "transport", detail: { kind: "malformed_request", detail: `failed to load core WASM: ${String(cause)}` } } }; }
   }
 
   get health(): CoreChildHealth {
@@ -72,6 +75,7 @@ export class CoreClient {
         switch (response.result.status) {
           case "ok": return { ok: true, value: response.result.value };
           case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
+          case "compile_errors": return { ok: false, error: { kind: "compile", detail: response.result.value } };
           case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
         }
       } finally {
@@ -88,7 +92,12 @@ export interface CompileInput { readonly workflow: Workflow; readonly prompts: {
 /** Compile a workflow against the declared code operations and leave it in the core's program cache. */
 export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledWorkflow>> {
   const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...OPERATION_REGISTRY] });
-  if (!response.ok) return traced("compile", input.workflow.workflow, response.error.kind === "domain" ? response.error.detail.detail : response.error.detail.detail);
+  if (!response.ok) {
+    const detail = response.error.kind === "compile"
+      ? response.error.detail.map((error) => `${error.path}:${error.span.start}..${error.span.end} [${error.check}] ${error.detail}`).join("; ")
+      : response.error.detail.detail;
+    return traced("compile", input.workflow.workflow, detail);
+  }
   if (response.value.kind !== "compiled") return traced("compile", input.workflow.workflow, "core returned a non-compiled response");
   return { ok: true, value: response.value.value };
 }
