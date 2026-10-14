@@ -274,6 +274,21 @@ test("a retry attempt that fails waits for another retry request", async () => {
     .toEqual({ attempts: ["failed", "failed"], intents: 2 });
 });
 
+test("a second retry request while the retry attempt runs is rejected, and its later failure starts nothing", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  const submit = submitter(authority);
+  await failLatest(run_id, "writer");
+  await submit({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
+  const retried = (await attemptsOf(run_id, "writer")).at(-1)!.action_id;
+  await submit({ run_id, event: { kind: "worker_started", action: retried, kbbl_session_id: null }, writer: executor(retried) });
+  const second = await submit({ run_id, event: { kind: "retry_requested", unit, worker: "writer" } });
+  await submit({ run_id, event: { kind: "worker_ended", action: retried, result: failed }, writer: executor(retried) });
+  const attempts = await attemptsOf(run_id, "writer");
+  expect({ second: second.ok && second.value.kind, attempts: attempts.map((attempt) => attempt.status.kind) })
+    .toEqual({ second: "rejected", attempts: ["failed", "failed"] });
+});
+
 test("a retry that already ran is not reused when a later attempt fails", async () => {
   const run_id = await launched();
   const unit = unitOf(run_id, "document");

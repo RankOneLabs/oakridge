@@ -226,6 +226,7 @@ function collectionKey(unit: StepSnapshot["units"][number]): string | null {
  * is named here and the commit faults instead. Null when nothing is lost.
  */
 export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot): string | null {
+  if (after.run.id !== before.run.id) return `run ${before.run.id} changed its id to ${after.run.id}`;
   const units = new Map(after.units.map((unit) => [unit.id, unit]));
   for (const old of before.units) {
     const unit = units.get(old.id);

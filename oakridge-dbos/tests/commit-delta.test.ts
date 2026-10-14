@@ -18,10 +18,12 @@ test("a change commit would not write is named instead of being dropped", () => 
     input: selectDeltaViolation(snapshot([resolved]), snapshot([{ ...resolved, input: { topic: "other" } }])),
     after: selectDeltaViolation(snapshot([unit]), snapshot([{ ...unit, after: [] }])),
     removed: selectDeltaViolation(snapshot([unit]), snapshot([])),
+    run_id: selectDeltaViolation(snapshot([unit]), { ...snapshot([unit]), run: { ...snapshot([unit]).run, id: "other" } }),
   }).toEqual({
     input: "unit run/document changed an input it had already resolved",
     after: "unit run/document changed its declaration, parent, stage, pool or dependencies",
     removed: "unit run/document was removed",
+    run_id: "run run changed its id to other",
   });
 });
 
