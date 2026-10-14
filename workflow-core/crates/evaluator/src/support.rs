@@ -76,9 +76,10 @@ pub(super) fn attribute_event(
         other => other,
     }
 }
+#[derive(Clone)]
 pub struct EvaluationContext<'a> {
     pub(super) limits: &'a ResourceLimits,
-    remaining: usize,
+    pub(super) remaining: usize,
     error: Option<EvalError>,
 }
 

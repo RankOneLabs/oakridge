@@ -105,7 +105,7 @@ pub(super) fn materialize_group(
                     .collect(),
                 pool: unit.pool.clone(),
             });
-            apply(&mut state, delta.clone());
+            apply(&mut state, context, delta.clone());
             deltas.push(delta);
         }
     }
@@ -153,7 +153,7 @@ pub(super) fn start_group(
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
     let mut deltas = materialize_group(program, &state, group_id, context)?;
-    apply_all(&mut state, deltas.clone());
+    apply_all(&mut state, context, deltas.clone());
     if state
         .units
         .iter()
@@ -358,14 +358,14 @@ pub(super) fn next_move(
                 let input = eval_fields(&declared.input, parent, state, None, context)?
                     .ok_or_else(|| invalid("unit input unresolved"))?;
                 let delta = Delta::UnitInput { index, input };
-                apply(&mut state_after, delta.clone());
+                apply(&mut state_after, context, delta.clone());
                 deltas.push(delta);
             }
             let delta = Delta::UnitStatus {
                 index,
                 status: UnitStatus::Active,
             };
-            apply(&mut state_after, delta.clone());
+            apply(&mut state_after, context, delta.clone());
             deltas.push(delta);
             if unit.stage.is_none() {
                 deltas.extend(start_group(program, &state_after, &unit.id, context)?);

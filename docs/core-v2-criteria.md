@@ -49,6 +49,7 @@ The closed `Delta` enum in `evaluator/src/apply.rs` follows the writes in the pr
 | Publication | `PushRevision` |
 | Validator, operator, and engine decisions | `PushDecision` |
 | Retry request | `PushRetry` |
+| Expression budget charges formerly held in an evaluation `Cell` | `EvaluationBudget` |
 
 The replay digest test frames the JSON bytes of every `StepResult` from all three frozen traces and compares their SHA-256 against the base evaluator. The fixture blobs are unchanged.
 

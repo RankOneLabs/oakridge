@@ -14,10 +14,11 @@ pub(super) enum Delta {
     PushRevision(RevisionState),
     PushDecision(DecisionState),
     PushRetry(UnitId, WorkerKey, EventId),
+    EvaluationBudget(usize),
 }
 
 /// The sole writer of `StepSnapshot`.
-pub(super) fn apply(state: &mut StepSnapshot, delta: Delta) {
+pub(super) fn apply(state: &mut StepSnapshot, context: &mut EvaluationContext<'_>, delta: Delta) {
     match delta {
         Delta::RunInput(input) => state.run.input = Some(input),
         Delta::RunStatus(status) => state.run.status = status,
@@ -29,12 +30,17 @@ pub(super) fn apply(state: &mut StepSnapshot, delta: Delta) {
         Delta::PushRevision(revision) => state.revisions.push(revision),
         Delta::PushDecision(decision) => state.decisions.push(decision),
         Delta::PushRetry(unit, worker, id) => state.retry_events.push((unit, worker, id)),
+        Delta::EvaluationBudget(remaining) => context.remaining = remaining,
     }
 }
 
-pub(super) fn apply_all(state: &mut StepSnapshot, deltas: Vec<Delta>) {
+pub(super) fn apply_all(
+    state: &mut StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+    deltas: Vec<Delta>,
+) {
     for delta in deltas {
-        apply(state, delta);
+        apply(state, context, delta);
     }
 }
 /// Pure reducer and bounded fixpoint that starts and completes units. The snapshot carries
@@ -69,9 +75,16 @@ pub fn step_with_limits(
         context.check_value(&decision.payload)?;
     }
     let mut state = snapshot.clone();
-    let deltas = reduce(program, &state, incoming, &mut context)
-        .map_err(|error| attribute_event(error, snapshot, incoming))?;
-    apply_all(&mut state, deltas);
+    let deltas = reduce(
+        &State {
+            snapshot: &state,
+            program,
+            context: &context,
+        },
+        incoming,
+    )
+    .map_err(|error| attribute_event(error, snapshot, incoming))?;
+    apply_all(&mut state, &mut context, deltas);
     match advance_reduced(program, state, &mut context) {
         // A launch that cannot advance never started: it is refused, as a
         // launch whose input fails, not a stall of a run that is going.
@@ -96,7 +109,7 @@ pub(super) fn advance_reduced(
 ) -> Result<StepResult, StepError> {
     if !matches!(state.run.status, UnitStatus::Cancelled) {
         while let Some(deltas) = next_move(program, &state, context)? {
-            apply_all(&mut state, deltas);
+            apply_all(&mut state, context, deltas);
         }
         if let Some(status) = state
             .units
@@ -104,7 +117,7 @@ pub(super) fn advance_reduced(
             .find(|u| u.id == state.run.root)
             .map(|root| root.status.clone())
         {
-            apply(&mut state, Delta::RunStatus(status));
+            apply(&mut state, context, Delta::RunStatus(status));
         }
     }
     let mut wanted = Vec::new();
@@ -122,7 +135,7 @@ pub(super) fn advance_reduced(
         wanted.extend(wants.workers);
         pending.extend(wants.pending);
     }
-    apply_all(&mut state, pending);
+    apply_all(&mut state, context, pending);
     Ok(StepResult {
         snapshot: state,
         wanted,

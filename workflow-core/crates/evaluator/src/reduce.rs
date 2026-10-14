@@ -1,5 +1,21 @@
 use super::*;
-pub(super) fn reduce(
+
+/// The checked program and remaining evaluation budget accompany the snapshot
+/// read by event reduction. Neither is changed by `reduce`.
+pub(super) struct State<'a, 'limits> {
+    pub(super) snapshot: &'a StepSnapshot,
+    pub(super) program: &'a CheckedWorkflow,
+    pub(super) context: &'a EvaluationContext<'limits>,
+}
+
+pub(super) fn reduce(state: &State<'_, '_>, incoming: &Incoming) -> Result<Vec<Delta>, StepError> {
+    let mut context = state.context.clone();
+    let mut deltas = reduce_event(state.program, state.snapshot, incoming, &mut context)?;
+    deltas.push(Delta::EvaluationBudget(context.remaining));
+    Ok(deltas)
+}
+
+fn reduce_event(
     program: &CheckedWorkflow,
     snapshot: &StepSnapshot,
     incoming: &Incoming,
@@ -10,7 +26,7 @@ pub(super) fn reduce(
     macro_rules! record {
         ($delta:expr) => {{
             let delta = $delta;
-            apply(&mut state, delta.clone());
+            apply(&mut state, context, delta.clone());
             deltas.push(delta);
         }};
     }
