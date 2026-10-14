@@ -10,7 +10,7 @@ Run from the repository root:
 rg -n -i 'legacy|scopes' kbbl oakridge-dbos workflow-core workflow-config
 ```
 
-The output at the baseline tip is, verbatim:
+The four matching lines at the baseline tip are quoted verbatim below. Their order is not part of the baseline; `rg` can emit files in a different order during a parallel walk.
 
 ```text
 oakridge-dbos/src/workflows/engine-version.ts:47: * The DBOS application version scopes workflow recovery: a process only resumes
@@ -61,9 +61,18 @@ The following are git blob hashes at the `epic/core-v2` tip above. Each hash was
 
 The intentional wire-shape changes across W2, W6 and W8 concern `wanted`, `RunState`, `UnitStatus` and attempt `ended_at`. Each named projection must cover only its cohort's intentional changes to those fields, compare everything else unchanged, and identify the before/after shape in its PR body. A regenerated fixture alone does not establish replay identity.
 
-## Governing-spec gap
+## Governing-spec location and tracked-repository gap
 
-`oakridge-core-spec.md`, its part 2, and the rescue and validation specs are absent from this repository, even though production code cites them as normative. Section 1 rule 3 can reach the in-repository documentation surface `workflow-config/README.md` (part 2 §1 and rescue spec R5 at line 3), and these section citations in code:
+The governing specs are present in the main checkout at `/home/steve/codes/rol/oakridge/comms/`:
+
+| Spec | Location |
+| --- | --- |
+| Part 1 | `/home/steve/codes/rol/oakridge/comms/oakridge-core-spec.md` — **§12, “Decisions,” starts at line 569**. |
+| Part 2 | `/home/steve/codes/rol/oakridge/comms/oakridge-core-spec-part2.md`. |
+| Rescue | `/home/steve/codes/rol/oakridge/comms/oakridge-core-v2-rescue-spec.md`. |
+| Validation | `/home/steve/codes/rol/oakridge/comms/oakridge-core-v2-validation-spec.md`. |
+
+`comms/` is ignored by Git and absent from this cohort worktree, so these files are not part of the tracked repository or available through its branch tip. W2 can read the main checkout paths above before it merges; another environment needs the operator to supply the same specs. Section 1 rule 3 reaches the tracked in-repository documentation surface `workflow-config/README.md` (part 2 §1 and rescue spec R5 at line 3), and these section citations in code:
 
 | In-repository citation | Cited section |
 | --- | --- |
@@ -73,4 +82,4 @@ The intentional wire-shape changes across W2, W6 and W8 concern `wanted`, `RunSt
 | `workflow-core/crates/model/src/values.rs:254,281` | Part 1 §§5.2 and 2.5. |
 | `workflow-config/README.md:3` | Part 2 §1 and rescue spec R5. |
 
-**Operator question:** Where does part 1 Section 12 live, and how should cohorts access the governing spec files? No cohort can record a semantic change in that missing section from this repository. The operator must supply the files or their location before W2, the first semantic change, merges.
+**Operator question answered:** Part 1 §12 is at the absolute path above. Because that file is ignored and outside the cohort worktree, a semantic change cannot be recorded there through this PR; W2 must access that path, or an operator-supplied copy in another environment, before its first semantic change merges.
