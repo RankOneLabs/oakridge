@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
-import { parseType, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
+import { typeNode, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
 
 const workflow: Workflow = {
   workflow: "development",
@@ -29,6 +29,11 @@ test("a record expression and its inline form share one canonical key, fields so
   expect([typeSchemaKey({ b: "text", a: "list(ident)" }), typeSchemaKey("{ b: text, a: list(ident) }")]).toEqual(["{a: list(ident), b: text}", "{a: list(ident), b: text}"]);
 });
 
+test("tagged contract types project without reading compact syntax", () => {
+  expect(typeSchemaKey({ kind: "record", fields: { b: { kind: "list", item: { kind: "ident" } }, a: { kind: "text" } } }))
+    .toBe("{a: text, b: list(ident)}");
+});
+
 test("an alias keeps its name; an alias of an alias takes the shape it resolves to", () => {
   expect({ plan: shape("plan"), plan_body: shape("plan_body") }).toEqual({
     plan: { kind: "record", fields: [{ key: "summary", schema: "text" }] },
@@ -52,7 +57,7 @@ test("primitives map to the PWA's shapes, with the core's ident bound", () => {
 });
 
 test("an enum expression becomes the PWA's enum shape", () => {
-  expect({ key: schemaKey(parseType("enum(fast, safe)")), shape: selectWorkflowSchemas({ ...workflow, input: { mode: "enum(fast, safe)" } })
+  expect({ key: schemaKey(typeNode("enum(fast, safe)")), shape: selectWorkflowSchemas({ ...workflow, input: { mode: "enum(fast, safe)" } })
     .find((schema) => schema.key === "enum(fast, safe)")?.shape }).toEqual({ key: "enum(fast, safe)", shape: { kind: "enum", variants: ["fast", "safe"] } });
 });
 

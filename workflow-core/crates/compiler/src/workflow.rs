@@ -1,6 +1,6 @@
 //! The section 2.1-2.3 workflow compiler: source validation, stage scope
 //! type-checking, and group and collection resolution.
-use crate::expressions::{checked, checked_guard, enum_variants, split_call, Scope};
+use crate::expressions::{checked, checked_guard, split_call, Scope};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
@@ -12,59 +12,13 @@ pub(crate) fn reject(class: u8, detail: impl Into<String>) -> DomainError {
         detail.into(),
     )
 }
-pub(crate) fn parse_type(text: &str) -> Result<TypeExpression, DomainError> {
-    let text = text.trim();
-    if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-        let mut fields = BTreeMap::new();
-        if !inner.trim().is_empty() {
-            for field in split_top_level(inner) {
-                let (key, value) = field
-                    .split_once(':')
-                    .ok_or_else(|| reject(11, format!("malformed record field {field}")))?;
-                let key = key.trim();
-                if key.is_empty() || value.trim().is_empty() {
-                    return Err(reject(11, format!("malformed record field {field}")));
-                }
-                if fields.insert(key.to_owned(), parse_type(value)?).is_some() {
-                    return Err(reject(11, format!("duplicate record field {key}")));
-                }
-            }
-        }
-        Ok(TypeExpression::Record(fields))
-    } else {
-        Ok(TypeExpression::Name(text.to_owned()))
-    }
-}
-fn split_top_level(text: &str) -> impl Iterator<Item = &str> {
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    let mut pieces = Vec::new();
-    for (index, ch) in text.char_indices() {
-        match ch {
-            '{' | '(' => depth += 1,
-            '}' | ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                pieces.push(text[start..index].trim());
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    pieces.push(text[start..].trim());
-    pieces.into_iter()
-}
-fn inner_type<'a>(name: &'a str, function: &str) -> Option<&'a str> {
-    name.strip_prefix(function)?
-        .strip_prefix('(')?
-        .strip_suffix(')')
-}
 fn validate_type(
-    ty: &TypeExpression,
-    aliases: &BTreeMap<String, TypeExpression>,
+    ty: &Type,
+    aliases: &BTreeMap<String, Type>,
     visiting: &mut BTreeSet<String>,
 ) -> Result<(), DomainError> {
     match ty {
-        TypeExpression::Record(fields) => {
+        Type::Record { fields } => {
             for (key, field) in fields {
                 if key.is_empty() {
                     return Err(reject(11, "empty schema field key"));
@@ -72,161 +26,78 @@ fn validate_type(
                 validate_type(field, aliases, visiting)?;
             }
         }
-        TypeExpression::Name(name)
-            if ["text", "ident", "repo_path", "integer", "boolean"].contains(&name.as_str()) => {}
-        TypeExpression::Name(_) if enum_variants(ty).is_some() => {
-            let variants = enum_variants(ty).unwrap_or_default();
-            let unique: BTreeSet<_> = variants.iter().collect();
-            let is_legal = |variant: &String| {
-                !variant.is_empty()
-                    && variant
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-            };
-            if !variants.iter().all(is_legal) || unique.len() != variants.len() {
-                return Err(reject(11, format!("malformed enum {}", render_type(ty))));
+        Type::List { item } => validate_type(item, aliases, visiting)?,
+        Type::Optional { value } => validate_type(value, aliases, visiting)?,
+        Type::Named { schema } if aliases.contains_key(&schema.0) => {
+            if !visiting.insert(schema.0.clone()) {
+                return Err(reject(1, format!("recursive schema {}", schema.0)));
             }
+            validate_type(&aliases[&schema.0], aliases, visiting)?;
+            visiting.remove(&schema.0);
         }
-        TypeExpression::Name(name)
-            if inner_type(name, "list").is_some() || inner_type(name, "optional").is_some() =>
-        {
-            let inner = inner_type(name, "list")
-                .or_else(|| inner_type(name, "optional"))
-                .unwrap();
-            validate_type(&parse_type(inner)?, aliases, visiting)?;
-        }
-        TypeExpression::Name(name) if aliases.contains_key(name) => {
-            if !visiting.insert(name.clone()) {
-                return Err(reject(1, format!("recursive schema {name}")));
-            }
-            validate_type(&aliases[name], aliases, visiting)?;
-            visiting.remove(name);
-        }
-        TypeExpression::Name(name) => return Err(reject(1, format!("schema {name} absent"))),
+        Type::Named { schema } if schema.0 == TYPE_VARIABLE => {}
+        Type::Named { schema } => return Err(reject(1, format!("schema {} absent", schema.0))),
+        // W5 resolves this after stage names and outcome records are known.
+        Type::OutcomeOf { .. } => {}
+        _ => {}
     }
     Ok(())
 }
-pub(crate) fn resolve_type(
-    ty: &TypeExpression,
-    aliases: &BTreeMap<String, TypeExpression>,
-) -> TypeExpression {
+pub(crate) fn resolve_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Type {
     match ty {
-        TypeExpression::Name(name) if aliases.contains_key(name) => {
-            resolve_type(&aliases[name], aliases)
+        Type::Named { schema } if aliases.contains_key(&schema.0) => {
+            resolve_type(&aliases[&schema.0], aliases)
         }
-        TypeExpression::Record(fields) => TypeExpression::Record(
-            fields
-                .iter()
-                .map(|(k, v)| (k.clone(), resolve_type(v, aliases)))
-                .collect(),
-        ),
-        // Aliases resolve at every depth, so `list(brief)` and the list of
-        // the record `brief` names are one type. Validation has already
-        // refused a recursive alias, so this terminates.
-        TypeExpression::Name(name) if name.starts_with('{') => match parse_type(name) {
-            Ok(parsed) => resolve_type(&parsed, aliases),
-            Err(_) => ty.clone(),
-        },
-        TypeExpression::Name(name) => ["list", "optional"]
-            .into_iter()
-            .find_map(|function| {
-                let inner = parse_type(inner_type(name, function)?).ok()?;
-                Some(TypeExpression::Name(format!(
-                    "{function}({})",
-                    render_type(&resolve_type(&inner, aliases))
-                )))
-            })
-            .unwrap_or_else(|| ty.clone()),
-    }
-}
-fn checked_type(
-    ty: &TypeExpression,
-    aliases: &BTreeMap<String, TypeExpression>,
-) -> Result<CheckedType, DomainError> {
-    match ty {
-        TypeExpression::Record(fields) => Ok(CheckedType::Record {
+        Type::Record { fields } => Type::Record {
             fields: fields
                 .iter()
-                .map(|(key, value)| Ok((key.clone(), checked_type(value, aliases)?)))
-                .collect::<Result<_, DomainError>>()?,
-        }),
-        TypeExpression::Name(name) if aliases.contains_key(name) => {
-            checked_type(&aliases[name], aliases)
-        }
-        TypeExpression::Name(name) if name == "text" => Ok(CheckedType::Text),
-        TypeExpression::Name(name) if name == "ident" => Ok(CheckedType::Ident),
-        TypeExpression::Name(name) if name == "repo_path" => Ok(CheckedType::RepoPath),
-        TypeExpression::Name(name) if name == "integer" => Ok(CheckedType::Integer),
-        TypeExpression::Name(name) if name == "boolean" => Ok(CheckedType::Boolean),
-        TypeExpression::Name(_) if enum_variants(ty).is_some() => Ok(CheckedType::Enumeration {
-            variants: enum_variants(ty).ok_or_else(|| reject(11, "malformed enum"))?,
-        }),
-        TypeExpression::Name(name) if inner_type(name, "list").is_some() => {
-            let inner = inner_type(name, "list").ok_or_else(|| reject(11, "malformed list"))?;
-            Ok(CheckedType::List {
-                item: Box::new(checked_type(&parse_type(inner)?, aliases)?),
-            })
-        }
-        TypeExpression::Name(name) if inner_type(name, "optional").is_some() => {
-            let inner =
-                inner_type(name, "optional").ok_or_else(|| reject(11, "malformed optional"))?;
-            Ok(CheckedType::Optional {
-                value: Box::new(checked_type(&parse_type(inner)?, aliases)?),
-            })
-        }
-        TypeExpression::Name(name) if name.starts_with('{') => {
-            let parsed = parse_type(name)?;
-            match parsed {
-                TypeExpression::Record(_) => checked_type(&parsed, aliases),
-                TypeExpression::Name(_) => Err(reject(11, format!("malformed record {name}"))),
-            }
-        }
-        TypeExpression::Name(name) => Err(reject(1, format!("schema {name} absent"))),
+                .map(|(key, value)| (key.clone(), resolve_type(value, aliases)))
+                .collect(),
+        },
+        Type::List { item } => Type::List {
+            item: Box::new(resolve_type(item, aliases)),
+        },
+        Type::Optional { value } => Type::Optional {
+            value: Box::new(resolve_type(value, aliases)),
+        },
+        _ => ty.clone(),
     }
 }
-pub(crate) fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
-    let TypeExpression::Name(name) = ty else {
-        return None;
-    };
-    parse_type(inner_type(name, "list")?).ok()
+fn checked_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Result<CheckedType, DomainError> {
+    let resolved = resolve_type(ty, aliases);
+    fn has_unresolved(ty: &Type) -> bool {
+        match ty {
+            Type::Named { .. } | Type::OutcomeOf { .. } => true,
+            Type::Optional { value } => has_unresolved(value),
+            Type::List { item } => has_unresolved(item),
+            Type::Record { fields } => fields.values().any(has_unresolved),
+            _ => false,
+        }
+    }
+    if has_unresolved(&resolved) {
+        return Err(reject(11, format!("unresolved type {resolved}")));
+    }
+    Ok(resolved)
+}
+pub(crate) fn item_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::List { item } => Some((**item).clone()),
+        _ => None,
+    }
 }
 pub(crate) fn field_type(
-    ty: &TypeExpression,
+    ty: &Type,
     path: &[&str],
-    aliases: &BTreeMap<String, TypeExpression>,
-) -> Option<TypeExpression> {
+    aliases: &BTreeMap<String, Type>,
+) -> Option<Type> {
     let mut current = resolve_type(ty, aliases);
     for part in path {
         current = match current {
-            TypeExpression::Record(fields) => fields.get(*part)?.clone(),
-            TypeExpression::Name(name) => {
-                let parsed = parse_type(&name).ok()?;
-                if parsed == TypeExpression::Name(name.clone()) {
-                    return None;
-                }
-                let TypeExpression::Record(fields) = parsed else {
-                    return None;
-                };
-                fields.get(*part)?.clone()
-            }
+            Type::Record { fields } => fields.get(*part)?.clone(),
+            _ => return None,
         };
     }
     Some(current)
-}
-/// Render a type back into the syntax `parse_type` accepts, so a nullable
-/// latest reads as `optional(text)` and not as an embedded JSON encoding.
-pub(crate) fn render_type(ty: &TypeExpression) -> String {
-    match ty {
-        TypeExpression::Name(name) => name.clone(),
-        TypeExpression::Record(fields) => format!(
-            "{{{}}}",
-            fields
-                .iter()
-                .map(|(key, value)| format!("{key}: {}", render_type(value)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
 }
 fn fields(
     values: &BTreeMap<String, String>,
@@ -263,12 +134,12 @@ fn workspace_expression(
     }
 }
 fn checked_record(fields: &[CheckedNamedExpression]) -> TypeExpression {
-    TypeExpression::Record(
-        fields
+    Type::Record {
+        fields: fields
             .iter()
             .map(|field| (field.key.clone(), field.value.value_type.clone()))
             .collect(),
-    )
+    }
 }
 /// A periodic code worker's interval: a positive whole number of seconds, minutes or hours (`30s`, `5m`, `1h`).
 fn is_duration(text: &str) -> bool {
@@ -378,13 +249,13 @@ fn unify(
     aliases: &BTreeMap<String, TypeExpression>,
     bindings: &mut BTreeMap<String, TypeExpression>,
 ) -> bool {
-    if let TypeExpression::Name(name) = contract {
-        if name == TYPE_VARIABLE {
+    if let Type::Named { schema } = contract {
+        if schema.0 == TYPE_VARIABLE {
             let actual = resolve_type(actual, aliases);
-            return match bindings.get(name) {
+            return match bindings.get(&schema.0) {
                 Some(bound) => *bound == actual,
                 None => {
-                    bindings.insert(name.clone(), actual);
+                    bindings.insert(schema.0.clone(), actual);
                     true
                 }
             };
@@ -394,7 +265,7 @@ fn unify(
         resolve_type(contract, aliases),
         resolve_type(actual, aliases),
     ) {
-        (TypeExpression::Record(expected), TypeExpression::Record(found)) => {
+        (Type::Record { fields: expected }, Type::Record { fields: found }) => {
             expected.len() == found.len()
                 && expected.iter().all(|(key, ty)| {
                     found
@@ -403,19 +274,12 @@ fn unify(
                 })
         }
         // A type variable may sit inside a constructor: `list($value)`.
-        (TypeExpression::Name(expected), TypeExpression::Name(found)) => ["list", "optional"]
-            .into_iter()
-            .find_map(|function| {
-                let inner = (
-                    inner_type(&expected, function)?,
-                    inner_type(&found, function)?,
-                );
-                Some(match (parse_type(inner.0), parse_type(inner.1)) {
-                    (Ok(expected), Ok(found)) => unify(&expected, &found, aliases, bindings),
-                    _ => false,
-                })
-            })
-            .unwrap_or(expected == found),
+        (Type::List { item: expected }, Type::List { item: found }) => {
+            unify(&expected, &found, aliases, bindings)
+        }
+        (Type::Optional { value: expected }, Type::Optional { value: found }) => {
+            unify(&expected, &found, aliases, bindings)
+        }
         (expected, found) => expected == found,
     }
 }
@@ -620,7 +484,7 @@ fn compile_stage(
             .iter()
             .map(|rule| {
                 let expression = checked(&rule.check, &own)?;
-                if expression.value_type != TypeExpression::Name("boolean".into()) {
+                if expression.value_type != Type::Boolean {
                     return Err(reject(8, "validation check must be boolean"));
                 }
                 Ok(CheckedArtifactValidation {
@@ -848,16 +712,16 @@ fn compile_group(
                 .ok_or_else(|| reject(2, format!("collection {key} source is not list")))?;
             scope.each = Some(each);
             let key_expr = checked(unit.key.as_ref().unwrap(), &scope)?;
-            if key_expr.value_type != TypeExpression::Name("ident".into())
-                && key_expr.value_type != TypeExpression::Name("text".into())
-            {
+            if key_expr.value_type != Type::Ident && key_expr.value_type != Type::Text {
                 return Err(reject(2, "collection key is not text"));
             }
             let after = match &unit.after {
                 UnitDependencies::Each(text) => checked(text, &scope)?,
                 _ => CheckedStageExpression {
                     source: "[]".into(),
-                    value_type: TypeExpression::Name("list(ident)".into()),
+                    value_type: Type::List {
+                        item: Box::new(Type::Ident),
+                    },
                     expression: Expression::List {
                         schema: SchemaId::from("list(ident)"),
                         items: vec![],
@@ -865,9 +729,7 @@ fn compile_group(
                 },
             };
             let dependency_type = item_type(&resolve_type(&after.value_type, &workflow.schemas));
-            if !matches!(dependency_type,
-                Some(TypeExpression::Name(ref name)) if name == "ident" || name == "text"
-            ) {
+            if !matches!(dependency_type, Some(Type::Ident | Type::Text)) {
                 return Err(reject(
                     2,
                     "collection after must be list(ident) or list(text)",
@@ -947,7 +809,7 @@ fn compile_group(
     };
     let mut checked_outcome = Vec::new();
     for (key, source) in &group.outcome {
-        let value = if let Some(inner) = inner_type(source, "map") {
+        let value = if let Some((inner, "")) = split_call(source, "map") {
             let (collection, projection) = inner
                 .split_once(',')
                 .ok_or_else(|| reject(4, "map needs collection and projection"))?;
@@ -974,7 +836,9 @@ fn compile_group(
                 )
                 .ok_or_else(|| reject(4, "map field absent"))?
             };
-            let item_type = TypeExpression::Name(format!("list({})", render_type(&item)));
+            let item_type = Type::List {
+                item: Box::new(item),
+            };
             CheckedStageExpression {
                 source: source.clone(),
                 expression: Expression::Map {
@@ -1093,7 +957,12 @@ pub fn decode_workflow(bytes: &[u8]) -> Result<Workflow, DomainError> {
             }
         }
     }
-    serde_json::from_value(value).map_err(|error| reject(11, error.to_string()))
+    serde_path_to_error::deserialize(value).map_err(|error| {
+        let path = error.path().to_string();
+        let mut failure = reject(11, format!("{path}: {}", error.inner()));
+        failure.path = path.into_boxed_str();
+        failure
+    })
 }
 
 #[cfg(test)]
@@ -1107,23 +976,16 @@ mod review_regressions {
             "{ key: text, bad }",
             "{ key: text, key: integer }",
         ] {
-            assert_eq!(&*parse_type(text).unwrap_err().entity_id, "check 11");
+            assert!(Type::parse(text).is_err());
         }
     }
 
     #[test]
     fn list_item_types_render_as_source_syntax() {
-        let item = TypeExpression::Record(BTreeMap::from([(
-            "key".into(),
-            TypeExpression::Name("text".into()),
-        )]));
-        assert_eq!(format!("list({})", render_type(&item)), "list({key: text})");
-        assert_eq!(
-            format!(
-                "list({})",
-                render_type(&TypeExpression::Name("text".into()))
-            ),
-            "list(text)"
-        );
+        let item = Type::Record {
+            fields: BTreeMap::from([("key".into(), Type::Text)]),
+        };
+        assert_eq!(format!("list({item})"), "list({key: text})");
+        assert_eq!(format!("list({})", Type::Text), "list(text)");
     }
 }

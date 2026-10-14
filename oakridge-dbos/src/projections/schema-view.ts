@@ -1,4 +1,4 @@
-import type { ReviewDecision, TypeExpression, Workflow } from "../core-client/core-types";
+import type { ReviewDecision, Type, TypeExpression, Workflow } from "../core-client/core-types";
 
 /**
  * The PWA's schema contract: every type a workflow declares,
@@ -51,23 +51,37 @@ function splitTopLevel(text: string): readonly string[] {
 const inner = (text: string, name: string): string | null =>
   text.startsWith(`${name}(`) && text.endsWith(")") ? text.slice(name.length + 1, -1) : null;
 
-/** Parse one type expression in the core's grammar. The workflow compiled, so the text is well formed. */
-export function parseType(type: TypeExpression): TypeNode {
+/** Read a tagged contract type. The compact source path remains for stored definitions. */
+export function typeNode(type: Type | TypeExpression): TypeNode {
+  if (typeof type === "object" && type !== null && "kind" in type) {
+    const tagged = type as Type;
+    switch (tagged.kind) {
+      case "text": case "ident": case "repo_path": case "integer": case "boolean":
+        return { kind: "primitive", name: tagged.kind };
+      case "enum": return { kind: "enum", variants: tagged.variants };
+      case "list": return { kind: "list", item: typeNode(tagged.item) };
+      case "optional": return { kind: "optional", item: typeNode(tagged.value) };
+      case "record": return { kind: "record", fields: Object.keys(tagged.fields).sort()
+        .map((key) => [key, typeNode(tagged.fields[key] as Type)] as const) };
+      case "named": return { kind: "alias", name: tagged.schema };
+      case "outcome_of": throw new Error(`outcome_of(${tagged.stage}) must be resolved before projection`);
+    }
+  }
   if (typeof type !== "string")
-    return { kind: "record", fields: Object.keys(type).sort().map((key) => [key, parseType(type[key] as TypeExpression)] as const) };
+    return { kind: "record", fields: Object.keys(type).sort().map((key) => [key, typeNode((type as { readonly [key: string]: TypeExpression })[key] as TypeExpression)] as const) };
   const text = type.trim();
   if (text.startsWith("{") && text.endsWith("}")) {
     const body = text.slice(1, -1).trim();
     const fields = body === "" ? [] : splitTopLevel(body).map((field) => {
       const colon = field.indexOf(":");
-      return [field.slice(0, colon).trim(), parseType(field.slice(colon + 1))] as const;
+      return [field.slice(0, colon).trim(), typeNode(field.slice(colon + 1))] as const;
     });
     return { kind: "record", fields: [...fields].sort(([left], [right]) => left.localeCompare(right)) };
   }
   const list = inner(text, "list");
-  if (list !== null) return { kind: "list", item: parseType(list) };
+  if (list !== null) return { kind: "list", item: typeNode(list) };
   const optional = inner(text, "optional");
-  if (optional !== null) return { kind: "optional", item: parseType(optional) };
+  if (optional !== null) return { kind: "optional", item: typeNode(optional) };
   const variants = inner(text, "enum");
   if (variants !== null) return { kind: "enum", variants: splitTopLevel(variants) };
   return isPrimitive(text) ? { kind: "primitive", name: text } : { kind: "alias", name: text };
@@ -83,7 +97,7 @@ export function schemaKey(node: TypeNode): string {
     case "record": return `{${node.fields.map(([key, field]) => `${key}: ${schemaKey(field)}`).join(", ")}}`;
   }
 }
-export const typeSchemaKey = (type: TypeExpression): string => schemaKey(parseType(type));
+export const typeSchemaKey = (type: Type | TypeExpression): string => schemaKey(typeNode(type));
 
 function primitiveShape(name: PrimitiveName): SchemaShape {
   switch (name) {
@@ -109,11 +123,11 @@ function nodeSchemas(node: TypeNode): readonly Schema[] {
 type Aliases = { readonly [name: string]: TypeExpression };
 /** A named schema: the alias's own key, with the shape of the type it names (through any chain of aliases). */
 function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
-  let body = parseType(aliases[name] as TypeExpression);
+  let body = typeNode(aliases[name] as TypeExpression);
   const visited = new Set([name]);
   while (body.kind === "alias" && !visited.has(body.name) && aliases[body.name] !== undefined) {
     visited.add(body.name);
-    body = parseType(aliases[body.name] as TypeExpression);
+    body = typeNode(aliases[body.name] as TypeExpression);
   }
   const [own, ...rest] = nodeSchemas(body);
   return own ? [{ key: name, shape: own.shape }, ...rest] : rest;
@@ -125,7 +139,7 @@ function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
  * `feedback` (the core refuses one without it).
  */
 export function selectDecisionPayloadType(decision: ReviewDecision): TypeNode {
-  const declared = decision.payload == null ? null : parseType(decision.payload);
+  const declared = decision.payload == null ? null : typeNode(decision.payload);
   const fields = new Map<string, TypeNode>(declared?.kind === "record" ? declared.fields : []);
   for (const key of Object.keys(decision.fields ?? {})) if (!fields.has(key)) fields.set(key, { kind: "primitive", name: "text" });
   if (decision.effect === "request_changes" && !fields.has("feedback")) fields.set("feedback", { kind: "primitive", name: "text" });
@@ -141,10 +155,10 @@ export const EMPTY_PAYLOAD: TypeNode = { kind: "record", fields: [] };
  * are unique; the first emission of a key wins (they are equal by construction).
  */
 export function selectWorkflowSchemas(workflow: Workflow): readonly Schema[] {
-  const nodes: TypeNode[] = [parseType(workflow.input), EMPTY_PAYLOAD];
+  const nodes: TypeNode[] = [typeNode(workflow.input), EMPTY_PAYLOAD];
   for (const stage of Object.values(workflow.stages)) {
-    nodes.push(parseType(stage.input));
-    for (const artifact of Object.values(stage.artifacts)) nodes.push(parseType(artifact.schema));
+    nodes.push(typeNode(stage.input));
+    for (const artifact of Object.values(stage.artifacts)) nodes.push(typeNode(artifact.schema));
     for (const review of Object.values(stage.reviews ?? {}))
       for (const decision of Object.values(review.decisions)) nodes.push(selectDecisionPayloadType(decision));
   }

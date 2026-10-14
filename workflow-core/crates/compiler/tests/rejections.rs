@@ -1,6 +1,19 @@
 use serde_json::Value;
 use workflow_model::*;
 
+#[test]
+fn malformed_type_reports_its_config_path() {
+    let mut workflow: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    workflow["schemas"]["pr_status"]["number"] = Value::String("list(integer".into());
+    let error =
+        workflow_compiler::decode_workflow(&serde_json::to_vec(&workflow).unwrap()).unwrap_err();
+    assert!(
+        error.detail.contains("schemas.pr_status.number"),
+        "{error:?}"
+    );
+}
+
 /// `repository.prepare` as the samples' registry declares it.
 fn prepare_operation() -> Vec<CodeOperation> {
     vec![CodeOperation {

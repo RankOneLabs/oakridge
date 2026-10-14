@@ -5,7 +5,7 @@
 //! Precedence, loosest first: `or`, `and`, `not`, a comparison (`==`, `!=`,
 //! `>`, `>=`, `<`, `<=`), then an atom: a call, a record literal, a literal or
 //! a read. Inside `every`, `any`, `filter` and `map`, `item` is the element.
-use crate::workflow::{field_type, item_type, parse_type, reject, render_type, resolve_type};
+use crate::workflow::{field_type, item_type, reject, resolve_type};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
@@ -453,10 +453,10 @@ impl Scope<'_> {
     }
 }
 fn boolean() -> TypeExpression {
-    TypeExpression::Name("boolean".into())
+    Type::Boolean
 }
 fn integer() -> TypeExpression {
-    TypeExpression::Name("integer".into())
+    Type::Integer
 }
 fn list_item(
     ty: &TypeExpression,
@@ -474,29 +474,22 @@ fn require_boolean(ty: TypeExpression, what: &str) -> Result<(), DomainError> {
 }
 /// The variants of an `enum(a, b, …)` type.
 pub(crate) fn enum_variants(ty: &TypeExpression) -> Option<Vec<String>> {
-    let TypeExpression::Name(name) = ty else {
-        return None;
-    };
-    let inner = name.trim().strip_prefix("enum(")?.strip_suffix(')')?;
-    Some(inner.split(',').map(|v| v.trim().to_owned()).collect())
+    match ty {
+        Type::Enum { variants } => Some(variants.clone()),
+        _ => None,
+    }
 }
 /// A type with its aliases resolved and an outer `optional(...)` removed, so
 /// a value compares with a nullable value of its own type.
 fn comparison_shape(ty: &TypeExpression, scope: &Scope<'_>) -> TypeExpression {
     let resolved = resolve_type(ty, scope.aliases);
-    if let TypeExpression::Name(name) = &resolved {
-        if let Some(inner) = name
-            .strip_prefix("optional(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            return comparison_shape(&parse_type(inner).unwrap_or(resolved.clone()), scope);
-        }
+    if let Type::Optional { value } = &resolved {
+        return comparison_shape(value, scope);
     }
     resolved
 }
 fn is_string_like(ty: &TypeExpression) -> bool {
-    matches!(ty, TypeExpression::Name(name) if ["text", "ident", "repo_path"].contains(&name.as_str()))
-        || enum_variants(ty).is_some()
+    matches!(ty, Type::Text | Type::Ident | Type::RepoPath) || enum_variants(ty).is_some()
 }
 fn comparable(left: &TypeExpression, right: &TypeExpression, scope: &Scope<'_>) -> bool {
     let (left, right) = (
@@ -568,11 +561,7 @@ pub(crate) fn infer(
             if !comparable(&left_type, &right_type, scope) {
                 return Err(reject(
                     9,
-                    format!(
-                        "cannot compare {} with {}",
-                        render_type(&left_type),
-                        render_type(&right_type)
-                    ),
+                    format!("cannot compare {} with {}", left_type, right_type),
                 ));
             }
             check_enum_literal(&left_type, right, scope)?;
@@ -587,7 +576,7 @@ pub(crate) fn infer(
         }
         StageExpr::Len(inner) => {
             let ty = resolve_type(&infer(inner, scope)?, scope.aliases);
-            if ty != TypeExpression::Name("text".into()) && item_type(&ty).is_none() {
+            if ty != Type::Text && item_type(&ty).is_none() {
                 return Err(reject(9, "len requires text or list"));
             }
             Ok(integer())
@@ -613,10 +602,9 @@ pub(crate) fn infer(
                 if !path.is_empty() {
                     return Err(reject(9, "nullable latest must be guarded"));
                 }
-                return Ok(TypeExpression::Name(format!(
-                    "optional({})",
-                    render_type(schema)
-                )));
+                return Ok(Type::Optional {
+                    value: Box::new(schema.clone()),
+                });
             }
             read_path(schema, path, scope, "artifact field absent")
         }
@@ -637,10 +625,9 @@ pub(crate) fn infer(
         StageExpr::MapOf { source, value } => {
             let item = list_item(&infer(source, scope)?, scope, "map")?;
             let value_type = infer(value, &scope.with_item(item))?;
-            Ok(TypeExpression::Name(format!(
-                "list({})",
-                render_type(&value_type)
-            )))
+            Ok(Type::List {
+                item: Box::new(value_type),
+            })
         }
         StageExpr::Contains { source, value } => {
             let item = list_item(&infer(source, scope)?, scope, "contains")?;
@@ -693,12 +680,12 @@ pub(crate) fn infer(
             }
             Ok(boolean())
         }
-        StageExpr::Record(fields) => Ok(TypeExpression::Record(
-            fields
+        StageExpr::Record(fields) => Ok(Type::Record {
+            fields: fields
                 .iter()
                 .map(|(key, value)| Ok((key.clone(), infer(value, scope)?)))
                 .collect::<Result<_, DomainError>>()?,
-        )),
+        }),
         StageExpr::Input(path) => read_path(
             scope.input,
             path,
@@ -758,7 +745,7 @@ pub(crate) fn infer(
         }
         StageExpr::Boolean(_) => Ok(boolean()),
         StageExpr::Integer(_) => Ok(integer()),
-        StageExpr::Text(_) => Ok(TypeExpression::Name("text".into())),
+        StageExpr::Text(_) => Ok(Type::Text),
     }
 }
 /// Resolve a parsed stage expression to the shared Expression tree, so the
