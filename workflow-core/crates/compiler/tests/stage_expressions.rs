@@ -46,9 +46,9 @@ fn stage_input_type(program: &CheckedWorkflow, worker: &str, input: &str) -> Typ
     program.stages[0]
         .workers
         .iter()
-        .find(|candidate| candidate.key.0 == worker)
+        .find(|candidate| candidate.key().0 == worker)
         .expect("worker")
-        .inputs
+        .inputs()
         .iter()
         .find(|candidate| candidate.key == input)
         .expect("input")
@@ -129,12 +129,12 @@ fn calls_and_comparisons_tolerate_their_own_whitespace() {
     ]))
     .unwrap();
     let draft = program.stages[0]
-        .validations
+        .artifacts
         .iter()
-        .find(|validation| validation.artifact.0 == "draft")
+        .find(|artifact| artifact.key.0 == "draft")
         .expect("draft validation");
     assert_eq!(
-        draft.checks[0].value_type,
+        draft.validations[0].expression.value_type,
         TypeExpression::Name("boolean".into())
     );
 }

@@ -79,17 +79,6 @@ fn latest<'a>(
         .rev()
         .find(|r| r.unit == *unit && r.artifact == *artifact)
 }
-fn stage<'a>(program: &'a CheckedWorkflow, unit: &UnitState) -> Result<&'a Stage, StepError> {
-    let key = unit
-        .stage
-        .as_ref()
-        .ok_or_else(|| invalid("unit is a group"))?;
-    program
-        .source
-        .stages
-        .get(&key.0)
-        .ok_or_else(|| invalid(format!("stage {key} absent")))
-}
 fn checked_stage<'a>(
     program: &'a CheckedWorkflow,
     unit: &UnitState,
@@ -104,16 +93,12 @@ fn checked_stage<'a>(
         .find(|stage| stage.key == *key)
         .ok_or_else(|| invalid(format!("checked stage {key} absent")))
 }
-fn worker<'a>(stage: &'a Stage, key: &WorkerKey) -> Result<&'a Worker, StepError> {
+fn worker<'a>(stage: &'a CheckedStage, key: &WorkerKey) -> Result<&'a CheckedWorker, StepError> {
     stage
         .workers
-        .get(&key.0)
+        .iter()
+        .find(|worker| worker.key() == key)
         .ok_or_else(|| rejected(format!("worker {key} absent")))
-}
-fn creates(worker: &Worker) -> &[SymbolKey] {
-    match worker {
-        Worker::Agent { creates, .. } | Worker::Code { creates, .. } => creates,
-    }
 }
 fn attempt<'a>(
     state: &'a StepSnapshot,
@@ -578,7 +563,7 @@ fn periodic_cause(
 /// Whether a worker that creates `artifact` has an attempt open, so its
 /// latest revision may yet be followed by the rest of that attempt's output.
 fn is_creator_working(
-    definition: &Stage,
+    definition: &CheckedStage,
     state: &StepSnapshot,
     unit: &UnitId,
     artifact: &SymbolKey,
@@ -586,9 +571,9 @@ fn is_creator_working(
     definition
         .workers
         .iter()
-        .filter(|(_, worker)| creates(worker).contains(artifact))
-        .any(|(key, _)| {
-            attempt(state, unit, &WorkerKey::from(key.as_str())).is_some_and(|current| {
+        .filter(|worker| worker.creates().contains(artifact))
+        .any(|worker| {
+            attempt(state, unit, worker.key()).is_some_and(|current| {
                 matches!(
                     current.status,
                     AttemptStatus::Pending | AttemptStatus::Running
@@ -650,27 +635,21 @@ fn unobserved_watch_artifacts(
     unit: &UnitState,
     context: &EvaluationContext<'_>,
 ) -> Result<Vec<SymbolKey>, StepError> {
-    let definition = stage(program, unit)?;
     let checked = checked_stage(program, unit)?;
     let mut unobserved = Vec::new();
-    for (key, definition_worker) in &definition.workers {
-        if !is_periodic(definition_worker) {
+    for checked_worker in &checked.workers {
+        if !is_periodic(checked_worker) {
             continue;
         }
-        let worker_key = WorkerKey::from(key.as_str());
-        let checked_worker = checked
-            .workers
-            .iter()
-            .find(|candidate| candidate.key == worker_key)
-            .ok_or_else(|| invalid(format!("checked worker {worker_key} absent")))?;
-        if !holds(checked_worker.when.as_ref(), unit, state, context)? {
+        let worker_key = checked_worker.key();
+        if !holds(checked_worker.when(), unit, state, context)? {
             continue;
         }
-        let Some(inputs) = eval_fields(&checked_worker.inputs, unit, state, None, context)? else {
+        let Some(inputs) = eval_fields(checked_worker.inputs(), unit, state, None, context)? else {
             continue;
         };
         let digest = inputs_digest(&inputs);
-        let is_observed = attempt(state, &unit.id, &worker_key).is_some_and(|latest| {
+        let is_observed = attempt(state, &unit.id, worker_key).is_some_and(|latest| {
             matches!(&latest.cause, Cause::Periodic { inputs: pinned, .. } if *pinned == digest)
                 && state.attempts.iter().any(|candidate| {
                     candidate.action_id == latest.action_id
@@ -678,7 +657,7 @@ fn unobserved_watch_artifacts(
                 })
         });
         if !is_observed {
-            unobserved.extend(creates(definition_worker).iter().cloned());
+            unobserved.extend(checked_worker.creates().iter().cloned());
         }
     }
     Ok(unobserved)
@@ -689,8 +668,8 @@ fn reads_any(expression: &Expression, artifacts: &[SymbolKey]) -> bool {
         .iter()
         .any(|artifact| reads_artifact(expression, artifact))
 }
-fn is_periodic(worker: &Worker) -> bool {
-    matches!(worker, Worker::Code { every: Some(_), .. })
+fn is_periodic(worker: &CheckedWorker) -> bool {
+    matches!(worker, CheckedWorker::Code { every: Some(_), .. })
 }
 fn can_run(state: &StepSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
     let Some(previous) = attempt(state, unit, worker) else {
@@ -734,24 +713,18 @@ fn stage_actions(
     unit: &UnitState,
     context: &EvaluationContext<'_>,
 ) -> Result<Vec<Action>, StepError> {
-    let definition = stage(program, unit)?;
     let checked = checked_stage(program, unit)?;
     let mut wanted = Vec::new();
-    for (key, definition_worker) in &definition.workers {
-        let worker_key = WorkerKey::from(key.as_str());
-        let Some(retry) = can_run(state, &unit.id, &worker_key) else {
+    for checked_worker in &checked.workers {
+        let worker_key = checked_worker.key();
+        let Some(retry) = can_run(state, &unit.id, worker_key) else {
             continue;
         };
-        let checked_worker = checked
-            .workers
-            .iter()
-            .find(|candidate| candidate.key == worker_key)
-            .ok_or_else(|| invalid(format!("checked worker {worker_key} absent")))?;
-        if !holds(checked_worker.when.as_ref(), unit, state, context)? {
+        if !holds(checked_worker.when(), unit, state, context)? {
             continue;
         }
-        let candidate = match definition_worker {
-            Worker::Agent {
+        let candidate = match checked_worker {
+            CheckedWorker::Agent {
                 creates,
                 reviews: Some(subject),
                 ..
@@ -759,7 +732,7 @@ fn stage_actions(
                 // The subject's creator may still replace it (a revise
                 // publishes the new build before its PR): review only what
                 // a finished attempt left.
-                if is_creator_working(definition, state, &unit.id, subject) {
+                if is_creator_working(checked, state, &unit.id, subject) {
                     continue;
                 }
                 let Some(subject) = latest(state, &unit.id, subject) else {
@@ -783,7 +756,7 @@ fn stage_actions(
                     ))
                 }
             }
-            Worker::Agent {
+            CheckedWorker::Agent {
                 creates,
                 reviews: None,
                 ..
@@ -805,15 +778,15 @@ fn stage_actions(
                 }
             }
             // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
-            Worker::Code { every: Some(_), .. } => {
-                eval_fields(&checked_worker.inputs, unit, state, None, context)?.map(|inputs| {
+            CheckedWorker::Code { every: Some(_), .. } => {
+                eval_fields(checked_worker.inputs(), unit, state, None, context)?.map(|inputs| {
                     (
                         Mode::Initial,
-                        periodic_cause(state, &unit.id, &worker_key, inputs_digest(&inputs)),
+                        periodic_cause(state, &unit.id, worker_key, inputs_digest(&inputs)),
                     )
                 })
             }
-            Worker::Code {
+            CheckedWorker::Code {
                 creates,
                 every: None,
                 ..
@@ -832,7 +805,7 @@ fn stage_actions(
             let cause = retry.unwrap_or(cause);
             wanted.push(Action::RunWorker {
                 unit: unit.id.clone(),
-                worker: worker_key,
+                worker: worker_key.clone(),
                 mode,
                 cause,
             });
@@ -849,45 +822,45 @@ fn resolve_reviews(
     context: &EvaluationContext<'_>,
 ) -> Result<Vec<ResolvedReview>, StepError> {
     let mut resolved = Vec::new();
-    let definition = stage(program, unit)?;
     for review in &checked_stage(program, unit)?.reviews {
-        let Some(source) = definition
-            .reviews
-            .get(&review.key.0)
-            .filter(|source| source.by == ReviewBy::Operator)
+        let CheckedReview::Operator {
+            key,
+            of,
+            inputs,
+            when,
+            decisions,
+        } = review
         else {
             continue;
         };
-        if !holds(review.when.as_ref(), unit, state, context)? {
+        if !holds(when.as_ref(), unit, state, context)? {
             continue;
         }
-        let Some(target) = latest(state, &unit.id, &review.of) else {
+        let Some(target) = latest(state, &unit.id, of) else {
             continue;
         };
-        if is_decided_by(state, &unit.id, &review.key, &target.id) {
+        if is_decided_by(state, &unit.id, key, &target.id) {
             continue;
         }
-        let decisions = open_decisions(state, &unit.id, &review.key, source);
-        let mut inputs = serde_json::Map::new();
-        for field in &review.inputs {
+        let decisions = open_decisions(state, &unit.id, key, of, decisions);
+        let mut resolved_inputs = serde_json::Map::new();
+        for field in inputs {
             let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
-            inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
+            resolved_inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
         }
         resolved.push(ResolvedReview {
             unit: unit.id.clone(),
-            review: review.key.clone(),
+            review: key.clone(),
             target: target.id.clone(),
             decisions,
-            inputs: Value::Object(inputs),
+            inputs: Value::Object(resolved_inputs),
         });
     }
     Ok(resolved)
 }
-/// The artifact a decision decides on: its `on`, else its review's `of`.
-fn decided_artifact<'a>(review: &'a Review, decision: &'a ReviewDecision) -> &'a SymbolKey {
-    decision.on.as_ref().unwrap_or(&review.of)
+fn decided_artifact<'a>(of: &'a SymbolKey, on: &'a Option<SymbolKey>) -> &'a SymbolKey {
+    on.as_ref().unwrap_or(of)
 }
-/// Whether `review` already has a decision on `target`.
 fn is_decided_by(
     state: &StepSnapshot,
     unit: &UnitId,
@@ -898,20 +871,17 @@ fn is_decided_by(
         decision.unit == *unit && decision.review == *review && decision.target == *target
     })
 }
-/// Each decision of an operator review that `reduce` would accept now,
-/// with the revision it must name: the latest of its decided artifact,
-/// while `review` has no decision on that revision.
 fn open_decisions(
     state: &StepSnapshot,
     unit: &UnitId,
     review: &SymbolKey,
-    source: &Review,
+    of: &SymbolKey,
+    decisions: &BTreeMap<String, CheckedDecision>,
 ) -> Vec<ResolvedDecision> {
-    source
-        .decisions
+    decisions
         .iter()
         .filter_map(|(key, decision)| {
-            let target = latest(state, unit, decided_artifact(source, decision))?;
+            let target = latest(state, unit, decided_artifact(of, &decision.on))?;
             (!is_decided_by(state, unit, review, &target.id)).then(|| ResolvedDecision {
                 decision: SymbolKey::from(key.as_str()),
                 target: target.id.clone(),
@@ -930,32 +900,35 @@ fn resolve_run_worker(
     let checked = checked_stage(program, unit)?
         .workers
         .iter()
-        .find(|candidate| candidate.key == *action.worker)
+        .find(|candidate| candidate.key() == action.worker)
         .ok_or_else(|| invalid(format!("checked worker {} absent", action.worker)))?;
     let mut inputs = serde_json::Map::new();
-    for field in &checked.inputs {
+    for field in checked.inputs() {
         let value = eval_expression(&field.value.expression, unit, state, None, None, context)?;
         inputs.insert(field.key.clone(), value.unwrap_or(Value::Null));
     }
-    let workspace = match &checked.workspace {
+    let workspace_expression = match checked {
+        CheckedWorker::Agent { workspace, .. } => workspace.as_ref(),
+        CheckedWorker::Code { .. } => None,
+    };
+    let workspace = match workspace_expression {
         None => None,
         Some(expression) => Some(
             eval_expression(&expression.expression, unit, state, None, None, context)?
                 .ok_or_else(|| invalid(format!("workspace of {} unresolved", action.worker)))?,
         ),
     };
-    let source = worker(stage(program, unit)?, action.worker)?;
     let (previous, feedback) = match action.mode {
-        Mode::Revise => match answered_decision(state, &unit.id, creates(source), action.cause) {
+        Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
             Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload.clone())),
             None => (None, None),
         },
         _ => (None, None),
     };
-    let subject = match (action.mode, source) {
+    let subject = match (action.mode, checked) {
         (
             Mode::Review,
-            Worker::Agent {
+            CheckedWorker::Agent {
                 reviews: Some(of), ..
             },
         ) => latest(state, &unit.id, of).cloned(),
@@ -1018,32 +991,6 @@ fn group_for<'a>(
     program: &'a CheckedWorkflow,
     state: &StepSnapshot,
     unit: &UnitState,
-) -> Result<&'a Group, StepError> {
-    if unit.id == state.run.root {
-        return Ok(&program.source.run);
-    }
-    let parent_id = unit
-        .parent
-        .as_ref()
-        .ok_or_else(|| invalid("group has no parent"))?;
-    let parent = state
-        .units
-        .iter()
-        .find(|u| u.id == *parent_id)
-        .ok_or_else(|| invalid("parent absent"))?;
-    let owner = group_for(program, state, parent)?;
-    owner
-        .units
-        .get(&unit.declaration.0)
-        .and_then(|u| u.group.as_deref())
-        .ok_or_else(|| invalid("group declaration absent"))
-}
-/// The checked group mirroring group_for, so the engine can read compiled
-/// unit expressions instead of the source text beside them.
-fn checked_group_for<'a>(
-    program: &'a CheckedWorkflow,
-    state: &StepSnapshot,
-    unit: &UnitState,
 ) -> Result<&'a CheckedGroup, StepError> {
     if unit.id == state.run.root {
         return Ok(&program.root);
@@ -1057,7 +1004,7 @@ fn checked_group_for<'a>(
         .iter()
         .find(|u| u.id == *parent_id)
         .ok_or_else(|| invalid("parent absent"))?;
-    checked_group_for(program, state, parent)?
+    group_for(program, state, parent)?
         .units
         .iter()
         .find(|candidate| candidate.key.0 == unit.declaration.0)
@@ -1074,81 +1021,25 @@ fn checked_unit<'a>(
         .find(|candidate| candidate.key.0 == declaration)
         .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
 }
-fn check_type(
-    ty: &TypeExpression,
-    value: &Value,
-    aliases: &BTreeMap<String, TypeExpression>,
-) -> bool {
-    if let TypeExpression::Name(name) = ty {
-        if let Some(alias) = aliases.get(name) {
-            return check_type(alias, value, aliases);
-        }
-    }
+fn check_type(ty: &CheckedType, value: &Value) -> bool {
     match ty {
-        TypeExpression::Record(fields) => value.as_object().is_some_and(|object| {
+        CheckedType::Record { fields } => value.as_object().is_some_and(|object| {
             fields
                 .iter()
-                .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v, aliases)))
+                .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v)))
         }),
-        TypeExpression::Name(name) if name == "text" || name == "repo_path" => value.is_string(),
-        TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(is_ident),
-        TypeExpression::Name(name) if name.starts_with("enum(") => name
-            .strip_prefix("enum(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|variants| {
-                value
-                    .as_str()
-                    .is_some_and(|text| variants.split(',').any(|v| v.trim() == text))
-            }),
-        TypeExpression::Name(name) if name == "boolean" => value.is_boolean(),
-        TypeExpression::Name(name) if name == "integer" => value.is_i64(),
-        TypeExpression::Name(name) if name.starts_with("optional(") => name
-            .strip_prefix("optional(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|inner| {
-                value.is_null() || check_type(&inline_type(inner), value, aliases)
-            }),
-        TypeExpression::Name(name) if name.starts_with("list(") => name
-            .strip_prefix("list(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|inner| {
-                value.as_array().is_some_and(|items| {
-                    items
-                        .iter()
-                        .all(|item| check_type(&inline_type(inner), item, aliases))
-                })
-            }),
-        TypeExpression::Name(name) if name.starts_with('{') && name.ends_with('}') => {
-            check_type(&inline_type(name), value, aliases)
-        }
-        _ => false,
+        CheckedType::Text | CheckedType::RepoPath => value.is_string(),
+        CheckedType::Ident => value.as_str().is_some_and(is_ident),
+        CheckedType::Enumeration { variants } => value
+            .as_str()
+            .is_some_and(|text| variants.iter().any(|variant| variant == text)),
+        CheckedType::Boolean => value.is_boolean(),
+        CheckedType::Integer => value.is_i64(),
+        CheckedType::Optional { value: inner } => value.is_null() || check_type(inner, value),
+        CheckedType::List { item } => value
+            .as_array()
+            .is_some_and(|items| items.iter().all(|value| check_type(item, value))),
     }
-}
-fn inline_type(text: &str) -> TypeExpression {
-    let text = text.trim();
-    let Some(body) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
-        return TypeExpression::Name(text.into());
-    };
-    let mut fields = BTreeMap::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for (index, ch) in body.char_indices() {
-        match ch {
-            '{' | '(' => depth += 1,
-            '}' | ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                if let Some((key, ty)) = body[start..index].split_once(':') {
-                    fields.insert(key.trim().into(), inline_type(ty));
-                }
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if let Some((key, ty)) = body[start..].split_once(':') {
-        fields.insert(key.trim().into(), inline_type(ty));
-    }
-    TypeExpression::Record(fields)
 }
 /// The longest `ident`. Collection keys are idents taken from runtime data
 /// and every id under a member embeds its key, so an unbounded ident would
@@ -1175,9 +1066,11 @@ fn materialize_group(
         .cloned()
         .ok_or_else(|| invalid("group absent"))?;
     let group = group_for(program, state, &parent)?.clone();
-    let checked = checked_group_for(program, state, &parent)?.clone();
-    for (key, unit) in &group.units {
-        let collection = checked_unit(&checked, key)?.collection.clone();
+    let mut units = group.units.iter().collect::<Vec<_>>();
+    units.sort_by_key(|unit| &unit.key);
+    for unit in units {
+        let key = &unit.key.0;
+        let collection = unit.collection.clone();
         let each_values = if let Some(collection) = &collection {
             eval_expression(
                 &collection.source.expression,
@@ -1217,9 +1110,11 @@ fn materialize_group(
                 )));
             }
             let dependencies = match &unit.after {
-                UnitDependencies::None => vec![],
-                UnitDependencies::Fixed(items) => items.iter().map(|v| v.0.clone()).collect(),
-                UnitDependencies::Each(_) => {
+                CheckedUnitDependencies::None => vec![],
+                CheckedUnitDependencies::Fixed { keys: items } => {
+                    items.iter().map(|v| v.0.clone()).collect()
+                }
+                CheckedUnitDependencies::Each => {
                     let after = collection
                         .as_ref()
                         .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
@@ -1242,8 +1137,8 @@ fn materialize_group(
                     .collect::<Result<Vec<_>, _>>()?
                 }
             };
-            let declared_input = &checked_unit(&checked, key)?.input;
-            let input = if unit.for_each.is_some() {
+            let declared_input = &unit.input;
+            let input = if unit.collection.is_some() {
                 eval_fields(declared_input, &parent, state, Some(each), context)?
                     .ok_or_else(|| rejected("collection input unresolved"))?
             } else {
@@ -1289,7 +1184,7 @@ fn group_outcome(
     context: &EvaluationContext<'_>,
 ) -> Result<Value, StepError> {
     eval_fields(
-        &checked_group_for(program, state, unit)?.outcome,
+        &group_for(program, state, unit)?.outcome,
         unit,
         state,
         None,
@@ -1335,7 +1230,7 @@ fn reduce(
                 return Ok(());
             }
             context.check_value(input)?;
-            if !check_type(&program.source.input, input, &program.source.schemas) {
+            if !check_type(&program.input, input) {
                 return Err(rejected("launch input fails schema"));
             }
             state.run.input = Some(input.clone());
@@ -1406,7 +1301,7 @@ fn reduce(
                 .iter()
                 .find(|u| u.id == attempt.unit)
                 .ok_or_else(|| invalid("attempt unit absent"))?;
-            let definition = worker(stage(program, unit)?, &attempt.worker)?;
+            let definition = worker(checked_stage(program, unit)?, &attempt.worker)?;
             state.attempts[index].status = match result {
                 WorkerResult::Failed { code, detail } => AttemptStatus::Failed {
                     code: code.clone(),
@@ -1416,7 +1311,7 @@ fn reduce(
                 // unchanged observation is a success, whatever caused the attempt.
                 WorkerResult::Succeeded
                     if !is_periodic(definition)
-                        && creates(definition).iter().any(|artifact| {
+                        && definition.creates().iter().any(|artifact| {
                             !state.revisions.iter().any(|r| {
                                 r.by.as_ref() == Some(&attempt.action_id) && r.artifact == *artifact
                             })
@@ -1448,12 +1343,13 @@ fn reduce(
             if !matches!(owner.status, UnitStatus::Active) {
                 return Err(rejected("unit is not active"));
             }
-            let definition = stage(program, owner)?.clone();
+            let definition = checked_stage(program, owner)?.clone();
             let artifact_definition = definition
                 .artifacts
-                .get(&artifact.0)
+                .iter()
+                .find(|candidate| candidate.key == *artifact)
                 .ok_or_else(|| rejected("artifact absent"))?;
-            if !check_type(&artifact_definition.schema, body, &program.source.schemas) {
+            if !check_type(&artifact_definition.schema, body) {
                 return Err(rejected("artifact body fails schema"));
             }
             // A revision is its body and what it reviews: the same body about a
@@ -1495,18 +1391,18 @@ fn reduce(
             let producer = match attempt_index {
                 Some(index) => {
                     let producer = worker(&definition, &state.attempts[index].worker)?;
-                    if !creates(producer).contains(artifact) {
+                    if !producer.creates().contains(artifact) {
                         return Err(rejected("worker does not create artifact"));
                     }
                     producer
                 }
                 None => definition
                     .workers
-                    .values()
-                    .find(|candidate| creates(candidate).contains(artifact))
+                    .iter()
+                    .find(|candidate| candidate.creates().contains(artifact))
                     .ok_or_else(|| invalid("artifact has no creator"))?,
             };
-            let is_code = matches!(producer, Worker::Code { .. });
+            let is_code = matches!(producer, CheckedWorker::Code { .. });
             if is_code && by.is_none() {
                 return Err(rejected("an operator cannot edit a code worker's artifact"));
             }
@@ -1520,16 +1416,10 @@ fn reduce(
             if previous.map(|r| &r.id) != predecessor.as_ref() {
                 return Err(rejected("stale predecessor"));
             }
-            let checked_checks = checked_stage(program, owner)?
-                .validations
-                .iter()
-                .find(|validation| validation.artifact == *artifact)
-                .map(|validation| validation.checks.as_slice())
-                .unwrap_or_default();
             let mut messages = Vec::new();
-            for (rule, checked) in artifact_definition.validate.iter().zip(checked_checks) {
+            for validation in &artifact_definition.validations {
                 if eval_expression(
-                    &checked.expression,
+                    &validation.expression.expression,
                     owner,
                     state,
                     None,
@@ -1537,7 +1427,7 @@ fn reduce(
                     context,
                 )? != Some(Value::Bool(true))
                 {
-                    messages.push(rule.message.clone());
+                    messages.push(validation.message.clone());
                 }
             }
             if let (false, true, Some(attempt_index)) =
@@ -1590,24 +1480,32 @@ fn reduce(
             if !matches!(owner.status, UnitStatus::Active) {
                 return Err(rejected("unit is not active"));
             }
-            let definition = stage(program, owner)?;
-            let review_definition = definition
-                .reviews
-                .get(&review.0)
-                .ok_or_else(|| rejected("review absent"))?;
-            let decision_definition = review_definition
-                .decisions
-                .get(&decision.0)
-                .ok_or_else(|| rejected("decision absent"))?;
-            if review_definition.by == ReviewBy::Engine {
-                return Err(rejected("the engine decides this review"));
-            }
-            let checked_review = checked_stage(program, owner)?
+            let review_definition = checked_stage(program, owner)?
                 .reviews
                 .iter()
-                .find(|candidate| candidate.key == *review)
-                .ok_or_else(|| invalid(format!("checked review {review} absent")))?;
-            if !holds(checked_review.when.as_ref(), owner, state, context)? {
+                .find(|candidate| candidate.key() == review)
+                .ok_or_else(|| rejected("review absent"))?;
+            let (of, when, decisions) = match review_definition {
+                CheckedReview::Operator {
+                    of,
+                    when,
+                    decisions,
+                    ..
+                } => (of, when, decisions),
+                CheckedReview::Engine {
+                    decision: engine_decision,
+                    ..
+                } => {
+                    if engine_decision.key != *decision {
+                        return Err(rejected("decision absent"));
+                    }
+                    return Err(rejected("the engine decides this review"));
+                }
+            };
+            let decision_definition = decisions
+                .get(&decision.0)
+                .ok_or_else(|| rejected("decision absent"))?;
+            if !holds(when.as_ref(), owner, state, context)? {
                 return Err(rejected("review is not open"));
             }
             if state.decisions.iter().any(|d| {
@@ -1619,12 +1517,8 @@ fn reduce(
             }) {
                 return Ok(());
             }
-            let current = latest(
-                state,
-                unit,
-                decided_artifact(review_definition, decision_definition),
-            )
-            .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
+            let current = latest(state, unit, decided_artifact(of, &decision_definition.on))
+                .ok_or_else(|| rejected("reviewed artifact unpublished"))?;
             if current.id != *target {
                 return Err(rejected("target is not latest revision"));
             }
@@ -1632,7 +1526,7 @@ fn reduce(
                 return Err(rejected("review already decided on latest revision"));
             }
             if let Some(ty) = &decision_definition.payload {
-                if !check_type(ty, payload, &program.source.schemas) {
+                if !check_type(ty, payload) {
                     return Err(rejected("decision payload fails schema"));
                 }
             }
@@ -1719,48 +1613,40 @@ fn engine_decision(
     unobserved: &[SymbolKey],
     context: &EvaluationContext<'_>,
 ) -> Result<Option<DecisionState>, StepError> {
-    let definition = stage(program, unit)?;
-    for review in &checked_stage(program, unit)?.reviews {
-        let Some(source) = definition.reviews.get(&review.key.0) else {
+    let definition = checked_stage(program, unit)?;
+    for review in &definition.reviews {
+        let CheckedReview::Engine {
+            key,
+            of,
+            when,
+            decision,
+        } = review
+        else {
             continue;
         };
-        if source.by != ReviewBy::Engine {
-            continue;
-        }
-        let Some((decision_key, decision)) = source.decisions.iter().next() else {
-            continue;
-        };
-        let target_artifact = decided_artifact(source, decision);
+        let target_artifact = decided_artifact(of, &decision.on);
         let Some(target) = latest(state, &unit.id, target_artifact) else {
             continue;
         };
-        // Wait for the target's creator to finish its attempt: a revise that
-        // has published the new target but not yet the rest of its output
-        // (a replacement PR) would otherwise be judged on what it replaces.
         if is_creator_working(definition, state, &unit.id, target_artifact) {
             continue;
         }
-        // Nor judge it on what a watch saw of inputs it no longer watches.
-        if review
-            .when
-            .as_ref()
-            .is_some_and(|when| reads_any(&when.expression, unobserved))
-        {
+        if reads_any(&when.expression, unobserved) {
             continue;
         }
-        if is_decided_by(state, &unit.id, &review.key, &target.id)
-            || !holds(review.when.as_ref(), unit, state, context)?
+        if is_decided_by(state, &unit.id, key, &target.id)
+            || !holds(Some(when), unit, state, context)?
         {
             continue;
         }
         return Ok(Some(DecisionState {
             id: decision_id(state, &unit.id),
             unit: unit.id.clone(),
-            review: review.key.clone(),
-            decision: SymbolKey::from(decision_key.as_str()),
+            review: key.clone(),
+            decision: decision.key.clone(),
             effect: decision.effect.clone(),
             target: target.id.clone(),
-            payload: serde_json::json!({ "feedback": decision.feedback.clone().unwrap_or_default() }),
+            payload: serde_json::json!({ "feedback": decision.feedback }),
         }));
     }
     Ok(None)
@@ -1917,10 +1803,7 @@ fn start_candidate(
                 .iter()
                 .find(|u| Some(&u.id) == unit.parent.as_ref())
                 .ok_or_else(|| invalid("parent absent"))?;
-            let declared = checked_unit(
-                checked_group_for(program, state, parent)?,
-                &unit.declaration.0,
-            )?;
+            let declared = checked_unit(group_for(program, state, parent)?, &unit.declaration.0)?;
             state.units[index].input = eval_fields(&declared.input, parent, state, None, context)?
                 .ok_or_else(|| invalid("unit input unresolved"))?;
         }
@@ -2288,29 +2171,116 @@ mod tests {
 
     #[test]
     fn named_schemas_resolve_through_optional_lists_and_records() {
-        let aliases = BTreeMap::from([
-            ("title".into(), TypeExpression::Name("text".into())),
-            ("titles".into(), TypeExpression::Name("list(title)".into())),
-        ]);
-        let ty = TypeExpression::Record(BTreeMap::from([(
-            "items".into(),
-            TypeExpression::Name("optional(titles)".into()),
-        )]));
+        let source: Workflow = serde_json::from_value(serde_json::json!({
+            "workflow":"aliases", "input":{"items":"optional(titles)"},
+            "schemas":{"title":"text","titles":"list(title)"},
+            "run":{"units":{},"outcome":{}},"stages":{}
+        }))
+        .unwrap();
+        let program = compile_workflow(&source, &[], &BTreeMap::new()).unwrap();
         assert!(check_type(
-            &ty,
-            &serde_json::json!({"items": ["one"]}),
-            &aliases
+            &program.input,
+            &serde_json::json!({"items": ["one"]})
         ));
         assert!(check_type(
-            &ty,
-            &serde_json::json!({"items": null}),
-            &aliases
+            &program.input,
+            &serde_json::json!({"items": null})
         ));
         assert!(!check_type(
-            &ty,
-            &serde_json::json!({"items": [1]}),
-            &aliases
+            &program.input,
+            &serde_json::json!({"items": [1]})
         ));
+    }
+
+    #[test]
+    fn checked_artifact_and_decision_schemas_contain_resolved_types() {
+        let source: Workflow = serde_json::from_value(serde_json::json!({
+            "workflow":"aliases", "input":{},
+            "schemas":{"title":"text","titles":"list(title)"},
+            "run":{"units":{"write":{"stage":"write","input":{}}},"outcome":{}},
+            "stages":{"write":{
+                "input":{}, "artifacts":{"draft":{"schema":"titles"}},
+                "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},
+                    "inputs":{},"creates":["draft"]}},
+                "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md",
+                    "decisions":{"approve":{"effect":"approve","label":"Approve",
+                        "payload":"optional(titles)"}}}},
+                "done_when":"approved(draft)","outcome":{}
+            }}
+        }))
+        .unwrap();
+        let prompts = BTreeMap::from([
+            ("write.md".into(), String::new()),
+            ("review.md".into(), String::new()),
+        ]);
+        let program = compile_workflow(&source, &[], &prompts).unwrap();
+        let stage = &program.stages[0];
+        assert_eq!(
+            stage.artifacts[0].schema,
+            CheckedType::List {
+                item: Box::new(CheckedType::Text)
+            }
+        );
+        let CheckedReview::Operator { decisions, .. } = &stage.reviews[0] else {
+            panic!("review is operator")
+        };
+        assert_eq!(
+            decisions["approve"].payload,
+            Some(CheckedType::Optional {
+                value: Box::new(CheckedType::List {
+                    item: Box::new(CheckedType::Text)
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn wrapped_record_aliases_preserve_field_names_in_checked_schemas() {
+        let source: Workflow = serde_json::from_value(serde_json::json!({
+            "workflow":"aliases", "input":{"items":"list(row)","maybe":"optional(row)"},
+            "schemas":{"row":{"a,b":"text"}},
+            "run":{"units":{"write":{"stage":"write","input":{}}},"outcome":{}},
+            "stages":{"write":{
+                "input":{}, "artifacts":{"draft":{"schema":"list(row)"}},
+                "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},
+                    "inputs":{},"creates":["draft"]}},
+                "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md",
+                    "decisions":{"approve":{"effect":"approve","label":"Approve",
+                        "payload":"optional(row)"}}}},
+                "done_when":"approved(draft)","outcome":{}
+            }}
+        }))
+        .unwrap();
+        let prompts = BTreeMap::from([
+            ("write.md".into(), String::new()),
+            ("review.md".into(), String::new()),
+        ]);
+        let program = compile_workflow(&source, &[], &prompts).unwrap();
+        let valid_row = serde_json::json!({"a,b":"ok"});
+        let invalid_row = serde_json::json!({"b":"ok"});
+        assert!(check_type(
+            &program.input,
+            &serde_json::json!({"items":[valid_row],"maybe":valid_row})
+        ));
+        assert!(!check_type(
+            &program.input,
+            &serde_json::json!({"items":[invalid_row],"maybe":null})
+        ));
+        let stage = &program.stages[0];
+        assert!(check_type(
+            &stage.artifacts[0].schema,
+            &serde_json::json!([valid_row])
+        ));
+        assert!(!check_type(
+            &stage.artifacts[0].schema,
+            &serde_json::json!([invalid_row])
+        ));
+        let CheckedReview::Operator { decisions, .. } = &stage.reviews[0] else {
+            panic!("review is operator")
+        };
+        let payload = decisions["approve"].payload.as_ref().unwrap();
+        assert!(check_type(payload, &valid_row));
+        assert!(!check_type(payload, &invalid_row));
     }
 
     #[test]
@@ -2344,8 +2314,17 @@ mod tests {
     #[test]
     fn reviewer_needs_every_output_for_its_subject() {
         let mut program = sample("review-loop");
-        let stage = program.source.stages.get_mut("document").unwrap();
-        let Worker::Agent { creates, .. } = stage.workers.get_mut("critic").unwrap() else {
+        let stage = program
+            .stages
+            .iter_mut()
+            .find(|stage| stage.key.0 == "document")
+            .unwrap();
+        let CheckedWorker::Agent { creates, .. } = stage
+            .workers
+            .iter_mut()
+            .find(|worker| worker.key().0 == "critic")
+            .unwrap()
+        else {
             panic!("critic is an agent")
         };
         creates.push(SymbolKey::from("summary"));
@@ -2534,18 +2513,20 @@ mod tests {
     #[test]
     fn operator_decision_uses_its_declared_target_artifact() {
         let mut program = sample("review-loop");
-        program
-            .source
+        let stage = program
             .stages
-            .get_mut("document")
-            .unwrap()
+            .iter_mut()
+            .find(|stage| stage.key.0 == "document")
+            .unwrap();
+        let CheckedReview::Operator { decisions, .. } = stage
             .reviews
-            .get_mut("editor")
+            .iter_mut()
+            .find(|review| review.key().0 == "editor")
             .unwrap()
-            .decisions
-            .get_mut("approve")
-            .unwrap()
-            .on = Some(SymbolKey::from("critique"));
+        else {
+            panic!("editor is an operator review")
+        };
+        decisions.get_mut("approve").unwrap().on = Some(SymbolKey::from("critique"));
         let trace: Value =
             serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
                 .unwrap();
