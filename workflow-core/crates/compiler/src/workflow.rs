@@ -139,6 +139,51 @@ pub(crate) fn resolve_type(
             .unwrap_or_else(|| ty.clone()),
     }
 }
+fn checked_type(
+    ty: &TypeExpression,
+    aliases: &BTreeMap<String, TypeExpression>,
+) -> Result<CheckedType, DomainError> {
+    match ty {
+        TypeExpression::Record(fields) => Ok(CheckedType::Record {
+            fields: fields
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), checked_type(value, aliases)?)))
+                .collect::<Result<_, DomainError>>()?,
+        }),
+        TypeExpression::Name(name) if aliases.contains_key(name) => {
+            checked_type(&aliases[name], aliases)
+        }
+        TypeExpression::Name(name) if name == "text" => Ok(CheckedType::Text),
+        TypeExpression::Name(name) if name == "ident" => Ok(CheckedType::Ident),
+        TypeExpression::Name(name) if name == "repo_path" => Ok(CheckedType::RepoPath),
+        TypeExpression::Name(name) if name == "integer" => Ok(CheckedType::Integer),
+        TypeExpression::Name(name) if name == "boolean" => Ok(CheckedType::Boolean),
+        TypeExpression::Name(_) if enum_variants(ty).is_some() => Ok(CheckedType::Enumeration {
+            variants: enum_variants(ty).ok_or_else(|| reject(11, "malformed enum"))?,
+        }),
+        TypeExpression::Name(name) if inner_type(name, "list").is_some() => {
+            let inner = inner_type(name, "list").ok_or_else(|| reject(11, "malformed list"))?;
+            Ok(CheckedType::List {
+                item: Box::new(checked_type(&parse_type(inner)?, aliases)?),
+            })
+        }
+        TypeExpression::Name(name) if inner_type(name, "optional").is_some() => {
+            let inner =
+                inner_type(name, "optional").ok_or_else(|| reject(11, "malformed optional"))?;
+            Ok(CheckedType::Optional {
+                value: Box::new(checked_type(&parse_type(inner)?, aliases)?),
+            })
+        }
+        TypeExpression::Name(name) if name.starts_with('{') => {
+            let parsed = parse_type(name)?;
+            match parsed {
+                TypeExpression::Record(_) => checked_type(&parsed, aliases),
+                TypeExpression::Name(_) => Err(reject(11, format!("malformed record {name}"))),
+            }
+        }
+        TypeExpression::Name(name) => Err(reject(1, format!("schema {name} absent"))),
+    }
+}
 pub(crate) fn item_type(ty: &TypeExpression) -> Option<TypeExpression> {
     let TypeExpression::Name(name) = ty else {
         return None;
@@ -586,7 +631,7 @@ fn compile_stage(
             .collect::<Result<Vec<_>, _>>()?;
         artifacts.push(CheckedArtifact {
             key: SymbolKey::from(artifact_key.as_str()),
-            schema: resolve_type(&artifact.schema, &workflow.schemas),
+            schema: checked_type(&artifact.schema, &workflow.schemas)?,
             validations,
         });
     }
@@ -620,7 +665,7 @@ fn compile_stage(
                     .decisions
                     .iter()
                     .map(|(key, decision)| {
-                        (
+                        Ok((
                             key.clone(),
                             CheckedDecision {
                                 effect: decision.effect.clone(),
@@ -628,11 +673,12 @@ fn compile_stage(
                                 payload: decision
                                     .payload
                                     .as_ref()
-                                    .map(|ty| resolve_type(ty, &workflow.schemas)),
+                                    .map(|ty| checked_type(ty, &workflow.schemas))
+                                    .transpose()?,
                             },
-                        )
+                        ))
                     })
-                    .collect(),
+                    .collect::<Result<_, DomainError>>()?,
             },
             ReviewBy::Engine => {
                 let (decision_key, decision) = review.decisions.iter().next().unwrap();
@@ -1018,7 +1064,7 @@ pub fn compile_workflow_with_limits(
     let digest = BundleDigest(format!("{:x}", Sha256::digest(encoded)));
     Ok(CheckedWorkflow {
         digest,
-        input: resolve_type(&source.input, &source.schemas),
+        input: checked_type(&source.input, &source.schemas)?,
         stages,
         root,
     })

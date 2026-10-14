@@ -8,9 +8,32 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct CheckedWorkflow {
     pub digest: BundleDigest,
-    pub input: TypeExpression,
+    pub input: CheckedType,
     pub stages: Vec<CheckedStage>,
     pub root: CheckedGroup,
+}
+
+/// A validated schema with aliases and type constructors resolved into nodes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CheckedType {
+    Text,
+    Ident,
+    RepoPath,
+    Integer,
+    Boolean,
+    Enumeration {
+        variants: Vec<String>,
+    },
+    List {
+        item: Box<CheckedType>,
+    },
+    Optional {
+        value: Box<CheckedType>,
+    },
+    Record {
+        fields: BTreeMap<String, CheckedType>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -64,7 +87,7 @@ pub struct CheckedStage {
 #[serde(deny_unknown_fields)]
 pub struct CheckedArtifact {
     pub key: SymbolKey,
-    pub schema: TypeExpression,
+    pub schema: CheckedType,
     pub validations: Vec<CheckedArtifactValidation>,
 }
 
@@ -80,7 +103,7 @@ pub struct CheckedArtifactValidation {
 pub struct CheckedDecision {
     pub effect: DecisionEffect,
     pub on: Option<SymbolKey>,
-    pub payload: Option<TypeExpression>,
+    pub payload: Option<CheckedType>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

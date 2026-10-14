@@ -1021,70 +1021,25 @@ fn checked_unit<'a>(
         .find(|candidate| candidate.key.0 == declaration)
         .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
 }
-fn check_type(ty: &TypeExpression, value: &Value) -> bool {
+fn check_type(ty: &CheckedType, value: &Value) -> bool {
     match ty {
-        TypeExpression::Record(fields) => value.as_object().is_some_and(|object| {
+        CheckedType::Record { fields } => value.as_object().is_some_and(|object| {
             fields
                 .iter()
                 .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v)))
         }),
-        TypeExpression::Name(name) if name == "text" || name == "repo_path" => value.is_string(),
-        TypeExpression::Name(name) if name == "ident" => value.as_str().is_some_and(is_ident),
-        TypeExpression::Name(name) if name.starts_with("enum(") => name
-            .strip_prefix("enum(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|variants| {
-                value
-                    .as_str()
-                    .is_some_and(|text| variants.split(',').any(|v| v.trim() == text))
-            }),
-        TypeExpression::Name(name) if name == "boolean" => value.is_boolean(),
-        TypeExpression::Name(name) if name == "integer" => value.is_i64(),
-        TypeExpression::Name(name) if name.starts_with("optional(") => name
-            .strip_prefix("optional(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|inner| value.is_null() || check_type(&inline_type(inner), value)),
-        TypeExpression::Name(name) if name.starts_with("list(") => name
-            .strip_prefix("list(")
-            .and_then(|s| s.strip_suffix(')'))
-            .is_some_and(|inner| {
-                value.as_array().is_some_and(|items| {
-                    items
-                        .iter()
-                        .all(|item| check_type(&inline_type(inner), item))
-                })
-            }),
-        TypeExpression::Name(name) if name.starts_with('{') && name.ends_with('}') => {
-            check_type(&inline_type(name), value)
-        }
-        _ => false,
+        CheckedType::Text | CheckedType::RepoPath => value.is_string(),
+        CheckedType::Ident => value.as_str().is_some_and(is_ident),
+        CheckedType::Enumeration { variants } => value
+            .as_str()
+            .is_some_and(|text| variants.iter().any(|variant| variant == text)),
+        CheckedType::Boolean => value.is_boolean(),
+        CheckedType::Integer => value.is_i64(),
+        CheckedType::Optional { value: inner } => value.is_null() || check_type(inner, value),
+        CheckedType::List { item } => value
+            .as_array()
+            .is_some_and(|items| items.iter().all(|value| check_type(item, value))),
     }
-}
-fn inline_type(text: &str) -> TypeExpression {
-    let text = text.trim();
-    let Some(body) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
-        return TypeExpression::Name(text.into());
-    };
-    let mut fields = BTreeMap::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for (index, ch) in body.char_indices() {
-        match ch {
-            '{' | '(' => depth += 1,
-            '}' | ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                if let Some((key, ty)) = body[start..index].split_once(':') {
-                    fields.insert(key.trim().into(), inline_type(ty));
-                }
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if let Some((key, ty)) = body[start..].split_once(':') {
-        fields.insert(key.trim().into(), inline_type(ty));
-    }
-    TypeExpression::Record(fields)
 }
 /// The longest `ident`. Collection keys are idents taken from runtime data
 /// and every id under a member embeds its key, so an unbounded ident would
@@ -2262,15 +2217,70 @@ mod tests {
         let stage = &program.stages[0];
         assert_eq!(
             stage.artifacts[0].schema,
-            TypeExpression::Name("list(text)".into())
+            CheckedType::List {
+                item: Box::new(CheckedType::Text)
+            }
         );
         let CheckedReview::Operator { decisions, .. } = &stage.reviews[0] else {
             panic!("review is operator")
         };
         assert_eq!(
             decisions["approve"].payload,
-            Some(TypeExpression::Name("optional(list(text))".into()))
+            Some(CheckedType::Optional {
+                value: Box::new(CheckedType::List {
+                    item: Box::new(CheckedType::Text)
+                })
+            })
         );
+    }
+
+    #[test]
+    fn wrapped_record_aliases_preserve_field_names_in_checked_schemas() {
+        let source: Workflow = serde_json::from_value(serde_json::json!({
+            "workflow":"aliases", "input":{"items":"list(row)","maybe":"optional(row)"},
+            "schemas":{"row":{"a,b":"text"}},
+            "run":{"units":{"write":{"stage":"write","input":{}}},"outcome":{}},
+            "stages":{"write":{
+                "input":{}, "artifacts":{"draft":{"schema":"list(row)"}},
+                "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},
+                    "inputs":{},"creates":["draft"]}},
+                "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md",
+                    "decisions":{"approve":{"effect":"approve","label":"Approve",
+                        "payload":"optional(row)"}}}},
+                "done_when":"approved(draft)","outcome":{}
+            }}
+        }))
+        .unwrap();
+        let prompts = BTreeMap::from([
+            ("write.md".into(), String::new()),
+            ("review.md".into(), String::new()),
+        ]);
+        let program = compile_workflow(&source, &[], &prompts).unwrap();
+        let valid_row = serde_json::json!({"a,b":"ok"});
+        let invalid_row = serde_json::json!({"b":"ok"});
+        assert!(check_type(
+            &program.input,
+            &serde_json::json!({"items":[valid_row],"maybe":valid_row})
+        ));
+        assert!(!check_type(
+            &program.input,
+            &serde_json::json!({"items":[invalid_row],"maybe":null})
+        ));
+        let stage = &program.stages[0];
+        assert!(check_type(
+            &stage.artifacts[0].schema,
+            &serde_json::json!([valid_row])
+        ));
+        assert!(!check_type(
+            &stage.artifacts[0].schema,
+            &serde_json::json!([invalid_row])
+        ));
+        let CheckedReview::Operator { decisions, .. } = &stage.reviews[0] else {
+            panic!("review is operator")
+        };
+        let payload = decisions["approve"].payload.as_ref().unwrap();
+        assert!(check_type(payload, &valid_row));
+        assert!(!check_type(payload, &invalid_row));
     }
 
     #[test]
