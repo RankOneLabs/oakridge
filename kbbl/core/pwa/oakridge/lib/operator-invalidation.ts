@@ -23,7 +23,7 @@ export function invalidateOperatorTarget(client: QueryClient, frame: OperatorStr
     case "run": if (frame.run_id !== null) invalidateRun(client, frame.run_id); return;
     case "runs": invalidateRunLists(client); return;
     case "definitions": invalidateDefinitions(client); return;
-    case "projects": void client.invalidateQueries({ queryKey: queryKeys.projects }); return;
+    case "projects": invalidateProjects(client); return;
   }
 }
 
@@ -31,6 +31,18 @@ export function invalidateOperatorTarget(client: QueryClient, frame: OperatorStr
 export function invalidateRun(client: QueryClient, runId: string): void {
   void client.invalidateQueries({ queryKey: queryKeys.run(runId) });
   invalidateRunLists(client);
+}
+
+export function invalidateRunDetail(client: QueryClient, runId: string): void {
+  void client.invalidateQueries({ queryKey: queryKeys.run(runId) });
+}
+
+export function invalidateThreads(client: QueryClient, runId: string, unitId: string, revisionId: string): void {
+  void client.invalidateQueries({ queryKey: queryKeys.threads(runId, unitId, revisionId) });
+}
+
+export function invalidateProjects(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: queryKeys.projects });
 }
 
 /** A launch or accepted decision changes what the run list and the inbox show. */

@@ -2,13 +2,12 @@ import type { OperatorArtifactRevisionView, OperatorArtifactView, OperatorRunUni
 import { selectUnitAsks } from "./decision-queue";
 import { selectRootUnitId } from "./operator-selectors";
 
-export interface RunProgress { readonly complete: number; readonly total: number; readonly needs_attention: number }
+export interface RunProgress { readonly complete: number; readonly total: number }
 export interface RunArtifact { readonly unit_id: string; readonly artifact: OperatorArtifactView; readonly revision: OperatorArtifactRevisionView }
 
 export const selectRunProgress = (run: OperatorRunView): RunProgress => ({
   complete: run.units.filter((unit) => unit.status.kind === "done").length,
   total: run.units.length,
-  needs_attention: run.units.filter((unit) => !unit.is_terminal && unit.asks.length > 0).length,
 });
 
 /**
@@ -28,14 +27,8 @@ export const selectRunArtifacts = (units: readonly OperatorUnitView[]): readonly
   units.flatMap((unit) => unit.artifacts.flatMap((artifact) => artifact.latest_revision
     ? [{ unit_id: unit.unit_id, artifact, revision: artifact.latest_revision }] : []));
 
-export const selectLoadedUnits = (values: readonly (OperatorUnitView | undefined)[]): readonly OperatorUnitView[] =>
-  values.filter((value): value is OperatorUnitView => value !== undefined);
-
 export const selectUnitDetail = (units: readonly OperatorUnitView[], unitId: string | null): OperatorUnitView | null =>
   unitId === null ? null : units.find((unit) => unit.unit_id === unitId) ?? null;
-
-export const selectUnitQueryIndex = (run: OperatorRunView, unitId: string | null): number =>
-  run.units.findIndex((unit) => unit.unit_id === unitId);
 
 export const selectWaitingUnits = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
   units.filter((unit) => unit.attention?.kind === "waiting");

@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 
-import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRuns } from "../client";
+import { fetchOakridgeConfig, fetchOperatorInbox, fetchOperatorRunInbox, fetchOperatorRuns } from "../client";
 import {
   makeDecision, makeInboxDecision, makeOakridgeConfig, makeInboxPage,
   makeRunView, makeRunUnitSummary, makeUnitView,
@@ -13,7 +13,7 @@ import { ReviewInboxView } from "../views/ReviewInboxView";
 import { RunOverviewPane } from "../components/organisms/RunOverviewPane";
 import { OakridgeShell } from "../OakridgeShell";
 
-vi.mock("../client", () => ({ fetchOakridgeConfig: vi.fn(), fetchOperatorRuns: vi.fn(), fetchOperatorInbox: vi.fn(),
+vi.mock("../client", () => ({ fetchOakridgeConfig: vi.fn(), fetchOperatorRuns: vi.fn(), fetchOperatorInbox: vi.fn(), fetchOperatorRunInbox: vi.fn(),
   setOperatorRunArchived: vi.fn() }));
 
 const show = (ui: ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -25,6 +25,7 @@ const list = (onSelectRun = vi.fn(), onDefinitions = vi.fn()) => show(<RunListVi
 beforeEach(() => {
   vi.mocked(fetchOperatorRuns).mockResolvedValue([]);
   vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage());
+  vi.mocked(fetchOperatorRunInbox).mockResolvedValue(makeInboxPage());
   vi.mocked(fetchOakridgeConfig).mockResolvedValue(makeOakridgeConfig());
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -53,9 +54,9 @@ describe("generated run catalog", () => {
 
   it("shows generated inbox attention instead of a parked gate count", async () => {
     vi.mocked(fetchOperatorRuns).mockResolvedValue([makeRunView({ run_id: "run-2" })]);
-    vi.mocked(fetchOperatorInbox).mockResolvedValue(makeInboxPage({ items: [makeInboxDecision({ run_id: "run-2" })] }));
+    vi.mocked(fetchOperatorRunInbox).mockResolvedValue(makeInboxPage({ items: [makeInboxDecision({ run_id: "run-2" })] }));
     list();
-    expect((await screen.findByTestId("or-cohort-lifecycle-card")).textContent).toContain("1 need attention");
+    await waitFor(() => expect(screen.getByTestId("or-cohort-lifecycle-card").textContent).toContain("1 need attention"));
   });
 
   it("shows an empty state", async () => {
@@ -82,7 +83,7 @@ describe("unit overview and review work", () => {
   it("lists generated units and their live decisions", () => {
     const run = makeRunView({ units: [makeRunUnitSummary({ unit_id: "build", label: "Build", asks: ["approve"] })] });
     const unit = makeUnitView({ unit_id: "build", label: "Build", decisions: [makeDecision()] });
-    show(<RunOverviewPane run={run} units={[unit]} onOpenUnit={() => undefined} />);
+    show(<RunOverviewPane run={run} units={[unit]} attentionCount={1} onOpenUnit={() => undefined} />);
     expect(screen.getAllByTestId("or-stage-row")).toHaveLength(1);
     expect(screen.getByTestId("or-gate-card").textContent).toContain("Approve");
   });

@@ -4,11 +4,11 @@ import { OperatorTypedValue } from "../molecules/OperatorTypedValue";
 import { RunStageRow } from "../molecules/RunStageRows";
 import { ParkedGateList } from "./ParkedGateList";
 
-interface Props { readonly run: OperatorRunView; readonly units: readonly OperatorUnitView[]; readonly onOpenUnit: (id: string) => void }
-export function RunOverviewPane({ run, units, onOpenUnit }: Props) {
+interface Props { readonly run: OperatorRunView; readonly units: readonly OperatorUnitView[]; readonly attentionCount: number; readonly onOpenUnit: (id: string) => void }
+export function RunOverviewPane({ run, units, attentionCount, onOpenUnit }: Props) {
   const progress = selectRunProgress(run);
   return <section data-testid="or-run-overview"><h2>Overview</h2>
-    <p>{progress.complete} of {progress.total} units complete · {progress.needs_attention} need attention</p>
+    <p>{progress.complete} of {progress.total} units complete · {attentionCount} need attention</p>
     <ul>{run.units.map((unit) => <RunStageRow key={unit.unit_id} unit={unit} onOpen={onOpenUnit} />)}</ul>
     <ParkedGateList units={units} onOpenUnit={onOpenUnit} />
     {selectWaitingUnits(units).map((unit) => <section key={unit.unit_id}>

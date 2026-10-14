@@ -85,7 +85,7 @@ test("StrictMode recovery delivers one pending decision with its retained reques
   const response = new Promise<Response>((resolve) => { complete = resolve; });
   const fetch = vi.fn((_url: string, _init?: RequestInit) => response);
   vi.stubGlobal("fetch", fetch);
-  render(<StrictMode><OperatorDecisionForm unit={unit} decision={decision} schemas={[]} onRefresh={() => undefined} /></StrictMode>);
+  render(<QueryClientProvider client={client()}><StrictMode><OperatorDecisionForm unit={unit} decision={decision} schemas={[]} onRefresh={() => undefined} /></StrictMode></QueryClientProvider>);
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).request_id).toBe("stable-id");
   complete(Response.json({ kind: "committed", run_id: "run-one", event_id: "event-1" }));

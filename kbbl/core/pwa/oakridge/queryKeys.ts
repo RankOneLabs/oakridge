@@ -10,8 +10,8 @@ export const queryKeys = {
   definitionDetail: (bundleId: string | null) => ["operator", "definitions", "detail", bundleId] as const,
   projects: ["operator", "projects"] as const,
   run: (runId: string) => ["operator", runId] as const,
-  definition: (runId: string) => ["operator", runId, "definition"] as const,
-  unit: (runId: string, unitId: string | null) => ["operator", runId, "unit", unitId] as const,
+  runAttention: (runId: string) => ["operator", runId, "attention"] as const,
+  units: (runId: string) => ["operator", runId, "units"] as const,
   history: (runId: string, unitId: string) => ["operator", runId, "unit", unitId, "history"] as const,
   threads: (runId: string, unitId: string, revisionId: string) => ["operator", runId, "unit", unitId, "revision", revisionId, "threads"] as const,
 };

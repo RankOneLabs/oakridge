@@ -2,7 +2,7 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorInboxPage, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
 import type { OperatorDecisionSubmission } from "./lib/operator-drafts";
 
 const API = "/oakridge/api";
@@ -39,6 +39,8 @@ export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
 export const fetchOperatorInbox = () => readAllInboxPages(get);
 export const fetchOperatorRuns = (is_archived = false): Promise<OperatorRunView[]> => readAllPages(is_archived ? "/api/runs?archived=true" : "/api/runs");
 export const fetchOperatorRun = (runId: string): Promise<OperatorRunView> => get(`/api/runs/${encodeURIComponent(runId)}`);
+export const fetchOperatorRunInbox = (runId: string): Promise<OperatorInboxPage> => get(`/api/runs/${encodeURIComponent(runId)}/inbox`);
+export const fetchOperatorRunUnits = (runId: string): Promise<readonly OperatorUnitView[]> => get(`/api/runs/${encodeURIComponent(runId)}/units`);
 export const fetchOperatorDefinition = (runId: string): Promise<OperatorPinnedDefinition> => get(`/api/runs/${encodeURIComponent(runId)}/definition`);
 export const fetchOperatorUnit = (runId: string, unitId: string): Promise<OperatorUnitView> => get(`/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}`);
 export const fetchOperatorUnitHistory = (runId: string, unitId: string): Promise<OperatorUnitHistory> => get(`/api/runs/${encodeURIComponent(runId)}/units/${encodeURIComponent(unitId)}/history`);
