@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { currentCarrier, currentRunGeneration, DEFAULT_WORKFLOW_TIMING, dispatchChild, ensureRunRecoveryFork, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep,
-  cleanupWorkflowId, generationOf, intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, wakeRun } from "../src/workflows/topology";
+  cleanupWorkflowId, generationOf, intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, selectIsAttemptEnded, wakeRun } from "../src/workflows/topology";
 
 registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
 /** DBOS's own record of an intent's carriers under this engine version. */
@@ -172,4 +172,11 @@ test("boot fences live workflows of another engine and leaves this engine's alon
     expect(await fenceOtherEngineWorkflows()).toBe(1);
     expect(cancel).toHaveBeenCalledWith(["run:run-1"]);
   } finally { list.mockRestore(); cancel.mockRestore(); }
+});
+
+test("an attempt has ended once it has a result or a later attempt follows it", () => {
+  const running = { kind: "running" } as const;
+  expect([selectIsAttemptEnded(null, 1), selectIsAttemptEnded({ seq: 1, status: running }, 1), selectIsAttemptEnded({ seq: 1, status: { kind: "succeeded" } }, 1),
+    selectIsAttemptEnded({ seq: 2, status: running }, 1), selectIsAttemptEnded({ seq: 1, status: { kind: "succeeded" } }, 2)])
+    .toEqual([false, false, true, true, false]);
 });

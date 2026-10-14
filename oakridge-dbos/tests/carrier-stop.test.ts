@@ -5,7 +5,7 @@ import type { EffectInstruction } from "../src/domain/effect-instruction";
 import type { EffectProvider, ExternalHandle, ProviderResult, TerminalObservation } from "../src/effects/provider";
 import { HANDLE_KINDS } from "../src/effects/provider-catalog";
 import { createProductionComposition } from "../src/runtime/compose";
-import { intentWorkflowId, wakeRun } from "../src/workflows/topology";
+import { cleanupWorkflowId, intentWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launchRunId } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
@@ -233,3 +233,31 @@ test("a start carrier that finished while its intent is still owed ends the atte
     run_errors: workflows.filter((workflow) => workflow.status === "ERROR").length, stopped: stop_calls.get(run_id)?.some((handle) => handle?.session_id === "s-orphan") ?? false })
     .toEqual({ status: "stopped", origin: "executor", run_errors: 0, stopped: true });
 }, 30_000);
+
+test("a stop commit requested after the turn ended closes the session without ending the attempt again", async () => {
+  const request_id = crypto.randomUUID();
+  // Settling this run's intents is refused until kbbl is asked to stop, so the cancel lands while the ended turn's intent is still owed.
+  await sql`CREATE TABLE public.settle_fault_run (run_id text PRIMARY KEY);
+    CREATE FUNCTION public.fail_settle() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.status = 'stopped' AND OLD.status <> 'stopped' AND EXISTS (SELECT 1 FROM public.settle_fault_run WHERE run_id = NEW.run_id)
+        THEN RAISE EXCEPTION 'settle refused'; END IF;
+      RETURN NEW; END $$;
+    CREATE TRIGGER fail_settle BEFORE UPDATE ON authority.effect_intent FOR EACH ROW EXECUTE FUNCTION public.fail_settle()`.execute(db);
+  await sql`INSERT INTO public.settle_fault_run VALUES (${launchRunId(request_id)})`.execute(db);
+  const run_id = await launchScripted({ start: { kind: "acknowledged", value: session("s-ended") },
+    observe: { kind: "acknowledged", value: { kind: "terminal", result: { kind: "succeeded" } } }, stops: [STOPPED] }, request_id);
+  const firstAttempt = () => db.selectFrom("authority.attempt").select(["action_id", "status"]).where("run_id", "=", run_id).where("seq", "=", 1)
+    .orderBy("action_id").executeTakeFirstOrThrow();
+  for (let poll = 0; poll < 150 && !["succeeded", "failed"].includes((await firstAttempt()).status.kind); poll++) await Bun.sleep(100);
+  const ended = await firstAttempt();
+  const intent_id = (await db.selectFrom("authority.effect_intent").select("id").where("action_id", "=", ended.action_id).executeTakeFirstOrThrow()).id;
+  expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
+  for (let poll = 0; poll < 150 && !stop_calls.get(run_id)?.length; poll++) await Bun.sleep(100);
+  await sql`DELETE FROM public.settle_fault_run`.execute(db);
+  const statusOf = async () => (await db.selectFrom("authority.effect_intent").select("status").where("id", "=", intent_id).executeTakeFirstOrThrow()).status;
+  for (let poll = 0; poll < 300 && await statusOf() !== "stopped"; poll++) await Bun.sleep(100);
+  const reports = (await DBOS.listWorkflowSteps(cleanupWorkflowId(intent_id)) ?? []).filter((step) => step.name === "oakridgeReportWorker");
+  expect({ status: await statusOf(), attempt: (await firstAttempt()).status, refused: reports.map((step) => step.output).filter((output) => output !== null),
+    stopped: stop_calls.get(run_id)?.some((handle) => handle?.session_id === "s-ended") ?? false })
+    .toEqual({ status: "stopped", attempt: ended.status, refused: [], stopped: true });
+}, 60_000);
