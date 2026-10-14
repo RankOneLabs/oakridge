@@ -303,8 +303,20 @@ pub struct ResolvedRunWorker {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StepError {
-    Rejected { reason: String },
-    Invalid { detail: String },
+    /// The event itself is refused against the snapshot.
+    Rejected {
+        reason: String,
+    },
+    /// The event was accepted, but advancing the run past it was refused at
+    /// `unit` (a group whose members cannot be made, a limit hit while
+    /// evaluating it), so the event is refused with it (D-V4).
+    Stalled {
+        unit: UnitId,
+        reason: String,
+    },
+    Invalid {
+        detail: String,
+    },
 }
 
 #[cfg(test)]

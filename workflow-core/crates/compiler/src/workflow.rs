@@ -391,6 +391,7 @@ fn compile_stage(
         aliases: &workflow.schemas,
         body: None,
         guaranteed: BTreeSet::new(),
+        collections: BTreeSet::new(),
     };
     let mut owners = BTreeMap::<String, String>::new();
     let mut workers = Vec::new();
@@ -670,8 +671,17 @@ fn compile_group(
         }
         if let UnitDependencies::Fixed(after) = &unit.after {
             for dependency in after {
-                if !group.units.contains_key(&dependency.0) {
+                let Some(prerequisite) = group.units.get(&dependency.0) else {
                     return Err(reject(1, format!("unit {dependency} absent")));
+                };
+                // Members are units of their own, `group/<key>`: no unit is the collection.
+                if prerequisite.for_each.is_some() {
+                    return Err(reject(
+                        2,
+                        format!(
+                            "unit {key} waits on collection {dependency}, which is no one unit"
+                        ),
+                    ));
                 }
             }
         }
@@ -685,6 +695,16 @@ fn compile_group(
                     return Err(reject(3, format!("unit {key} reads {other} outside after")));
                 }
             }
+        }
+    }
+    // A member's id is `group/<key>`, its key runtime data, so a sibling's
+    // id (or another collection's member's) could be any member's.
+    if let Some((collection, _)) = group.units.iter().find(|(_, unit)| unit.for_each.is_some()) {
+        if group.units.len() > 1 {
+            return Err(reject(
+                2,
+                format!("collection {collection} shares its group, so a member key could collide with a sibling"),
+            ));
         }
     }
     fn visit(
@@ -739,6 +759,7 @@ fn compile_group(
             aliases: &workflow.schemas,
             body: None,
             guaranteed: BTreeSet::new(),
+            collections: BTreeSet::new(),
         };
         let collection = if let Some(source) = &unit.for_each {
             let source = checked(source, &scope)?;
@@ -828,6 +849,12 @@ fn compile_group(
         aliases: &workflow.schemas,
         body: None,
         guaranteed: BTreeSet::new(),
+        collections: group
+            .units
+            .iter()
+            .filter(|(_, unit)| unit.for_each.is_some())
+            .map(|(key, _)| key.clone())
+            .collect(),
     };
     let mut checked_outcome = Vec::new();
     for (key, source) in &group.outcome {

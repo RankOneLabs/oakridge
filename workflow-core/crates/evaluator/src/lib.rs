@@ -15,6 +15,21 @@ mod v2_step {
             detail: detail.into(),
         }
     }
+    /// Attribute an error raised while advancing `unit` to it (D-V4): a
+    /// refusal there stalls the run at that unit rather than refusing the
+    /// event for what it is, and an inconsistency names where it was found.
+    fn advancing(unit: &UnitId) -> impl Fn(StepError) -> StepError + '_ {
+        move |error| match error {
+            StepError::Rejected { reason } => StepError::Stalled {
+                unit: unit.clone(),
+                reason,
+            },
+            StepError::Invalid { detail } => StepError::Invalid {
+                detail: format!("advancing {unit}: {detail}"),
+            },
+            stalled @ StepError::Stalled { .. } => stalled,
+        }
+    }
     struct EvaluationContext<'a> {
         limits: &'a ResourceLimits,
         remaining: Cell<usize>,
@@ -551,6 +566,27 @@ mod v2_step {
             },
         }
     }
+    /// Whether a worker that creates `artifact` has an attempt open, so its
+    /// latest revision may yet be followed by the rest of that attempt's output.
+    fn is_creator_working(
+        definition: &Stage,
+        state: &StepSnapshot,
+        unit: &UnitId,
+        artifact: &SymbolKey,
+    ) -> bool {
+        definition
+            .workers
+            .iter()
+            .filter(|(_, worker)| creates(worker).contains(artifact))
+            .any(|(key, _)| {
+                attempt(state, unit, &WorkerKey::from(key.as_str())).is_some_and(|current| {
+                    matches!(
+                        current.status,
+                        AttemptStatus::Pending | AttemptStatus::Running
+                    )
+                })
+            })
+    }
     fn is_periodic(worker: &Worker) -> bool {
         matches!(worker, Worker::Code { every: Some(_), .. })
     }
@@ -618,6 +654,12 @@ mod v2_step {
                     reviews: Some(subject),
                     ..
                 } => {
+                    // The subject's creator may still replace it (a revise
+                    // publishes the new build before its PR): review only what
+                    // a finished attempt left.
+                    if is_creator_working(definition, state, &unit.id, subject) {
+                        continue;
+                    }
                     let Some(subject) = latest(state, &unit.id, subject) else {
                         continue;
                     };
@@ -1133,6 +1175,47 @@ mod v2_step {
         }
         Ok(())
     }
+    fn group_outcome(
+        program: &CheckedWorkflow,
+        state: &StepSnapshot,
+        unit: &UnitState,
+        context: &EvaluationContext<'_>,
+    ) -> Result<Value, StepError> {
+        eval_fields(
+            &checked_group_for(program, state, unit)?.outcome,
+            unit,
+            state,
+            None,
+            context,
+        )?
+        .ok_or_else(|| invalid("group outcome unresolved"))
+    }
+    /// Materialize an active group's members. A group with none (a collection
+    /// over an empty list) is done at once: this is the one step that holds
+    /// all of its members, since a snapshot omits a non-ancestor's children.
+    fn start_group(
+        program: &CheckedWorkflow,
+        state: &mut StepSnapshot,
+        group_id: &UnitId,
+        context: &EvaluationContext<'_>,
+    ) -> Result<(), StepError> {
+        materialize_group(program, state, group_id, context)?;
+        if state
+            .units
+            .iter()
+            .any(|unit| unit.parent.as_ref() == Some(group_id))
+        {
+            return Ok(());
+        }
+        let index = state
+            .units
+            .iter()
+            .position(|unit| unit.id == *group_id)
+            .ok_or_else(|| invalid("group absent"))?;
+        let outcome = group_outcome(program, state, &state.units[index], context)?;
+        state.units[index].status = UnitStatus::Done { outcome };
+        Ok(())
+    }
     fn reduce(
         program: &CheckedWorkflow,
         state: &mut StepSnapshot,
@@ -1161,7 +1244,7 @@ mod v2_step {
                     pool: None,
                 });
                 let root = state.run.root.clone();
-                materialize_group(program, state, &root, context)?;
+                start_group(program, state, &root, context)?;
             }
             Event::WorkerStarted {
                 action,
@@ -1399,6 +1482,9 @@ mod v2_step {
                     .iter()
                     .find(|u| u.id == *unit)
                     .ok_or_else(|| rejected("unit absent"))?;
+                if !matches!(owner.status, UnitStatus::Active) {
+                    return Err(rejected("unit is not active"));
+                }
                 let definition = stage(program, owner)?;
                 let review_definition = definition
                     .reviews
@@ -1477,6 +1563,14 @@ mod v2_step {
                 }) {
                     return Ok(());
                 }
+                let owner = state
+                    .units
+                    .iter()
+                    .find(|u| u.id == *unit)
+                    .ok_or_else(|| rejected("unit absent"))?;
+                if !matches!(owner.status, UnitStatus::Active) {
+                    return Err(rejected("unit is not active"));
+                }
                 let previous = attempt(state, unit, worker)
                     .ok_or_else(|| rejected("worker has no attempt"))?;
                 if !matches!(previous.status, AttemptStatus::Failed { .. }) {
@@ -1498,6 +1592,12 @@ mod v2_step {
                 state.retry_events.push((unit.clone(), worker.clone(), id));
             }
             Event::CancelRequested => {
+                // A finished run stays finished; a cancelled one is cancelled once.
+                match state.run.status {
+                    UnitStatus::Done { .. } => return Err(rejected("run is done")),
+                    UnitStatus::Cancelled => return Ok(()),
+                    _ => {}
+                }
                 for unit in &mut state.units {
                     if !matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
                         unit.status = UnitStatus::Cancelled;
@@ -1535,21 +1635,7 @@ mod v2_step {
             // Wait for the target's creator to finish its attempt: a revise that
             // has published the new target but not yet the rest of its output
             // (a replacement PR) would otherwise be judged on what it replaces.
-            let is_creator_working = definition
-                .workers
-                .iter()
-                .filter(|(_, worker)| creates(worker).contains(target_artifact))
-                .any(|(key, _)| {
-                    attempt(state, &unit.id, &WorkerKey::from(key.as_str())).is_some_and(
-                        |current| {
-                            matches!(
-                                current.status,
-                                AttemptStatus::Pending | AttemptStatus::Running
-                            )
-                        },
-                    )
-                });
-            if is_creator_working {
+            if is_creator_working(definition, state, &unit.id, target_artifact) {
                 continue;
             }
             let is_decided = state.decisions.iter().any(|existing| {
@@ -1572,59 +1658,67 @@ mod v2_step {
         }
         Ok(None)
     }
+    /// One move of an active unit: a stage completes or its engine review
+    /// decides; a group whose members are all done completes.
+    fn advance_active(
+        program: &CheckedWorkflow,
+        state: &mut StepSnapshot,
+        index: usize,
+        context: &EvaluationContext<'_>,
+    ) -> Result<bool, StepError> {
+        let unit = state.units[index].clone();
+        if unit.stage.is_some() {
+            let definition = checked_stage(program, &unit)?;
+            if eval_expression(
+                &definition.done_when.expression,
+                &unit,
+                state,
+                None,
+                None,
+                context,
+            )? == Some(Value::Bool(true))
+            {
+                let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
+                    .ok_or_else(|| invalid("stage outcome unresolved"))?;
+                state.units[index].status = UnitStatus::Done { outcome };
+                return Ok(true);
+            }
+            if let Some(decision) = engine_decision(program, state, &unit, context)? {
+                state.decisions.push(decision);
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        let children: Vec<_> = state
+            .units
+            .iter()
+            .filter(|u| u.parent.as_ref() == Some(&unit.id))
+            .collect();
+        // An empty group completed when it materialized: no children here
+        // means a snapshot that omits them, not a group that has none.
+        if !children.is_empty()
+            && children
+                .iter()
+                .all(|u| matches!(u.status, UnitStatus::Done { .. }))
+        {
+            let outcome = group_outcome(program, state, &unit, context)?;
+            state.units[index].status = UnitStatus::Done { outcome };
+            return Ok(true);
+        }
+        Ok(false)
+    }
     fn advance(
         program: &CheckedWorkflow,
         state: &mut StepSnapshot,
         context: &EvaluationContext<'_>,
     ) -> Result<bool, StepError> {
         for index in 0..state.units.len() {
-            let unit = state.units[index].clone();
-            if matches!(unit.status, UnitStatus::Done { .. } | UnitStatus::Cancelled) {
+            if !matches!(state.units[index].status, UnitStatus::Active) {
                 continue;
             }
-            if unit.stage.is_some() && matches!(unit.status, UnitStatus::Active) {
-                let definition = checked_stage(program, &unit)?;
-                if eval_expression(
-                    &definition.done_when.expression,
-                    &unit,
-                    state,
-                    None,
-                    None,
-                    context,
-                )? == Some(Value::Bool(true))
-                {
-                    let outcome = eval_fields(&definition.outcome, &unit, state, None, context)?
-                        .ok_or_else(|| invalid("stage outcome unresolved"))?;
-                    state.units[index].status = UnitStatus::Done { outcome };
-                    return Ok(true);
-                }
-                if let Some(decision) = engine_decision(program, state, &unit, context)? {
-                    state.decisions.push(decision);
-                    return Ok(true);
-                }
-            }
-            if unit.stage.is_none() && matches!(unit.status, UnitStatus::Active) {
-                let children: Vec<_> = state
-                    .units
-                    .iter()
-                    .filter(|u| u.parent.as_ref() == Some(&unit.id))
-                    .collect();
-                if !children.is_empty()
-                    && children
-                        .iter()
-                        .all(|u| matches!(u.status, UnitStatus::Done { .. }))
-                {
-                    let outcome = eval_fields(
-                        &checked_group_for(program, state, &unit)?.outcome,
-                        &unit,
-                        state,
-                        None,
-                        context,
-                    )?
-                    .ok_or_else(|| invalid("group outcome unresolved"))?;
-                    state.units[index].status = UnitStatus::Done { outcome };
-                    return Ok(true);
-                }
+            let unit_id = state.units[index].id.clone();
+            if advance_active(program, state, index, context).map_err(advancing(&unit_id))? {
+                return Ok(true);
             }
         }
         let mut candidates: Vec<_> = state
@@ -1641,6 +1735,22 @@ mod v2_step {
             .collect();
         candidates.sort_by_key(|&index| state.units[index].id.clone());
         for index in candidates {
+            let unit_id = state.units[index].id.clone();
+            if start_candidate(program, state, index, context).map_err(advancing(&unit_id))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    /// Start a unit that is not started or blocked, once what it waits on is
+    /// done and its pool has room; otherwise record why it is blocked.
+    fn start_candidate(
+        program: &CheckedWorkflow,
+        state: &mut StepSnapshot,
+        index: usize,
+        context: &EvaluationContext<'_>,
+    ) -> Result<bool, StepError> {
+        {
             let unit = state.units[index].clone();
             let waiting: Vec<_> = unit
                 .after
@@ -1657,7 +1767,7 @@ mod v2_step {
                 state.units[index].status = UnitStatus::Blocked {
                     reason: BlockedReason::WaitingOn { units: waiting },
                 };
-                continue;
+                return Ok(false);
             }
             if let Some(pool) = &unit.pool {
                 let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
@@ -1683,7 +1793,7 @@ mod v2_step {
                     state.units[index].status = UnitStatus::Blocked {
                         reason: BlockedReason::Capacity { pool: pool.clone() },
                     };
-                    continue;
+                    return Ok(false);
                 }
             }
             if unit.input.is_null() {
@@ -1702,11 +1812,10 @@ mod v2_step {
             }
             state.units[index].status = UnitStatus::Active;
             if unit.stage.is_none() {
-                materialize_group(program, state, &unit.id, context)?;
+                start_group(program, state, &unit.id, context)?;
             }
-            return Ok(true);
+            Ok(true)
         }
-        Ok(false)
     }
     /// Pure reducer and bounded internal Start/Complete fixpoint. The snapshot carries
     /// the affected unit, its ancestors, and the evidence required by those units.
@@ -1741,8 +1850,27 @@ mod v2_step {
         }
         let mut state = snapshot.clone();
         reduce(program, &mut state, incoming, &context)?;
+        match advance_reduced(program, state, &context) {
+            // A launch that cannot advance never started: it is refused, as a
+            // launch whose input fails, not a stall of a run that is going.
+            Err(StepError::Stalled { reason, .. })
+                if matches!(incoming.event, Event::Launched { .. }) =>
+            {
+                Err(StepError::Rejected { reason })
+            }
+            other => other,
+        }
+    }
+    /// Everything after the event is applied: advance to a fixpoint, then
+    /// resolve what each active stage wants. Nothing here is the event's own
+    /// fault, so each error is attributed to the unit it was raised on.
+    fn advance_reduced(
+        program: &CheckedWorkflow,
+        mut state: StepSnapshot,
+        context: &EvaluationContext<'_>,
+    ) -> Result<StepResult, StepError> {
         if !matches!(state.run.status, UnitStatus::Cancelled) {
-            while advance(program, &mut state, &context)? {}
+            while advance(program, &mut state, context)? {}
             if let Some(root) = state.units.iter().find(|u| u.id == state.run.root) {
                 state.run.status = root.status.clone();
             }
@@ -1757,45 +1885,11 @@ mod v2_step {
             .cloned()
             .collect();
         for unit in active {
-            let stage_unit = unit.clone();
-            let actions = stage_actions(program, &state, &unit, &context)?;
-            for action in &actions {
-                if let Action::RunWorker {
-                    unit,
-                    worker,
-                    mode,
-                    cause,
-                } = action
-                {
-                    let id = action_id(unit, worker, mode, cause);
-                    resolved.push(resolve_run_worker(
-                        program,
-                        &state,
-                        &stage_unit,
-                        &RunWorkerAction {
-                            worker,
-                            mode,
-                            cause,
-                        },
-                        &context,
-                    )?);
-                    if !state.attempts.iter().any(|a| a.action_id == id) {
-                        state.attempts.push(AttemptState {
-                            action_id: id,
-                            seq: 1,
-                            unit: unit.clone(),
-                            worker: worker.clone(),
-                            mode: mode.clone(),
-                            cause: cause.clone(),
-                            status: AttemptStatus::Pending,
-                            kbbl_session_id: None,
-                            ended_at: None,
-                        });
-                    }
-                }
-            }
-            reviews.extend(resolve_reviews(program, &state, &stage_unit, &context)?);
-            wanted.push((unit.id, actions));
+            let wants =
+                stage_wants(program, &mut state, &unit, context).map_err(advancing(&unit.id))?;
+            resolved.extend(wants.resolved);
+            reviews.extend(wants.reviews);
+            wanted.push((unit.id, wants.actions));
         }
         let statuses = state
             .units
@@ -1806,6 +1900,64 @@ mod v2_step {
             snapshot: state,
             statuses,
             wanted,
+            resolved,
+            reviews,
+        })
+    }
+    /// What one active stage wants after the step, each wanted worker with
+    /// what it runs with, and the operator reviews open on it.
+    struct StageWants {
+        actions: Vec<Action>,
+        resolved: Vec<ResolvedRunWorker>,
+        reviews: Vec<ResolvedReview>,
+    }
+    /// A wanted worker with no attempt yet gets its pending one.
+    fn stage_wants(
+        program: &CheckedWorkflow,
+        state: &mut StepSnapshot,
+        stage_unit: &UnitState,
+        context: &EvaluationContext<'_>,
+    ) -> Result<StageWants, StepError> {
+        let actions = stage_actions(program, state, stage_unit, context)?;
+        let mut resolved = Vec::new();
+        for action in &actions {
+            if let Action::RunWorker {
+                unit,
+                worker,
+                mode,
+                cause,
+            } = action
+            {
+                let id = action_id(unit, worker, mode, cause);
+                resolved.push(resolve_run_worker(
+                    program,
+                    state,
+                    stage_unit,
+                    &RunWorkerAction {
+                        worker,
+                        mode,
+                        cause,
+                    },
+                    context,
+                )?);
+                if !state.attempts.iter().any(|a| a.action_id == id) {
+                    state.attempts.push(AttemptState {
+                        action_id: id,
+                        seq: 1,
+                        unit: unit.clone(),
+                        worker: worker.clone(),
+                        mode: mode.clone(),
+                        cause: cause.clone(),
+                        status: AttemptStatus::Pending,
+                        kbbl_session_id: None,
+                        ended_at: None,
+                    });
+                }
+            }
+        }
+        let reviews = resolve_reviews(program, state, stage_unit, context)?;
+        Ok(StageWants {
+            actions,
             resolved,
             reviews,
         })
@@ -2509,6 +2661,35 @@ mod v2_step {
             );
         }
         #[test]
+        fn a_reviewer_waits_for_its_subjects_creator_to_end_its_attempt() {
+            let program = sample("review-loop");
+            let published = [
+                serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+                serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+                serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                    "artifact":"draft","body":{"title":"First","body":"Long"}}),
+            ];
+            let wants_critic = |result: &StepResult| {
+                result.wanted.iter().flat_map(|(_, actions)| actions).any(|action| {
+                    matches!(action, Action::RunWorker { worker, .. } if worker.0 == "critic")
+                })
+            };
+            let writing = step_specs(&program, &snapshot(), &published);
+            let ended = step_specs(
+                &program,
+                &snapshot(),
+                &[
+                    published.as_slice(),
+                    &[serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"})],
+                ]
+                .concat(),
+            );
+            assert_eq!(
+                (wants_critic(&writing), wants_critic(&ended)),
+                (false, true)
+            );
+        }
+        #[test]
         fn reviewer_receives_the_revision_it_reviews_as_subject() {
             let program = sample("review-loop");
             let result = step_specs(
@@ -2519,6 +2700,7 @@ mod v2_step {
                     serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
                     serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
                         "artifact":"draft","body":{"title":"First","body":"Long"}}),
+                    serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
                 ],
             );
             let subject = resolved_for(&result, "critic").subject.as_ref().unwrap();
@@ -3437,6 +3619,140 @@ mod v2_step {
                     )
                 ),
                 Err(StepError::Rejected { .. })
+            ));
+        }
+        /// Fan-out launched over `items`, then its workspace published: the
+        /// step that starts the collection group.
+        fn fan_out_preparing(items: Value) -> (CheckedWorkflow, StepSnapshot, Incoming) {
+            let program = sample("fan-out");
+            let input = serde_json::json!({"repository":{"repository_path":"/tmp/repo","expected_head":null},"items":items});
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(Event::Launched { input }, "launch"),
+            )
+            .unwrap()
+            .snapshot;
+            let git = launched.attempts[0].action_id.clone();
+            let publish = Event::RevisionPublished {
+                unit: UnitId::from("run/prepare"),
+                artifact: SymbolKey::from("workspace"),
+                body: serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc"}),
+                predecessor: None,
+                subject: None,
+                by: Some(git),
+            };
+            (program, launched, incoming(publish, "publish"))
+        }
+        #[test]
+        fn a_collection_over_an_empty_list_completes_its_group_and_the_run() {
+            let (program, launched, publish) = fan_out_preparing(serde_json::json!([]));
+            let result = step(&program, &launched, &publish).unwrap();
+            let work = result
+                .snapshot
+                .units
+                .iter()
+                .find(|unit| unit.id.0 == "run/work")
+                .unwrap();
+            assert_eq!(
+                (&work.status, &result.snapshot.run.status),
+                (
+                    &UnitStatus::Done {
+                        outcome: serde_json::json!({"results": []})
+                    },
+                    &UnitStatus::Done {
+                        outcome: serde_json::json!({"results": []})
+                    }
+                )
+            );
+        }
+        #[test]
+        fn a_group_that_cannot_materialize_after_launch_stalls_at_that_group() {
+            let item = serde_json::json!({"key":"same","text":"t","after":[]});
+            let (program, launched, publish) =
+                fan_out_preparing(serde_json::json!([item.clone(), item]));
+            assert!(matches!(
+                step(&program, &launched, &publish),
+                Err(StepError::Stalled { unit, reason })
+                    if unit.0 == "run/work" && reason.contains("duplicate key")
+            ));
+        }
+        /// The review-loop trace played to its end: the run is done.
+        fn review_loop_done() -> (CheckedWorkflow, StepSnapshot) {
+            let program = sample("review-loop");
+            let trace: Value =
+                serde_json::from_str(include_str!("../../../fixtures/traces/review-loop.json"))
+                    .unwrap();
+            let mut state = snapshot();
+            for (index, row) in trace["rows"].as_array().unwrap().iter().enumerate() {
+                state = apply_row(&program, &state, row, index);
+            }
+            (program, state)
+        }
+        #[test]
+        fn a_done_run_refuses_cancel() {
+            let (program, done) = review_loop_done();
+            assert!(matches!(
+                step(&program, &done, &incoming(Event::CancelRequested, "cancel")),
+                Err(StepError::Rejected { reason }) if reason == "run is done"
+            ));
+        }
+        #[test]
+        fn a_done_unit_refuses_a_decision() {
+            let (program, done) = review_loop_done();
+            let decision = Event::OperatorDecided {
+                unit: UnitId::from("run/document"),
+                review: SymbolKey::from("editor"),
+                decision: SymbolKey::from("request_changes"),
+                target: RevisionId::from("run/document:draft:3"),
+                payload: serde_json::json!({"feedback": "again"}),
+            };
+            assert!(matches!(
+                step(&program, &done, &incoming(decision, "late")),
+                Err(StepError::Rejected { reason }) if reason == "unit is not active"
+            ));
+        }
+        #[test]
+        fn a_cancelled_unit_refuses_a_retry_of_its_failed_worker() {
+            let program = program();
+            let launched = step(
+                &program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let writer = launched.attempts[0].action_id.clone();
+            let failed = run_attempt(
+                &program,
+                &launched,
+                &writer,
+                WorkerResult::Failed {
+                    code: "oops".into(),
+                    detail: "failed".into(),
+                },
+                "writer",
+            )
+            .snapshot;
+            let cancelled = step(
+                &program,
+                &failed,
+                &incoming(Event::CancelRequested, "cancel"),
+            )
+            .unwrap()
+            .snapshot;
+            let retry = Event::RetryRequested {
+                unit: UnitId::from("run/document"),
+                worker: WorkerKey::from("writer"),
+            };
+            assert!(matches!(
+                step(&program, &cancelled, &incoming(retry, "retry")),
+                Err(StepError::Rejected { reason }) if reason == "unit is not active"
             ));
         }
         #[test]

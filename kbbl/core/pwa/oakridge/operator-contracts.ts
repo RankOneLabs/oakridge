@@ -35,6 +35,9 @@ export interface OperatorRunInspectView {
 }
 
 export type OperatorInspectAttention =
+  /** The run could not advance past `event` (D-V4); the decisions are the run's cancel. */
+  | { readonly kind: "stalled_run"; readonly unit_id: string; readonly stall: OperatorRunStall["kind"]; readonly reason: string; readonly event: OperatorEvent;
+    readonly decisions: readonly OperatorDecisionDefinition[] }
   | { readonly kind: "stalled_worker"; readonly unit_id: string; readonly worker: string; readonly action_id: string; readonly detail: string;
     readonly decisions: readonly OperatorDecisionDefinition[] }
   | { readonly kind: "awaiting_review"; readonly unit_id: string; readonly review: string; readonly target: string;
@@ -211,6 +214,18 @@ export interface OperatorAttemptView {
 
 export interface OperatorInspectEvent { readonly id: string; readonly unit_id: string | null; readonly kind: string; readonly writer: OperatorWriter; readonly created_at: string }
 
+export interface OperatorRunStall {
+  readonly kind: "stalled" | "faulted";
+  /** Where advancing stopped; for a fault, the unit its event addressed (the root for a launch or a cancel). */
+  readonly unit_id: string;
+  readonly reason: string;
+  /** The event it refused or faulted on. */
+  readonly event: OperatorEvent;
+  readonly ingress_id: string | null;
+}
+
+export type OperatorEvent = { readonly "input": unknown; readonly "kind": "launched" } | { readonly "action": string; readonly "kbbl_session_id"?: string | null; readonly "kind": "worker_started" } | { readonly "action": string; readonly "kind": "worker_ended"; readonly "result": OperatorWorkerResult } | { readonly "artifact": string; readonly "body": unknown; readonly "by"?: string | null; readonly "kind": "revision_published"; readonly "predecessor"?: string | null; readonly "subject"?: string | null; readonly "unit": string } | { readonly "decision": string; readonly "kind": "operator_decided"; readonly "payload": unknown; readonly "review": string; readonly "target": string; readonly "unit": string } | { readonly "kind": "retry_requested"; readonly "unit": string; readonly "worker": string } | { readonly "kind": "cancel_requested" };
+
 export interface OperatorDecisionDefinition {
   /** Unique within the unit: the decision key, `<review>:<decision>` where a stage reuses a key across reviews, `retry:<worker>`, or `cancel`. */
   readonly key: string;
@@ -318,8 +333,6 @@ export interface OperatorCollaborationDeliveryRecord {
 
 export interface OperatorForgeRepository { readonly provider: "github"; readonly owner: string; readonly name: string }
 
-export type OperatorEvent = { readonly "input": unknown; readonly "kind": "launched" } | { readonly "action": string; readonly "kbbl_session_id"?: string | null; readonly "kind": "worker_started" } | { readonly "action": string; readonly "kind": "worker_ended"; readonly "result": OperatorWorkerResult } | { readonly "artifact": string; readonly "body": unknown; readonly "by"?: string | null; readonly "kind": "revision_published"; readonly "predecessor"?: string | null; readonly "subject"?: string | null; readonly "unit": string } | { readonly "decision": string; readonly "kind": "operator_decided"; readonly "payload": unknown; readonly "review": string; readonly "target": string; readonly "unit": string } | { readonly "kind": "retry_requested"; readonly "unit": string; readonly "worker": string } | { readonly "kind": "cancel_requested" };
-
 export interface OperatorAwaitingReviewNotice { readonly review: string; readonly label: string }
 
 export interface OperatorRunConfig { readonly sessions: { readonly [stage: string]: OperatorSessionSettings } }
@@ -335,6 +348,8 @@ export type OperatorMode = { readonly "kind": "initial" } | { readonly "kind": "
 export type OperatorCause = { readonly "kind": "missing" } | { readonly "decision": string; readonly "kind": "changes_requested" } | { readonly "kind": "review_of"; readonly "revision": string } | { readonly "event": string; readonly "kind": "retry" } | { readonly "inputs": string; readonly "kind": "periodic"; readonly "replaces"?: string | null };
 
 export type OperatorWriter = { readonly "attempt": string; readonly "kind": "session"; readonly "session": string } | { readonly "attempt": string; readonly "kind": "executor" } | { readonly "kind": "operator"; readonly "subject": string } | { readonly "kind": "engine" };
+
+export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
 export interface OperatorDecisionField { readonly key: string; readonly label: string }
 
@@ -371,8 +386,6 @@ export interface OperatorReviewItemBody { readonly title: string; readonly detai
 export type OperatorCollaborationDeliveryPayload =
   | { readonly status: "delivered"; readonly session_id: string; readonly reason: null; readonly request_key: string }
   | { readonly status: "failed"; readonly session_id: null; readonly reason: string; readonly request_key: string };
-
-export type OperatorWorkerResult = { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
 export interface OperatorSessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }
 

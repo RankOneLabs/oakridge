@@ -167,6 +167,9 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                         StepError::Rejected { reason } => {
                             DomainError::new(DomainErrorKind::RejectedEvent, "step", reason)
                         }
+                        StepError::Stalled { unit, reason } => {
+                            DomainError::new(DomainErrorKind::StalledEvent, unit.0, reason)
+                        }
                         StepError::Invalid { detail } => {
                             DomainError::new(DomainErrorKind::InvalidSnapshot, "step", detail)
                         }

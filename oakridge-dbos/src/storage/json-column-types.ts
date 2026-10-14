@@ -33,7 +33,23 @@ export type PinnedPrompts = { readonly [path: string]: string };
 /** What an ingress id resolved to. A rejection is stored so a replay returns it again. */
 export type CommitReceipt =
   | { readonly kind: "committed"; readonly event_id: string }
-  | { readonly kind: "rejected"; readonly reason: string };
+  /** `stall` is set when step refused the event because advancing the run past it failed (D-V4). */
+  | { readonly kind: "rejected"; readonly reason: string; readonly stall?: StallRecord };
+/**
+ * Where the run could not advance past an event, and which event it refused.
+ * It stands while `after_event` is still the latest event committed on the
+ * refused event's unit: a later commit there (a corrected publication, a
+ * different decision) means the run moved on.
+ */
+export interface StallRecord {
+  /** The unit advancing stopped at: a group that cannot materialize, a stage whose evaluation hit a limit. */
+  readonly unit_id: string;
+  readonly event: Event;
+  /** The latest event committed on the refused event's unit when it was refused; null when there was none. */
+  readonly after_event: string | null;
+  /** When it was refused (ISO-8601): orders a run's stalls among themselves. */
+  readonly refused_at: string;
+}
 
 export interface CollaborationThreadContext { readonly title: string; readonly anchor: string | null }
 export interface CollaborationMessageBody { readonly text: string; readonly author: string; readonly ping?: boolean }

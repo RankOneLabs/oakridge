@@ -435,6 +435,9 @@ pub(crate) struct Scope<'a> {
     pub aliases: &'a BTreeMap<String, TypeExpression>,
     pub body: Option<(&'a str, &'a TypeExpression)>,
     pub guaranteed: BTreeSet<String>,
+    /// Collection units in `outcomes`: a collection has one outcome per
+    /// member, so its outcome is read only through `map`.
+    pub collections: BTreeSet<String>,
 }
 impl Scope<'_> {
     fn guarded_by(&self, expression: &StageExpr) -> Self {
@@ -717,6 +720,12 @@ pub(crate) fn infer(
             read_path(item, path, scope, "item field absent")
         }
         StageExpr::Outcome { unit, path } => {
+            if scope.collections.contains(unit) {
+                return Err(reject(
+                    4,
+                    format!("collection {unit} outcome is read only through map"),
+                ));
+            }
             let ty = scope.outcomes.get(unit).ok_or_else(|| {
                 reject(
                     1,

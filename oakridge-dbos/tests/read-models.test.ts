@@ -293,8 +293,9 @@ describe("derived fields", () => {
     const { run_id, unit } = await drafted();
     await decide(run_id, unit, "approve", `${unit}:draft:9`, {});
     const diagnostics = await get<UnitDiagnostics>(unitPath(run_id, unit, "/diagnostics"));
+    // The writer's intent only: the critic waits for the writer's attempt to end.
     expect({ effects: diagnostics.effects.map((effect) => effect.status), rejected: diagnostics.rejected.map((receipt) => receipt.reason.length > 0) })
-      .toEqual({ effects: ["pending", "pending"], rejected: [true] });
+      .toEqual({ effects: ["pending"], rejected: [true] });
   });
 
   test("an artifact's status follows the latest decision on its latest revision", async () => {
