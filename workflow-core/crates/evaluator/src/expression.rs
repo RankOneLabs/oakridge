@@ -30,28 +30,20 @@ pub fn eval_expression(
         item: None,
         body: own_body,
     };
-    let result = eval_expression_inner(expression, unit, state, bindings, context);
-    if let Some(error) = context.take_error() {
-        return Err(error);
-    }
+    let result = eval_expression_inner(expression, unit, state, bindings, context)?;
     if let Some(value) = &result {
         context.check_value(value)?;
     }
     Ok(result)
 }
-/// The graph check behind `valid_graph`: every key a legal ident and
-/// unique, every dependency list free of repeats and naming a key, and no
-/// cycle. Malformed members fail the check rather than the evaluation.
 pub(super) fn eval_expression_inner(
     expression: &Expression,
     unit: &UnitState,
     state: &StepSnapshot,
     bindings: Bindings<'_>,
     context: &mut EvaluationContext<'_>,
-) -> Option<Value> {
-    if !context.charge() {
-        return None;
-    }
+) -> Result<Option<Value>, EvalError> {
+    context.charge()?;
     fn decided(
         state: &StepSnapshot,
         unit: &UnitState,
@@ -66,9 +58,17 @@ pub(super) fn eval_expression_inner(
             })
         }))
     }
+    macro_rules! resolved {
+        ($value:expr) => {
+            match $value {
+                Some(value) => value,
+                None => return Ok(None),
+            }
+        };
+    }
     macro_rules! eval {
         ($inner:expr) => {
-            eval_expression_inner($inner, unit, state, bindings, context)
+            eval_expression_inner($inner, unit, state, bindings, context)?
         };
     }
     macro_rules! eval_item {
@@ -77,140 +77,147 @@ pub(super) fn eval_expression_inner(
                 item: Some($item),
                 ..bindings
             };
-            eval_expression_inner($inner, unit, state, bound, context)
+            eval_expression_inner($inner, unit, state, bound, context)?
         }};
     }
     macro_rules! boolean {
         ($inner:expr) => {
-            eval!($inner)?.as_bool()
+            resolved!(resolved!(eval!($inner)).as_bool())
         };
     }
     macro_rules! list {
         ($inner:expr) => {{
-            let Value::Array(items) = eval!($inner)? else {
-                return None;
+            let Value::Array(items) = resolved!(eval!($inner)) else {
+                return Ok(None);
             };
-            context.check_list_len(items.len()).then_some(items)
+            context.check_list_len(items.len())?;
+            items
         }};
     }
     macro_rules! integers {
         ($left:expr, $right:expr) => {
-            Some((eval!($left)?.as_i64()?, eval!($right)?.as_i64()?))
+            (
+                resolved!(resolved!(eval!($left)).as_i64()),
+                resolved!(resolved!(eval!($right)).as_i64()),
+            )
         };
     }
-    match expression {
+    Ok(match expression {
         Expression::Literal { value, .. } => Some(value.clone()),
-        Expression::Len { value } => Some(Value::from(match eval!(value)? {
+        Expression::Len { value } => Some(Value::from(match resolved!(eval!(value)) {
             Value::String(text) => text.chars().count(),
             Value::Array(items) => items.len(),
-            _ => return None,
+            _ => return Ok(None),
         })),
         Expression::GreaterThan { left, right } => {
-            let (left, right) = integers!(left, right)?;
+            let (left, right) = integers!(left, right);
             Some(Value::Bool(left > right))
         }
         Expression::GreaterOrEqual { left, right } => {
-            let (left, right) = integers!(left, right)?;
+            let (left, right) = integers!(left, right);
             Some(Value::Bool(left >= right))
         }
         Expression::LessThan { left, right } => {
-            let (left, right) = integers!(left, right)?;
+            let (left, right) = integers!(left, right);
             Some(Value::Bool(left < right))
         }
         Expression::LessOrEqual { left, right } => {
-            let (left, right) = integers!(left, right)?;
+            let (left, right) = integers!(left, right);
             Some(Value::Bool(left <= right))
         }
         // `a and b` reads b only where a holds, so a false a short-circuits
         // and an unresolved a leaves the conjunction unresolved.
         Expression::All { items } => {
             for item in items {
-                if !boolean!(item)? {
-                    return Some(Value::Bool(false));
+                if !boolean!(item) {
+                    return Ok(Some(Value::Bool(false)));
                 }
             }
             Some(Value::Bool(true))
         }
         Expression::Any { items } => {
             for item in items {
-                if boolean!(item)? {
-                    return Some(Value::Bool(true));
+                if boolean!(item) {
+                    return Ok(Some(Value::Bool(true)));
                 }
             }
             Some(Value::Bool(false))
         }
-        Expression::Not { value } => Some(Value::Bool(!boolean!(value)?)),
-        Expression::Equals { left, right } => Some(Value::Bool(eval!(left)? == eval!(right)?)),
+        Expression::Not { value } => Some(Value::Bool(!boolean!(value))),
+        Expression::Equals { left, right } => Some(Value::Bool(
+            resolved!(eval!(left)) == resolved!(eval!(right)),
+        )),
         Expression::Every { source, predicate } => {
-            for item in list!(source)? {
-                if !eval_item!(predicate, &item)?.as_bool()? {
-                    return Some(Value::Bool(false));
+            for item in list!(source) {
+                if !resolved!(resolved!(eval_item!(predicate, &item)).as_bool()) {
+                    return Ok(Some(Value::Bool(false)));
                 }
             }
             Some(Value::Bool(true))
         }
         Expression::Filter { source, predicate } => {
             let mut kept = Vec::new();
-            for item in list!(source)? {
-                if eval_item!(predicate, &item)?.as_bool()? {
+            for item in list!(source) {
+                if resolved!(resolved!(eval_item!(predicate, &item)).as_bool()) {
                     kept.push(item);
                 }
             }
             Some(Value::Array(kept))
         }
         Expression::Contains { source, value } => {
-            let value = eval!(value)?;
-            Some(Value::Bool(list!(source)?.contains(&value)))
+            let value = resolved!(eval!(value));
+            Some(Value::Bool(list!(source).contains(&value)))
         }
         Expression::Lookup {
             source,
             key_field,
             key,
         } => {
-            let key = eval!(key)?;
-            let mut matches = list!(source)?
+            let key = resolved!(eval!(key));
+            let mut matches = list!(source)
                 .into_iter()
                 .filter(|item| item.get(key_field) == Some(&key));
-            let found = matches.next()?;
+            let found = resolved!(matches.next());
             // Exactly one: an ambiguous key resolves to nothing.
             matches.next().is_none().then_some(found)
         }
-        Expression::Field { value, key } => eval!(value)?.get(key).cloned(),
+        Expression::Field { value, key } => resolved!(eval!(value)).get(key).cloned(),
         Expression::CheckCollection {
             source,
             key_field,
             dependencies_field,
         } => Some(Value::Bool(is_valid_graph(
-            &list!(source)?,
+            &list!(source),
             key_field,
             dependencies_field,
         ))),
         Expression::Record { fields, .. } => {
             let mut record = serde_json::Map::new();
             for field in fields {
-                record.insert(field.key.clone(), eval!(&field.value)?);
+                record.insert(field.key.clone(), resolved!(eval!(&field.value)));
             }
             Some(Value::Object(record))
         }
         Expression::List { items, .. } => {
-            if !context.check_list_len(items.len()) {
-                return None;
+            context.check_list_len(items.len())?;
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(resolved!(eval!(item)));
             }
-            items
-                .iter()
-                .map(|item| eval!(item))
-                .collect::<Option<Vec<_>>>()
-                .map(Value::Array)
+            Some(Value::Array(values))
         }
         Expression::Map {
             source,
             value: projection,
             ..
-        } => list!(source)?
-            .iter()
-            .map(|item| eval_item!(projection, item))
-            .collect::<Option<Vec<_>>>()
-            .map(Value::Array),
+        } => {
+            let source = list!(source);
+            let mut values = Vec::with_capacity(source.len());
+            for item in &source {
+                values.push(resolved!(eval_item!(projection, item)));
+            }
+            Some(Value::Array(values))
+        }
         Expression::Reference {
             root,
             path: segments,
@@ -225,14 +232,14 @@ pub(super) fn eval_expression_inner(
             };
             match root {
                 ReferenceRoot::UnitInput => read(&unit.input),
-                ReferenceRoot::EachMember => read(bindings.each?),
-                ReferenceRoot::Item => read(bindings.item?),
+                ReferenceRoot::EachMember => read(resolved!(bindings.each)),
+                ReferenceRoot::Item => read(resolved!(bindings.item)),
                 ReferenceRoot::ValidationBody { artifact } => {
-                    let (bound, body) = bindings.body?;
+                    let (bound, body) = resolved!(bindings.body);
                     (bound == artifact.0).then(|| read(body)).flatten()
                 }
                 ReferenceRoot::Latest { artifact } => {
-                    read(&latest(state, &unit.id, artifact)?.body)
+                    read(&resolved!(latest(state, &unit.id, artifact)).body)
                 }
                 ReferenceRoot::Published { artifact } => {
                     Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
@@ -257,32 +264,30 @@ pub(super) fn eval_expression_inner(
                         })
                         .collect();
                     children.sort_by(|left, right| left.id.cmp(&right.id));
-                    if !context.check_list_len(children.len()) {
-                        return None;
-                    }
+                    context.check_list_len(children.len())?;
                     for child in children {
                         let UnitStatus::Done { outcome } = &child.status else {
-                            return None;
+                            return Ok(None);
                         };
-                        values.push(read(outcome)?);
+                        values.push(resolved!(read(outcome)));
                     }
                     Some(Value::Array(values))
                 }
                 ReferenceRoot::UnitOutcome { unit: child_key } => {
                     // The compiler admits only a non-collection unit
                     // here, so its declaration names exactly one member.
-                    let child = state.units.iter().find(|candidate| {
+                    let child = resolved!(state.units.iter().find(|candidate| {
                         candidate.parent.as_ref() == Some(&unit.id)
                             && candidate.declaration == *child_key
-                    })?;
+                    }));
                     let UnitStatus::Done { outcome } = &child.status else {
-                        return None;
+                        return Ok(None);
                     };
                     read(outcome)
                 }
             }
         }
-    }
+    })
 }
 pub(super) fn eval_fields(
     fields: &[CheckedNamedExpression],

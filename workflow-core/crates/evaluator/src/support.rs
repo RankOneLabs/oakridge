@@ -80,7 +80,6 @@ pub(super) fn attribute_event(
 pub struct EvaluationContext<'a> {
     pub(super) limits: &'a ResourceLimits,
     pub(super) remaining: usize,
-    error: Option<EvalError>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,16 +105,14 @@ impl<'a> EvaluationContext<'a> {
         Self {
             limits,
             remaining: limits.evaluation_budget,
-            error: None,
         }
     }
-    pub(super) fn charge(&mut self) -> bool {
+    pub(super) fn charge(&mut self) -> Result<(), EvalError> {
         if self.remaining == 0 {
-            self.error.get_or_insert(EvalError::BudgetExceeded);
-            false
+            Err(EvalError::BudgetExceeded)
         } else {
             self.remaining -= 1;
-            true
+            Ok(())
         }
     }
     pub(super) fn check_value(&self, value: &Value) -> Result<(), EvalError> {
@@ -123,16 +120,12 @@ impl<'a> EvaluationContext<'a> {
             .check_value(value)
             .map_err(|reason| EvalError::ValueLimit(reason.to_owned()))
     }
-    pub(super) fn check_list_len(&mut self, len: usize) -> bool {
+    pub(super) fn check_list_len(&self, len: usize) -> Result<(), EvalError> {
         if len > self.limits.max_list_items {
-            self.error = Some(EvalError::ListLimitExceeded);
-            false
+            Err(EvalError::ListLimitExceeded)
         } else {
-            true
+            Ok(())
         }
-    }
-    pub(super) fn take_error(&mut self) -> Option<EvalError> {
-        self.error.take()
     }
 }
 pub fn latest<'a>(
@@ -285,8 +278,12 @@ pub(super) fn is_creator_working(
             })
         })
 }
-/// Whether an expression reads an artifact of its unit: `latest`,
-/// `published`, `approved` or `changes_requested` of it.
+/// The artifacts of a stage's watches that have not observed what they
+/// watch now: a watch whose guard holds and whose inputs resolve, but whose
+/// worker's latest action is not pinned to those inputs, or has never run
+/// successfully. Such an artifact's latest revision is about inputs the watch
+/// no longer watches (a pull request since replaced), so the stage is not
+/// judged on it until the replacing watch has observed.
 pub(super) fn unobserved_watch_artifacts(
     program: &CheckedWorkflow,
     state: &StepSnapshot,
@@ -329,6 +326,9 @@ pub(super) fn reads_any(expression: &Expression, artifacts: &[SymbolKey]) -> boo
 pub(super) fn is_periodic(worker: &CheckedWorker) -> bool {
     matches!(worker, CheckedWorker::Code { every: Some(_), .. })
 }
+/// The request_changes decision a revise of `artifacts` answers: the
+/// newest one on the latest revision of the first artifact, in `creates`
+/// order, that has one.
 pub(super) fn changes_requested<'a>(
     state: &'a StepSnapshot,
     unit: &UnitId,

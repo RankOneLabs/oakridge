@@ -1,4 +1,7 @@
 use super::*;
+/// The graph check behind `valid_graph`: every key a legal ident and
+/// unique, every dependency list free of repeats and naming a key, and no
+/// cycle. Malformed members fail the check rather than the evaluation.
 #[doc(hidden)]
 pub fn is_valid_graph(items: &[Value], key_field: &str, dependencies_field: &str) -> bool {
     let mut keys = BTreeSet::new();

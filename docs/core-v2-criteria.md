@@ -53,6 +53,8 @@ The closed `Delta` enum in `evaluator/src/apply.rs` follows the writes in the pr
 
 The replay digest test frames the JSON bytes of every `StepResult` from all three frozen traces and compares their SHA-256 against the base evaluator. The fixture blobs are unchanged.
 
+`StepEntity` is defined in `workflow-core/crates/model/src/values.rs`, beside the existing `StepError`. The W3 file-scope list named `protocol.rs`, but `values.rs` is the correct file for this change. The host's pre-existing `thread_local RefCell<CoreState>` remains because the synchronous ABI must retain its program cache and response buffer between calls. It is separate from the three removed evaluator budget `Cell`s; a literal search for `Cell` in `src/` will still find `RefCell` in `host.rs`.
+
 W7's e2e clause is: **the development e2e test's assertions are unchanged and pass**. W6 necessarily edits `oakridge-dbos/tests/development-e2e.test.ts`; W7 preserves its post-W6 assertions.
 
 ## Frozen replay corpus

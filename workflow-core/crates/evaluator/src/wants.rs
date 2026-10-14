@@ -1,4 +1,6 @@
 use super::*;
+/// Whether an expression reads an artifact of its unit: `latest`,
+/// `published`, `approved` or `changes_requested` of it.
 pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> bool {
     let reads = |inner: &Expression| reads_artifact(inner, artifact);
     match expression {
@@ -39,12 +41,6 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         Expression::CheckCollection { source, .. } => reads(source),
     }
 }
-/// The artifacts of a stage's watches that have not observed what they
-/// watch now: a watch whose guard holds and whose inputs resolve, but whose
-/// worker's latest action is not pinned to those inputs, or has never run
-/// successfully. Such an artifact's latest revision is about inputs the watch
-/// no longer watches (a pull request since replaced), so the stage is not
-/// judged on it until the replacing watch has observed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Readiness {
     Blocked,
@@ -331,9 +327,6 @@ pub(super) fn resolve_run_worker(
         workspace,
     })
 }
-/// The request_changes decision a revise of `artifacts` answers: the
-/// newest one on the latest revision of the first artifact, in `creates`
-/// order, that has one.
 pub(super) struct RunWorkerAction<'a> {
     pub(super) worker: &'a WorkerKey,
     pub(super) mode: &'a Mode,
