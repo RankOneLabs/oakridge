@@ -1,5 +1,5 @@
 import type { BlockedReason, Event } from "../core-client/core-types";
-import type { RetryRequest, RunRead, UnitWanted } from "../storage/read-store";
+import type { RetryRequest, RunSummaryRead, UnitWanted } from "../storage/read-store";
 import type { AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectUnitLabel } from "./unit-label";
 
@@ -84,15 +84,15 @@ export function selectStalledWorkers(sources: StallSources): readonly StalledWor
 }
 
 /** The latest event committed on a unit, or on the run as a whole for null. */
-function latestEventOn(read: Pick<RunRead, "latest_events">, unit_id: string | null): string | null {
+function latestEventOn(read: Pick<RunSummaryRead, "latest_events">, unit_id: string | null): string | null {
   const candidates = unit_id === null ? read.latest_events : read.latest_events.filter((event) => event.unit_id === unit_id);
-  const latest = candidates.reduce<RunRead["latest_events"][number] | null>((best, event) => !best
+  const latest = candidates.reduce<RunSummaryRead["latest_events"][number] | null>((best, event) => !best
     || event.created_at.getTime() > best.created_at.getTime()
     || event.created_at.getTime() === best.created_at.getTime() && event.event_id > best.event_id ? event : best, null);
   return latest?.event_id ?? null;
 }
 
-type RunStallSources = Pick<RunRead, "run" | "units" | "stalls" | "faults" | "latest_events">;
+type RunStallSources = Pick<RunSummaryRead, "run" | "units" | "stalls" | "faults" | "latest_events">;
 /**
  * The stalls and faults that stand: the run is live, and nothing has committed
  * on the refused event's unit since. Oldest first; a repeat of one unit and
@@ -125,7 +125,7 @@ export function selectRunStallDetail(stall: RunStall): string {
 }
 
 /** Every unit's attention, in unit order. */
-export function selectRunAttention(read: RunRead): readonly UnitAttention[] {
+export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention[] {
   const stalled = selectStalledWorkers(read);
   const run_stalls = selectRunStalls(read);
   return read.units.map((unit) => ({ unit_id: unit.id, run_stalls: run_stalls.filter((stall) => stall.unit_id === unit.id),
@@ -136,7 +136,7 @@ export function selectRunAttention(read: RunRead): readonly UnitAttention[] {
 }
 
 /** A blocked unit's reason, naming the units it waits on by their labels. */
-function blockedReason(reason: BlockedReason, read: RunRead): string {
+function blockedReason(reason: BlockedReason, read: RunSummaryRead): string {
   if (reason.kind === "capacity") return `waiting for capacity in ${reason.pool}`;
   const labels = reason.units.map((id) => {
     const unit = read.units.find((candidate) => candidate.id === id);
@@ -146,7 +146,7 @@ function blockedReason(reason: BlockedReason, read: RunRead): string {
 }
 
 /** The one line the unit view shows: the run's stall first, then a stalled worker, then an awaiting review, then a block. */
-export function selectAttention(attention: UnitAttention, read: RunRead): Attention | null {
+export function selectAttention(attention: UnitAttention, read: RunSummaryRead): Attention | null {
   const run_stall = attention.run_stalls.at(-1);
   if (run_stall) return { kind: "stalled", detail: selectRunStallDetail(run_stall) };
   const [stalled] = attention.stalled;

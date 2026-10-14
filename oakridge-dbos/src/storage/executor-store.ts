@@ -13,7 +13,7 @@ type Reader = Kysely<DB> | DatabaseTransaction;
  * retry time and last error here. What a worker did is never written here: it
  * goes to commit as WorkerStarted, WorkerEnded and RevisionPublished.
  */
-export type { EffectStatus } from "./schema-records";
+export type { EffectStatus, StopOrigin } from "./schema-records";
 export type EffectIntent = EffectIntentRecord;
 /** The terminal statuses: the intent owns no external execution. */
 export const SETTLED_STATUSES = ["stopped", "failed"] as const satisfies readonly EffectStatus[];
@@ -83,7 +83,7 @@ export async function markAcknowledged(db: Database, intent_id: string): Promise
 export async function abandonIntent(db: Database, input: { readonly intent_id: string; readonly last_error: string }): Promise<EffectStatus | null> {
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return null;
-    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
+    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
       .where("id", "=", input.intent_id).where("status", "in", ["pending", "acknowledged"]).execute();
     return (await trx.selectFrom("authority.effect_intent").select("status").where("id", "=", input.intent_id).executeTakeFirst())?.status ?? null;
   });

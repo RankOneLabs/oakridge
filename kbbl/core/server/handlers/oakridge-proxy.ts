@@ -15,7 +15,8 @@ export interface OakridgeProxyDeps {
   coreControlToken?: string;
   /**
    * kbbl's own control token — the value its `kbbl_ctrl` cookie carries and its
-   * global middleware validates. The browser is authenticated against THIS, not
+   * global middleware validates. Required for operator routes whenever
+   * `coreControlToken` is set: without it they are refused. The browser is authenticated against THIS, not
    * against `coreControlToken`: the two differ whenever the documented
    * `OAKRIDGE_CORE_CONTROL_TOKEN` override is set, and checking the browser's
    * credential against the upstream's would reject every proxied operator
@@ -82,7 +83,12 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
     if (rejection) return rejection;
     const route = matchRoute(c.req.method, subPath);
-    if (route?.authority === "operator" && deps.browserControlToken && !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy))
+    // The proxy presents the core token on the caller's behalf, so an operator
+    // route needs kbbl's own credential whenever a core token is configured.
+    // Without a browser token there is nothing to check the caller against,
+    // and the proxy refuses rather than act as the operator for anyone.
+    if (route?.authority === "operator" && (deps.browserControlToken
+      ? !isValidControlRequest(c.req.raw, deps.browserControlToken, write_policy) : deps.coreControlToken !== undefined))
       return c.json({ error: "unauthorized" }, 401);
     const search = new URL(c.req.url, "http://localhost").search;
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;

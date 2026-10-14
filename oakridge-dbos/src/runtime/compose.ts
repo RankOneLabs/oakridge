@@ -19,6 +19,8 @@ import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices
 export interface ExecutorOptions {
   /** Null runs no agent: each agent attempt fails with `kbbl_unconfigured`. */
   readonly kbbl_base_url: string | null;
+  /** kbbl's control token, presented on every executor call to kbbl; null when kbbl runs without one. */
+  readonly kbbl_control_token?: string | null;
   /** Derives each session's publication secret; required with kbbl. */
   readonly publication_key: string | null;
   /** This backend as agents reach it, for the publish endpoint in their preamble. */
@@ -51,7 +53,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   if (access.kind === "refused") throw new Error(access.detail);
   const executor = options.executor;
   if (executor?.kbbl_base_url && !executor.publication_key) throw new Error("OAKRIDGE_PUBLICATION_KEY is required when KBBL_BASE_URL is set");
-  const provider = options.effect_provider ?? createAgentProvider({ kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url }) : null,
+  const provider = options.effect_provider ?? createAgentProvider({ kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
     publication_key: executor?.publication_key ?? null, publish_base_url: executor?.publish_base_url ?? "", default_workdir: executor?.agent_workdir ?? "" });
   const operations = options.operation_runner ?? createOperationRunner({ git: new BunGitCommandRunner(),
     pull_requests: executor?.github_token ? new GithubPullRequestReader({ token: executor.github_token }) : null });

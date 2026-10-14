@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { Database } from "../storage/database";
+import { operatorWriterFromCredential } from "./control-auth";
 import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread,
   readCollaborationThreads, readThreadRevision, recordCollaborationDelivery } from "../storage/collaboration-store";
 
@@ -40,12 +41,14 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
   },
   addMessage: async (c: Context) => {
     const raw = await json(c.req.raw);
-    if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.text) || !nonempty(raw.author)
-      || (raw.ping !== undefined && typeof raw.ping !== "boolean")) return c.json({ error: "request_key, text and author are required" }, 400);
+    if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.text)
+      || (raw.ping !== undefined && typeof raw.ping !== "boolean")) return c.json({ error: "request_key and text are required" }, 400);
     const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), thread_id = param(c, "thread_id");
     const id = `message:${collaborationRecordId(thread_id, raw.request_key)}`;
+    // The author is whoever's credential passed control auth, as for every operator event; the body has no say in it.
+    const author = operatorWriterFromCredential(c.req.raw).subject;
     const result = await addCollaborationMessage(deps.db, { id, run_id, unit_id, thread_id,
-      body: { text: raw.text, author: raw.author, ping: raw.ping === true } });
+      body: { text: raw.text, author, ping: raw.ping === true } });
     if (result.kind !== "written" && result.kind !== "replayed") return c.json({ error: result.kind }, status(result.kind));
     if (!raw.ping) return c.json({ message: result.value }, result.kind === "written" ? 201 : 200);
     if (!await readThreadRevision(deps.db, { run_id, unit_id, thread_id })) return c.json({ error: "thread has no reviewed revision" }, 409);

@@ -1,9 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { currentRunGeneration, DEFAULT_WORKFLOW_TIMING, dispatchChild, ensureRunRecoveryFork, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep,
-  cleanupWorkflowId, intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, wakeRun } from "../src/workflows/topology";
+import { currentCarrier, currentRunGeneration, DEFAULT_WORKFLOW_TIMING, dispatchChild, ensureRunRecoveryFork, ensureRunWorkflow, fenceOtherEngineWorkflows, forkStartStep,
+  cleanupWorkflowId, generationOf, intentWorkflowId, registerWorkflowServices, RunInfrastructureError, runGenerationOf, runWorkflowId, wakeRun } from "../src/workflows/topology";
 
 registerWorkflowServices({ timing: DEFAULT_WORKFLOW_TIMING } as Parameters<typeof registerWorkflowServices>[0]);
+/** DBOS's own record of an intent's carriers under this engine version. */
+const carrierWorkflows = (...statuses: { readonly workflowID: string; readonly status: string }[]) =>
+  spyOn(DBOS, "listWorkflows").mockImplementation(async () => statuses as never);
 /** DBOS's own record of a run's workflows: the source of its current generation (D10). */
 const runWorkflows = (...ids: string[]) => spyOn(DBOS, "listWorkflows").mockImplementation(async () => ids.map((workflowID) => ({ workflowID })) as never);
 function recordStarts() {
@@ -44,26 +47,46 @@ test("an intent workflow is addressed by intent and engine version", () => {
 });
 
 test("an intent's stop is carried under its own workflow id, apart from its start", async () => {
-  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => null as never);
+  const list = carrierWorkflows();
   const starts = recordStarts();
   try {
     await dispatchChild("run-1", "intent-1", "stop");
     expect({ ids: starts.calls[0], distinct: cleanupWorkflowId("intent-1", "engine-a") !== intentWorkflowId("intent-1", "engine-a") })
       .toEqual({ ids: [{ workflowID: cleanupWorkflowId("intent-1") }], distinct: true });
-  } finally { status.mockRestore(); starts.restore(); }
+  } finally { list.mockRestore(); starts.restore(); }
 });
 
 test("a PENDING carrier is not dispatched again, while a missing one is started", async () => {
-  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "PENDING" }) as never);
+  const list = carrierWorkflows({ workflowID: intentWorkflowId("intent-1"), status: "PENDING" });
   const starts = recordStarts();
   try {
     await dispatchChild("run-1", "intent-1", "start");
     const after_pending = [...starts.calls];
-    status.mockImplementation(async () => null as never);
+    list.mockImplementation(async () => [] as never);
     await dispatchChild("run-1", "intent-1", "start");
     expect({ after_pending, after_missing: starts.calls }).toEqual({ after_pending: [],
       after_missing: [[{ workflowID: intentWorkflowId("intent-1") }], ["intent-1"]] });
-  } finally { status.mockRestore(); starts.restore(); }
+  } finally { list.mockRestore(); starts.restore(); }
+});
+
+test("a carrier's successors are addressed by generation under its engine version, apart from another version's", () => {
+  expect([intentWorkflowId("intent-1", "v1", 2), cleanupWorkflowId("intent-1", "v1", 1),
+    generationOf(intentWorkflowId("intent-1", "v1"), intentWorkflowId("intent-1", "v1", 3)),
+    generationOf(intentWorkflowId("intent-1", "v1"), intentWorkflowId("intent-1", "v10")),
+    generationOf(intentWorkflowId("intent-1", "v1"), cleanupWorkflowId("intent-1", "v1"))])
+    .toEqual(["intent-1@v1:2", "intent-1:stop@v1:1", 3, null, null]);
+});
+
+test("dispatch reads a rolled-over carrier's newest generation, not the finished one it replaced", async () => {
+  const list = carrierWorkflows({ workflowID: intentWorkflowId("intent-1"), status: "SUCCESS" },
+    { workflowID: intentWorkflowId("intent-1", DBOS.applicationVersion, 2), status: "PENDING" },
+    { workflowID: intentWorkflowId("intent-1", DBOS.applicationVersion, 1), status: "SUCCESS" });
+  const starts = recordStarts();
+  try {
+    const carrier = await currentCarrier("start", "intent-1");
+    await dispatchChild("run-1", "intent-1", "start");
+    expect({ generation: carrier?.generation, starts: starts.calls }).toEqual({ generation: 2, starts: [] });
+  } finally { list.mockRestore(); starts.restore(); }
 });
 
 test("a run with no workflow yet starts generation zero", async () => {

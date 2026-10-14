@@ -104,7 +104,12 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
     }
     return failed(PROVIDER_ERROR_CODES.session_failed, refusal);
   }
-  /** Bounds a turn that never makes progress: kbbl truthfully reports it as unfinished forever. */
+  /**
+   * Bounds a turn that never makes progress: kbbl truthfully reports it as
+   * unfinished forever. A silent session may still be running, so silence
+   * refuses the observation rather than ending the attempt: the carrier then
+   * stops the session, and a later revise does not find it busy.
+   */
   async function silence(kbbl: KbblClient, sid: string, signal: AbortSignal | undefined): Promise<ProviderResult<TerminalObservation>> {
     const reading = await kbbl.read(sid, signal);
     // A failed read is not activity: it counts toward the observation's unavailable bound.
@@ -113,8 +118,8 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
     const session: KbblSession = reading.value.session;
     const last = session.last_activity_ts ? Date.parse(session.last_activity_ts) : Number.NaN;
     const silent_for = Number.isNaN(last) ? null : Math.max(0, now() - last);
-    if (silent_for !== null && silent_for > max_silent_ms) return failed(PROVIDER_ERROR_CODES.executor_silent_timeout,
-      `kbbl session ${sid} reported no activity for ${Math.round(silent_for / 1000)}s (limit ${Math.round(max_silent_ms / 1000)}s)`);
+    if (silent_for !== null && silent_for > max_silent_ms) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.executor_silent_timeout,
+      detail: `kbbl session ${sid} reported no activity for ${Math.round(silent_for / 1000)}s (limit ${Math.round(max_silent_ms / 1000)}s)` };
     return { kind: "acknowledged", value: { kind: "running" } };
   }
 

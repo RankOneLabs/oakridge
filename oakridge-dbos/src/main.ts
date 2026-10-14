@@ -15,6 +15,8 @@ const port = Number(process.env.PORT ?? 8790);
 // their secret), so their preamble names it as they reach it.
 const publish_base_url = optional("OAKRIDGE_PUBLIC_URL") ?? `http://${host}:${port}`;
 const kbbl_base_url = optional("KBBL_BASE_URL");
+// kbbl refuses unauthenticated writes whenever it has a control token; it shares OAKRIDGE_CONTROL_TOKEN unless KBBL_CONTROL_TOKEN overrides it.
+const kbbl_control_token = optional("KBBL_CONTROL_TOKEN") ?? optional("OAKRIDGE_CONTROL_TOKEN");
 if (!kbbl_base_url) console.warn("KBBL_BASE_URL is unset: agent workers cannot run, and each agent attempt fails with kbbl_unconfigured");
 // A `workspace: none` session still needs a repository to run in; an empty one keeps it out of any checkout.
 // Only agents use it, so a deployment without kbbl never prepares it.
@@ -33,7 +35,7 @@ const migration_db = openDatabase(database_url);
 try { await migrateEmptyDatabase(migration_db); }
 finally { await migration_db.destroy(); }
 const composition = await createProductionComposition({ database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
-  executor: { kbbl_base_url, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, github_token } });
+  executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, github_token } });
 let server: ReturnType<typeof Bun.serve>;
 try { server = Bun.serve({ hostname: host, port, fetch: composition.app.fetch }); }
 catch (cause) { await composition.close(); throw cause; }

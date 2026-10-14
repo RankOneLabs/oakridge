@@ -105,7 +105,7 @@ test("an observation that is malformed or refused fails the attempt; an unavaila
     resolveObserve({ kind: "transiently_unavailable", detail: "down" }),
   ]).toEqual(["running", { kind: "ended", result: { kind: "succeeded" } }, "refused",
     { kind: "refused", failure: { kind: "failed", code: "gone", detail: "session gone" } },
-    { kind: "retry", detail: "down", is_unavailable: true }]);
+    { kind: "retry", detail: "down" }]);
 });
 
 test("only a positive acknowledgement confirms a stop", () => {

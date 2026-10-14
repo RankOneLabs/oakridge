@@ -6,6 +6,8 @@ import type { ColumnType } from "kysely";
 
 export type AuthorityEffectStatus = "acknowledged" | "failed" | "pending" | "stop_requested" | "stopped";
 
+export type AuthorityStopOrigin = "commit" | "executor";
+
 export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
@@ -119,6 +121,7 @@ export interface AuthorityEffectIntent {
   run_id: string;
   seq: number;
   status: Generated<AuthorityEffectStatus>;
+  stop_origin: AuthorityStopOrigin | null;
   tries: Generated<number>;
   unit_id: string;
   updated_at: Generated<Timestamp>;

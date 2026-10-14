@@ -11,7 +11,7 @@ import type { OperationOutcome } from "../operations/outcome";
 import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
 import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure, settleIntent,
-  type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim } from "../storage/executor-store";
+  type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
 import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readSessionHistory } from "../storage/read-store";
 import { readPromptTexts } from "../storage/registry-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
@@ -57,10 +57,12 @@ export interface WorkflowTiming {
    * an agent session that is still working.
    */
   readonly execution_deadline_ms: number | null;
+  /** Loop iterations (observations, watch runs, stop tries) one carrier workflow runs before it rolls over to its successor. */
+  readonly carrier_max_iterations: number;
 }
 export const DEFAULT_WORKFLOW_TIMING: WorkflowTiming = {
   retry_initial_seconds: 1, retry_cap_seconds: 30, observe_interval_seconds: 5,
-  max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: null,
+  max_observe_unavailable_attempts: 10, wake_timeout_seconds: 30, execution_deadline_ms: null, carrier_max_iterations: 128,
 };
 
 let services: WorkflowServices | null = null;
@@ -72,17 +74,32 @@ function current(): WorkflowServices {
 
 export const RUN_WAKE_TOPIC = "oakridge-run-wake";
 const RUN_WORKFLOW_NAME = "oakridgeRunWorkflow";
-export const runWorkflowId = (run_id: string, generation = 0): string => generation === 0 ? `run:${run_id}` : `run:${run_id}:${generation}`;
+const EFFECT_WORKFLOW_NAME = "oakridgeEffectWorkflow";
+const CLEANUP_WORKFLOW_NAME = "oakridgeCleanupWorkflow";
+/** Generation zero keeps a workflow's original address; a successor appends its generation, so two processes that roll it over start the same one. */
+const generationId = (base_id: string, generation: number): string => generation === 0 ? base_id : `${base_id}:${generation}`;
+/** The generation a workflow id names under its base address, or null when the id is not one of that workflow's. */
+export function generationOf(base_id: string, workflow_id: string): number | null {
+  if (workflow_id === base_id) return 0;
+  const suffix = workflow_id.startsWith(`${base_id}:`) ? workflow_id.slice(base_id.length + 1) : null;
+  return suffix !== null && /^[1-9]\d*$/.test(suffix) ? Number(suffix) : null;
+}
+export const runWorkflowId = (run_id: string, generation = 0): string => generationId(`run:${run_id}`, generation);
 /**
  * Intent workflows are addressed per engine version: a new engine starts its
  * own carrier for an intent its predecessor parked, rather than inheriting a
  * row it can never run. The workflow's argument, not its id, names the intent.
  */
-export const intentWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
-  `${intent_id}@${application_version}`;
+export const intentWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion, generation = 0): string =>
+  generationId(`${intent_id}@${application_version}`, generation);
 /** A stop is carried by its own workflow: the intent's start carrier may have finished, or may still be observing. */
-export const cleanupWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion): string =>
-  `${intent_id}:stop@${application_version}`;
+export const cleanupWorkflowId = (intent_id: string, application_version: string = DBOS.applicationVersion, generation = 0): string =>
+  generationId(`${intent_id}:stop@${application_version}`, generation);
+/** Which of an intent's two carriers: the one that starts and observes it, or the one that confirms its stop. */
+export type CarrierKind = "start" | "stop";
+export const carrierWorkflowId = (kind: CarrierKind, intent_id: string, generation = 0): string =>
+  kind === "start" ? intentWorkflowId(intent_id, DBOS.applicationVersion, generation) : cleanupWorkflowId(intent_id, DBOS.applicationVersion, generation);
+const CARRIER_WORKFLOW_NAMES: { readonly [kind in CarrierKind]: string } = { start: EFFECT_WORKFLOW_NAME, stop: CLEANUP_WORKFLOW_NAME };
 /** DBOS dequeues and recovers only rows recorded under the running version. */
 export function isFromOtherEngine(status: WorkflowStatus): boolean {
   return status.applicationVersion !== undefined && status.applicationVersion !== DBOS.applicationVersion;
@@ -104,11 +121,7 @@ const backoff = (attempt: number, timing: WorkflowTiming): number => Math.min(ti
 // ------------------------------------------------------- run generation -----
 
 /** The generation a run workflow id names, or null when the id is not one of this run's. */
-export function runGenerationOf(run_id: string, workflow_id: string): number | null {
-  if (workflow_id === runWorkflowId(run_id)) return 0;
-  const suffix = workflow_id.startsWith(`run:${run_id}:`) ? workflow_id.slice(`run:${run_id}:`.length) : null;
-  return suffix !== null && /^[1-9]\d*$/.test(suffix) ? Number(suffix) : null;
-}
+export const runGenerationOf = (run_id: string, workflow_id: string): number | null => generationOf(runWorkflowId(run_id), workflow_id);
 /**
  * A run's current generation is the newest run workflow DBOS holds for it
  * (D10: the authority keeps no generation). A successor's id is fixed by its
@@ -118,6 +131,16 @@ export async function currentRunGeneration(run_id: string): Promise<number | nul
   const workflows = await DBOS.listWorkflows({ workflowName: RUN_WORKFLOW_NAME, workflow_id_prefix: runWorkflowId(run_id), loadInput: false, loadOutput: false });
   const generations = workflows.map((status) => runGenerationOf(run_id, status.workflowID)).filter((generation) => generation !== null);
   return generations.length ? Math.max(...generations) : null;
+}
+
+/** An intent carrier's current generation under this engine version: the newest DBOS holds, with its status; null before the first. */
+export async function currentCarrier(kind: CarrierKind, intent_id: string): Promise<{ readonly generation: number; readonly status: WorkflowStatus } | null> {
+  const base_id = carrierWorkflowId(kind, intent_id);
+  const workflows = await DBOS.listWorkflows({ workflowName: CARRIER_WORKFLOW_NAMES[kind], workflow_id_prefix: base_id, loadInput: false, loadOutput: false });
+  return workflows.reduce<{ readonly generation: number; readonly status: WorkflowStatus } | null>((newest, status) => {
+    const generation = generationOf(base_id, status.workflowID);
+    return generation !== null && (newest === null || generation > newest.generation) ? { generation, status } : newest;
+  }, null);
 }
 
 // ---------------------------------------------------------------- steps -----
@@ -131,6 +154,8 @@ interface CarriedIntent {
   /** Provider starts claimed so far; none means no execution can exist. */
   readonly tries: number;
   readonly last_error: string | null;
+  /** Who requested the intent's stop, once one was requested. */
+  readonly stop_origin: StopOrigin | null;
   readonly instruction: EffectInstruction;
   /** The session the attempt reported at start, so a carrier resumed by another version can observe or stop it. */
   readonly handle: ExternalHandle | null;
@@ -146,7 +171,7 @@ const loadIntentStep = DBOS.registerStep(async (intent_id: string): Promise<Load
   if (!decoded.ok) return { kind: "invalid", id: intent.id, run_id: intent.run_id, attempt: { action_id: intent.action_id, seq: intent.seq }, detail: decoded.error.detail };
   const session_id = await readAttemptSession(db, decoded.value.attempt);
   return { kind: "carried", intent: { id: intent.id, run_id: intent.run_id, status: intent.status, tries: intent.tries,
-    last_error: intent.last_error, instruction: decoded.value,
+    last_error: intent.last_error, stop_origin: intent.stop_origin, instruction: decoded.value,
     handle: session_id === null ? null : { kind: HANDLE_KINDS.session, session_id } } };
 }, { name: "oakridgeLoadIntent", retriesAllowed: true, maxAttempts: 5 });
 
@@ -277,8 +302,23 @@ async function untilSettled<Value>(label: string, body: () => Promise<Value>): P
   }
 }
 
-/** Carries one intent: an agent's session, or a code worker's operation. Workflow id = `intentWorkflowId(intent_id)`. */
-export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: "oakridgeEffectWorkflow" });
+/** Carries one intent: an agent's session, or a code worker's operation. Workflow id = `intentWorkflowId(intent_id)`, then its successors'. */
+export const effectWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`effect ${intent_id}`, () => carryStart(intent_id)), { name: EFFECT_WORKFLOW_NAME });
+
+const carrierWorkflow = (kind: CarrierKind) => kind === "start" ? effectWorkflow : cleanupWorkflow;
+/**
+ * A carrier that has looped `carrier_max_iterations` times hands its intent to
+ * the next generation, as the run workflow does at RUN_MAX_ITERATIONS, so no
+ * carrier's step history grows for as long as its session or watch lives. The
+ * successor resumes from the authority rows. False when this workflow is not
+ * one of the intent's generations (an operator's recovery fork): it keeps looping.
+ */
+async function rollOver(kind: CarrierKind, intent_id: string): Promise<boolean> {
+  const generation = generationOf(carrierWorkflowId(kind, intent_id), DBOS.workflowID ?? "");
+  if (generation === null) return false;
+  await DBOS.startWorkflow(carrierWorkflow(kind), { workflowID: carrierWorkflowId(kind, intent_id, generation + 1) })(intent_id);
+  return true;
+}
 async function carryStart(intent_id: string): Promise<EffectStatus | null> {
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind === "missing") return null;
@@ -337,14 +377,20 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
       report: { kind: "started", session_id: handle.session_id, publication_secret_hash: outcome.started.publication_secret_hash } });
     status = await markAcknowledgedStep(intent_id);
   }
-  for (let unavailable = 0; status === "acknowledged" && handle !== null;) {
+  // Acknowledged with no session recorded: the start's report was refused, so nothing can be observed.
+  // The stop's ensure finds the session if one was opened.
+  if (status === "acknowledged" && handle === null) return abandonAttempt(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.session_unrecorded,
+    detail: `attempt ${intent.instruction.attempt.action_id}#${intent.instruction.attempt.seq} has no recorded session to observe` });
+  for (let observations = 0, unavailable = 0; status === "acknowledged" && handle !== null; observations++) {
+    if (observations >= timing.carrier_max_iterations && await rollOver("start", intent_id)) return status;
     const outcome = resolveObserve(await observeStep(intent.instruction, material, handle));
     if (outcome.kind === "ended") {
       await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: outcome.result } });
       return settleStep({ intent_id, status: outcome.result.kind === "succeeded" ? "stopped" : "failed", last_error: failureText(outcome.result) });
     }
     if (outcome.kind === "refused") return abandonAttempt(intent, outcome.failure);
-    unavailable = outcome.kind === "retry" && outcome.is_unavailable ? unavailable + 1 : 0;
+    // Any observation without an answer counts toward the bound, an unreachable kbbl as much as a 5xx; only an answer resets it.
+    unavailable = outcome.kind === "retry" ? unavailable + 1 : 0;
     if (unavailable >= Math.max(1, timing.max_observe_unavailable_attempts)) {
       return abandonAttempt(intent, { kind: "failed", code: "observation_unavailable",
         detail: `observation unavailable after ${unavailable} consecutive attempts${outcome.kind === "retry" ? `: ${outcome.detail}` : ""}` });
@@ -395,7 +441,8 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
     seq += 1;
   }
   let status: EffectStatus | null = intent.status;
-  for (;;) {
+  for (let runs = 0; ; runs++) {
+    if (runs >= current().timing.carrier_max_iterations && await rollOver("start", intent.id)) return status;
     const attempt = { action_id: intent.instruction.attempt.action_id, seq };
     const refused_start = await report({ run_id: intent.run_id, attempt, report: { kind: "started", session_id: null, publication_secret_hash: null } });
     if (refused_start) {
@@ -428,30 +475,25 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
   }
 }
 
-/** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`. */
-export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: "oakridgeCleanupWorkflow" });
+/** Carries one requested stop until the provider positively acknowledges it. Workflow id = `cleanupWorkflowId(intent_id)`, then its successors'. */
+export const cleanupWorkflow = DBOS.registerWorkflow((intent_id: string) => untilSettled(`cleanup ${intent_id}`, () => carryStop(intent_id)), { name: CLEANUP_WORKFLOW_NAME });
 async function carryStop(intent_id: string): Promise<EffectStatus | null> {
   const timing = current().timing;
   const loaded = await loadIntentStep(intent_id);
   if (loaded.kind !== "carried") return loaded.kind === "invalid" ? settleStep({ intent_id, status: "stopped", last_error: loaded.detail }) : null;
   const intent = loaded.intent;
   if (intent.status !== "stop_requested") return intent.status;
-  // Why the stop was requested, when the executor requested it; kept past the stop's own retries.
+  // Why the attempt failed, when the executor requested the stop; kept past the stop's own retries.
   const reason = intent.last_error;
   // A code operation leaves nothing running outside: its loop ends when it sees the stop.
   if (intent.instruction.worker.kind === "code") return settleStep({ intent_id, status: "stopped", last_error: reason });
+  // A start never claimed never reached kbbl, so nothing can be running; ensuring the session only to close it would spawn the agent.
+  if (intent.tries === 0 && intent.handle === null) return confirmStop(intent, reason);
   let handle = intent.handle;
   for (let attempt = 0; ; attempt++) {
+    if (attempt >= timing.carrier_max_iterations && await rollOver("stop", intent_id)) return intent.status;
     const outcome = resolveStop(await stopStep(intent.instruction, handle));
-    if (outcome.kind === "confirmed") {
-      // A stop commit requested (the unit is no longer active) ends an attempt nothing else will;
-      // one the executor requested has already reported how its attempt ended.
-      if (reason === null) await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended",
-        result: { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" } } });
-      const settled = await settleStep({ intent_id, status: "stopped", last_error: reason });
-      await wakeRun(intent.run_id);
-      return settled;
-    }
+    if (outcome.kind === "confirmed") return confirmStop(intent, reason);
     const retry_in = backoff(attempt, timing);
     if (await recordTryFailureStep({ intent_id, last_error: outcome.detail, retry_in_seconds: retry_in }) !== "stop_requested") return null;
     await DBOS.sleepSeconds(retry_in);
@@ -459,6 +501,18 @@ async function carryStop(intent_id: string): Promise<EffectStatus | null> {
     const refreshed = await loadIntentStep(intent_id);
     if (refreshed.kind === "carried") handle = refreshed.intent.handle ?? handle;
   }
+}
+/**
+ * Nothing of the attempt runs any more. A stop commit requested (its unit is no
+ * longer active, or its watch was replaced) ends an attempt nothing else will;
+ * one the executor requested has already reported how its attempt ended.
+ */
+async function confirmStop(intent: CarriedIntent, reason: string | null): Promise<EffectStatus | null> {
+  if (intent.stop_origin === "commit") await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended",
+    result: { kind: "failed", code: PROVIDER_ERROR_CODES.attempt_stopped, detail: "stopped because its unit is no longer active" } } });
+  const settled = await settleStep({ intent_id: intent.id, status: "stopped", last_error: reason });
+  await wakeRun(intent.run_id);
+  return settled;
 }
 
 export function forkStartStep(steps: readonly { readonly functionID: number; readonly error: Error | null }[]): number {
@@ -500,44 +554,60 @@ async function recoverErroredRun(run_id: string, generation: number): Promise<vo
     start_step: forkStartStep(steps), application_version: DBOS.applicationVersion });
 }
 
+const isStartOwed = (status: EffectStatus): boolean => status === "pending" || status === "acknowledged";
+/**
+ * End an owed start that no carrier will finish. An unclaimed intent never
+ * reached the provider and fails outright; any other may have a live
+ * execution, so its stop is requested and the cleanup carrier confirms it.
+ */
+async function endOwedStart(intent: CarriedIntent, failure: WorkerFailure): Promise<void> {
+  if (intent.status === "pending" && intent.tries === 0) await failAttempt(intent, failure);
+  else await abandonAttempt(intent, failure);
+  DBOS.logger.error(`effect ${intent.id}: ${failure.code}: ${failure.detail}`);
+}
 async function settleExpiredEffect(intent_id: string): Promise<void> {
   const loaded = await loadIntentStep(intent_id);
-  if (loaded.kind !== "carried" || (loaded.intent.status !== "pending" && loaded.intent.status !== "acknowledged")) return;
-  const failure = { kind: "failed", code: "execution_deadline_exceeded", detail: `execution deadline exceeded for ${intent_id}` } as const;
-  // An unclaimed intent never reached the provider; any other may have a live execution to stop.
-  if (loaded.intent.status === "pending" && loaded.intent.tries === 0) await failAttempt(loaded.intent, failure);
-  else await abandonAttempt(loaded.intent, failure);
-  DBOS.logger.error(`effect ${intent_id}: execution deadline exceeded`);
+  if (loaded.kind !== "carried" || !isStartOwed(loaded.intent.status)) return;
+  await endOwedStart(loaded.intent, { kind: "failed", code: "execution_deadline_exceeded", detail: `execution deadline exceeded for ${intent_id}` });
 }
 
 const effectExpiredStep = DBOS.registerStep(async (deadline_epoch_ms: number): Promise<boolean> =>
   deadline_epoch_ms <= Date.now(), { name: "oakridgeEffectExpired" });
 
-export async function dispatchChild(run_id: string, intent_id: string, kind: "start" | "stop"): Promise<void> {
-  const workflow_id = kind === "start" ? intentWorkflowId(intent_id) : cleanupWorkflowId(intent_id);
-  const status = await DBOS.getWorkflowStatus(workflow_id);
-  if (!status) {
+export async function dispatchChild(run_id: string, intent_id: string, kind: CarrierKind): Promise<void> {
+  const carrier = await currentCarrier(kind, intent_id);
+  if (!carrier) {
     const deadline_ms = current().timing.execution_deadline_ms;
     if (kind === "start") await DBOS.startWorkflow(effectWorkflow,
-      { workflowID: workflow_id, ...(deadline_ms === null ? {} : { timeoutMS: deadline_ms }) })(intent_id);
-    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: workflow_id })(intent_id);
+      { workflowID: carrierWorkflowId(kind, intent_id), ...(deadline_ms === null ? {} : { timeoutMS: deadline_ms }) })(intent_id);
+    else await DBOS.startWorkflow(cleanupWorkflow, { workflowID: carrierWorkflowId(kind, intent_id) })(intent_id);
     return;
   }
+  const { generation, status } = carrier;
   if (status.status === "PENDING" || status.status === "ENQUEUED") return;
   if (status.status === "CANCELLED") {
     if (kind === "start" && status.deadlineEpochMS !== undefined && await effectExpiredStep(status.deadlineEpochMS)) {
       await settleExpiredEffect(intent_id);
       return;
     }
-    await DBOS.resumeWorkflow(workflow_id);
+    await DBOS.resumeWorkflow(status.workflowID);
     return;
   }
-  // A finished carrier whose intent is still owed is a fault the run must surface.
+  // The carrier finished while its intent is still owed, so nothing will carry it. A start
+  // is ended as a failed attempt the operator can retry, rather than carried again by a body
+  // that may finish the same way; a stop must be confirmed, so the next generation carries it.
   const loaded = await loadIntentStep(intent_id);
-  const is_owed = loaded.kind === "carried" && (kind === "start"
-    ? loaded.intent.status === "pending" || loaded.intent.status === "acknowledged"
-    : loaded.intent.status === "stop_requested");
-  if (is_owed) throw new RunInfrastructureError(run_id, `dispatch ${kind} ${intent_id}`, `workflow ${status.status} while intent remains owed`);
+  if (loaded.kind !== "carried") return;
+  const intent = loaded.intent;
+  const detail = `run ${run_id}: ${kind} carrier ${status.workflowID} is ${status.status} while intent ${intent_id} is ${intent.status}`;
+  if (kind === "start" && isStartOwed(intent.status)) {
+    await endOwedStart(intent, { kind: "failed", code: PROVIDER_ERROR_CODES.carrier_ended, detail });
+    return;
+  }
+  if (kind === "stop" && intent.status === "stop_requested") {
+    DBOS.logger.error(`${detail}; carrying it again`);
+    await DBOS.startWorkflow(cleanupWorkflow, { workflowID: carrierWorkflowId(kind, intent_id, generation + 1) })(intent_id);
+  }
 }
 
 export const runWorkflow = DBOS.registerWorkflow(async (run_id: string): Promise<void> => {
@@ -609,9 +679,9 @@ export async function wakeRun(run_id: string): Promise<void> {
   catch (error) { DBOS.logger.warn(`run ${run_id}: wake not delivered: ${String(error)}`); }
 }
 
-const WORKFLOW_NAMES = [RUN_WORKFLOW_NAME, "oakridgeEffectWorkflow", "oakridgeCleanupWorkflow"];
+const WORKFLOW_NAMES = [RUN_WORKFLOW_NAME, EFFECT_WORKFLOW_NAME, CLEANUP_WORKFLOW_NAME];
 function isExpiredEffectWorkflow(status: WorkflowStatus, now_ms: number): boolean {
-  return status.workflowName === "oakridgeEffectWorkflow"
+  return status.workflowName === EFFECT_WORKFLOW_NAME
     && status.deadlineEpochMS !== undefined && status.deadlineEpochMS <= now_ms;
 }
 

@@ -30,6 +30,8 @@ export const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface KbblClientOptions {
   readonly base_url: string;
+  /** kbbl's control token, sent as Bearer on every call; null when kbbl runs without one. */
+  readonly control_token?: string | null;
   readonly fetch?: FetchLike;
 }
 
@@ -94,9 +96,15 @@ export interface SessionCloser { readonly action_id: string; readonly is_fence: 
 export class KbblClient {
   private readonly fetch: FetchLike;
   private readonly base_url: string;
+  private readonly authorization: { readonly authorization: string } | null;
   constructor(options: KbblClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch;
     this.base_url = options.base_url.replace(/\/+$/, "");
+    this.authorization = options.control_token ? { authorization: `Bearer ${options.control_token}` } : null;
+  }
+  /** A request's headers with kbbl's credential, when one is configured: kbbl refuses an unauthenticated write. */
+  private headers(headers: { readonly [name: string]: string } = {}): { readonly [name: string]: string } {
+    return this.authorization ? { ...headers, ...this.authorization } : headers;
   }
 
   /** One HTTP call; transport failures are uncertain, 5xx/408/429 transient, other refusals permanent. */
@@ -118,7 +126,7 @@ export class KbblClient {
   /** PUT /sessions/resumable/:key, reviving an ended session under the key. The same key and spec reach the same session. */
   ensure(session_key: string, body: ResumableEnsureRequest, signal?: AbortSignal): Promise<ProviderResult<EnsuredSession>> {
     return this.call("ensure", `${this.base_url}/sessions/resumable/${encodeURIComponent(session_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json", [REVIVE_HEADER]: "true" }, body: JSON.stringify(body),
+      method: "PUT", headers: this.headers({ "content-type": "application/json", [REVIVE_HEADER]: "true" }), body: JSON.stringify(body),
     }, async (response) => {
       const raw: unknown = await response.json();
       if (!isFields(raw) || (raw.kind !== "attached" && raw.kind !== "started" && raw.kind !== "terminal")) return null;
@@ -134,7 +142,7 @@ export class KbblClient {
    */
   deliver(sid: string, delivery_key: string, text: string, signal?: AbortSignal): Promise<ProviderResult<TurnReceipt>> {
     return this.call("input", `${this.base_url}/sessions/resumable/${encodeURIComponent(sid)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text } satisfies ResumableInputRequest),
+      method: "PUT", headers: this.headers({ "content-type": "application/json" }), body: JSON.stringify({ text } satisfies ResumableInputRequest),
     }, async (response) => {
       const raw: unknown = await response.json();
       const status = isFields(raw) ? TURN_STATUSES.find((candidate) => candidate === raw.status) : undefined;
@@ -144,7 +152,7 @@ export class KbblClient {
 
   /** GET /sessions/resumable/:sid/terminal without waiting: the session's activity, and how it ended if it has. */
   read(sid: string, signal?: AbortSignal): Promise<ProviderResult<SessionReading>> {
-    return this.call("read", `${this.base_url}/sessions/resumable/${encodeURIComponent(sid)}/terminal?wait_ms=0`, { method: "GET" }, async (response) => {
+    return this.call("read", `${this.base_url}/sessions/resumable/${encodeURIComponent(sid)}/terminal?wait_ms=0`, { method: "GET", headers: this.headers() }, async (response) => {
       const raw: unknown = await response.json();
       if (!isFields(raw)) return null;
       const session = parseSession(raw.session);
@@ -163,7 +171,7 @@ export class KbblClient {
   async close(sid: string, closer: SessionCloser, signal?: AbortSignal): Promise<ProviderResult<{ readonly stopped: true }>> {
     const query = `?${closer.is_fence ? "fenced_by" : "closed_by"}=${encodeURIComponent(closer.action_id)}`;
     let response: Response;
-    try { response = await this.fetch(`${this.base_url}/sessions/${encodeURIComponent(sid)}${query}`, { method: "DELETE", ...(signal ? { signal } : {}) }); }
+    try { response = await this.fetch(`${this.base_url}/sessions/${encodeURIComponent(sid)}${query}`, { method: "DELETE", headers: this.headers(), ...(signal ? { signal } : {}) }); }
     catch (error) { return { kind: "uncertain", detail: `kbbl close: ${String(error)}` }; }
     if (response.ok || response.status === 404) return { kind: "acknowledged", value: { stopped: true } };
     const detail = `kbbl close failed (${response.status}): ${await response.text().catch(() => "")}`;

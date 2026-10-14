@@ -16,6 +16,8 @@ type Row<Table extends keyof DB> = Selectable<DB[Table]>;
 
 /** Generated from the authority.effect_status enum. */
 export type EffectStatus = Row<"authority.effect_intent">["status"];
+/** Generated from the authority.stop_origin enum. */
+export type StopOrigin = NonNullable<Row<"authority.effect_intent">["stop_origin"]>;
 
 export type DefinitionBundleRecord = Branded<Row<"authority.definition_bundle">, { id: DefinitionBundleId }>;
 export type PromptContentRecord = Readonly<Row<"authority.prompt_content">>;

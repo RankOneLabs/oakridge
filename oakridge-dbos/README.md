@@ -22,7 +22,8 @@ that carry every run without knowing its stages:
 - `oakridgeRunWorkflow` (id `run:<run_id>`, then `run:<run_id>:<n>`) — on each
   wake re-reads the run's owed intents and starts a carrier for each; exits when
   the run is done or cancelled and nothing is owed. Every committed event wakes it.
-- `oakridgeEffectWorkflow` (id = `<intent id>@<application version>`) — carries
+- `oakridgeEffectWorkflow` (id = `<intent id>@<application version>`, then
+  `…:<n>`) — carries
   one effect instruction, reports what happened to commit with the executor as
   writer, and settles the intent `stopped` or `failed`:
   - an **agent** worker runs in a kbbl resumable session. The carrier renders
@@ -37,10 +38,13 @@ that carry every run without knowing its stages:
     the start budget), publishes its value as `RevisionPublished` by the action,
     and reports `WorkerEnded`. With `every` it repeats while the intent is live,
     each run a later attempt of the same action.
-- `oakridgeCleanupWorkflow` (id = `<intent id>:stop@<application version>`) —
-  carries one requested stop until kbbl confirms it (`DELETE /sessions/:sid`).
-  A fresh session is fenced; a resumed one is closed, so a later attempt can
-  revive it. A stop commit requested ends the attempt as `attempt_stopped`.
+- `oakridgeCleanupWorkflow` (id = `<intent id>:stop@<application version>`,
+  then `…:<n>`) — carries one requested stop until kbbl confirms it
+  (`DELETE /sessions/:sid`). A fresh session is fenced; a resumed one is
+  closed, so a later attempt can revive it. A start never claimed never reached
+  kbbl, so its stop settles without calling it. A stop commit requested
+  (`stop_origin = commit`) ends the attempt as `attempt_stopped`; one the
+  executor requested has already reported how its attempt ended.
 
 An operator review awaiting a decision has its prompt rendered by commit,
 from the inputs `step` resolved for it, and kept on its unit
@@ -63,6 +67,9 @@ Configuration (read by `src/main.ts`):
 
 - `KBBL_BASE_URL` — the kbbl agents run in. Unset, every agent attempt fails
   with `kbbl_unconfigured`.
+- `KBBL_CONTROL_TOKEN` — kbbl's control token, sent as Bearer on every
+  executor call to kbbl; defaults to `OAKRIDGE_CONTROL_TOKEN`. kbbl refuses an
+  unauthenticated write whenever it has a token.
 - `OAKRIDGE_PUBLICATION_KEY` — required with `KBBL_BASE_URL`. Rotating it
   does not revoke secrets already handed out: publish resolves a secret by the
   hash its attempt stored, so an old secret keeps working while its session
@@ -86,12 +93,18 @@ version. A clean shutdown parks running workflows (DBOS cancel), and the next
 boot of the same version resumes them. A boot of a different version carries
 them over instead (see Application version). An `ERROR` run is forked at its
 failed step into the next generation, and a long run rolls over after 128
-iterations. The authority stores no generation: a run's current generation is
-the newest run workflow DBOS holds for it.
+iterations. Carriers roll over the same way after `carrier_max_iterations`
+(default 128) observations, watch runs or stop tries. The authority stores no
+generation: a run's or carrier's current generation is the newest workflow DBOS
+holds for it. A start carrier that finished while its intent is still owed ends
+the attempt as `carrier_ended` (stopping any session it may have opened); a stop
+carrier that finished unconfirmed is carried again by its next generation.
 
 Each provider call is bounded by its instruction's `deadline_ms`, and starts by
-its `max_start_attempts`; a lost session is bounded by consecutive unavailable
-observations, so a working agent session has no wall-clock limit.
+its `max_start_attempts`; a lost session is bounded by consecutive observations
+that get no answer (unavailable or unreachable), so a working agent session has
+no wall-clock limit. A session silent past its bound is stopped, not just failed,
+so a later revise does not find it busy.
 `execution_deadline_ms` in the workflow timing optionally adds a DBOS execution
 timeout; if that deadline expires while parked, startup fails the attempt.
 
