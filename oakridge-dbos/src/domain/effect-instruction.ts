@@ -149,7 +149,9 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const artifact = declared.creates[0];
     if (declared.creates.length !== 1 || artifact === undefined)
       return failure(resolved.action_id, `code worker ${action.worker} must create exactly one artifact`);
-    worker = { kind: "code", operation: declared.operation, every: declared.every ?? null, artifact };
+    // Only a watch repeats: a retry of a periodic worker is one attempt, after which step opens a new watch.
+    const every = action.cause.kind === "periodic" ? declared.every ?? null : null;
+    worker = { kind: "code", operation: declared.operation, every, artifact };
   }
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id, seq: source.seq }, worker,
     inputs: resolved.inputs,
@@ -174,7 +176,8 @@ function isMode(value: unknown): value is Mode {
 function isCause(value: unknown): boolean {
   if (!isFields(value)) return false;
   switch (value.kind) {
-    case "missing": case "periodic": return true;
+    case "missing": return true;
+    case "periodic": return isString(value.inputs) && isNullableString(value.replaces ?? null);
     case "changes_requested": return isString(value.decision);
     case "review_of": return isString(value.revision);
     case "retry": return isString(value.event);

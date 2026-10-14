@@ -519,6 +519,41 @@ mod v2_step {
                 && matches!(&attempt.cause, Cause::Retry { event } if event == retry)
         })
     }
+    /// The digest a periodic watch is pinned to: its resolved inputs as wire
+    /// JSON (object keys sorted), hashed as `action_id` hashes its parts.
+    fn inputs_digest(inputs: &Value) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(inputs.to_string().as_bytes())[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+    /// Which watch a periodic worker wants (D-V1). Its latest watch while that
+    /// one is pinned to these inputs; otherwise a new one replacing the
+    /// worker's latest action, which may be an earlier watch or a retry.
+    fn periodic_cause(
+        state: &StepSnapshot,
+        unit: &UnitId,
+        worker: &WorkerKey,
+        inputs: String,
+    ) -> Cause {
+        let Some(previous) = attempt(state, unit, worker) else {
+            return Cause::Periodic {
+                inputs,
+                replaces: None,
+            };
+        };
+        match &previous.cause {
+            Cause::Periodic { inputs: pinned, .. } if *pinned == inputs => previous.cause.clone(),
+            _ => Cause::Periodic {
+                inputs,
+                replaces: Some(previous.action_id.clone()),
+            },
+        }
+    }
+    fn is_periodic(worker: &Worker) -> bool {
+        matches!(worker, Worker::Code { every: Some(_), .. })
+    }
     fn can_run(state: &StepSnapshot, unit: &UnitId, worker: &WorkerKey) -> Option<Option<Cause>> {
         let Some(previous) = attempt(state, unit, worker) else {
             return Some(None);
@@ -639,8 +674,12 @@ mod v2_step {
                 }
                 // Part 1 §5.2 rule 4: wanted only once its inputs resolve.
                 Worker::Code { every: Some(_), .. } => {
-                    eval_fields(&checked_worker.inputs, unit, state, None, context)?
-                        .map(|_| (Mode::Initial, Cause::Periodic))
+                    eval_fields(&checked_worker.inputs, unit, state, None, context)?.map(|inputs| {
+                        (
+                            Mode::Initial,
+                            periodic_cause(state, &unit.id, &worker_key, inputs_digest(&inputs)),
+                        )
+                    })
                 }
                 Worker::Code {
                     creates,
@@ -1140,7 +1179,14 @@ mod v2_step {
                         state.attempts[index].kbbl_session_id = kbbl_session_id.clone();
                     }
                     AttemptStatus::Running => {}
-                    AttemptStatus::Succeeded if matches!(old.cause, Cause::Periodic) => {
+                    AttemptStatus::Succeeded if matches!(old.cause, Cause::Periodic { .. }) => {
+                        // A watch whose worker has moved on to another action
+                        // (new inputs, or a retry) runs no further attempt.
+                        if attempt(state, &old.unit, &old.worker)
+                            .is_some_and(|latest| latest.action_id != *action)
+                        {
+                            return Err(rejected("periodic action is superseded"));
+                        }
                         state.attempts.push(AttemptState {
                             seq: old.seq + 1,
                             status: AttemptStatus::Running,
@@ -1176,8 +1222,10 @@ mod v2_step {
                         code: code.clone(),
                         detail: detail.clone(),
                     },
+                    // A periodic worker publishes only a changed value, so an
+                    // unchanged observation is a success, whatever caused the attempt.
                     WorkerResult::Succeeded
-                        if !matches!(attempt.cause, Cause::Periodic)
+                        if !is_periodic(definition)
                             && creates(definition).iter().any(|artifact| {
                                 !state.revisions.iter().any(|r| {
                                     r.by.as_ref() == Some(&attempt.action_id)
@@ -2964,6 +3012,298 @@ mod v2_step {
                     .map(|a| a.ended_at)
                     .collect::<Vec<_>>(),
                 vec![Some(1), Some(2), Some(3)]
+            );
+        }
+        /// A builder agent publishing `pr`, and a watch observing `latest(pr)`
+        /// every second once it is published: the shape of `pr_watch`.
+        fn watch_program() -> CheckedWorkflow {
+            let source: Workflow = serde_json::from_value(serde_json::json!({
+                "workflow":"watch", "input":{}, "run":{"units":{"watch":{"stage":"watch","input":{}}},"outcome":{}},
+                "stages":{"watch":{"input":{},"artifacts":{"pr":{"schema":"text"},"observation":{"schema":"text"}},
+                  "workers":{"builder":{"kind":"agent","prompts":{"initial":"build.md"},"inputs":{},"creates":["pr"]},
+                    "observer":{"kind":"code","operation":"observe","when":"published(pr)","inputs":{"branch":"latest(pr)"},"creates":["observation"],"every":"1s"}},
+                  "done_when":"false","outcome":{}}}
+            })).unwrap();
+            let observe = vec![CodeOperation {
+                key: SymbolKey::from("observe"),
+                version: 1,
+                input_schema: TypeExpression::Record(BTreeMap::from([(
+                    "branch".to_owned(),
+                    TypeExpression::Name("text".into()),
+                )])),
+                output_schema: TypeExpression::Name("text".into()),
+                error_codes: vec![],
+            }];
+            let prompts = BTreeMap::from([("build.md".to_owned(), String::new())]);
+            workflow_compiler::compile_workflow(&source, &observe, &prompts).unwrap()
+        }
+        fn latest_action(state: &StepSnapshot, worker: &str) -> ActionKey {
+            state
+                .attempts
+                .iter()
+                .rev()
+                .find(|attempt| attempt.worker.0 == worker)
+                .unwrap()
+                .action_id
+                .clone()
+        }
+        fn run_attempt(
+            program: &CheckedWorkflow,
+            state: &StepSnapshot,
+            action: &ActionKey,
+            result: WorkerResult,
+            id: &str,
+        ) -> StepResult {
+            let started = step(
+                program,
+                state,
+                &incoming(
+                    Event::WorkerStarted {
+                        action: action.clone(),
+                        kbbl_session_id: None,
+                    },
+                    &format!("{id}:start"),
+                ),
+            )
+            .unwrap();
+            step(
+                program,
+                &started.snapshot,
+                &incoming(
+                    Event::WorkerEnded {
+                        action: action.clone(),
+                        result,
+                    },
+                    &format!("{id}:end"),
+                ),
+            )
+            .unwrap()
+        }
+        /// An operator's edit of `pr`: what moves the watch's input in these tests.
+        fn edit_pr(program: &CheckedWorkflow, state: &StepSnapshot, branch: &str) -> StepResult {
+            let unit = UnitId::from("run/watch");
+            let predecessor = latest(state, &unit, &SymbolKey::from("pr")).map(|r| r.id.clone());
+            step(
+                program,
+                state,
+                &Incoming {
+                    event: Event::RevisionPublished {
+                        unit,
+                        artifact: SymbolKey::from("pr"),
+                        body: serde_json::json!(branch),
+                        predecessor,
+                        subject: None,
+                        by: None,
+                    },
+                    writer: Writer::Operator {
+                        subject: OperatorId::from("operator"),
+                    },
+                    ingress_id: Some(format!("edit:{branch}")),
+                },
+            )
+            .unwrap()
+        }
+        /// Launched, the builder's `pr` published as "one", and the first watch
+        /// opened on it.
+        fn watching_one(program: &CheckedWorkflow) -> StepSnapshot {
+            let launched = step(
+                program,
+                &snapshot(),
+                &incoming(
+                    Event::Launched {
+                        input: serde_json::json!({}),
+                    },
+                    "launch",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let builder = latest_action(&launched, "builder");
+            let started = step(
+                program,
+                &launched,
+                &incoming(
+                    Event::WorkerStarted {
+                        action: builder.clone(),
+                        kbbl_session_id: None,
+                    },
+                    "builder:start",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let published = step(
+                program,
+                &started,
+                &incoming(
+                    Event::RevisionPublished {
+                        unit: UnitId::from("run/watch"),
+                        artifact: SymbolKey::from("pr"),
+                        body: serde_json::json!("one"),
+                        predecessor: None,
+                        subject: None,
+                        by: Some(builder.clone()),
+                    },
+                    "builder:publish",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            step(
+                program,
+                &published,
+                &incoming(
+                    Event::WorkerEnded {
+                        action: builder,
+                        result: WorkerResult::Succeeded,
+                    },
+                    "builder:end",
+                ),
+            )
+            .unwrap()
+            .snapshot
+        }
+        #[test]
+        fn a_watch_whose_inputs_change_is_replaced_by_one_pinned_to_the_new_inputs() {
+            let program = watch_program();
+            let state = watching_one(&program);
+            let first = latest_action(&state, "observer");
+            let state =
+                run_attempt(&program, &state, &first, WorkerResult::Succeeded, "first").snapshot;
+            let moved = edit_pr(&program, &state, "two");
+            let second = latest_action(&moved.snapshot, "observer");
+            assert_ne!(second, first);
+            assert_eq!(
+                resolved_for(&moved, "observer").inputs,
+                serde_json::json!({"branch": "two"})
+            );
+            assert!(matches!(
+                &moved.snapshot.attempts.last().unwrap().cause,
+                Cause::Periodic { replaces: Some(replaced), .. } if *replaced == first
+            ));
+        }
+        #[test]
+        fn a_replaced_watch_starts_no_further_attempt() {
+            let program = watch_program();
+            let state = watching_one(&program);
+            let first = latest_action(&state, "observer");
+            let state =
+                run_attempt(&program, &state, &first, WorkerResult::Succeeded, "first").snapshot;
+            let moved = edit_pr(&program, &state, "two").snapshot;
+            let late_start = step(
+                &program,
+                &moved,
+                &incoming(
+                    Event::WorkerStarted {
+                        action: first,
+                        kbbl_session_id: None,
+                    },
+                    "first:late",
+                ),
+            );
+            assert!(matches!(late_start, Err(StepError::Rejected { .. })));
+        }
+        #[test]
+        fn a_watch_back_on_earlier_inputs_is_a_new_action() {
+            let program = watch_program();
+            let state = watching_one(&program);
+            let first = latest_action(&state, "observer");
+            let state =
+                run_attempt(&program, &state, &first, WorkerResult::Succeeded, "first").snapshot;
+            let state = edit_pr(&program, &state, "two").snapshot;
+            let second = latest_action(&state, "observer");
+            let state =
+                run_attempt(&program, &state, &second, WorkerResult::Succeeded, "second").snapshot;
+            let back = edit_pr(&program, &state, "one");
+            let third = latest_action(&back.snapshot, "observer");
+            assert!(third != first && third != second);
+            assert_eq!(
+                resolved_for(&back, "observer").inputs,
+                serde_json::json!({"branch": "one"})
+            );
+        }
+        #[test]
+        fn a_watch_on_unchanged_inputs_keeps_its_action() {
+            let program = watch_program();
+            let state = watching_one(&program);
+            let first = latest_action(&state, "observer");
+            let ended = run_attempt(&program, &state, &first, WorkerResult::Succeeded, "first");
+            assert_eq!(
+                ended
+                    .snapshot
+                    .attempts
+                    .iter()
+                    .filter(|a| a.worker.0 == "observer")
+                    .count(),
+                1
+            );
+        }
+        #[test]
+        fn a_retried_watch_succeeds_on_an_unchanged_observation_and_resumes_its_schedule() {
+            let program = watch_program();
+            let state = watching_one(&program);
+            let first = latest_action(&state, "observer");
+            let state = run_attempt(
+                &program,
+                &state,
+                &first,
+                WorkerResult::Failed {
+                    code: "unavailable".into(),
+                    detail: "down".into(),
+                },
+                "first",
+            )
+            .snapshot;
+            let state = step(
+                &program,
+                &state,
+                &incoming(
+                    Event::RetryRequested {
+                        unit: UnitId::from("run/watch"),
+                        worker: WorkerKey::from("observer"),
+                    },
+                    "retry",
+                ),
+            )
+            .unwrap()
+            .snapshot;
+            let retried = latest_action(&state, "observer");
+            let ended = run_attempt(&program, &state, &retried, WorkerResult::Succeeded, "retry");
+            let retry_attempt = ended
+                .snapshot
+                .attempts
+                .iter()
+                .find(|a| a.action_id == retried)
+                .unwrap();
+            assert_eq!(retry_attempt.status, AttemptStatus::Succeeded);
+            let resumed = latest_action(&ended.snapshot, "observer");
+            assert!(matches!(
+                &ended.snapshot.attempts.last().unwrap().cause,
+                Cause::Periodic { replaces: Some(replaced), .. } if *replaced == retried
+            ));
+            let state = run_attempt(
+                &program,
+                &ended.snapshot,
+                &resumed,
+                WorkerResult::Succeeded,
+                "resumed:1",
+            )
+            .snapshot;
+            let state = run_attempt(
+                &program,
+                &state,
+                &resumed,
+                WorkerResult::Succeeded,
+                "resumed:2",
+            )
+            .snapshot;
+            assert_eq!(
+                state
+                    .attempts
+                    .iter()
+                    .filter(|a| a.action_id == resumed && a.status == AttemptStatus::Succeeded)
+                    .count(),
+                2
             );
         }
         #[test]

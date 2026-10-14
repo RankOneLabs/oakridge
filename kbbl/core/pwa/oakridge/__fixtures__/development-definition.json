@@ -147,21 +147,21 @@
         "fields": [
           {
             "key": "observations",
-            "schema": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, observed_at: text, owner: ident, provider: text, source: text, state: text, url: text})"
+            "schema": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text})"
           }
         ]
       }
     },
     {
-      "key": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, observed_at: text, owner: ident, provider: text, source: text, state: text, url: text})",
+      "key": "list({base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text})",
       "shape": {
         "kind": "list",
-        "item": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, observed_at: text, owner: ident, provider: text, source: text, state: text, url: text}",
+        "item": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text}",
         "max_items": 9007199254740991
       }
     },
     {
-      "key": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, observed_at: text, owner: ident, provider: text, source: text, state: text, url: text}",
+      "key": "{base_branch: text, head_branch: text, head_sha: optional(text), merged_at: optional(text), name: ident, number: integer, owner: ident, provider: text, source: text, state: text, url: text}",
       "shape": {
         "kind": "record",
         "fields": [
@@ -188,10 +188,6 @@
           {
             "key": "number",
             "schema": "integer"
-          },
-          {
-            "key": "observed_at",
-            "schema": "text"
           },
           {
             "key": "owner",

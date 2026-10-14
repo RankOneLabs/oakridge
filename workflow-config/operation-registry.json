@@ -29,7 +29,7 @@
       }
     },
     "output_schema": {
-      "observations": "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, observed_at: text, merged_at: optional(text)})"
+      "observations": "list({provider: text, owner: ident, name: ident, number: integer, url: text, head_branch: text, base_branch: text, head_sha: optional(text), state: text, source: text, merged_at: optional(text)})"
     },
     "error_codes": [
       "discovery_unsupported",

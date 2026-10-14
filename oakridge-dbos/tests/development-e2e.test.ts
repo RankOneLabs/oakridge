@@ -3,10 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
-import type { PullRequestObservation } from "../src/domain/pull-request";
-import { ok } from "../src/domain/primitives";
 import { createOperationRunner } from "../src/operations/runner";
-import type { PullRequestBranchQuery, PullRequestReader } from "../src/runtime/github-pull-requests";
+import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { launchRunId } from "../src/storage/commit";
@@ -37,19 +35,25 @@ function developmentWorkflow(): Workflow {
   return JSON.parse(text.replaceAll('"every": "2m"', '"every": "1s"')) as Workflow;
 }
 
-/** A forge whose pull requests the agents open and the test merges. */
-class StubForge implements PullRequestReader {
-  readonly pulls = new Map<string, { readonly url: string; state: PullRequestObservation["state"]; readonly base: string }>();
+/**
+ * A forge whose pull requests the agents open and the test merges, served as
+ * GitHub's pull request list to the production reader: what the PR watches
+ * publish is what that reader makes of it.
+ */
+class StubForge {
+  readonly pulls = new Map<string, { readonly url: string; state: "open" | "merged"; readonly base: string }>();
   open(branch: string, url: string, base: string): void { if (!this.pulls.has(branch)) this.pulls.set(branch, { url, state: "open", base }); }
   merge(branch: string): void { const pull = this.pulls.get(branch); if (pull) pull.state = "merged"; }
-  async find_for_branches(query: PullRequestBranchQuery) {
-    const pull = this.pulls.get(query.head_branch);
-    const observations: PullRequestObservation[] = pull && pull.base === query.base_branch ? [{ provider: "github", owner: query.owner,
-      name: query.name, number: 1, url: pull.url, head_branch: query.head_branch, base_branch: query.base_branch, head_sha: "abc123",
-      state: pull.state, source: "poll", observed_at: "2026-10-12T00:00:00Z", merged_at: pull.state === "merged" ? "2026-10-12T00:00:00Z" : null }] : [];
-    return ok(observations);
-  }
-  async read() { return ok(null); }
+  /** `GET /repos/:owner/:name/pulls?head=:owner::branch&base=:base`. */
+  readonly list = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    const [head_owner = "", head_branch = ""] = (url.searchParams.get("head") ?? "").split(":");
+    const pull = this.pulls.get(head_branch);
+    return Response.json(pull && pull.base === url.searchParams.get("base") ? [{ number: 1, html_url: pull.url,
+      state: pull.state === "merged" ? "closed" : "open", merged_at: pull.state === "merged" ? "2026-10-12T00:00:00Z" : null,
+      head: { ref: head_branch, sha: "abc123", repo: { full_name: `${head_owner}/app` } }, base: { ref: pull.base } }] : []);
+  }) as unknown as typeof fetch;
+  readonly reader = new GithubPullRequestReader({ token: "e2e" }, this.list);
 }
 
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
@@ -127,7 +131,7 @@ beforeAll(async () => {
   base_url = `http://127.0.0.1:${server.port}`;
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
     executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, github_token: null },
-    operation_runner: createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: forge }),
+    operation_runner: createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: forge.reader }),
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5 } });
   handler = composition.app.fetch;
 }, 60_000);
@@ -198,6 +202,12 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
     assessment: await schemaOf(unitOf("cohort", "a"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
   };
+  // A watch polls every second but publishes only a change: no two successive pr_state revisions agree.
+  const pr_states = await db.selectFrom("authority.artifact_revision").select(["unit_id", "body"]).where("run_id", "=", run_id)
+    .where("artifact", "=", "pr_state").orderBy("created_at").execute();
+  const statesOf = (unit: string): readonly string[] => pr_states.filter((revision) => revision.unit_id === unit)
+    .map((revision) => JSON.stringify(revision.body));
+  const isChangesOnly = (states: readonly string[]): boolean => states.length > 0 && states.every((state, index) => index === 0 || state !== states[index - 1]);
   const outcome = (run as { readonly outcome: { readonly cohorts: readonly { readonly cohort_id: string }[];
     readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[] } }).outcome;
   expect({
@@ -206,12 +216,14 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     admitted: [...admitted].sort(),
     b_built_after_a_merged: (timeline.get("build:b") ?? 0) >= (timeline.get("merge:a") ?? Infinity),
     schemas,
+    pr_states_change: [unitOf("cohort", "a"), unitOf("cohort", "b"), unitOf("integration")].map((unit) => isChangesOnly(statesOf(unit))),
   }).toEqual({
     cohorts: ["a", "b"],
     integrations: [{ repository_key: "app", pr_url: "https://forge.test/app/pull/integration", is_merged: true }],
     admitted: ["a", "b"],
     b_built_after_a_merged: true,
     schemas: BODY_SCHEMAS,
+    pr_states_change: [true, true, true],
   });
 }, 150_000);
 

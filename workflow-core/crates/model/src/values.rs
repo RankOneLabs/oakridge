@@ -113,10 +113,23 @@ pub enum Mode {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Cause {
     Missing,
-    ChangesRequested { decision: DecisionId },
-    ReviewOf { revision: RevisionId },
-    Retry { event: EventId },
-    Periodic,
+    ChangesRequested {
+        decision: DecisionId,
+    },
+    ReviewOf {
+        revision: RevisionId,
+    },
+    Retry {
+        event: EventId,
+    },
+    /// One watch of a periodic worker: every attempt it runs is pinned to the
+    /// inputs `inputs` digests. A change of inputs, or a retry that ran, opens
+    /// a new watch that `replaces` the worker's previous action, so no two
+    /// watches share an id even when their inputs do.
+    Periodic {
+        inputs: String,
+        replaces: Option<ActionKey>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
