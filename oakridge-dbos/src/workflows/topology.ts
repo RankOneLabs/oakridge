@@ -250,10 +250,18 @@ const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string 
   return `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
 }, { name: "oakridgeReportWorker", retriesAllowed: true, maxAttempts: 5 });
 
-/** Report to commit; a refusal is returned (and logged), never thrown: step decides what an event means. */
+/**
+ * Report to commit; a refusal is returned (and logged), never thrown: step
+ * decides what an event means. An end refused because another report ended
+ * the attempt first (a stop racing the turn's own end) is the one end commit
+ * keeps per attempt, so it is not logged.
+ */
 async function report(input: ReportInput): Promise<string | null> {
   const refused = await reportStep(input);
-  if (refused) DBOS.logger.warn(`attempt ${input.attempt.action_id}#${input.attempt.seq}: ${input.report.kind} report not applied: ${refused}`);
+  if (refused === null) return null;
+  const { action_id, seq } = input.attempt;
+  const is_ended_by_another = input.report.kind === "ended" && selectIsAttemptEnded(await latestAttemptStep(action_id), seq);
+  if (!is_ended_by_another) DBOS.logger.warn(`attempt ${action_id}#${seq}: ${input.report.kind} report not applied: ${refused}`);
   return refused;
 }
 const failureText = (result: WorkerResult): string | null => result.kind === "failed" ? `${result.code}: ${result.detail}` : null;
@@ -267,6 +275,7 @@ export function selectIsAttemptEnded(latest: LatestAttempt | null, seq: number):
  * ended: commit keeps one end per attempt, and a stop or a sweep of an owed
  * start can reach an attempt its carrier ended first (a turn that succeeded
  * just as its unit went inactive). The stop of its session is still owed.
+ * An end landing between this read and the report is settled by `report`.
  */
 async function endAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<void> {
   const { attempt } = intent.instruction;
