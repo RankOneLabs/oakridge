@@ -129,6 +129,8 @@ test("an attempt whose observation is refused stops its session, and settles onl
     intent: { status: "stopped", last_error: "session_failed: observer refused" },
     attempt: { kind: "failed", code: "session_failed", detail: "observer refused" },
     stops: [session("s-refused"), session("s-refused")] });
+  expect((await db.selectFrom("authority.effect_intent").select("stop_error").where("run_id", "=", run_id)
+    .executeTakeFirstOrThrow()).stop_error).toBe("session_failed: observer refused");
 }, 30_000);
 
 test("a start that never gets a definite answer is stopped without a handle before it settles", async () => {
@@ -227,7 +229,7 @@ test("a stop commit requested after a failed start try still ends the attempt as
     expect((await composition.app.request(`/api/runs/${run_id}/cancel`, json({ request_id: crypto.randomUUID() }))).status).toBe(201);
     await until(run_id, isSettled);
     expect({ intent: await intentOf(run_id), origin: (await intentsOf(run_id))[0]?.stop_origin, attempt: (await attemptOf(run_id)).status })
-      .toEqual({ intent: { status: "stopped", last_error: "kbbl busy" }, origin: "commit",
+      .toEqual({ intent: { status: "stopped", last_error: null }, origin: "commit",
         attempt: { kind: "failed", code: "attempt_stopped", detail: "stopped because its unit is no longer active" } });
   } finally { release_start(); }
 }, 30_000);

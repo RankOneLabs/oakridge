@@ -110,6 +110,7 @@ export interface AuthorityEffectIntent {
   run_id: string;
   seq: number;
   status: Generated<AuthorityEffectStatus>;
+  stop_error: string | null;
   stop_origin: AuthorityStopOrigin | null;
   tries: Generated<number>;
   unit_id: string;

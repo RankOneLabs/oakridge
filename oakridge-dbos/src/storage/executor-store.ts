@@ -97,7 +97,8 @@ export async function markAcknowledged(db: Database, intent_id: string): Promise
 export async function abandonIntent(db: Database, input: { readonly intent_id: string; readonly last_error: string }): Promise<EffectStatus | null> {
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return null;
-    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
+    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", stop_error: input.last_error,
+      last_error: input.last_error, next_try_at: null, updated_at: new Date() })
       .where("id", "=", input.intent_id).where("status", "in", START_OWED_STATUSES).execute();
     return readStatus(trx, input.intent_id);
   });
