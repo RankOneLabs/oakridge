@@ -23,14 +23,14 @@ The three `kbbl` hits refer to Anthropic legacy 4.x model IDs; the DBOS hit uses
 
 ## Cohort bounds
 
-W2 changes the action-to-attempt join in `oakridge-dbos/src/storage/commit.ts:440-441`. That is the bound for its `canonical(` replacement. These four deep-equality sites are separate behavior and W2 must leave them alone:
+At the recorded baseline tip, W2's action-to-attempt join was at `oakridge-dbos/src/storage/commit.ts:440-441`. That was the bound for its `canonical(` replacement. These four deep-equality comparisons are separate behavior; their current anchors after W8 are:
 
 | Site | Existing comparison |
 | --- | --- |
-| `writeDelta` at `commit.ts:377` | Unit status or input changed. |
-| `writeDelta` at `commit.ts:387` | Attempt row changed. |
-| `writeReviewPrompts` at `commit.ts:501` | Rendered prompts unchanged. |
-| `selectChangedWanted` at `commit.ts:532` | Wanted set differs from the last logged set. |
+| `selectDeltaPlan` at `commit.ts:369` (applied by `writeDelta` at `:385`) | Unit status or input changed. |
+| `selectDeltaPlan` at `commit.ts:375` (applied by `writeDelta` at `:385`) | Attempt row changed. |
+| `selectCommitPlan` at `commit.ts:520` (written by `applyCommitPlan` at `:556`) | Rendered prompts unchanged. |
+| `selectChangedWanted` at `commit.ts:570` (written by `applyCommitPlan` at `:558`) | Wanted set differs from the last logged set. |
 
 W3's 500-line bound applies to `workflow-core/crates/evaluator` only. At `897dfa68`, `workflow-core/crates/compiler/src/workflow.rs` has 1,029 lines and `workflow-core/crates/compiler/src/expressions.rs` has 969. Both are W5's files and outside W3's bound. Section 4 asserts the repository-wide reading once all nine cohorts merge.
 
