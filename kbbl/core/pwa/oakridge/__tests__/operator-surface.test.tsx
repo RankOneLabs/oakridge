@@ -5,7 +5,7 @@ import { OperatorLaunchView } from "../views/OperatorLaunchView";
 import { OperatorHistoryPane } from "../views/OperatorHistoryPane";
 import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
 import type { OperatorDefinitionBundle } from "../operator-contracts";
-import { makeDevelopmentBundle, makeWorkflowSource } from "../__fixtures__/read-models";
+import { makeCompiledWorkflow, makeDevelopmentBundle, makeWorkflowSource } from "../__fixtures__/read-models";
 import { formatWorkflowText } from "../lib/workflow-definition-form";
 
 /** The development bundle with one more root input field, which the form can only take as JSON. */
@@ -302,7 +302,7 @@ test("the editor compiles the workflow before pinning exactly what compiled", as
   const requests: { readonly path: string; readonly body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     requests.push({ path: url, body: JSON.parse(String(init?.body)) });
-    return url.endsWith("/compile") ? Response.json({ digest: "compiled", stages: ["document"] })
+    return url.endsWith("/compile") ? Response.json(makeCompiledWorkflow({ digest: "compiled" }))
       : Response.json({ bundle_id: "bundle-1", digest: "compiled" }, { status: 201 });
   }));
   const onPinned = vi.fn();

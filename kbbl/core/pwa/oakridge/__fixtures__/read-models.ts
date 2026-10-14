@@ -4,6 +4,7 @@ import type {
   OperatorRunSummary, OperatorSchema, OperatorUnitView, OperatorRunEvent, OperatorDefinitionSummary, OperatorDefinitionDetail,
   OperatorAttemptView, OperatorIngressCommitted, OperatorRunUnitSummary, OperatorLaunchRequest, OperatorUnitHistory,
   OperatorDefinitionBundle, OperatorEventHistory, OperatorWorkflow,
+  OperatorCompiledWorkflow,
 } from "../operator-contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -136,6 +137,19 @@ export function makeWorkflowSource(overrides: Partial<OperatorWorkflow> = {}): O
       workers: { writer: { kind: "agent", prompts: { initial: "write.md" }, inputs: { topic: "input.topic" }, creates: ["draft"] } },
       reviews: { editor: { of: "draft", by: "operator", decisions: { approve: { effect: "approve", label: "Approve" } } } },
       done_when: "approved(draft)", outcome: { draft: "latest(draft)" } } }, ...overrides };
+}
+
+/** The core's compile response carries the source with parsed, tagged types. */
+export function makeCompiledWorkflow(overrides: Partial<OperatorCompiledWorkflow> = {}): OperatorCompiledWorkflow {
+  const source = makeWorkflowSource();
+  const document = source.stages.document!;
+  const workflow: OperatorCompiledWorkflow["workflow"] = { workflow: source.workflow, run: source.run,
+    input: { kind: "record", fields: { topic: { kind: "text" } } },
+    stages: { document: { ...document, input: { kind: "record", fields: { topic: { kind: "text" } } },
+      artifacts: { draft: { schema: { kind: "record", fields: { title: { kind: "text" }, body: { kind: "text" } } } } },
+      reviews: { editor: { of: "draft", by: "operator", decisions: { approve: { effect: "approve", label: "Approve" } } } } } },
+  };
+  return { digest: "digest-1", stages: ["document"], workflow, ...overrides };
 }
 
 export function makeDefinitionDetail(overrides: Partial<OperatorDefinitionDetail> = {}): OperatorDefinitionDetail {

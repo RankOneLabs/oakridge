@@ -19,7 +19,9 @@ CREATE TABLE authority.definition_bundle (
   id text PRIMARY KEY,
   digest text NOT NULL UNIQUE,
   source jsonb NOT NULL,
-  checked_program jsonb NOT NULL,
+  -- The parsed workflow is required by every read projection. Changing this
+  -- baseline digest enforces the W4 database cutover at startup.
+  checked_program jsonb NOT NULL CHECK (checked_program ? 'workflow'),
   -- prompt path -> content digest, pinned at compile (D9). Editing a prompt
   -- file afterwards cannot change what this definition renders.
   prompts jsonb NOT NULL DEFAULT '{}'::jsonb,

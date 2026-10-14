@@ -1,9 +1,9 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-/// Bumped whenever the request or response shape changes. v5 carries each
-/// wanted worker's identity and resolved inputs in one step response entry.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// Bumped whenever the request or response shape changes. v6 adds the parsed
+/// workflow to the compile response for tagged-type read projections.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -86,6 +86,8 @@ pub enum Output {
 pub struct CompiledWorkflow {
     pub digest: BundleDigest,
     pub stages: Vec<SymbolKey>,
+    /// The parsed source returned with its tagged types for read projections.
+    pub workflow: Box<Workflow>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

@@ -39,12 +39,24 @@ test("a database with other tables is refused, and a changed baseline is detecte
   } finally { await db.destroy(); await scratch.drop(); }
 });
 
+test("the new baseline rejects compiled bundles without a parsed workflow", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db);
+    await expect(db.insertInto("authority.definition_bundle").values({ id: "old", digest: "old", source: jsonText({}) as never,
+      checked_program: jsonText({ digest: "old", stages: [] }) as never }).execute())
+      .rejects.toThrow();
+  } finally { await db.destroy(); await scratch.drop(); }
+});
+
 test("two runs each have a root unit with no parent, and ingress ids are scoped to a run", async () => {
   const scratch = await scratchDatabase();
   const db = openDatabase(scratch.url);
   try {
     await migrateEmptyDatabase(db);
-    await db.insertInto("authority.definition_bundle").values({ id: "b", digest: "d", source: jsonText({}) as never, checked_program: jsonText({}) as never }).execute();
+    await db.insertInto("authority.definition_bundle").values({ id: "b", digest: "d", source: jsonText({}) as never,
+      checked_program: jsonText({ workflow: {} }) as never }).execute();
     for (const run of ["r1", "r2"]) await db.transaction().execute(async (trx) => {
       await trx.insertInto("authority.run").values({ id: run, definition_bundle_id: "b", root_unit_id: run }).execute();
       await trx.insertInto("authority.unit").values({ id: run, run_id: run, declaration: "$root", input: jsonText({}) as never, status: jsonText({}) as never }).execute();

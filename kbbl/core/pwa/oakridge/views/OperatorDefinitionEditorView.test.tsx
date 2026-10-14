@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { makeDefinitionDetail, makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
+import { makeCompiledWorkflow, makeDefinitionDetail, makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
 import { compileOperatorDefinition, fetchOperatorDefinitionDetail, pinOperatorDefinition } from "../client";
 import { formatWorkflowText } from "../lib/workflow-definition-form";
 import { OperatorDefinitionEditorView } from "./OperatorDefinitionEditorView";
@@ -18,7 +18,7 @@ const renderEditor = (cloneFromId: string | null, onPinned = vi.fn()) => render(
   </QueryClientProvider>);
 
 test("a workflow compiles before the operator can pin it, and pins exactly what compiled", async () => {
-  vi.mocked(compileOperatorDefinition).mockResolvedValue({ digest: "digest-1", stages: ["document"] });
+  vi.mocked(compileOperatorDefinition).mockResolvedValue(makeCompiledWorkflow());
   vi.mocked(pinOperatorDefinition).mockResolvedValue(makeDefinitionSummary());
   const onPinned = vi.fn();
   renderEditor(null, onPinned);
