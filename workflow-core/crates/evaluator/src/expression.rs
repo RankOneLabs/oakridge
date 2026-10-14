@@ -234,7 +234,13 @@ pub(super) fn eval_expression_inner(
                 }
             };
             match root {
-                ReferenceRoot::UnitInput => unit.input.as_ref().and_then(read),
+                ReferenceRoot::UnitInput => match &unit.input {
+                    Some(input) => read(input),
+                    // A launched root always has resolved input. JSON null becomes
+                    // None when Option<Value> is deserialized from a snapshot.
+                    None if unit.id == state.run.root => read(&Value::Null),
+                    None => None,
+                },
                 ReferenceRoot::EachMember => read(resolved!(bindings.each)),
                 ReferenceRoot::Item => read(resolved!(bindings.item)),
                 ReferenceRoot::ValidationBody { artifact } => {

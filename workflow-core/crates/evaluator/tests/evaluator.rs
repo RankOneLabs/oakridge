@@ -16,6 +16,68 @@ fn program() -> CheckedWorkflow {
     workflow_compiler::compile_workflow(&source, &[], &prompts).unwrap()
 }
 #[test]
+fn a_serialized_null_launch_input_remains_resolved_after_a_child_completes() {
+    let source: Workflow = serde_json::from_value(serde_json::json!({
+        "workflow": "null_input",
+        "input": "optional(text)",
+        "run": {
+            "units": {"document": {"stage": "document", "input": {}}},
+            "outcome": {"input": "input"}
+        },
+        "stages": {"document": {
+            "input": {},
+            "artifacts": {"draft": {"schema": "text"}},
+            "workers": {"writer": {"kind": "agent", "prompts": {"initial": "write.md"},
+                                   "inputs": {}, "creates": ["draft"]}},
+            "done_when": "published(draft)",
+            "outcome": {"draft": "latest(draft)"}
+        }}
+    }))
+    .unwrap();
+    let prompts = [("write.md".to_owned(), String::new())]
+        .into_iter()
+        .collect();
+    let program = compile_workflow(&source, &[], &prompts).unwrap();
+    let launched = step(
+        &program,
+        &snapshot(),
+        &incoming(Event::Launched { input: Value::Null }, "launch"),
+    )
+    .unwrap()
+    .snapshot;
+    let restored: StepSnapshot =
+        serde_json::from_value(serde_json::to_value(launched).unwrap()).unwrap();
+    let action = restored.attempts[0].action_id.clone();
+    let completed = step(
+        &program,
+        &restored,
+        &incoming(
+            Event::RevisionPublished {
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("draft"),
+                body: serde_json::json!("done"),
+                predecessor: None,
+                subject: None,
+                by: Some(action),
+            },
+            "publish",
+        ),
+    )
+    .unwrap();
+    let root = completed
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id == completed.snapshot.run.root)
+        .unwrap();
+    assert_eq!(
+        root.status,
+        UnitStatus::Done {
+            outcome: serde_json::json!({"input": null})
+        }
+    );
+}
+#[test]
 fn valid_graph_accepts_a_long_chain_and_refuses_it_closed_into_a_cycle() {
     let chain = |is_closed: bool| -> Vec<Value> {
         (0..10_000)
