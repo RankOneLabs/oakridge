@@ -1,19 +1,20 @@
 import { expect, test } from "bun:test";
-import type { Stage } from "../src/core-client/core-types";
+import type { ParsedStage } from "../src/core-client/core-types";
 import type { UnitAttention } from "../src/projections/attention";
 import { selectAvailableDecisions } from "../src/projections/unit-view";
 import type { RunSummaryRead, UnitSummaryRecord } from "../src/storage/read-store";
 
 /** A cohort stage whose assessment review may instead request changes `on` the build. */
 const stage = {
-  input: {}, outcome: {}, workers: {}, artifacts: { assessment: { schema: "text" }, build_result: { schema: "text" } },
+  input: { kind: "record", fields: {} }, outcome: {}, workers: {}, artifacts: {
+    assessment: { schema: { kind: "text" } }, build_result: { schema: { kind: "text" } } },
   reviews: { assessment_review: { of: "assessment", by: "operator", decisions: {
     accept: { effect: "approve", label: "Accept" },
     request_build_changes: { effect: "request_changes", on: "build_result", label: "Request build changes" } } } },
-} as unknown as Stage;
+} as ParsedStage;
 const unit = { id: "run/cohort", parent_id: "run", declaration: "cohort", stage: "cohort" } as UnitSummaryRecord;
 // The read's own revisions name a newer build than the core resolved: the view must not re-derive the target from them.
-const read = { run: { status: { kind: "active" } }, definition: { workflow: { stages: { cohort: stage } } },
+const read = { run: { status: { kind: "active" } }, definition: { parsed_workflow: { stages: { cohort: stage } } },
   revisions: [{ id: "run/cohort:build_result:9", unit_id: unit.id, artifact: "build_result" }] } as unknown as RunSummaryRead;
 const awaiting = (decisions: UnitAttention["awaiting"][number]["decisions"]): UnitAttention => ({ unit_id: unit.id, run_stalls: [], stalled: [],
   blocked: null, awaiting: [{ unit_id: unit.id, review: "assessment_review", target: "run/cohort:assessment:1", decisions, prompt: "" }] });

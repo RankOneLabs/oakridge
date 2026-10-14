@@ -1,10 +1,10 @@
-import type { ReviewDecision, Type, TypeExpression, Workflow } from "../core-client/core-types";
+import type { ParsedReviewDecision, ParsedWorkflow, Type } from "../core-client/core-types";
 
 /**
  * The PWA's schema contract: every type a workflow declares,
  * flattened into named shapes that reference each other by key. The PWA never
  * parses a type expression (rescue spec §2.4); this module is where the core's
- * `TypeExpression`s become these shapes.
+ * Tagged contract types become these shapes.
  */
 export interface Schema { readonly key: string; readonly shape: SchemaShape }
 /** The core requires every record field to be present; an `optional(T)` field admits null, not absence. */
@@ -27,64 +27,24 @@ export type TypeNode =
   | { readonly kind: "enum"; readonly variants: readonly string[] }
   | { readonly kind: "record"; readonly fields: readonly (readonly [string, TypeNode])[] };
 type PrimitiveName = "text" | "ident" | "repo_path" | "integer" | "boolean";
-const PRIMITIVES: readonly string[] = ["text", "ident", "repo_path", "integer", "boolean"];
-const isPrimitive = (name: string): name is PrimitiveName => PRIMITIVES.includes(name);
 
 /** The core's ident bound (`MAX_IDENT_CHARS`); text, lists and integers are bounded only by the wire. */
 const MAX_IDENT_CHARS = 100;
 const WIRE_MAX = Number.MAX_SAFE_INTEGER;
 
-/** Split at commas outside braces and parentheses, as the core's `split_top_level` does. */
-function splitTopLevel(text: string): readonly string[] {
-  const pieces: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let index = 0; index < text.length; index++) {
-    const ch = text[index];
-    if (ch === "{" || ch === "(") depth++;
-    else if (ch === "}" || ch === ")") depth = Math.max(0, depth - 1);
-    else if (ch === "," && depth === 0) { pieces.push(text.slice(start, index).trim()); start = index + 1; }
+/** Project the model's parsed type into the operator schema graph. */
+export function typeNode(type: Type): TypeNode {
+  switch (type.kind) {
+    case "text": case "ident": case "repo_path": case "integer": case "boolean":
+      return { kind: "primitive", name: type.kind };
+    case "enum": return { kind: "enum", variants: type.variants };
+    case "list": return { kind: "list", item: typeNode(type.item) };
+    case "optional": return { kind: "optional", item: typeNode(type.value) };
+    case "record": return { kind: "record", fields: Object.keys(type.fields).sort()
+      .map((key) => [key, typeNode(type.fields[key] as Type)] as const) };
+    case "named": return { kind: "alias", name: type.schema };
+    case "outcome_of": throw new Error(`outcome_of(${type.stage}) must be resolved before projection`);
   }
-  pieces.push(text.slice(start).trim());
-  return pieces;
-}
-const inner = (text: string, name: string): string | null =>
-  text.startsWith(`${name}(`) && text.endsWith(")") ? text.slice(name.length + 1, -1) : null;
-
-/** Read a tagged contract type. The compact source path remains for stored definitions. */
-export function typeNode(type: Type | TypeExpression): TypeNode {
-  if (typeof type === "object" && type !== null && "kind" in type) {
-    const tagged = type as Type;
-    switch (tagged.kind) {
-      case "text": case "ident": case "repo_path": case "integer": case "boolean":
-        return { kind: "primitive", name: tagged.kind };
-      case "enum": return { kind: "enum", variants: tagged.variants };
-      case "list": return { kind: "list", item: typeNode(tagged.item) };
-      case "optional": return { kind: "optional", item: typeNode(tagged.value) };
-      case "record": return { kind: "record", fields: Object.keys(tagged.fields).sort()
-        .map((key) => [key, typeNode(tagged.fields[key] as Type)] as const) };
-      case "named": return { kind: "alias", name: tagged.schema };
-      case "outcome_of": throw new Error(`outcome_of(${tagged.stage}) must be resolved before projection`);
-    }
-  }
-  if (typeof type !== "string")
-    return { kind: "record", fields: Object.keys(type).sort().map((key) => [key, typeNode((type as { readonly [key: string]: TypeExpression })[key] as TypeExpression)] as const) };
-  const text = type.trim();
-  if (text.startsWith("{") && text.endsWith("}")) {
-    const body = text.slice(1, -1).trim();
-    const fields = body === "" ? [] : splitTopLevel(body).map((field) => {
-      const colon = field.indexOf(":");
-      return [field.slice(0, colon).trim(), typeNode(field.slice(colon + 1))] as const;
-    });
-    return { kind: "record", fields: [...fields].sort(([left], [right]) => left.localeCompare(right)) };
-  }
-  const list = inner(text, "list");
-  if (list !== null) return { kind: "list", item: typeNode(list) };
-  const optional = inner(text, "optional");
-  if (optional !== null) return { kind: "optional", item: typeNode(optional) };
-  const variants = inner(text, "enum");
-  if (variants !== null) return { kind: "enum", variants: splitTopLevel(variants) };
-  return isPrimitive(text) ? { kind: "primitive", name: text } : { kind: "alias", name: text };
 }
 
 /** A node's schema key: an alias keeps its name, anything else is its canonical text. */
@@ -97,7 +57,7 @@ export function schemaKey(node: TypeNode): string {
     case "record": return `{${node.fields.map(([key, field]) => `${key}: ${schemaKey(field)}`).join(", ")}}`;
   }
 }
-export const typeSchemaKey = (type: Type | TypeExpression): string => schemaKey(typeNode(type));
+export const typeSchemaKey = (type: Type): string => schemaKey(typeNode(type));
 
 function primitiveShape(name: PrimitiveName): SchemaShape {
   switch (name) {
@@ -120,14 +80,15 @@ function nodeSchemas(node: TypeNode): readonly Schema[] {
       ({ key, schema: schemaKey(field) })) } }, ...node.fields.flatMap(([, field]) => nodeSchemas(field))];
   }
 }
-type Aliases = { readonly [name: string]: TypeExpression };
+type Aliases = { readonly [name: string]: Type };
+export interface SchemaOrder { readonly schema_names: readonly string[]; readonly stage_names: readonly string[] }
 /** A named schema: the alias's own key, with the shape of the type it names (through any chain of aliases). */
 function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
-  let body = typeNode(aliases[name] as TypeExpression);
+  let body = typeNode(aliases[name] as Type);
   const visited = new Set([name]);
   while (body.kind === "alias" && !visited.has(body.name) && aliases[body.name] !== undefined) {
     visited.add(body.name);
-    body = typeNode(aliases[body.name] as TypeExpression);
+    body = typeNode(aliases[body.name] as Type);
   }
   const [own, ...rest] = nodeSchemas(body);
   return own ? [{ key: name, shape: own.shape }, ...rest] : rest;
@@ -138,7 +99,7 @@ function aliasSchemas(name: string, aliases: Aliases): readonly Schema[] {
  * name text fields to collect, and a `request_changes` decision must carry
  * `feedback` (the core refuses one without it).
  */
-export function selectDecisionPayloadType(decision: ReviewDecision): TypeNode {
+export function selectDecisionPayloadType(decision: ParsedReviewDecision): TypeNode {
   const declared = decision.payload == null ? null : typeNode(decision.payload);
   const fields = new Map<string, TypeNode>(declared?.kind === "record" ? declared.fields : []);
   for (const key of Object.keys(decision.fields ?? {})) if (!fields.has(key)) fields.set(key, { kind: "primitive", name: "text" });
@@ -154,16 +115,18 @@ export const EMPTY_PAYLOAD: TypeNode = { kind: "record", fields: [] };
  * the run and stage inputs, artifact bodies and review decision payloads. Keys
  * are unique; the first emission of a key wins (they are equal by construction).
  */
-export function selectWorkflowSchemas(workflow: Workflow): readonly Schema[] {
+export function selectWorkflowSchemas(workflow: ParsedWorkflow, order?: SchemaOrder): readonly Schema[] {
   const nodes: TypeNode[] = [typeNode(workflow.input), EMPTY_PAYLOAD];
-  for (const stage of Object.values(workflow.stages)) {
+  for (const stage_name of order?.stage_names ?? Object.keys(workflow.stages)) {
+    const stage = workflow.stages[stage_name];
+    if (!stage) continue;
     nodes.push(typeNode(stage.input));
     for (const artifact of Object.values(stage.artifacts)) nodes.push(typeNode(artifact.schema));
     for (const review of Object.values(stage.reviews ?? {}))
       for (const decision of Object.values(review.decisions)) nodes.push(selectDecisionPayloadType(decision));
   }
   const aliases = workflow.schemas ?? {};
-  const all = [...Object.keys(aliases).flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
+  const all = [...(order?.schema_names ?? Object.keys(aliases)).flatMap((name) => aliasSchemas(name, aliases)), ...nodes.flatMap(nodeSchemas)];
   const seen = new Set<string>();
   return all.filter((schema) => !seen.has(schema.key) && !!seen.add(schema.key));
 }

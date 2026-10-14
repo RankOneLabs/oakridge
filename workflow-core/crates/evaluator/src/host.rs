@@ -144,6 +144,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
+                workflow,
             };
             state.insert(program);
             Output::Compiled(output)

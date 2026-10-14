@@ -17,7 +17,9 @@ test("compile runs in process without spawning a child", async () => {
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const compiled = await started.value.request("compile", { workflow, prompts: { "write.md": "write" } });
-    expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled", value: { stages: ["document"] } } });
+    expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled", value: { stages: ["document"], workflow: {
+      input: { kind: "record", fields: {} }, stages: { document: { artifacts: { draft: { schema: { kind: "text" } } } } },
+    } } } });
     expect(spawn).not.toHaveBeenCalled();
     started.value.close();
   } finally { spawn.mockRestore(); }

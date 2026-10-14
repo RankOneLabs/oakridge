@@ -86,6 +86,8 @@ pub enum Output {
 pub struct CompiledWorkflow {
     pub digest: BundleDigest,
     pub stages: Vec<SymbolKey>,
+    /// The parsed source returned with its tagged types for read projections.
+    pub workflow: Box<Workflow>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

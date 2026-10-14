@@ -28,7 +28,11 @@ fn schema_to_ts_with_source(schema: &Value, is_source: bool) -> String {
         if is_source && reference == "#/$defs/Type" {
             return "TypeExpression".into();
         }
-        return reference.trim_start_matches("#/$defs/").to_owned();
+        let name = reference.trim_start_matches("#/$defs/");
+        if !is_source && PARSED_SOURCE_DEFS.contains(&name) {
+            return format!("Parsed{name}");
+        }
+        return name.to_owned();
     }
     if let Some(value) = schema.get("const") {
         return value.to_string();
@@ -112,6 +116,15 @@ fn schema_to_ts_with_source(schema: &Value, is_source: bool) -> String {
     }
 }
 
+const PARSED_SOURCE_DEFS: &[&str] = &["Workflow", "Stage", "Artifact", "Review", "ReviewDecision"];
+
+fn compact_type_schema() -> Value {
+    serde_json::json!({"anyOf": [
+        {"type": "string"},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/Type"}}
+    ]})
+}
+
 fn request_type(schema: &Value) -> String {
     let Some(variants) = schema.get("oneOf").and_then(Value::as_array) else {
         return schema_to_ts(schema);
@@ -145,10 +158,13 @@ fn request_type(schema: &Value) -> String {
 }
 
 pub fn generate() -> String {
-    let schemas = serde_json::json!({
+    let mut schemas = serde_json::json!({
         "request": schema_for!(Request),
         "response": schema_for!(Response),
     });
+    // A compile request carries compact source. A compiled response carries
+    // the same workflow after its types were parsed and serialized as tags.
+    schemas["request"]["$defs"]["Type"] = compact_type_schema();
     let mut definitions = BTreeMap::new();
     for root in ["request", "response"] {
         if let Some(items) = schemas[root]["$defs"].as_object() {
@@ -162,8 +178,14 @@ pub fn generate() -> String {
     for (name, schema) in definitions {
         output.push_str(&format!(
             "export type {name} = {};\n",
-            schema_to_ts_with_source(schema, name != "Type")
+            schema_to_ts_with_source(schema, name != "Type" && name != "CompiledWorkflow")
         ));
+        if PARSED_SOURCE_DEFS.contains(&name.as_str()) {
+            output.push_str(&format!(
+                "export type Parsed{name} = {};\n",
+                schema_to_ts_with_source(schema, false)
+            ));
+        }
     }
     output.push_str(
         "export type TypeExpression = string | { readonly [key: string]: TypeExpression };\n",
@@ -188,9 +210,7 @@ pub fn generate_source() -> String {
         serde_json::to_value(schema_for!(workflow_model::Workflow)).expect("source schema is JSON");
     // The editor validates the compact source surface, which the model's
     // custom Deserialize parses before its tagged serialization is used.
-    schema["$defs"]["Type"] = serde_json::json!({"anyOf": [
-        {"type": "string"}, {"type": "object", "additionalProperties": {"$ref": "#/$defs/Type"}}
-    ]});
+    schema["$defs"]["Type"] = compact_type_schema();
     let mut output = format!(
         "// Generated from workflow-model::Workflow. Run scripts/generate-core-contracts.sh.\nexport const SOURCE_SCHEMA = {schema} as const;\n"
     );

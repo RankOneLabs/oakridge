@@ -34,7 +34,7 @@ export interface ArtifactLocation { readonly unit_id: string; readonly artifact:
 /** One declared artifact of a stage unit, or null when the unit or its stage does not declare it. */
 export function selectArtifactDetail(read: RunRead, location: ArtifactLocation): ArtifactDetail | null {
   const unit = read.units.find((candidate) => candidate.id === location.unit_id);
-  const stage = unit?.stage == null ? undefined : read.definition.workflow.stages[unit.stage];
+  const stage = unit?.stage == null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!unit || !stage?.artifacts[location.artifact]) return null;
   const revisions = selectRevisionViews(read.revisions.filter((revision) => revision.unit_id === unit.id && revision.artifact === location.artifact));
   const ids = new Set(revisions.map((revision) => revision.id));
