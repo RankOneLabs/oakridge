@@ -27,9 +27,9 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 - **The default install at `127.0.0.1:8790` still lacks v2 `/api/runs`.** The
   isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders a
-  seeded run list and detail in a browser check; operator confirmation of that
-  checkpoint is pending. The default install needs its separate database cutover
-  before this PWA branch can run against it.
+  seeded run list and detail in a browser check; the operator confirmed the
+  visual checkpoint. Functional validation remains separate. The default
+  install needs its database cutover before this PWA branch can run against it.
 - **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
   A composite v2 ID resolves on a cold load, and the client can find a bare v2
   revision ID by searching run and unit views. An arbitrary retired v1 UUID
