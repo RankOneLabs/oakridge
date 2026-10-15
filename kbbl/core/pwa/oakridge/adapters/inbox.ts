@@ -1,6 +1,6 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, ok, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, ok, statusInputOf, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -20,7 +20,7 @@ function classify(item: OperatorInboxItem, unit: OperatorUnitView): ReviewInboxI
 
 function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]): CohortLifecycle {
   if (unit.status.kind === "done") return "complete";
-  if (deriveStatus({ status: unit.status, attention: unit.attention, attempts: unit.attempts }).stage === "failed") return "failed";
+  if (deriveStatus(statusInputOf(unit)).stage === "failed") return "failed";
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review" && item.submit.review === "admission")) return "waiting_admission";
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review" && item.submit.review.includes("merge"))) return "merge_confirmation";
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review")) return "artifact_review";

@@ -43,8 +43,7 @@ if (!capturedCohort) throw new Error("captured fixture lacks an assessment revie
 const unitFor = (unitId: string, revision: string) => ({ ...capturedCohort, run_id: "run-1", unit_id: unitId,
   decisions: capturedCohort.decisions.flatMap((decision) => {
     if (decision.submit.kind !== "review" || decision.submit.review !== "assessment_review") return [];
-    return [{ ...decision, key: decision.key === "accept" ? "approve" : decision.key,
-      submit: { ...decision.submit, decision: decision.submit.decision === "accept" ? "approve" : decision.submit.decision, target_revision_id: revision } }];
+    return [{ ...decision, submit: { ...decision.submit, target_revision_id: revision } }];
   }) });
 function mockV2(units: readonly ReturnType<typeof unitFor>[], post: (init?: RequestInit) => Promise<Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {

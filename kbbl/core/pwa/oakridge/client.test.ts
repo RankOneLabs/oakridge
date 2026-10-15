@@ -107,13 +107,14 @@ describe("v2 Oakridge client", () => {
       target: changeTarget, payload: { feedback: "Fix the API" } });
   });
 
-  it("submits an accept-effect decision without feedback", async () => {
+  it("submits the v1 approve action as the v2 decision key it maps from, without feedback", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-4" } : cohort);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
     await resumeGate(gateId, { idempotency_key: "decide-2", artifact_revision_id: "stale", gate_step: "assessment_review",
-      action: "accept", operator_comment: "", feedback: "" });
+      action: "approve", operator_comment: "", feedback: "" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
-    expect(JSON.parse(String(decision?.[1]?.body)).payload).toEqual({});
+    const body = JSON.parse(String(decision?.[1]?.body)) as { decision: string; payload: unknown };
+    expect([body.decision, body.payload]).toEqual(["accept", {}]);
   });
 
   it("maps replace_pr by its request_changes effect and submits feedback", async () => {
