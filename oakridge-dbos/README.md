@@ -22,6 +22,11 @@ that carry every run without knowing its stages:
 - `oakridgeRunWorkflow` (id `run:<run_id>`, then `run:<run_id>:<n>`) — on each
   wake re-reads the run's owed intents and starts a carrier for each; exits when
   the run is done or cancelled and nothing is owed. Every committed event wakes it.
+  With pinned DBOS SDK 4.25.14, `DBOS.send` stores a wake until `DBOS.recv`
+  consumes it, even when the send arrives during carrier dispatch before the
+  run parks. `tests/periodic-workers.test.ts` holds that ordering open and
+  checks the run advances before its wake timeout. Recheck this guarantee on
+  an SDK upgrade; without it, a pre-park wake could delay work until timeout.
 - `oakridgeEffectWorkflow` (id = `<intent id>@<application version>`, then
   `…:<n>`) — carries
   one effect instruction, reports what happened to commit with the executor as
@@ -34,8 +39,9 @@ that carry every run without knowing its stages:
     session's input keyed by the action id. Re-sending that input returns its
     receipt, which is how the turn is observed; its end is `WorkerEnded`.
   - a **code** worker runs a registered operation (`src/operations/`): the
-    carrier reports `WorkerStarted`, runs it (transient failures retried within
-    the start budget), publishes its value as `RevisionPublished` by the action,
+    carrier reports `WorkerStarted`, runs it (one-shot transient failures use
+    the start budget; a watch retries and rolls over across a longer outage),
+    publishes its value as `RevisionPublished` by the action,
     and reports `WorkerEnded`. With `every` it repeats while the intent is live,
     each run a later attempt of the same action.
 - `oakridgeCleanupWorkflow` (id = `<intent id>:stop@<application version>`,
