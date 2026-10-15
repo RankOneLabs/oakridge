@@ -1,11 +1,23 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ParsedWorkflow, Type, Workflow } from "../src/core-client/core-types";
+import type { AuthoredWorkflow, ParsedWorkflow, Type, Workflow } from "../src/core-client/core-types";
 import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
 import { typeNode, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
-import { readWorkflowPrompts } from "../src/runtime/prompt-files";
+import { readWorkflowPrompts, selectPromptPaths } from "../src/runtime/prompt-files";
+
+test("prompt discovery applies worker and review template overrides", () => {
+  const source: AuthoredWorkflow = {
+    workflow: "template_prompts", input: {}, run: { units: {}, outcome: {} },
+    workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, creates: [] } },
+    reviews: { approval: { of: "draft", by: "operator", prompt: "unused-review.md", decisions: {} } },
+    stages: { draft: { input: {}, artifacts: {}, outcome: {}, workers: {
+      writer: { template: "writer", overrides: { prompts: { initial: "used.md" } } } },
+      reviews: { approval: { template: "approval", overrides: { prompt: "used-review.md" } } } } },
+  };
+  expect(selectPromptPaths(source)).toEqual(["used-review.md", "used.md"]);
+});
 
 const workflow: ParsedWorkflow = {
   workflow: "development",

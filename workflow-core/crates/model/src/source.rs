@@ -290,6 +290,133 @@ pub struct Workflow {
     pub stages: BTreeMap<String, Stage>,
 }
 
+/// The authoring surface before reusable declarations are expanded into a
+/// pinned `Workflow`. This is also the source schema used by the editor.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredWorkflow {
+    pub workflow: SymbolKey,
+    pub input: TypeExpression,
+    #[serde(default)]
+    pub schemas: BTreeMap<String, TypeExpression>,
+    #[serde(default)]
+    pub decisions: BTreeMap<String, BTreeMap<String, ReviewDecision>>,
+    #[serde(default)]
+    pub workers: BTreeMap<String, Worker>,
+    #[serde(default)]
+    pub reviews: BTreeMap<String, Review>,
+    pub run: Group,
+    pub stages: BTreeMap<String, AuthoredStage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredStage {
+    pub input: TypeExpression,
+    #[serde(default, rename = "let")]
+    pub let_bindings: BTreeMap<String, String>,
+    pub artifacts: BTreeMap<String, Artifact>,
+    pub workers: BTreeMap<String, AuthoredWorker>,
+    #[serde(default)]
+    pub reviews: BTreeMap<String, AuthoredReview>,
+    pub done_when: Option<String>,
+    pub outcome: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AuthoredWorker {
+    Concrete(Worker),
+    Template(WorkerUse),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AuthoredReview {
+    Concrete(AuthoredReviewDefinition),
+    Template(ReviewUse),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredReviewDefinition {
+    pub of: SymbolKey,
+    pub by: ReviewBy,
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub inputs: BTreeMap<String, String>,
+    pub decisions: AuthoredDecisions,
+    pub when: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AuthoredDecisions {
+    Inline(BTreeMap<String, ReviewDecision>),
+    Set(DecisionSetUse),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerOverrides {
+    pub inputs: Option<BTreeMap<String, String>>,
+    pub when: Option<String>,
+    pub every: Option<String>,
+    pub workspace: Option<String>,
+    pub operation: Option<SymbolKey>,
+    pub creates: Option<Vec<SymbolKey>>,
+    pub prompts: Option<Prompts>,
+    pub reviews: Option<SymbolKey>,
+    pub runtime: Option<WorkerRuntime>,
+    pub session: Option<SessionMode>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerUse {
+    pub template: String,
+    #[serde(default)]
+    pub overrides: Option<WorkerOverrides>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionOverrides {
+    pub label: Option<String>,
+    pub on: Option<SymbolKey>,
+    pub fields: Option<BTreeMap<String, String>>,
+    pub feedback: Option<String>,
+    pub payload: Option<TypeExpression>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionSetUse {
+    pub set: String,
+    #[serde(default)]
+    pub rename: BTreeMap<String, String>,
+    #[serde(default)]
+    pub overrides: BTreeMap<String, DecisionOverrides>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewOverrides {
+    pub of: Option<SymbolKey>,
+    pub when: Option<String>,
+    pub prompt: Option<String>,
+    pub inputs: Option<BTreeMap<String, String>>,
+    pub decisions: Option<BTreeMap<String, DecisionOverrides>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewUse {
+    pub template: String,
+    #[serde(default)]
+    pub overrides: Option<ReviewOverrides>,
+}
+
 /// A type is parsed once when a source workflow is loaded. `OutcomeOf` stays
 /// unresolved until W5's name-resolution pass knows the stage's outcome.
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]

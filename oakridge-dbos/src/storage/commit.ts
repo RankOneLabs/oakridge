@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
+import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -436,14 +436,19 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
 }
+function reviewPromptPath(source: Workflow, parsed: ParsedWorkflow | undefined, stage: string | null, review: string): string | null {
+  if (stage === null) return null;
+  return parsed?.stages[stage]?.reviews?.[review]?.prompt
+    ?? source.stages[stage]?.reviews?.[review]?.prompt ?? null;
+}
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
-  const { request, step, source, prompts } = input;
+  const { request, step, source, parsed_workflow, prompts } = input;
   const unit_ids = step.snapshot.units.map((unit) => unit.id);
   const wanted = selectWanted(step);
   const paths = step.reviews.flatMap((review) => {
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    const path = reviewPromptPath(source, parsed_workflow, stage, review.review);
     return path ? [path] : [];
   });
   const [intent_rows, review_rows, logged_rows, prompt_texts] = await Promise.all([
@@ -521,7 +526,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   for (const review of step.reviews) {
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    const path = reviewPromptPath(source, existing.parsed_workflow, stage, review.review);
     const digest = path ? prompts[path] : undefined;
     const text = digest === undefined ? undefined : existing.prompt_texts.get(digest);
     if (text === undefined) return violation(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);

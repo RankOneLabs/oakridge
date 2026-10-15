@@ -2,7 +2,8 @@ import { readAllInboxPages } from "./lib/operator-inbox";
 import { OakridgeHttpError, selectFailureDetail } from "./lib/client-errors";
 import { selectFallbackRefreshMs } from "./lib/oakridge-config";
 import type { OakridgeConfig } from "./types";
-import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorInboxPage, OperatorRunInboxBatch, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorWorkflow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
+import type { OperatorProjectDraft, OperatorProjectList, OperatorProjectView, OperatorLaunchRequest, OperatorIngressCommitted, OperatorRunView, OperatorDefinitionSummary, OperatorDefinitionDetail, OperatorUnitHistory, OperatorPinnedDefinition, OperatorUnitView, OperatorInboxPage, OperatorRunInboxBatch, OperatorCollaborationThreadView, OperatorCollaborationThreadRow, OperatorCollaborationMessageRow, OperatorCompiledWorkflow, OperatorDecideRequest, OperatorIngressRequest, OperatorPublishRequest } from "./operator-contracts";
+import type { WorkflowDefinitionDescriptor } from "./workflow-definition-types";
 import type { OperatorDecisionSubmission } from "./lib/operator-drafts";
 
 const API = "/oakridge/api";
@@ -74,8 +75,8 @@ export const fetchOperatorProjects = async (): Promise<readonly OperatorProjectV
 export const createOperatorProject = (draft: OperatorProjectDraft): Promise<OperatorProjectView> => post("/api/projects", draft);
 export const updateOperatorProject = (projectId: string, draft: OperatorProjectDraft): Promise<OperatorProjectView> => put(`/api/projects/${encodeURIComponent(projectId)}`, draft);
 /** Compiling is the authority's check before the editor offers to pin. */
-export const compileOperatorDefinition = (workflow: OperatorWorkflow): Promise<OperatorCompiledWorkflow> => post("/api/definitions/compile", workflow);
-export const pinOperatorDefinition = (workflow: OperatorWorkflow): Promise<OperatorDefinitionSummary> => post("/api/definitions", workflow);
+export const compileOperatorDefinition = (workflow: WorkflowDefinitionDescriptor): Promise<OperatorCompiledWorkflow> => post("/api/definitions/compile", workflow);
+export const pinOperatorDefinition = (workflow: WorkflowDefinitionDescriptor): Promise<OperatorDefinitionSummary> => post("/api/definitions", workflow);
 export const launchOperatorRun = (request: OperatorLaunchRequest): Promise<OperatorIngressCommitted> => post("/api/runs", request);
 
 const runPath = (runId: string): string => `/api/runs/${encodeURIComponent(runId)}`;

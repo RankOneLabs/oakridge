@@ -6,7 +6,7 @@ import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
 import { requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -301,6 +301,31 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
   expect({ target: drafted.editor?.target, topic: drafted.editor?.prompt.includes("topic Oakridge"), draft: drafted.editor?.prompt.includes("A long draft"),
     no_critique_yet: drafted.editor?.prompt.includes("critique none"), critique: critiqued.editor?.prompt.includes("tighten the opening"), decided: await prompts() })
     .toEqual({ target: `${unit}:draft:1`, topic: true, draft: true, no_critique_yet: true, critique: true, decided: {} });
+});
+
+test("a templated operator review renders its pinned prompt", async () => {
+  const source = sampleWorkflow("review-loop");
+  const editor = source.stages.document?.reviews?.editor;
+  if (!editor) throw new Error("editor review absent");
+  const templated = { ...source, reviews: { editor }, stages: {
+    ...source.stages,
+    document: { ...source.stages.document!, reviews: { editor: { template: "editor" } } },
+  } } as unknown as Workflow;
+  const pinned = await pinWorkflow(authority, templated);
+  const { run_id, result } = await launch(authority, {
+    bundle_id: pinned.bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
+  });
+  if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
+  const unit = unitOf(run_id, "document");
+  const writer = await writerAction(run_id);
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-template" }, writer: executor(writer) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Body" },
+    predecessor: null, subject: null, by: writer },
+    writer: { kind: "session", session: "sid-template", attempt: writer } });
+  const row = await authority.db.selectFrom("authority.unit").select("review_prompts")
+    .where("run_id", "=", run_id).where("id", "=", unit).executeTakeFirstOrThrow();
+  expect(row.review_prompts.editor?.prompt.includes("topic Oakridge")).toBe(true);
 });
 
 // ---------------------------------------------------- commit correctness -----

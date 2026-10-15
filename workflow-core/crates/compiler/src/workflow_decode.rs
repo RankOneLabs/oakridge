@@ -1,63 +1,6 @@
 use super::*;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct WorkerOverrides {
-    inputs: Option<BTreeMap<String, String>>,
-    when: Option<String>,
-    every: Option<String>,
-    workspace: Option<String>,
-    operation: Option<SymbolKey>,
-    creates: Option<Vec<SymbolKey>>,
-    prompts: Option<Prompts>,
-    reviews: Option<SymbolKey>,
-    runtime: Option<WorkerRuntime>,
-    session: Option<SessionMode>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkerUse {
-    template: String,
-    #[serde(default)]
-    overrides: Option<WorkerOverrides>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct DecisionOverrides {
-    label: Option<String>,
-    on: Option<SymbolKey>,
-    fields: Option<BTreeMap<String, String>>,
-    feedback: Option<String>,
-    payload: Option<TypeExpression>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DecisionSetUse {
-    set: String,
-    #[serde(default)]
-    rename: BTreeMap<String, String>,
-    #[serde(default)]
-    overrides: BTreeMap<String, DecisionOverrides>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewOverrides {
-    of: Option<SymbolKey>,
-    when: Option<String>,
-    prompt: Option<String>,
-    inputs: Option<BTreeMap<String, String>>,
-    decisions: Option<BTreeMap<String, DecisionOverrides>>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewUse {
-    template: String,
-    #[serde(default)]
-    overrides: Option<ReviewOverrides>,
-}
 fn decode_at<T: DeserializeOwned>(value: Value, path: &str) -> Result<T, CompileError> {
     serde_json::from_value(value).map_err(|error| {
         CompileError::new(
