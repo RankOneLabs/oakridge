@@ -39,6 +39,7 @@ fn operations() -> Vec<CodeOperation> {
                     "repository_path".into(),
                     TypeExpression::Name("repo_path".into()),
                 ),
+                ("base_branch".into(), TypeExpression::Name("text".into())),
                 (
                     "expected_head".into(),
                     TypeExpression::Name("optional(text)".into()),

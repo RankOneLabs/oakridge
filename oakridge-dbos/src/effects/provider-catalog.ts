@@ -16,6 +16,7 @@ export const PROVIDER_ERROR_CODES = {
   pull_request_mismatch: "pull_request_mismatch",
   worktree_unrecoverable: "worktree_unrecoverable",
   head_changed: "head_changed",
+  base_branch_missing: "base_branch_missing",
   // The executor's own.
   session_failed: "session_failed",
   session_closed: "session_closed",

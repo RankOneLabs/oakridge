@@ -134,7 +134,11 @@ beforeAll(async () => {
   const git = (...args: string[]) => Bun.spawn(["git", "-C", repository, ...args]).exited;
   await git("init", "-q", "-b", "main");
   await git("-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-  await git("remote", "add", "origin", "git@github.com:oakridge-e2e/app.git");
+  // Fetches come from a local bare origin carrying the build base; pushes would go to GitHub, which the run never reaches.
+  await Bun.spawn(["git", "init", "-q", "--bare", "-b", "main", `${repository}.origin.git`]).exited;
+  await git("remote", "add", "origin", `${repository}.origin.git`);
+  await git("remote", "set-url", "--push", "origin", "git@github.com:oakridge-e2e/app.git");
+  await git("push", "-q", `${repository}.origin.git`, "main:develop");
   stub = startStubKbbl(developmentAgents(forge, timeline));
   let handler: (request: Request) => Response | Promise<Response> = () => new Response("starting", { status: 503 });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });
@@ -153,6 +157,7 @@ afterAll(async () => {
   await scratch.drop();
   rmSync(workdir, { recursive: true, force: true });
   rmSync(repository, { recursive: true, force: true });
+  rmSync(`${repository}.origin.git`, { recursive: true, force: true });
 });
 
 const api = async (method: string, path: string, body?: unknown): Promise<Response> =>

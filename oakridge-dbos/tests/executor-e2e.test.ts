@@ -183,19 +183,43 @@ test("a revise under session: fresh opens a new session whose first input carrie
 
 // ---------------------------------------------------------------- sample B --
 
-/** A temporary repository the code worker prepares: one commit, and a GitHub push remote it never reaches. */
-async function temporaryRepository(): Promise<{ readonly path: string; readonly head: string; remove(): void }> {
-  const path = mkdtempSync(resolve(tmpdir(), "oakridge-e2e-repo-"));
+/**
+ * A temporary repository the code worker prepares: `main` published to a local
+ * bare origin, and a checkout parked on a branch with a commit origin lacks, so
+ * a workspace head read from the checkout rather than from `origin/main` shows.
+ * Its push URL is a GitHub remote it never reaches.
+ */
+async function temporaryRepository(): Promise<{ readonly path: string; readonly head: string; advance(): Promise<string>; remove(): void }> {
+  const root = mkdtempSync(resolve(tmpdir(), "oakridge-e2e-repo-"));
+  const path = resolve(root, "work");
+  const origin = resolve(root, "origin.git");
   const git = async (...args: string[]) => {
-    const child = Bun.spawn(["git", "-C", path, ...args], { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(["git", ...args], { stdout: "pipe", stderr: "pipe" });
     const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     if (code !== 0) throw new Error(`git ${args.join(" ")} failed`);
     return stdout.trim();
   };
-  await git("init", "-q", "-b", "main");
-  await git("-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-  await git("remote", "add", "origin", "git@github.com:oakridge-e2e/fan-out.git");
-  return { path, head: await git("rev-parse", "HEAD"), remove: () => rmSync(path, { recursive: true, force: true }) };
+  const commit = (message: string) => git("-C", path, "-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false",
+    "commit", "-q", "--allow-empty", "-m", message);
+  await git("init", "-q", "--bare", "-b", "main", origin);
+  await git("init", "-q", "-b", "main", path);
+  await commit("base");
+  await git("-C", path, "remote", "add", "origin", origin);
+  await git("-C", path, "remote", "set-url", "--push", "origin", "git@github.com:oakridge-e2e/fan-out.git");
+  await git("-C", path, "push", "-q", origin, "main");
+  const head = await git("-C", path, "rev-parse", "HEAD");
+  await git("-C", path, "checkout", "-q", "-b", "elsewhere");
+  await commit("not on main");
+  return {
+    path, head,
+    advance: async () => {
+      await git("-C", path, "checkout", "-q", "main");
+      await commit("next");
+      await git("-C", path, "push", "-q", origin, "main");
+      return git("-C", path, "rev-parse", "HEAD");
+    },
+    remove: () => rmSync(root, { recursive: true, force: true }),
+  };
 }
 const ITEMS = [{ key: "a", text: "alpha", after: [] }, { key: "b", text: "beta", after: [] }, { key: "c", text: "gamma", after: ["a"] }, { key: "d", text: "delta", after: [] }];
 const itemOf = (turn: StubTurn): string => unitOf(turn).split("/").at(-1) ?? "";
@@ -219,7 +243,7 @@ test("I2: sample B prepares a temporary repository and runs every item in a work
   const repo = await temporaryRepository();
   try {
     const timeline = { started: new Map<string, number>(), finished: new Map<string, number>() };
-    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, expected_head: null }, items: ITEMS },
+    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, base_branch: "main", expected_head: null }, items: ITEMS },
       itemAgents(timeline, async () => { await Bun.sleep(300); return "succeeded"; }));
     await eventually("the run to finish", async () => await runStatus(run_id) === "done", 60_000);
     const item_sessions = sessionsOfRun(run_id, "worker");
@@ -241,7 +265,7 @@ test("I3: cancelling mid-flight stops every live session and cancels every unit"
   try {
     const timeline = { started: new Map<string, number>(), finished: new Map<string, number>() };
     let released = false;
-    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, expected_head: null }, items: ITEMS },
+    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, base_branch: "main", expected_head: null }, items: ITEMS },
       itemAgents(timeline, async () => { await eventually("release", async () => released, 60_000); return "succeeded"; }));
     await eventually("two item sessions running", async () => timeline.started.size === 2);
     expect((await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() })).status).toBe(201);
@@ -261,7 +285,7 @@ test("I3: a failed item stalls holding its slot while its siblings run to comple
   try {
     const timeline = { started: new Map<string, number>(), finished: new Map<string, number>() };
     let b_tries = 0;
-    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, expected_head: null }, items: ITEMS },
+    const run_id = await launch(sampleWorkflow("fan-out"), { repository: { repository_path: repo.path, base_branch: "main", expected_head: null }, items: ITEMS },
       itemAgents(timeline, async (item) => item === "b" && ++b_tries === 1 ? "failed" : "succeeded"));
     await eventually("a, c and d to finish", async () => {
       const done = (await units(run_id)).filter((unit) => unit.status.kind === "done").map((unit) => unit.collection_key);
@@ -328,22 +352,21 @@ test("a periodic code worker repeats under one intent across carrier generations
   const repo = await temporaryRepository();
   try {
     const periodic: Workflow = {
-      workflow: "watch_head", input: { repository_path: "repo_path", expected_head: "optional(text)" },
-      run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } }, outcome: {} },
-      stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)" },
+      workflow: "watch_head", input: { repository_path: "repo_path", base_branch: "text", expected_head: "optional(text)" },
+      run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", base_branch: "input.base_branch",
+        expected_head: "input.expected_head" } } }, outcome: {} },
+      stages: { watch: { input: { repository_path: "repo_path", base_branch: "text", expected_head: "optional(text)" },
         artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" } } },
         workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
-          inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } },
+          inputs: { repository_path: "input.repository_path", base_branch: "input.base_branch", expected_head: "input.expected_head" } } },
         done_when: "false", outcome: {} } },
     };
-    const run_id = await launch(periodic, { repository_path: repo.path, expected_head: null }, async () => "failed");
+    const run_id = await launch(periodic, { repository_path: repo.path, base_branch: "main", expected_head: null }, async () => "failed");
     const ran = async (count: number) => eventually(`${count} runs`, async () =>
       (await attempts(run_id, "prepare")).filter((attempt) => attempt.status.kind === "succeeded").length >= count, 20_000);
     await ran(2);
     const unchanged = (await revisions(run_id, "workspace")).length;
-    const child = Bun.spawn(["git", "-C", repo.path, "-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false",
-      "commit", "-q", "--allow-empty", "-m", "next"]);
-    await child.exited;
+    await repo.advance();
     const moved = await eventually("the new head published", async () => {
       const heads = (await revisions(run_id, "workspace")).map((revision) => (revision.body as { head: string }).head);
       return heads.length === 2 ? heads : null;

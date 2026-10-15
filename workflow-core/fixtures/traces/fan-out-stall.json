@@ -10,6 +10,7 @@
           "input": {
             "repository": {
               "repository_path": "/tmp/repo",
+              "base_branch": "main",
               "expected_head": null
             },
             "items": [

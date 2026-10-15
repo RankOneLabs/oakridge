@@ -1,6 +1,6 @@
 workflow: fan_out
 input:
-  repository: { repository_path: repo_path, expected_head: optional(text) }
+  repository: { repository_path: repo_path, base_branch: text, expected_head: optional(text) }
   items: "list({ key: ident, text: text, after: list(ident) })"
 run:
   units:
@@ -21,14 +21,14 @@ run:
   outcome: { results: work.outcome.results }
 stages:
   prepare:
-    input: { repository: { repository_path: repo_path, expected_head: optional(text) } }
+    input: { repository: { repository_path: repo_path, base_branch: text, expected_head: optional(text) } }
     artifacts:
       workspace: { schema: { repository_path: repo_path, push_remote_owner: ident, head: ident } }
     workers:
       git:
         kind: code
         operation: repository.prepare
-        inputs: { repository_path: input.repository.repository_path, expected_head: input.repository.expected_head }
+        inputs: { repository_path: input.repository.repository_path, base_branch: input.repository.base_branch, expected_head: input.repository.expected_head }
         creates: [workspace]
     done_when: published(workspace)
     outcome: { workspace: latest(workspace) }

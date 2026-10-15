@@ -281,6 +281,7 @@
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
+            "base_branch": "input.repository.forge.build_base",
             "expected_head": "input.repository.preparation.expected_head"
           },
           "creates": [

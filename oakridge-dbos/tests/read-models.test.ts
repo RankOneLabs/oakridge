@@ -95,7 +95,7 @@ const decide = (run_id: RunId, unit: string, decision: string, target: string, p
   submitter(authority)({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision, target, payload } });
 /** Sample B with `prepare` published: the work group is active and its items exist. */
 async function fanned(): Promise<RunId> {
-  const run_id = await launched(fan_out, { repository: { repository_path: "/tmp/repo", expected_head: null },
+  const run_id = await launched(fan_out, { repository: { repository_path: "/tmp/repo", base_branch: "main", expected_head: null },
     items: [{ key: "a", text: "A", after: [] }, { key: "c", text: "C", after: ["a"] }] });
   const git = await actionOf(authority, run_id, "git");
   const prepare = unitOf(run_id, "prepare");
@@ -225,7 +225,7 @@ describe("derived fields", () => {
 
   test("a unit's attention: awaiting a review, blocked on another unit, or nothing", async () => {
     const { run_id, unit } = await drafted();
-    const fan = await launched(fan_out, { repository: { repository_path: "/tmp/repo", expected_head: null }, items: [] });
+    const fan = await launched(fan_out, { repository: { repository_path: "/tmp/repo", base_branch: "main", expected_head: null }, items: [] });
     const quiet = await launched(review_loop, { topic: "Oakridge" });
     expect({ awaiting: (await get<UnitView>(unitPath(run_id, unit))).attention,
       blocked: (await get<UnitView>(unitPath(fan, unitOf(fan, "work")))).attention,
@@ -270,7 +270,7 @@ describe("derived fields", () => {
   });
 
   test("GET inbox retains dependency and pool-capacity waits from the committed step", async () => {
-    const run_id = await launched(fan_out, { repository: { repository_path: "/tmp/repo", expected_head: null },
+    const run_id = await launched(fan_out, { repository: { repository_path: "/tmp/repo", base_branch: "main", expected_head: null },
       items: [{ key: "a", text: "A", after: [] }, { key: "b", text: "B", after: [] },
         { key: "c", text: "C", after: [] }, { key: "d", text: "D", after: ["a"] }] });
     const git = await actionOf(authority, run_id, "git");

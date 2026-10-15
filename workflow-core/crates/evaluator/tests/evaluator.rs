@@ -154,6 +154,7 @@ fn sample(name: &str) -> CheckedWorkflow {
                     "repository_path".into(),
                     TypeExpression::Name("repo_path".into()),
                 ),
+                ("base_branch".into(), TypeExpression::Name("text".into())),
                 (
                     "expected_head".into(),
                     TypeExpression::Name("optional(text)".into()),
@@ -580,6 +581,7 @@ fn failed_code_validation_does_not_publish_a_revision() {
                 "repository_path".into(),
                 TypeExpression::Name("repo_path".into()),
             ),
+            ("base_branch".into(), TypeExpression::Name("text".into())),
             (
                 "expected_head".into(),
                 TypeExpression::Name("optional(text)".into()),
@@ -813,7 +815,7 @@ fn an_action_id_is_a_fixed_length_hash_of_its_parts() {
 fn a_collection_key_longer_than_an_ident_is_refused_at_launch() {
     let program = sample("fan-out");
     let input = |key: String| {
-        serde_json::json!({"repository":{"repository_path":"/tmp/repo","expected_head":null},
+        serde_json::json!({"repository":{"repository_path":"/tmp/repo","base_branch":"main","expected_head":null},
             "items":[{"key":key,"text":"t","after":[]}]})
     };
     let launch = |key: String| {
@@ -1937,7 +1939,7 @@ fn stale_review_retry_and_publication_are_rejected() {
 /// step that starts the collection group.
 fn fan_out_preparing(items: Value) -> (CheckedWorkflow, StepSnapshot, Incoming) {
     let program = sample("fan-out");
-    let input = serde_json::json!({"repository":{"repository_path":"/tmp/repo","expected_head":null},"items":items});
+    let input = serde_json::json!({"repository":{"repository_path":"/tmp/repo","base_branch":"main","expected_head":null},"items":items});
     let launched = step(
         &program,
         &snapshot(),
@@ -2298,6 +2300,6 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         format!("{:x}", digest.finalize()),
         // The base corpus serialized through serde_json::Value has this
         // canonical-key-order digest; w6_projection restores its old shape.
-        "e994ea49c366116322181a55bb669f28a5cfc6244b4b2fbfe5533de53dd7b070"
+        "553099d0fcb714f63f82261e7aeb541a28fdc95f2dd3263adecf786067ae0107"
     );
 }
