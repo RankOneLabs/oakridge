@@ -62,6 +62,18 @@ loads (see `oakridge-dbos/README.md`).
 Bundle, route, projection, prompt and UI edits do not change it; set
 `DBOS_APPLICATION_VERSION` only to pin it for a controlled fork or rollback.
 
+To run a second Oakridge beside the one already running on a machine (an e2e
+run next to the operator's own install), use `./scripts/oakridge-shadow` from
+that checkout. It shares none of the default install's state: it starts its own
+PostgreSQL container and volume, binds kbbl to 8798 and DBOS to 8800 on
+loopback, keeps kbbl data, the agent workdir and a generated publication key
+under `~/.local/state/oakridge-shadow`, and drops every `OAKRIDGE_*`, `DBOS_*`
+and `KBBL_*` variable inherited from the shell. It refuses ports or a container
+the default install uses. `OAKRIDGE_SHADOW_NAME`, `OAKRIDGE_SHADOW_*_PORT` and
+`OAKRIDGE_SHADOW_STATE_DIR` run further instances; `OAKRIDGE_SHADOW_GITHUB_TOKEN`
+(else `OAKRIDGE_GITHUB_TOKEN` or `GITHUB_TOKEN`) authenticates pull request
+observation.
+
 Edit the examples in `workflow-config/samples/`. Their YAML is parsed into
 the Rust test fixtures by `workflow-config/src/generate.ts`; CI checks that
 the committed JSON matches. Definitions are authored as workflow JSON in the
