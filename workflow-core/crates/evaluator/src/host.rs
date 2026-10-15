@@ -119,13 +119,12 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         );
     }
     if let Some(source) = raw.get("input").and_then(|input| input.get("workflow")) {
-        let source_bytes = serde_json::to_vec(source).expect("JSON value serializes");
-        if let Err(error) = workflow_compiler::decode_workflow(&source_bytes) {
+        if let Err(errors) = workflow_compiler::decode_workflow_value_detailed(source.clone()) {
             return Response {
                 version: PROTOCOL_VERSION,
                 request_id: id,
                 truncated: false,
-                result: ResponseResult::DomainError(error),
+                result: ResponseResult::CompileErrors(errors),
             };
         }
     }
@@ -141,13 +140,13 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             workflow,
             operations,
             prompts,
-        } => workflow_compiler::compile_workflow_with_limits(
+        } => workflow_compiler::compile_workflow_with_limits_and_projection_detailed(
             &workflow,
             &operations,
             &prompts,
             &limits,
         )
-        .map(|program| {
+        .map(|(program, projected_workflow)| {
             let output = CompiledWorkflow {
                 digest: program.digest.clone(),
                 stages: program
@@ -155,11 +154,12 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
-                workflow,
+                workflow: Box::new(projected_workflow),
             };
             state.insert(program);
             Output::Compiled(output)
-        }),
+        })
+        .map_err(ResponseResult::CompileErrors),
         Operation::Step {
             workflow_digest,
             snapshot,
@@ -192,7 +192,11 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     }
                 })
             })
-            .map(|result| Output::Stepped(Box::new(result))),
+            .map(|result| Output::Stepped(Box::new(result)))
+            .map_err(|mut error| {
+                error.operation = operation_name.into();
+                ResponseResult::DomainError(error)
+            }),
     };
     Response {
         version: PROTOCOL_VERSION,
@@ -200,10 +204,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         truncated: false,
         result: match result {
             Ok(output) => ResponseResult::Ok(output),
-            Err(mut error) => {
-                error.operation = operation_name.into();
-                ResponseResult::DomainError(error)
-            }
+            Err(error) => error,
         },
     }
 }

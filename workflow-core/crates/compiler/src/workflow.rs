@@ -1,70 +1,75 @@
 //! The section 2.1-2.3 workflow compiler: source validation, stage scope
 //! type-checking, and group and collection resolution.
-use crate::expressions::{checked, checked_guard, split_call, Scope};
+use crate::expressions::{checked, checked_guard, parse_repository, Scope};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use workflow_model::*;
 
-pub(crate) fn reject(class: u8, detail: impl Into<String>) -> DomainError {
-    DomainError::new(
-        DomainErrorKind::InvalidWorkflow,
-        format!("check {class}"),
-        detail.into(),
-    )
-}
-fn validate_type(
-    ty: &Type,
-    aliases: &BTreeMap<String, Type>,
-    visiting: &mut BTreeSet<String>,
-) -> Result<(), DomainError> {
-    match ty {
-        Type::Record { fields } => {
-            for (key, field) in fields {
-                if key.is_empty() {
-                    return Err(reject(11, "empty schema field key"));
-                }
-                validate_type(field, aliases, visiting)?;
-            }
-        }
-        Type::List { item } => validate_type(item, aliases, visiting)?,
-        Type::Optional { value } => validate_type(value, aliases, visiting)?,
-        Type::Named { schema } if aliases.contains_key(&schema.0) => {
-            if !visiting.insert(schema.0.clone()) {
-                return Err(reject(1, format!("recursive schema {}", schema.0)));
-            }
-            validate_type(&aliases[&schema.0], aliases, visiting)?;
-            visiting.remove(&schema.0);
-        }
-        Type::Named { schema } if schema.0 == TYPE_VARIABLE => {}
-        Type::Named { schema } => return Err(reject(1, format!("schema {} absent", schema.0))),
-        // W5 will resolve this after stage names and outcome records are known.
-        // Until then, even an unused alias must not reach read projections.
-        Type::OutcomeOf { .. } => return Err(reject(11, format!("unresolved type {ty}"))),
-        _ => {}
+pub(crate) fn source_span(text: &str) -> SourceSpan {
+    SourceSpan {
+        start: 0,
+        end: text.len(),
     }
-    Ok(())
+}
+/// Span the source value selected by a diagnostic path. A missing value has an
+/// insertion point at byte zero; existing values span their encoded source.
+pub(crate) fn workflow_span(source: &Workflow, path: &str) -> SourceSpan {
+    serde_json::to_value(source)
+        .map(|value| json_value_span(&value, path))
+        .unwrap_or_default()
+}
+fn json_value_span(root: &serde_json::Value, path: &str) -> SourceSpan {
+    let mut value = root;
+    for segment in path.split('.') {
+        value = match value {
+            serde_json::Value::Object(fields) => fields.get(segment),
+            serde_json::Value::Array(items) => segment
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| items.get(index)),
+            _ => None,
+        }
+        .unwrap_or(&serde_json::Value::Null);
+    }
+    match value {
+        serde_json::Value::Null => SourceSpan::default(),
+        serde_json::Value::String(text) => source_span(text),
+        other => source_span(&other.to_string()),
+    }
 }
 pub(crate) fn resolve_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Type {
-    match ty {
-        Type::Named { schema } if aliases.contains_key(&schema.0) => {
-            resolve_type(&aliases[&schema.0], aliases)
+    fn visit(ty: &Type, aliases: &BTreeMap<String, Type>, visiting: &mut BTreeSet<String>) -> Type {
+        match ty {
+            Type::Named { schema } if aliases.contains_key(&schema.0) => {
+                if !visiting.insert(schema.0.clone()) {
+                    return ty.clone();
+                }
+                let result = visit(&aliases[&schema.0], aliases, visiting);
+                visiting.remove(&schema.0);
+                result
+            }
+            Type::Record { fields } => Type::Record {
+                fields: fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), visit(value, aliases, visiting)))
+                    .collect(),
+            },
+            Type::List { item } => Type::List {
+                item: Box::new(visit(item, aliases, visiting)),
+            },
+            Type::Optional { value } => Type::Optional {
+                value: Box::new(visit(value, aliases, visiting)),
+            },
+            _ => ty.clone(),
         }
-        Type::Record { fields } => Type::Record {
-            fields: fields
-                .iter()
-                .map(|(key, value)| (key.clone(), resolve_type(value, aliases)))
-                .collect(),
-        },
-        Type::List { item } => Type::List {
-            item: Box::new(resolve_type(item, aliases)),
-        },
-        Type::Optional { value } => Type::Optional {
-            value: Box::new(resolve_type(value, aliases)),
-        },
-        _ => ty.clone(),
     }
+    visit(ty, aliases, &mut BTreeSet::new())
 }
-fn checked_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Result<CheckedType, DomainError> {
+fn checked_type(
+    ty: &Type,
+    aliases: &BTreeMap<String, Type>,
+    path: &str,
+) -> Result<CheckedType, CompileError> {
     let resolved = resolve_type(ty, aliases);
     fn has_unresolved(ty: &Type) -> bool {
         match ty {
@@ -76,7 +81,12 @@ fn checked_type(ty: &Type, aliases: &BTreeMap<String, Type>) -> Result<CheckedTy
         }
     }
     if has_unresolved(&resolved) {
-        return Err(reject(11, format!("unresolved type {resolved}")));
+        return Err(CompileError::new(
+            CheckKind::Schema,
+            path,
+            source_span(&ty.to_string()),
+            format!("unresolved type {resolved}"),
+        ));
     }
     Ok(resolved)
 }
@@ -103,33 +113,51 @@ pub(crate) fn field_type(
 fn fields(
     values: &BTreeMap<String, String>,
     scope: &Scope<'_>,
-) -> Result<Vec<CheckedNamedExpression>, DomainError> {
-    values
-        .iter()
-        .map(|(key, source)| {
-            Ok(CheckedNamedExpression {
+    path: &str,
+) -> Result<Vec<CheckedNamedExpression>, Vec<CompileError>> {
+    let mut checked_fields = Vec::new();
+    let mut errors = Vec::new();
+    for (key, source) in values {
+        match checked(source, scope, &format!("{path}.{key}")) {
+            Ok(value) => checked_fields.push(CheckedNamedExpression {
                 key: key.clone(),
-                value: checked(source, scope)?,
-            })
-        })
-        .collect()
+                value,
+            }),
+            Err(error) => errors.push(error),
+        }
+    }
+    if errors.is_empty() {
+        Ok(checked_fields)
+    } else {
+        Err(errors)
+    }
 }
 /// `none` (or no workspace) gives the session no worktree; `repository(<expr>)`
 /// names the repository its worktree is cut from, read from the stage input.
 fn workspace_expression(
     source: Option<&str>,
     scope: &Scope<'_>,
-) -> Result<Option<CheckedStageExpression>, DomainError> {
-    let Some(text) = source.map(str::trim) else {
+    path: &str,
+) -> Result<Option<CheckedStageExpression>, CompileError> {
+    let Some(text) = source else {
         return Ok(None);
     };
-    if text == "none" {
+    if text.trim() == "none" {
         return Ok(None);
     }
-    match split_call(text, "repository") {
-        Some((inner, "")) if !inner.is_empty() => Ok(Some(checked(inner, scope)?)),
-        _ => Err(reject(
-            6,
+    match parse_repository(text, path) {
+        Ok(inner) => {
+            let offset = inner.as_ptr() as usize - text.as_ptr() as usize;
+            checked(inner, scope, path).map(Some).map_err(|mut error| {
+                error.span.start += offset;
+                error.span.end += offset;
+                error
+            })
+        }
+        Err(_) => Err(CompileError::new(
+            CheckKind::Workspace,
+            path,
+            source_span(text),
             format!("workspace {text} must be none or repository(<expr>)"),
         )),
     }
@@ -156,23 +184,36 @@ const MODE_ENGINE_INPUTS: &[&str] = &["previous", "feedback", "subject"];
 const HANDOFF_PROMPT: &str = "handoff";
 const HANDOFF_ENGINE_INPUTS: &[&str] = &["artifacts", "feedback", "previous_attempt"];
 fn prompt(
-    path: &str,
+    file: &str,
     inputs: &BTreeMap<String, String>,
     prompts: &BTreeMap<String, String>,
     engine_inputs: &[&str],
-) -> Result<(), DomainError> {
-    if path.trim().is_empty() {
-        return Err(reject(7, "review or agent prompt missing"));
+    path: &str,
+) -> Result<(), CompileError> {
+    if file.trim().is_empty() {
+        return Err(CompileError::new(
+            CheckKind::Worker,
+            path,
+            source_span(file),
+            "review or agent prompt missing",
+        ));
     }
-    let body = prompts
-        .get(path)
-        .ok_or_else(|| reject(10, format!("prompt file {path} missing")))?;
+    let body = prompts.get(file).ok_or_else(|| {
+        CompileError::new(
+            CheckKind::Prompt,
+            path,
+            source_span(file),
+            format!("prompt file {file} missing"),
+        )
+    })?;
     for part in body.split("{{").skip(1) {
         let key = part.split("}}").next().unwrap_or("").trim();
         if !inputs.contains_key(key) && !engine_inputs.contains(&key) {
-            return Err(reject(
-                10,
-                format!("prompt {path} names undeclared input {key}"),
+            return Err(CompileError::new(
+                CheckKind::Prompt,
+                path,
+                source_span(file),
+                format!("prompt {file} names undeclared input {key}"),
             ));
         }
     }
@@ -184,22 +225,41 @@ fn check_operator_review(
     key: &str,
     review: &Review,
     prompts: &BTreeMap<String, String>,
-) -> Result<(), DomainError> {
-    let review_prompt = review
-        .prompt
-        .as_deref()
-        .ok_or_else(|| reject(7, format!("review {key} lacks prompt")))?;
+    path: &str,
+) -> Result<(), CompileError> {
+    let prompt_path = format!("{path}.prompt");
+    let review_prompt = review.prompt.as_deref().ok_or_else(|| {
+        CompileError::new(
+            CheckKind::Worker,
+            &prompt_path,
+            SourceSpan::default(),
+            format!("review {key} lacks prompt"),
+        )
+    })?;
     if review_prompt.trim().is_empty() {
-        return Err(reject(7, format!("review {key} lacks prompt")));
+        return Err(CompileError::new(
+            CheckKind::Worker,
+            &prompt_path,
+            source_span(review_prompt),
+            format!("review {key} lacks prompt"),
+        ));
     }
-    prompt(review_prompt, &review.inputs, prompts, MODE_ENGINE_INPUTS)?;
-    if review
+    prompt(
+        review_prompt,
+        &review.inputs,
+        prompts,
+        MODE_ENGINE_INPUTS,
+        &prompt_path,
+    )?;
+    if let Some((decision_key, decision)) = review
         .decisions
-        .values()
-        .any(|decision| decision.feedback.is_some())
+        .iter()
+        .find(|(_, decision)| decision.feedback.is_some())
     {
-        return Err(reject(
-            8,
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions.{decision_key}.feedback"),
+            source_span(decision.feedback.as_deref().unwrap_or("")),
             format!("operator review {key} sets fixed feedback"),
         ));
     }
@@ -207,19 +267,40 @@ fn check_operator_review(
 }
 /// An engine review decides by itself: a `when`, and exactly one
 /// request_changes decision carrying fixed, non-empty feedback.
-fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(), DomainError> {
+fn check_engine_review(
+    key: &str,
+    review: &Review,
+    has_when: bool,
+    path: &str,
+) -> Result<(), CompileError> {
     if !has_when {
-        return Err(reject(8, format!("engine review {key} lacks when")));
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.when"),
+            SourceSpan::default(),
+            format!("engine review {key} lacks when"),
+        ));
     }
     if review.prompt.is_some() || !review.inputs.is_empty() {
-        return Err(reject(
-            8,
+        let (field, span) = match review.prompt.as_deref() {
+            Some(prompt) => ("prompt", source_span(prompt)),
+            None => (
+                "inputs",
+                source_span(&serde_json::to_string(&review.inputs).unwrap_or_default()),
+            ),
+        };
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.{field}"),
+            span,
             format!("engine review {key} has a prompt or inputs"),
         ));
     }
-    let [decision] = review.decisions.values().collect::<Vec<_>>()[..] else {
-        return Err(reject(
-            8,
+    let [(decision_key, decision)] = review.decisions.iter().collect::<Vec<_>>()[..] else {
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions"),
+            source_span(&serde_json::to_string(&review.decisions).unwrap_or_default()),
             format!("engine review {key} needs exactly one decision"),
         ));
     };
@@ -232,8 +313,10 @@ fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(),
         || decision.payload.is_some()
         || !decision.fields.is_empty()
     {
-        return Err(reject(
-            8,
+        return Err(CompileError::new(
+            CheckKind::Review,
+            format!("{path}.decisions.{decision_key}"),
+            source_span(&serde_json::to_string(decision).unwrap_or_default()),
             format!("engine review {key} decides request_changes with fixed feedback only"),
         ));
     }
@@ -284,598 +367,44 @@ fn unify(
         (expected, found) => expected == found,
     }
 }
-fn compile_stage(
-    key: &str,
-    stage: &Stage,
-    workflow: &Workflow,
+#[path = "workflow_group.rs"]
+mod group;
+#[path = "workflow_stage.rs"]
+mod stage;
+#[path = "workflow_worker.rs"]
+mod worker;
+use group::compile_group;
+use stage::compile_stage;
+#[path = "workflow_passes.rs"]
+mod passes;
+pub use passes::{CheckKind, CompileError};
+
+pub fn compile_workflow_detailed(
+    source: &Workflow,
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,
-) -> Result<(CheckedStage, TypeExpression), DomainError> {
-    let empty = BTreeMap::new();
-    let base = Scope {
-        input: &stage.input,
-        artifacts: &stage.artifacts,
-        outcomes: &empty,
-        each: None,
-        item: None,
-        aliases: &workflow.schemas,
-        body: None,
-        guaranteed: BTreeSet::new(),
-        collections: BTreeSet::new(),
-    };
-    let mut owners = BTreeMap::<String, String>::new();
-    let mut workers = Vec::new();
-    for (worker_key, worker) in &stage.workers {
-        let created = match worker {
-            Worker::Agent { creates, .. } | Worker::Code { creates, .. } => creates,
-        };
-        if created.is_empty() {
-            return Err(reject(7, format!("worker {worker_key} creates nothing")));
-        }
-        for artifact in created {
-            if !stage.artifacts.contains_key(&artifact.0) {
-                return Err(reject(1, format!("artifact {artifact} absent")));
-            }
-            if owners
-                .insert(artifact.0.clone(), worker_key.clone())
-                .is_some()
-            {
-                return Err(reject(
-                    7,
-                    format!("artifact {artifact} has multiple creators"),
-                ));
-            }
-        }
-        let guard = match worker {
-            Worker::Agent { when, .. } | Worker::Code { when, .. } => when.as_deref(),
-        };
-        let when = guard
-            .map(|text| checked_guard(text, &base, 9, &format!("worker {worker_key} when")))
-            .transpose()?;
-        // A worker runs only while its guard holds, so what the guard proves
-        // published types the worker's inputs and workspace.
-        let worker_scope = Scope {
-            guaranteed: when
-                .as_ref()
-                .map(|(_, proven)| proven.clone())
-                .unwrap_or_default(),
-            ..base.clone()
-        };
-        let checked_worker = match worker {
-            Worker::Agent {
-                prompts: modes,
-                inputs,
-                creates,
-                reviews,
-                workspace,
-                session,
-                ..
-            } => {
-                let input_fields = fields(inputs, &worker_scope)?;
-                let workspace = workspace_expression(workspace.as_deref(), &worker_scope)?;
-                if reviews.is_some() && !modes.contains_key("review") {
-                    return Err(reject(
-                        7,
-                        format!("reviewer {worker_key} lacks review prompt"),
-                    ));
-                }
-                if reviews.is_none() && !modes.contains_key("initial") {
-                    return Err(reject(
-                        7,
-                        format!("agent {worker_key} lacks initial prompt"),
-                    ));
-                }
-                if let Some(of) = reviews {
-                    if !stage.artifacts.contains_key(&of.0) {
-                        return Err(reject(8, format!("reviewed artifact {of} absent")));
-                    }
-                }
-                let needs_revise = creates.iter().any(|artifact| {
-                    !stage.artifacts[&artifact.0].validate.is_empty()
-                        || stage
-                            .reviews
-                            .values()
-                            .flat_map(|review| {
-                                review.decisions.values().map(move |decision| {
-                                    (decision.on.as_ref().unwrap_or(&review.of), decision)
-                                })
-                            })
-                            .any(|(target, decision)| {
-                                target == artifact
-                                    && decision.effect == DeclaredDecisionEffect::RequestChanges
-                            })
-                });
-                if needs_revise && !modes.contains_key("revise") {
-                    return Err(reject(7, format!("agent {worker_key} lacks revise prompt")));
-                }
-                if modes.contains_key(HANDOFF_PROMPT)
-                    && !matches!(session, Some(SessionMode::Fresh))
-                {
-                    return Err(reject(
-                        7,
-                        format!(
-                            "agent {worker_key} has a handoff prompt but its session is not fresh"
-                        ),
-                    ));
-                }
-                for (mode, path) in modes.iter() {
-                    let engine_inputs = if mode == HANDOFF_PROMPT {
-                        HANDOFF_ENGINE_INPUTS
-                    } else {
-                        MODE_ENGINE_INPUTS
-                    };
-                    prompt(path, inputs, prompts, engine_inputs)?;
-                }
-                CheckedWorker::Agent {
-                    key: WorkerKey::from(worker_key.as_str()),
-                    inputs: input_fields,
-                    creates: creates.clone(),
-                    reviews: reviews.clone(),
-                    workspace,
-                    when: when.map(|(expression, _)| expression),
-                }
-            }
-            Worker::Code {
-                operation,
-                inputs,
-                creates,
-                every,
-                ..
-            } => {
-                if let Some(interval) = every {
-                    if !is_duration(interval) {
-                        return Err(reject(
-                            12,
-                            format!("code worker {worker_key} every {interval} is not a duration"),
-                        ));
-                    }
-                }
-                if creates.len() != 1 {
-                    return Err(reject(
-                        12,
-                        format!("code worker {worker_key} must create one artifact"),
-                    ));
-                }
-                let contract = operations
-                    .iter()
-                    .find(|o| o.key == *operation)
-                    .ok_or_else(|| reject(12, format!("operation {operation} absent")))?;
-                let input_fields = fields(inputs, &worker_scope)?;
-                let mut bindings = BTreeMap::new();
-                if !unify(
-                    &contract.input_schema,
-                    &checked_record(&input_fields),
-                    &workflow.schemas,
-                    &mut bindings,
-                ) {
-                    return Err(reject(12, format!("operation {operation} input mismatch")));
-                }
-                if !unify(
-                    &contract.output_schema,
-                    &stage.artifacts[&creates[0].0].schema,
-                    &workflow.schemas,
-                    &mut bindings,
-                ) {
-                    return Err(reject(12, format!("operation {operation} output mismatch")));
-                }
-                CheckedWorker::Code {
-                    key: WorkerKey::from(worker_key.as_str()),
-                    inputs: input_fields,
-                    creates: creates.clone(),
-                    every: every.clone(),
-                    when: when.map(|(expression, _)| expression),
-                }
-            }
-        };
-        workers.push(checked_worker);
-    }
-    for artifact in stage.artifacts.keys() {
-        if !owners.contains_key(artifact) {
-            return Err(reject(7, format!("artifact {artifact} has no creator")));
-        }
-    }
-    let mut artifacts = Vec::new();
-    for (artifact_key, artifact) in &stage.artifacts {
-        let own = Scope {
-            body: Some((artifact_key, &artifact.schema)),
-            ..base.clone()
-        };
-        let validations = artifact
-            .validate
-            .iter()
-            .map(|rule| {
-                let expression = checked(&rule.check, &own)?;
-                if expression.value_type != Type::Boolean {
-                    return Err(reject(8, "validation check must be boolean"));
-                }
-                Ok(CheckedArtifactValidation {
-                    expression,
-                    message: rule.message.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        artifacts.push(CheckedArtifact {
-            key: SymbolKey::from(artifact_key.as_str()),
-            schema: checked_type(&artifact.schema, &workflow.schemas)?,
-            validations,
-        });
-    }
-    let mut reviews = Vec::new();
-    for (review_key, review) in &stage.reviews {
-        if !stage.artifacts.contains_key(&review.of.0) {
-            return Err(reject(8, format!("review {review_key} artifact absent")));
-        }
-        let when = review
-            .when
-            .as_deref()
-            .map(|text| checked_guard(text, &base, 9, &format!("review {review_key} when")))
-            .transpose()?
-            .map(|(expression, _)| expression);
-        match review.by {
-            ReviewBy::Operator => check_operator_review(review_key, review, prompts)?,
-            ReviewBy::Engine => check_engine_review(review_key, review, when.is_some())?,
-        }
-        let review_inputs = fields(&review.inputs, &base).map_err(|mut error| {
-            error.entity_id = "check 8".into();
-            error
-        })?;
-        let key = SymbolKey::from(review_key.as_str());
-        let checked_review = match review.by {
-            ReviewBy::Operator => CheckedReview::Operator {
-                key,
-                of: review.of.clone(),
-                inputs: review_inputs,
-                when,
-                decisions: review
-                    .decisions
-                    .iter()
-                    .map(|(key, decision)| {
-                        Ok((
-                            key.clone(),
-                            CheckedDecision {
-                                effect: decision.effect.clone(),
-                                on: decision.on.clone(),
-                                payload: decision
-                                    .payload
-                                    .as_ref()
-                                    .map(|ty| checked_type(ty, &workflow.schemas))
-                                    .transpose()?,
-                            },
-                        ))
-                    })
-                    .collect::<Result<_, DomainError>>()?,
-            },
-            ReviewBy::Engine => {
-                let (decision_key, decision) = review.decisions.iter().next().unwrap();
-                CheckedReview::Engine {
-                    key,
-                    of: review.of.clone(),
-                    when: when.unwrap(),
-                    decision: CheckedEngineDecision {
-                        key: SymbolKey::from(decision_key.as_str()),
-                        effect: decision.effect.clone(),
-                        on: decision.on.clone(),
-                        feedback: decision.feedback.clone().unwrap(),
-                    },
-                }
-            }
-        };
-        reviews.push(checked_review);
-        for decision in review.decisions.values() {
-            let target = decision.on.as_ref().unwrap_or(&review.of);
-            let Some(owner) = owners.get(&target.0) else {
-                return Err(reject(8, format!("decision target {target} absent")));
-            };
-            // Only a request for changes needs a worker that can revise; an
-            // approval may be of any artifact (a reviewer's, a code worker's).
-            if decision.effect == DeclaredDecisionEffect::RequestChanges
-                && !matches!(stage.workers[owner], Worker::Agent { reviews: None, .. })
-            {
-                return Err(reject(
-                    8,
-                    format!("decision target {target} is not agent-created"),
-                ));
-            }
-        }
-    }
-    let done = stage
-        .done_when
-        .as_deref()
-        .ok_or_else(|| reject(9, format!("stage {key} lacks done_when")))?;
-    let (done_when, proven) = checked_guard(done, &base, 9, &format!("stage {key} done_when"))?;
-    let outcome_scope = Scope {
-        guaranteed: proven,
-        ..base
-    };
-    let outcome = fields(&stage.outcome, &outcome_scope)?;
-    let outcome_type = checked_record(&outcome);
-    Ok((
-        CheckedStage {
-            key: SymbolKey::from(key),
-            workers,
-            done_when,
-            outcome,
-            artifacts,
-            reviews,
-        },
-        outcome_type,
-    ))
+) -> Result<CheckedWorkflow, Vec<CompileError>> {
+    compile_workflow_with_limits_detailed(source, operations, prompts, &ResourceLimits::default())
 }
-fn compile_group(
-    group: &Group,
-    input: &TypeExpression,
-    stage_outcomes: &BTreeMap<String, TypeExpression>,
-    workflow: &Workflow,
-) -> Result<(CheckedGroup, TypeExpression), DomainError> {
-    for (key, unit) in &group.units {
-        if unit.stage.is_some() == unit.group.is_some() {
-            return Err(reject(
-                2,
-                format!("unit {key} needs exactly one stage or group"),
-            ));
-        }
-        if unit.for_each.is_some() != unit.key.is_some() {
-            return Err(reject(2, format!("collection {key} needs key")));
-        }
-        if let Some(pool) = &unit.pool {
-            if group
-                .pools
-                .get(&pool.0)
-                .is_none_or(|capacity| *capacity == 0)
-            {
-                return Err(reject(1, format!("pool {pool} absent or empty")));
-            }
-        }
-        if let UnitDependencies::Fixed(after) = &unit.after {
-            for dependency in after {
-                let Some(prerequisite) = group.units.get(&dependency.0) else {
-                    return Err(reject(1, format!("unit {dependency} absent")));
-                };
-                // Members are units of their own, `group/<key>`: no unit is the collection.
-                if prerequisite.for_each.is_some() {
-                    return Err(reject(
-                        2,
-                        format!(
-                            "unit {key} waits on collection {dependency}, which is no one unit"
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-    // A member's id is `group/<key>`, its key runtime data, so a sibling's
-    // id (or another collection's member's) could be any member's.
-    if let Some((collection, _)) = group.units.iter().find(|(_, unit)| unit.for_each.is_some()) {
-        if group.units.len() > 1 {
-            return Err(reject(
-                2,
-                format!("collection {collection} shares its group, so a member key could collide with a sibling"),
-            ));
-        }
-    }
-    fn visit(
-        key: &str,
-        group: &Group,
-        visiting: &mut BTreeSet<String>,
-        done: &mut BTreeSet<String>,
-        order: &mut Vec<String>,
-    ) -> Result<(), DomainError> {
-        if done.contains(key) {
-            return Ok(());
-        }
-        if !visiting.insert(key.to_owned()) {
-            return Err(reject(5, format!("dependency cycle through {key}")));
-        }
-        if let Some(UnitDependencies::Fixed(after)) = group.units.get(key).map(|u| &u.after) {
-            for dependency in after {
-                visit(&dependency.0, group, visiting, done, order)?;
-            }
-        }
-        visiting.remove(key);
-        done.insert(key.to_owned());
-        order.push(key.to_owned());
-        Ok(())
-    }
-    let mut order = Vec::new();
-    let mut visiting = BTreeSet::new();
-    let mut done = BTreeSet::new();
-    for key in group.units.keys() {
-        visit(key, group, &mut visiting, &mut done, &mut order)?;
-    }
-    let empty = BTreeMap::new();
-    let mut outcomes = BTreeMap::<String, TypeExpression>::new();
-    let mut checked_units = Vec::new();
-    for key in &order {
-        let unit = &group.units[key];
-        let after_keys: Vec<_> = if let UnitDependencies::Fixed(after) = &unit.after {
-            after.clone()
-        } else {
-            vec![]
-        };
-        let allowed: BTreeMap<_, _> = after_keys
-            .iter()
-            .filter_map(|key| outcomes.get(&key.0).map(|ty| (key.0.clone(), ty.clone())))
-            .collect();
-        let mut scope = Scope {
-            input,
-            artifacts: &empty,
-            outcomes: &allowed,
-            each: None,
-            item: None,
-            aliases: &workflow.schemas,
-            body: None,
-            guaranteed: BTreeSet::new(),
-            collections: BTreeSet::new(),
-        };
-        let collection = if let Some(source) = &unit.for_each {
-            let source = checked(source, &scope)?;
-            let each = item_type(&resolve_type(&source.value_type, &workflow.schemas))
-                .ok_or_else(|| reject(2, format!("collection {key} source is not list")))?;
-            scope.each = Some(each);
-            let key_expr = checked(unit.key.as_ref().unwrap(), &scope)?;
-            if key_expr.value_type != Type::Ident && key_expr.value_type != Type::Text {
-                return Err(reject(2, "collection key is not text"));
-            }
-            let after = match &unit.after {
-                UnitDependencies::Each(text) => checked(text, &scope)?,
-                _ => CheckedStageExpression {
-                    source: "[]".into(),
-                    value_type: Type::List {
-                        item: Box::new(Type::Ident),
-                    },
-                    expression: Expression::List {
-                        schema: SchemaId::from("list(ident)"),
-                        items: vec![],
-                    },
-                },
-            };
-            let dependency_type = item_type(&resolve_type(&after.value_type, &workflow.schemas));
-            if !matches!(dependency_type, Some(Type::Ident | Type::Text)) {
-                return Err(reject(
-                    2,
-                    "collection after must be list(ident) or list(text)",
-                ));
-            }
-            Some(CheckedUnitCollection {
-                source,
-                key: key_expr,
-                after,
-            })
-        } else {
-            None
-        };
-        let checked_input = fields(&unit.input, &scope)?;
-        let input_type = checked_record(&checked_input);
-        let (nested, outcome_type) = if let Some(stage) = &unit.stage {
-            let target = workflow
-                .stages
-                .get(&stage.0)
-                .ok_or_else(|| reject(1, format!("stage {stage} absent")))?;
-            if resolve_type(&input_type, &workflow.schemas)
-                != resolve_type(&target.input, &workflow.schemas)
-            {
-                return Err(reject(
-                    6,
-                    format!("unit {key} input does not match stage {stage}"),
-                ));
-            }
-            (
-                None,
-                stage_outcomes
-                    .get(&stage.0)
-                    .cloned()
-                    .ok_or_else(|| reject(1, "stage outcome absent"))?,
-            )
-        } else {
-            let (nested, outcome_type) = compile_group(
-                unit.group.as_ref().unwrap(),
-                &input_type,
-                stage_outcomes,
-                workflow,
-            )?;
-            (Some(Box::new(nested)), outcome_type)
-        };
-        outcomes.insert(key.clone(), outcome_type);
-        checked_units.push(CheckedUnit {
-            key: SymbolKey::from(key.as_str()),
-            input: checked_input,
-            stage: unit.stage.clone(),
-            pool: unit.pool.clone(),
-            after: match &unit.after {
-                UnitDependencies::None => CheckedUnitDependencies::None,
-                UnitDependencies::Fixed(keys) => {
-                    CheckedUnitDependencies::Fixed { keys: keys.clone() }
-                }
-                UnitDependencies::Each(_) => CheckedUnitDependencies::Each,
-            },
-            collection,
-            group: nested,
-        });
-    }
-    let scope = Scope {
-        input,
-        artifacts: &empty,
-        outcomes: &outcomes,
-        each: None,
-        item: None,
-        aliases: &workflow.schemas,
-        body: None,
-        guaranteed: BTreeSet::new(),
-        collections: group
-            .units
-            .iter()
-            .filter(|(_, unit)| unit.for_each.is_some())
-            .map(|(key, _)| key.clone())
-            .collect(),
-    };
-    let mut checked_outcome = Vec::new();
-    for (key, source) in &group.outcome {
-        let value = if let Some((inner, "")) = split_call(source, "map") {
-            let (collection, projection) = inner
-                .split_once(',')
-                .ok_or_else(|| reject(4, "map needs collection and projection"))?;
-            let collection = collection.trim();
-            let projection = projection.trim();
-            let member = outcomes
-                .get(collection)
-                .ok_or_else(|| reject(4, "map collection absent"))?;
-            let suffix = projection
-                .strip_prefix(collection)
-                .and_then(|v| v.strip_prefix(".outcome"))
-                .ok_or_else(|| reject(4, "map projection outside outcome"))?;
-            let item = if suffix.is_empty() {
-                member.clone()
-            } else {
-                field_type(
-                    member,
-                    &suffix
-                        .strip_prefix('.')
-                        .unwrap_or("")
-                        .split('.')
-                        .collect::<Vec<_>>(),
-                    &workflow.schemas,
-                )
-                .ok_or_else(|| reject(4, "map field absent"))?
-            };
-            let item_type = Type::List {
-                item: Box::new(item),
-            };
-            CheckedStageExpression {
-                source: source.clone(),
-                expression: Expression::Map {
-                    source: Box::new(Expression::Reference {
-                        root: ReferenceRoot::MemberOutcomes {
-                            unit: SymbolKey::from(collection),
-                        },
-                        path: vec![],
-                    }),
-                    value: Box::new(Expression::Reference {
-                        root: ReferenceRoot::Item,
-                        path: suffix
-                            .strip_prefix('.')
-                            .map(|rest| rest.split('.').map(str::to_owned).collect())
-                            .unwrap_or_default(),
-                    }),
-                },
-                value_type: item_type,
-            }
-        } else {
-            checked(source, &scope)?
-        };
-        checked_outcome.push(CheckedNamedExpression {
-            key: key.clone(),
-            value,
-        });
-    }
-    let outcome_type = checked_record(&checked_outcome);
-    Ok((
-        CheckedGroup {
-            pools: group.pools.clone(),
-            units: checked_units,
-            outcome: checked_outcome,
-        },
-        outcome_type,
-    ))
+pub fn compile_workflow_with_limits_detailed(
+    source: &Workflow,
+    operations: &[CodeOperation],
+    prompts: &BTreeMap<String, String>,
+    limits: &ResourceLimits,
+) -> Result<CheckedWorkflow, Vec<CompileError>> {
+    compile_workflow_with_limits_and_projection_detailed(source, operations, prompts, limits)
+        .map(|(program, _)| program)
+}
+pub fn compile_workflow_with_limits_and_projection_detailed(
+    source: &Workflow,
+    operations: &[CodeOperation],
+    prompts: &BTreeMap<String, String>,
+    limits: &ResourceLimits,
+) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
+    let parsed = passes::parse(source)?;
+    let resolved = passes::resolve(parsed)?;
+    let checked = passes::check(resolved, operations, prompts, limits)?;
+    passes::lower(checked)
 }
 pub fn compile_workflow(
     source: &Workflow,
@@ -890,89 +419,27 @@ pub fn compile_workflow_with_limits(
     prompts: &BTreeMap<String, String>,
     limits: &ResourceLimits,
 ) -> Result<CheckedWorkflow, DomainError> {
-    let source_value = serde_json::to_value(source).map_err(|error| {
-        DomainError::new(
-            DomainErrorKind::UnknownConstruct,
-            "workflow",
-            error.to_string(),
-        )
-    })?;
-    limits
-        .check_value(&source_value)
-        .map_err(|detail| DomainError::new(DomainErrorKind::ResourceLimit, "workflow", detail))?;
-    for key in source.schemas.keys() {
-        if matches!(
-            key.as_str(),
-            "text" | "ident" | "repo_path" | "integer" | "boolean"
-        ) {
-            return Err(reject(1, format!("schema {key} shadows a primitive type")));
+    compile_workflow_with_limits_detailed(source, operations, prompts, limits).map_err(|errors| {
+        let mut domain = errors[0].as_domain_error();
+        if errors.len() > 1 {
+            domain.detail = errors
+                .iter()
+                .map(|error| format!("{}: {}", error.path, error.detail))
+                .collect::<Vec<_>>()
+                .join("; ")
+                .into();
         }
-    }
-    validate_type(&source.input, &source.schemas, &mut BTreeSet::new())?;
-    for ty in source.schemas.values() {
-        validate_type(ty, &source.schemas, &mut BTreeSet::new())?;
-    }
-    for stage in source.stages.values() {
-        validate_type(&stage.input, &source.schemas, &mut BTreeSet::new())?;
-        for artifact in stage.artifacts.values() {
-            validate_type(&artifact.schema, &source.schemas, &mut BTreeSet::new())?;
+        if domain.detail.as_ref() == "max_depth exceeded"
+            || domain.detail.as_ref() == "max_list_items exceeded"
+        {
+            domain.kind = DomainErrorKind::ResourceLimit;
         }
-        for review in stage.reviews.values() {
-            for decision in review.decisions.values() {
-                if let Some(payload) = &decision.payload {
-                    validate_type(payload, &source.schemas, &mut BTreeSet::new())?;
-                }
-            }
-        }
-    }
-    let mut stages = Vec::new();
-    let mut stage_outcomes = BTreeMap::new();
-    for (key, stage) in &source.stages {
-        let (checked, outcome_type) = compile_stage(key, stage, source, operations, prompts)?;
-        stages.push(checked);
-        stage_outcomes.insert(key.clone(), outcome_type);
-    }
-    let (root, _) = compile_group(&source.run, &source.input, &stage_outcomes, source)?;
-    let encoded = serde_json::to_vec(source).map_err(|error| reject(11, error.to_string()))?;
-    let digest = BundleDigest(format!("{:x}", Sha256::digest(encoded)));
-    Ok(CheckedWorkflow {
-        digest,
-        input: checked_type(&source.input, &source.schemas)?,
-        stages,
-        root,
+        domain
     })
 }
-pub fn decode_workflow(bytes: &[u8]) -> Result<Workflow, DomainError> {
-    let value = crate::decode_unique_json(bytes)?;
-    if let Some(stages) = value.get("stages").and_then(serde_json::Value::as_object) {
-        for stage in stages.values() {
-            if let Some(workers) = stage.get("workers").and_then(serde_json::Value::as_object) {
-                for (key, worker) in workers {
-                    let kind = worker
-                        .get("kind")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("");
-                    let forbidden: &[&str] = match kind {
-                        "code" => &["prompts", "runtime", "workspace", "session", "reviews"],
-                        "agent" => &["operation", "every"],
-                        _ => &[],
-                    };
-                    if let Some(field) =
-                        forbidden.iter().find(|field| worker.get(**field).is_some())
-                    {
-                        return Err(reject(12, format!("worker {key} cannot set {field}")));
-                    }
-                }
-            }
-        }
-    }
-    serde_path_to_error::deserialize(value).map_err(|error| {
-        let path = error.path().to_string();
-        let mut failure = reject(11, format!("{path}: {}", error.inner()));
-        failure.path = path.into_boxed_str();
-        failure
-    })
-}
+#[path = "workflow_decode.rs"]
+mod decode;
+pub use decode::{decode_workflow, decode_workflow_value_detailed};
 
 #[cfg(test)]
 mod review_regressions {

@@ -199,7 +199,7 @@ pub fn generate() -> String {
         "export type CoreResponse = {};\n",
         schema_to_ts(&schemas["response"])
     ));
-    output.push_str("export type CoreDomainError = DomainError;\nexport type CoreTransportError = TransportError;\nexport type CoreTransportKind = TransportErrorKind;\nexport type CoreResponseResult = ResponseResult;\n");
+    output.push_str("export type CoreCompileError = CompileError;\nexport type CoreDomainError = DomainError;\nexport type CoreTransportError = TransportError;\nexport type CoreTransportKind = TransportErrorKind;\nexport type CoreResponseResult = ResponseResult;\n");
     output.push_str(&schema_decoder());
     output.push_str(include_str!("response-decoder.ts.txt"));
     output

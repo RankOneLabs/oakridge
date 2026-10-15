@@ -2,7 +2,11 @@
 //! 2.1-2.3 model into a CheckedWorkflow.
 mod expressions;
 mod workflow;
-pub use workflow::{compile_workflow, compile_workflow_with_limits, decode_workflow};
+pub use workflow::{
+    compile_workflow, compile_workflow_detailed, compile_workflow_with_limits,
+    compile_workflow_with_limits_and_projection_detailed, compile_workflow_with_limits_detailed,
+    decode_workflow, decode_workflow_value_detailed, CheckKind, CompileError,
+};
 use workflow_model::*;
 
 pub(crate) fn error(

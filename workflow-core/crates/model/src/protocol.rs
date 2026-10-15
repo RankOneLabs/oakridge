@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 /// Bumped whenever the request or response shape changes. v6 adds the parsed
 /// workflow to the compile response for tagged-type read projections.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// One wanted worker and the identity of the attempt that runs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -107,6 +107,7 @@ pub struct TransportError {
 pub enum ResponseResult {
     Ok(Output),
     DomainError(DomainError),
+    CompileErrors(Vec<CompileError>),
     TransportError(TransportError),
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
