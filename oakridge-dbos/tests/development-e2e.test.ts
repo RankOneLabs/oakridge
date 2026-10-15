@@ -25,6 +25,14 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const root = resolve(import.meta.dir, "../..");
 const BODY_SCHEMAS = { analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
+const VIEWER_COMPONENTS = {
+  "dev-spec-analysis-viewer": "SpecAnalysisViewer",
+  "dev-plan-viewer": "PlanViewer",
+  "dev-build-brief-viewer": "BuildBriefViewer",
+  "dev-build-result-viewer": "BuildResultReview",
+  "dev-assessment-viewer": "AssessmentReview",
+  "dev-pr-summary-viewer": "PrSummaryViewer",
+} as const;
 
 /**
  * development.yaml as pinned (read through the JSON generate.ts derives from
@@ -239,11 +247,16 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   });
 }, 150_000);
 
-test("each body schema the workflow declares keys a viewer in the PWA's artifact registry", () => {
-  // The registry is the PWA's viewer contract (D1 exempts these names from K1); read as text, not imported across the boundary.
+test("development body schemas and v1 PWA viewer component IDs remain available", () => {
+  // The v1 registry resolves component_id; the data layer supplies the schema-to-component mapping.
+  // Read the registry as text rather than importing across the PWA boundary.
   const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
   const workflow = developmentWorkflow();
   const declared = Object.values(BODY_SCHEMAS).filter((name) => workflow.schemas?.[name] !== undefined);
-  expect({ declared, viewers: declared.filter((name) => new RegExp(`\\b${name}:\\s*\\w+Viewer`).test(registry)) })
-    .toEqual({ declared: Object.values(BODY_SCHEMAS), viewers: Object.values(BODY_SCHEMAS) });
+  const registered = Object.entries(VIEWER_COMPONENTS).filter(([componentId, viewer]) =>
+    registry.includes(`"${componentId}": { Viewer: ${viewer} }`));
+  expect({ declared, registered }).toEqual({
+    declared: Object.values(BODY_SCHEMAS),
+    registered: Object.entries(VIEWER_COMPONENTS),
+  });
 });
