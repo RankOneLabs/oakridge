@@ -73,6 +73,11 @@ the default install uses. `OAKRIDGE_SHADOW_NAME`, `OAKRIDGE_SHADOW_*_PORT` and
 `OAKRIDGE_SHADOW_STATE_DIR` run further instances; `OAKRIDGE_SHADOW_GITHUB_TOKEN`
 (else `OAKRIDGE_GITHUB_TOKEN` or `GITHUB_TOKEN`) authenticates pull request
 observation.
+Its database starts with no projects. Add them with
+`oakridge-dbos/scripts/import-projects.ts --to=http://127.0.0.1:8800`, using
+`--only=<name>` and `--repo-dir=<name>=<path>` to point each at its own clone:
+a project whose `repo_dir` is the default install's checkout would have shadow
+runs working in that checkout.
 
 Edit the examples in `workflow-config/samples/`. Their YAML is parsed into
 the Rust test fixtures by `workflow-config/src/generate.ts`; CI checks that
@@ -91,10 +96,14 @@ the operator retries it.
 ## Database cutover
 
 1. Stop the Oakridge service.
-2. Run `pg_dump` to a file nothing in this repository reads.
+2. Run `pg_dump` to a file nothing in this repository reads, and export the
+   saved projects: `bun oakridge-dbos/scripts/import-projects.ts --export=projects.json`.
 3. Drop and recreate the Oakridge database empty.
 4. Deploy the new stack: core WASM, DBOS backend and kbbl PWA.
-5. Admit traffic after the new stack is healthy.
+5. Re-add the projects, which a fresh database does not have:
+   `bun oakridge-dbos/scripts/import-projects.ts --from=projects.json --to=http://127.0.0.1:8790`
+   (`--dry-run` first to see the plan; a rerun skips projects already present).
+6. Admit traffic after the new stack is healthy.
 
 The kbbl SQLite ACP ledger is separate. It is also created fresh at cutover:
 its schema is a single baseline migration with workflow identity columns.
