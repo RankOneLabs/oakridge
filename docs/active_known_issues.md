@@ -7,17 +7,13 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 
 ## Frozen v1 operator UI on v2 (v1-data-layer)
 
-- **The repository browser suite remains red (0/2).** Reproduce with
-  `cd kbbl && bun run test:browser`: both cases in
-  `kbbl/tests/browser/operator-browser.test.ts` time out. Its test server
-  answers retired v1 paths such as `/oakridge/api/workflow_defs` and
-  `/oakridge/api/workflow_runs`, while the v2 client requests
-  `/oakridge/api/api/definitions`, `/oakridge/api/api/runs` and unit views.
-  The expected result is browser coverage that seeds the v2 contract and
-  exercises the retained v1 UI; the browser fixture is outside this cohort's
-  allowed files. The isolated shadow install does render the run list and
-  detail, and live button checks verified Cancel and Archive on a disposable
-  run and intercepted review decision submissions on the seeded run.
+- **Browser coverage now seeds the v2 contract, but is narrow.** The two
+  browser cases exercise launch/read-back and run-workspace loading against
+  the captured v2 run fixture. They pass with `cd kbbl && bun run test:browser`.
+  They do not yet automate every control in the frozen UI. The isolated shadow
+  install rendered the run list and detail; live button checks verified Cancel
+  and Archive on a disposable run and intercepted review decision submissions
+  on the seeded run.
 - **No pull request mismatch rows.** The v2 `pull_request.observe` path reports a
   state but does not expose the v1 `PullRequestMismatch` or
   `CohortPullRequestReconciliation` facts. The development inbox adapter never
