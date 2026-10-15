@@ -96,6 +96,38 @@ test("K4: decide takes its writer from the control token, not the body", async (
     .toEqual({ status: 201, kind: "operator_decided", writer: { kind: "operator", subject: OPERATOR_SUBJECT } });
 });
 
+test("a decision addressed to a group unit is rejected without recording a commit fault", async () => {
+  const run_id = await launched();
+  const response = await send("POST", path("runs", run_id, "units", run_id, "reviews", "editor", "decide"),
+    { request_id: crypto.randomUUID(), decision: "approve", target: "missing", payload: {} });
+  const faults = await authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
+  expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
+    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+  });
+});
+
+test("a retry addressed to a group unit is rejected without recording a commit fault", async () => {
+  const run_id = await launched();
+  const response = await send("POST", path("runs", run_id, "units", run_id, "workers", "writer", "retry"),
+    { request_id: crypto.randomUUID() });
+  const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
+  expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
+    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+  });
+});
+
+test("an operator revision addressed to a group unit is rejected without recording a commit fault", async () => {
+  const run_id = await launched();
+  const response = await publish(run_id, draft(), `Bearer ${CONTROL_TOKEN}`, run_id);
+  const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
+  expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
+    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+  });
+});
+
 test("K4: publish takes its writer and its `by` from the session secret, not the body", async () => {
   const sid = `sid-${crypto.randomUUID()}`;
   const run_id = await sessionRun("publish-secret", sid);

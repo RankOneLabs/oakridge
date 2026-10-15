@@ -158,6 +158,9 @@ fn reduce_event(
             if !matches!(owner.status, UnitStatus::Active) {
                 return Err(rejected("unit is not active"));
             }
+            if owner.kind.stage().is_none() {
+                return Err(rejected("unit is a group"));
+            }
             let definition = checked_stage(program, owner)?.clone();
             let artifact_definition = definition
                 .artifacts
@@ -306,6 +309,9 @@ fn reduce_event(
             if !matches!(owner.status, UnitStatus::Active) {
                 return Err(rejected("unit is not active"));
             }
+            if owner.kind.stage().is_none() {
+                return Err(rejected("unit is a group"));
+            }
             let review_definition = checked_stage(program, owner)?
                 .reviews
                 .iter()
@@ -402,6 +408,9 @@ fn reduce_event(
                 .ok_or_else(|| rejected("unit absent"))?;
             if !matches!(owner.status, UnitStatus::Active) {
                 return Err(rejected("unit is not active"));
+            }
+            if owner.kind.stage().is_none() {
+                return Err(rejected("unit is a group"));
             }
             let previous =
                 attempt(&state, unit, worker).ok_or_else(|| rejected("worker has no attempt"))?;
