@@ -73,6 +73,102 @@ fn member(key: &str, after: Value, text: &str) -> Value {
     json!({"meta": {"key": key, "after": after}, "text": text})
 }
 
+fn deferred_program(run: Value, input: Value) -> CheckedWorkflow {
+    let source: Workflow = serde_json::from_value(json!({
+        "workflow": "deferred",
+        "input": input,
+        "run": run,
+        "stages": {
+            "producer": {
+                "input": {},
+                "artifacts": {"items": {"schema": "list({key: ident, text: text})"}},
+                "workers": {"writer": {"kind": "agent", "prompts": {"initial": "item.md"},
+                    "inputs": {}, "creates": ["items"]}},
+                "done_when": "published(items)",
+                "outcome": {"items": "latest(items)"}
+            },
+            "item": {"input": {"text": "text"}, "artifacts": {}, "workers": {},
+                "done_when": "true", "outcome": {"result": "input.text"}},
+            "summary": {"input": {"results": "list(text)"}, "artifacts": {}, "workers": {},
+                "done_when": "true", "outcome": {"result": "input.results"}}
+        }
+    }))
+    .unwrap();
+    compile_workflow(
+        &source,
+        &[],
+        &BTreeMap::from([("item.md".to_owned(), "".to_owned())]),
+    )
+    .unwrap()
+}
+
+#[test]
+fn an_unmaterialized_collection_cannot_look_empty_to_its_dependents() {
+    let program = deferred_program(
+        json!({"units": {
+            "producer": {"stage": "producer", "input": {}},
+            "delayed": {"for_each": "producer.outcome.items", "key": "each.key",
+                "stage": "item", "input": {"text": "each.text"}},
+            "derived": {"for_each": "map(delayed, delayed.outcome.result)", "key": "each",
+                "stage": "item", "input": {"text": "each"}},
+            "summary": {"stage": "summary",
+                "input": {"results": "map(derived, derived.outcome.result)"}},
+            "tail": {"stage": "summary",
+                "input": {"results": "summary.outcome.result"}}
+        }, "outcome": {"results": "tail.outcome.result"}}),
+        json!({}),
+    );
+    let result = step(
+        &program,
+        &snapshot(),
+        &Incoming {
+            event: Event::Launched { input: json!({}) },
+            writer: Writer::Engine,
+            ingress_id: Some("launch".into()),
+        },
+    )
+    .unwrap();
+    let ids: Vec<_> = result
+        .snapshot
+        .units
+        .iter()
+        .map(|unit| unit.id.0.as_str())
+        .collect();
+    assert_eq!(ids, ["run", "run/producer"]);
+}
+
+#[test]
+fn per_member_after_retains_an_inferred_collection_prerequisite() {
+    let program = deferred_program(
+        json!({"units": {
+            "producer": {"stage": "producer", "input": {}},
+            "delayed": {"for_each": "producer.outcome.items", "key": "each.key",
+                "stage": "item", "input": {"text": "each.text"}},
+            "work": {"for_each": "input.members", "key": "each.key",
+                "after": "each.after", "stage": "summary",
+                "input": {"results": "map(delayed, delayed.outcome.result)"}}
+        }, "outcome": {"results": "map(work, work.outcome.result)"}}),
+        json!({"members": "list({key: ident, after: list(ident)})"}),
+    );
+    let result = step(
+        &program,
+        &snapshot(),
+        &Incoming {
+            event: Event::Launched {
+                input: json!({"members": [{"key": "a", "after": []}]}),
+            },
+            writer: Writer::Engine,
+            ingress_id: Some("launch".into()),
+        },
+    )
+    .unwrap();
+    assert!(result
+        .snapshot
+        .units
+        .iter()
+        .all(|unit| unit.declaration.0 != "work"));
+}
+
 #[test]
 fn default_uses_the_fallback_when_lookup_has_no_unique_match() {
     let result = launch(json!([])).unwrap();

@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { Workflow } from "../src/core-client/core-types";
 import { openDatabase } from "../src/storage/database";
 import { selectDefinitionGraph } from "../src/projections/definition-view";
 import { listDefinitions, listLiveRuns, listRuns, listRunsNeedingWork, readDefinition, readEventStreamBoundary, readHistory, readOperatorEventsAfter,
   readPinnedDefinition, readRun, readRunInspect, readRunStanding, readUnitDiagnostics } from "../src/storage/read-store";
 import { setRunArchived } from "../src/storage/registry-store";
 import { readStepSnapshot } from "../src/storage/snapshot-store";
-import { actionOf, executor, launch, openAuthority, pinSample, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -25,7 +26,7 @@ async function launched(): Promise<RunId> {
 }
 const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 
-test("a step snapshot holds the unit, its ancestors and their children; with no unit, the whole run", async () => {
+test("a step snapshot includes the whole run while rejecting an absent affected unit", async () => {
   const run_id = await launched();
   const scoped = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "document"));
   const whole = await readStepSnapshot(authority.db, run_id, null);
@@ -207,6 +208,24 @@ test("run lists and the inbox read no revision body, decision, unit input or lau
     latest_events: item.latest_events.length };
   const expected = { revisions: 1, has_body: false, has_decisions: false, has_unit_input: false, has_launch_input: false, latest_events: 0 };
   expect({ listed: read(listed), live: read(live) }).toEqual({ listed: expected, live: expected });
+});
+
+test("a sibling group's persisted children are present when another unit receives an event", async () => {
+  const workflow: Workflow = {
+    workflow: "sibling_snapshot", input: {},
+    run: { units: {
+      left: { group: { units: { child: { stage: "waiting", input: {} } }, outcome: {} }, input: {} },
+      right: { stage: "waiting", input: {} },
+    }, outcome: {} },
+    stages: { waiting: { input: {}, artifacts: {}, workers: {}, done_when: "false", outcome: {} } },
+  };
+  const pinned = await pinWorkflow(authority, workflow);
+  const { run_id, result } = await launch(authority, {
+    bundle_id: pinned.bundle_id, request_id: crypto.randomUUID(), input: {},
+  });
+  if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
+  const snapshot = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "right"));
+  expect(snapshot?.units.some((unit) => unit.id === unitOf(run_id, "left/child"))).toBe(true);
 });
 
 async function stalledRun(): Promise<RunId> {

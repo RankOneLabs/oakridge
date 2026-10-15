@@ -41,7 +41,7 @@ pub struct CheckedUnit {
 pub enum CheckedUnitDependencies {
     None,
     Fixed { keys: Vec<SymbolKey> },
-    Each,
+    Each { keys: Vec<SymbolKey> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

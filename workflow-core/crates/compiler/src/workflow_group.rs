@@ -395,7 +395,9 @@ pub(super) fn compile_group(
                     stage: unit.stage.clone(),
                     pool: unit.pool.clone(),
                     after: match &unit.after {
-                        UnitDependencies::Each(_) => CheckedUnitDependencies::Each,
+                        UnitDependencies::Each(_) => CheckedUnitDependencies::Each {
+                            keys: after_keys.clone(),
+                        },
                         _ if after_keys.is_empty() => CheckedUnitDependencies::None,
                         _ => CheckedUnitDependencies::Fixed {
                             keys: after_keys.clone(),
