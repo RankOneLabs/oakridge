@@ -3,108 +3,184 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
-import { makeArtifactRevision, makeBuildBriefFixture, makeDecision, makeArtifact, makeUnitView } from "../__fixtures__/read-models";
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
+import type { ArtifactDetail, ParkedGate } from "../types";
+
+// Split out of oakridge.test.tsx when the chrome union landed: the review
+// organism now has two hosts, and its cases outgrew the shared file.
 
 function wrap(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-/** A unit whose `analysis` artifact has a plain text latest revision, which the generic viewer renders. */
-function reviewUnit(revisionId = "revision-1") {
-  const revision = makeArtifactRevision({ id: revisionId });
-  return makeUnitView({ artifacts: [makeArtifact({ schema: "text", latest_revision: revision })] });
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
-const isPublish = (input: RequestInfo | URL, init?: RequestInit): boolean => init?.method === "PUT" && String(input).includes("/artifacts/");
 
-afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
+afterEach(() => vi.restoreAllMocks());
+
+const PARKED_GATE_FIXTURE: ParkedGate = {
+  id: "gate-1",
+  gate_type: "operator_approval",
+  gate_step: null,
+  run_id: "run-2",
+  stage_name: "approve",
+  unit_id: "0",
+  artifact_revision_id: "rev-abc",
+  worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
+  resume_actions: ["approve", "reject"],
+  run_state: "active",
+  actionable: true,
+};
+
+const ARTIFACT_FIXTURE: ArtifactDetail = {
+  id: "art-1",
+  type_id: "spec_v2",
+  component_id: null,
+  capabilities: null,
+  anchor_schema: null,
+  run_id: "run-1",
+  producing_stage: "spec",
+  revisions: [
+    {
+      id: "rev-1",
+      status: "approved",
+      created_at: "2026-07-01T09:00:00Z",
+      body: { title: "Spec body" },
+      validation: { valid: true },
+    },
+  ],
+};
 
 describe("ArtifactReview", () => {
-  it("renders the artifact key and the selected revision body", () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    wrap(<ArtifactReview revisionId="revision-1" units={[reviewUnit()]} schemas={[]} onBack={() => undefined} onRefresh={() => undefined} />);
+  it("renders artifact type, producing stage, and revision body", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
+    wrap(<ArtifactReview artifactId="art-1" />);
 
-    expect(screen.getByTestId("or-artifact-review").textContent).toContain("analysis");
-    expect(screen.getByTestId("or-revision-navigation").textContent).toContain("Revision 1");
-    expect(screen.getByTestId("operator-typed-value").textContent).toContain("Spec body");
+    expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
+    expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
+    expect(screen.getByTestId("or-artifact-stage").textContent).toBe("spec");
+
+    const body = screen.getByTestId("or-revision-body");
+    expect(body.textContent).toContain("Spec body");
+
+    const validation = screen.getByTestId("or-revision-validation");
+    expect(validation.textContent).toContain("true");
   });
 
-  it("offers a decision only when its target is the selected revision", () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    const decision = makeDecision();
-    const unit = makeUnitView({ ...reviewUnit(), decisions: [decision] });
-    const { rerender } = wrap(<ArtifactReview revisionId="revision-1" units={[unit]} schemas={[]}
-      onBack={() => undefined} onRefresh={() => undefined} />);
-    expect(screen.getByTestId("or-gate-actions").textContent).toContain("Submit Approve");
-
-    const otherUnit = makeUnitView({ ...reviewUnit("revision-2"), decisions: [decision] });
-    rerender(<QueryClientProvider client={new QueryClient()}><ArtifactReview revisionId="revision-2"
-      units={[otherUnit]} schemas={[]} onBack={() => undefined} onRefresh={() => undefined} /></QueryClientProvider>);
-    expect(screen.queryByTestId("or-gate-actions")).toBeNull();
+  it("shows revision status chip", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
+    wrap(<ArtifactReview artifactId="art-1" />);
+    const status = await screen.findByTestId("or-revision-status");
+    expect(status.textContent).toBe("approved");
   });
 
-  it("shows an unavailable state when the revision is no longer the latest", () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    wrap(<ArtifactReview revisionId="missing" units={[reviewUnit()]} schemas={[]} onBack={() => undefined} onRefresh={() => undefined} />);
-    expect(screen.getByRole("status").textContent).toContain("no longer among the unit's latest revisions");
+  it("uses the review descriptor layout and action labels for an artifact-local gate", async () => {
+    const described: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      revisions: [{
+        ...ARTIFACT_FIXTURE.revisions[0]!,
+        body: { details: "Second", summary: "First" },
+      }],
+      review: {
+        viewer: "json",
+        layout: "report",
+        sections: ["summary", "details"],
+        action_labels: { approve: "Approve discrepancy report" },
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
+      return json(described);
+    });
+    wrap(<ArtifactReview artifactId="art-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
+    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve discrepancy report");
+    const sections = Array.from(screen.getByTestId("or-descriptor-sections").querySelectorAll("[data-artifact-section]"));
+    expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
   });
 
-  it("uses the pane overview control for review navigation", () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    wrap(<ArtifactReview revisionId="revision-1" units={[reviewUnit()]} schemas={[]} onBack={() => undefined} onRefresh={() => undefined} />);
-    expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();
+  it("loads run-scoped gates and only offers actions for the selected revision", async () => {
+    const artifact: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      revisions: [
+        ARTIFACT_FIXTURE.revisions[0]!,
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "draft" },
+      ],
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/runs/run-1/gates")) {
+        return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-2" }]);
+      }
+      return json(artifact);
+    });
+    wrap(<ArtifactReview artifactId="art-1" />);
+
+    await screen.findByTestId("or-artifact-type");
+    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-rev-tab-0"));
+    expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
+    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(true);
   });
 
-  it("publishes an edited text as the revision after the one edited", async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-      isPublish(input, init) ? Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 201 }) : Response.json([]));
-    vi.stubGlobal("fetch", fetch);
-    const unit = reviewUnit();
-    const refresh = vi.fn();
-    wrap(<ArtifactReview revisionId="revision-1" units={[unit]} schemas={[]} onBack={() => undefined} onRefresh={refresh} />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit artifact" }));
-    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Operator changed body" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    const request = fetch.mock.calls.find(([input, init]) => isPublish(input, init));
-    expect([String(request?.[0]), JSON.parse(request?.[1]?.body as string)]).toEqual(["/oakridge/api/api/runs/run-1/units/unit-1/artifacts/analysis",
-      { request_id: expect.any(String), body: "Operator changed body", predecessor: "revision-1", subject: null }]);
+  it("renders configured plan scope and risks", async () => {
+    const plan: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      component_id: "dev-plan-viewer",
+      revisions: [{
+        ...ARTIFACT_FIXTURE.revisions[0]!,
+        body: {
+          summary: "One cohort.",
+          cohorts: [{
+            id: "core", repository_key: "oakridge", title: "Core", scope: "", depends_on: [],
+            description: null, files_in_scope: [], decisions: [], acceptance_criteria: [],
+          }],
+          dependency_order: ["core"],
+          scope: { in_scope: ["core"], out_of_scope: [] },
+          acceptance_criteria: [],
+          risks: ["migration"],
+        },
+      }],
+      review: {
+        viewer: "dev-plan-viewer",
+        layout: "dag",
+        sections: ["scope", "risks"],
+        action_labels: {},
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).includes("/gates") ? json([]) : json(plan));
+    wrap(<ArtifactReview artifactId="art-1" />);
+
+    expect(await screen.findByText("Scope")).toBeTruthy();
+    expect(screen.getByText("migration")).toBeTruthy();
+    expect(screen.queryByTestId("or-plan-cohorts")).toBeNull();
   });
 
-  it("edits one field of a structured body and keeps the others", async () => {
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-      isPublish(input, init) ? Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 201 }) : Response.json([]));
-    vi.stubGlobal("fetch", fetch);
-    const brief = makeBuildBriefFixture();
-    const revision = makeArtifactRevision({ artifact_key: "brief", body: brief.body });
-    const unit = makeUnitView({ unit_key: "brief", artifacts: [makeArtifact({ artifact_key: "brief", schema: "brief_body", latest_revision: revision })] });
-    const refresh = vi.fn();
-    wrap(<ArtifactReview revisionId={revision.id} units={[unit]} schemas={[]} onBack={() => undefined} onRefresh={refresh} />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit artifact" }));
-    fireEvent.change(screen.getByLabelText("title"), { target: { value: "Updated brief" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    const request = fetch.mock.calls.find(([input, init]) => isPublish(input, init));
-    expect(JSON.parse(request?.[1]?.body as string).body).toEqual({ ...brief.body as object, title: "Updated brief" });
+  it("shows error state when artifact fetch fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
+    wrap(<ArtifactReview artifactId="bad-id" />);
+    expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
+});
 
-  it("offers no edit for an artifact a code worker creates", () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    const revision = makeArtifactRevision();
-    const unit = makeUnitView({ artifacts: [makeArtifact({ schema: "text", is_editable: false, latest_revision: revision })] });
-    wrap(<ArtifactReview revisionId={revision.id} units={[unit]} schemas={[]} onBack={() => undefined} onRefresh={() => undefined} />);
-    expect(screen.queryByRole("button", { name: "Edit artifact" })).toBeNull();
-  });
+describe("navigation inside the review", () => {
+  // The pane frame above this body owns close and open-in-other-pane, and the
+  // standalone artifact route is gone. A back control appearing here again
+  // would sit directly under those and mean something different from them.
+  it("offers none of its own, so the pane frame stays the only frame", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
+    wrap(<ArtifactReview artifactId="art-1" />);
 
-  it("opens the new revision when a saved edit replaces the selected revision", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
-    const predecessor = makeArtifactRevision();
-    const revised = makeArtifactRevision({ id: "revision-2", predecessor_id: predecessor.id, number: 2 });
-    const navigate = vi.fn();
-    wrap(<ArtifactReview revisionId={predecessor.id} units={[makeUnitView({ artifacts: [makeArtifact({
-      latest_revision: revised, revision_count: 2 })] })]} schemas={[]}
-      onBack={() => undefined} onRefresh={() => undefined} onRevised={navigate} />);
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith(revised.id));
+    await screen.findByTestId("or-artifact-type");
+    expect(screen.queryByText("← Back")).toBeNull();
   });
 });

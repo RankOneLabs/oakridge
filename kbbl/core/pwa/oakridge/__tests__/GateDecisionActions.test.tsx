@@ -1,64 +1,135 @@
-// @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
-import { makeDecision, makeIngressCommitted, makeDevelopmentSchemas, makeUnitView } from "../__fixtures__/read-models";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { GateDecisionActions } from "../components/organisms/GateDecisionActions";
+import type { ParkedGate, RepositoryKey, RunState } from "../types";
 
-const renderGate = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ({ children }) =>
-  <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider> });
+function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
+  return {
+    id,
+    gate_type: "artifact_approval",
+    gate_step: "artifact_approval",
+    run_id: "run-1",
+    stage_name: "build",
+    unit_id: "web",
+    repository_key: "web" as RepositoryKey,
+    artifact_revision_id: revision,
+    worktree: null,
+    resume_actions: ["approve", "request_revision"],
+    pr_url: null,
+    run_state: "active",
+    actionable: true,
+    ...overrides,
+  };
+}
 
-afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
+function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), artifactRevisionId?: string) {
+  return (
+    <QueryClientProvider client={client}>
+      <GateDecisionActions gate={value} artifactRevisionId={artifactRevisionId} onComplete={onComplete} />
+    </QueryClientProvider>
+  );
+}
 
-const approveOn = (target_revision_id: string) => makeDecision({ payload_schema: "{}",
-  submit: { kind: "review", review: "analysis_review", decision: "approve", effect: "approve", target_revision_id } });
+afterEach(() => vi.restoreAllMocks());
 
-describe("GateDecisionActions on a revision", () => {
-  test("submits the decision on the revision it targets", async () => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(makeIngressCommitted()));
-    vi.stubGlobal("fetch", fetch);
-    const unit = makeUnitView({ decisions: [approveOn("revision-edited")] });
-    renderGate(<GateDecisionActions unit={unit} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
-    fireEvent.click(screen.getByRole("button", { name: "Submit Approve" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    const request = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-    expect([request.decision, request.target]).toEqual(["approve", "revision-edited"]);
+describe("GateDecisionActions", () => {
+  it("submits the latest edited artifact revision", async () => {
+    let requestBody: { artifact_revision_id: string } | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as { artifact_revision_id: string };
+      return new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, gate("gate-a", "revision-root"), vi.fn(), "revision-edited"));
+
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    await waitFor(() => expect(requestBody?.artifact_revision_id).toBe("revision-edited"));
   });
 
-  test("shows a decision only on its target revision after a revision switch", () => {
-    const unit = makeUnitView({ decisions: [approveOn("revision-edited")] });
-    const view = renderGate(<GateDecisionActions unit={unit} revisionId="revision-root" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
-    expect(screen.queryByTestId("or-gate-actions")).toBeNull();
-    view.rerender(<GateDecisionActions unit={unit} revisionId="revision-edited" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
-    expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
+  it("resets decision state on a gate switch and ignores the previous gate response", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const onComplete = vi.fn();
+    const view = render(wrapper(client, gate("gate-a", "revision-a"), onComplete));
+
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const staleResponseResolver = resolveRequest;
+    if (!staleResponseResolver) throw new Error("Expected an in-flight request for gate-a");
+    view.rerender(wrapper(client, gate("gate-b", "revision-b"), onComplete));
+    await waitFor(() => expect(screen.getByTestId("or-decision-approve")).toBeTruthy());
+
+    await act(async () => {
+      staleResponseResolver(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("or-decision-success")).toBeNull();
+    expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
   });
 
-  test("ignores completion of a previous revision's decision after switching revisions", async () => {
-    let resolvePrevious: ((response: Response) => void) | undefined;
-    const fetch = vi.fn(async () => new Promise<Response>((resolve) => { resolvePrevious = resolve; }));
-    vi.stubGlobal("fetch", fetch);
-    const onRefresh = vi.fn();
-    const first = makeUnitView({ decisions: [approveOn("revision-a")] });
-    const next = makeUnitView({ decisions: [approveOn("revision-b")] });
-    const view = renderGate(<GateDecisionActions unit={first} revisionId="revision-a" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
-    fireEvent.click(screen.getByRole("button", { name: "Submit Approve" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-    view.rerender(<GateDecisionActions unit={next} revisionId="revision-b" schemas={makeDevelopmentSchemas()} onRefresh={onRefresh} />);
-    await act(async () => { resolvePrevious?.(Response.json(makeIngressCommitted())); });
-    expect(onRefresh).not.toHaveBeenCalled();
-    expect(screen.queryByText("Decision accepted.")).toBeNull();
-    expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
+  it("uses a new idempotency key when feedback changes", async () => {
+    const requests: Array<{ feedback: string; idempotency_key: string }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)) as { feedback: string; idempotency_key: string });
+      return new Response(JSON.stringify({ detail: "try again" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, gate("gate-a", "revision-a")));
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "First explanation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    await screen.findByRole("alert");
+
+    fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Better explanation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+
+    expect(requests.map((request) => request.feedback)).toEqual(["First explanation", "Better explanation"]);
+    expect(requests[0].idempotency_key).not.toBe(requests[1].idempotency_key);
   });
 
-  test("removes decision controls when the unit no longer offers a decision", () => {
-    const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
-    vi.stubGlobal("fetch", fetch);
-    const actionable = makeUnitView({ decisions: [approveOn("revision-1")] });
-    const view = renderGate(<GateDecisionActions unit={actionable} revisionId="revision-1" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
-    expect(screen.getByRole("button", { name: "Submit Approve" })).toBeTruthy();
-    view.rerender(<GateDecisionActions unit={makeUnitView({ is_terminal: true, decisions: [] })}
-      revisionId="revision-1" schemas={makeDevelopmentSchemas()} onRefresh={() => undefined} />);
-    expect(screen.queryByTestId("or-gate-actions")).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+  it("renders a stranded gate as visible, but with every decision disabled and no feedback textarea reachable", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const runState: RunState = "cancelled";
+    render(wrapper(client, gate("gate-a", "revision-a", { run_state: runState, actionable: false })));
+
+    const stranded = screen.getByTestId("or-gate-stranded");
+    expect(stranded.textContent).toBe("Run cancelled — gate stranded");
+    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("closes an already-open feedback panel when the gate becomes non-actionable", async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const view = render(wrapper(client, gate("gate-a", "revision-a")));
+
+    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
+
+    view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));
+
+    expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
   });
 });

@@ -1,28 +1,45 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeProject, makeProjectDraft } from "./__fixtures__/read-models";
-import { updateOperatorProject } from "./client";
-import { OakridgeHttpError } from "./lib/client-errors";
 
-afterEach(() => vi.unstubAllGlobals());
+import { updateProject } from "./client";
+import type { ProjectId } from "./types";
 
-describe("updateOperatorProject", () => {
-  it("returns the updated project projected by the authority", async () => {
-    const project = makeProject();
-    const fetch = vi.fn(async (_url: string) => Response.json(project));
-    vi.stubGlobal("fetch", fetch);
+const projectId = "00000000-0000-4000-8000-000000000001" as ProjectId;
+const command = { id: projectId, project: { name: "Scout", repo_dir: "/code/rol/scout" } };
 
-    expect(await updateOperatorProject(project.id, makeProjectDraft())).toEqual(project);
-    expect(fetch.mock.calls[0]?.[0]).toBe(`/oakridge/api/api/projects/${project.id}`);
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe("updateProject", () => {
+  it("returns the updated project as a typed result", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: projectId,
+      name: "Scout",
+      repo_dir: "/code/rol/scout",
+      created_at: "2026-08-15T12:00:00Z",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "scout" },
+      base_branch: "main",
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    const result = await updateProject(command);
+
+    expect(result).toEqual({ ok: true, value: expect.objectContaining({ id: projectId, repo_dir: "/code/rol/scout" }) });
   });
 
-  it("retains the authority's failure detail", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "repository not found" }, { status: 400 })));
-    await expect(updateOperatorProject("project-1", makeProjectDraft())).rejects.toEqual(
-      new OakridgeHttpError(400, "repository not found"));
+  it("returns HTTP failures with operation and path context", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "repository not found" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })));
+
+    const result = await updateProject(command);
+
+    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/projects/${projectId}`, detail: "repository not found" } });
   });
 
-  it("rejects a malformed successful response", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", { status: 200 })));
-    await expect(updateOperatorProject("project-1", makeProjectDraft())).rejects.toBeInstanceOf(SyntaxError);
+  it("returns malformed successful responses as parsing failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not json", { status: 200 })));
+
+    const result = await updateProject(command);
+
+    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/projects/${projectId}`, detail: expect.any(String) } });
   });
 });

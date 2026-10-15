@@ -22,8 +22,8 @@ interface RunSessionPaneProps {
  * Oakridge subtree. What this adds is the two things c1 made injectable: the
  * element the transcript scrolls (this pane's own container, so new output
  * follows down here and the rest of the workspace stays put) and the chrome
- * variant that drops the app-level back button and theme toggle, both of which
- * belong to the shell rather than to a pane.
+ * variant that drops the app-level back button, which belongs to the shell
+ * rather than to a pane.
  *
  * Session data comes from the zustand store through slice selectors rather
  * than down through OakridgeShell props: `App.tsx` calls `useInbox()`

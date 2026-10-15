@@ -28,7 +28,11 @@ export function useRemoveSession(sessionId: string) {
       }));
     },
   });
-  const refusal = mutation.isError ? refusalOf(mutation.error) : null;
+  const receivedRefusal = mutation.isError ? refusalOf(mutation.error) : null;
+  // The frozen v1 sidebar names this overridable hold by its former tag.
+  const refusal = receivedRefusal?.kind === "held_by_attempt"
+    ? { ...receivedRefusal, kind: "held_by_execution" as const }
+    : receivedRefusal;
   const error = mutation.isError
     ? (refusal?.message ??
       (mutation.error instanceof Error

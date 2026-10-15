@@ -9,6 +9,9 @@ import type {
   AcpSessionWorkflowIdentity,
 } from "./types";
 
+/** ACP is the live inventory; archived sessions can be retained by the PWA seed. */
+export type PwaSessionSource = "acp" | "legacy_archive";
+
 /** camelCase mirror of `AcpSessionWorkflowIdentity` on the browser wire. */
 export interface PwaSessionWorkflowIdentity {
   runId: string;
@@ -21,6 +24,7 @@ export interface PwaSessionSnapshot {
   name: string;
   agentProfile: string;
   status: AcpSessionStatus;
+  source: PwaSessionSource;
   lastActivityTs: string;
   createdAt: string;
   artifactId: string | null;
@@ -54,6 +58,7 @@ export function toPwaSessionSnapshot(
     name: snapshot.name,
     agentProfile: snapshot.agent_profile,
     status: snapshot.status,
+    source: "acp",
     lastActivityTs: snapshot.last_activity_at,
     createdAt: snapshot.created_at,
     artifactId: snapshot.artifact_id,

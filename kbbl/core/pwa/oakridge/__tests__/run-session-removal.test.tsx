@@ -1,22 +1,90 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { makeAttemptView, makeUnitView } from "../__fixtures__/read-models";
-import { RunSidebarSessions } from "../components/molecules/RunSidebarSessions";
-import { selectRunAttempts } from "../lib/run-sessions";
+import { RunDetailView } from "../views/RunDetailView";
+import { useStore } from "../../state/store";
+import type { SessionSnapshot } from "../../types";
+import type { RunDetail, RunSessionAttempt } from "../types";
+import { writeStoredRunWorkspace } from "../lib/run-workspace-storage";
+import type { Sid } from "../../lib/ids";
 
-afterEach(cleanup);
+const run: RunDetail = {
+  id: "run-removal", title: "Removal regression", repository_keys: [],
+  workflow_name: "dev_flow_v2", status: "parked", is_stuck: false,
+  parked_count: 0, updated_at: "2026-09-01T00:00:00Z", stages: [],
+};
+const attempts: RunSessionAttempt[] = ["deleted", "existing"].map((session_id, index) => ({
+  work_order_id: `work-${index}`, session_id, stage_instance_id: "stage",
+  stage_key: "build", unit_id: "unit", reason: "initial",
+  work_order_state: "completed", created_at: "2026-09-01T00:00:00Z",
+  completed_at: null, executor_health_kind: null, cleanup_state: "complete",
+}));
+const existing: SessionSnapshot = {
+  sid: "existing", name: "existing", agentProfile: "codex", status: "idle",
+  source: "acp", lastActivityTs: "2026-09-01T00:00:00Z", createdAt: "2026-09-01T00:00:00Z",
+  artifactId: null, projectWorkdir: "/repo", worktreePath: "/repo",
+  worktreeBranch: null, worktreeBaseRef: null, requestedModel: null,
+  requestedEffort: null, endReason: null, fencedBy: null, pendingPermissionCount: 0, workflow: null,
+};
 
-it("an attempt row opens its unit", () => {
-  const onOpen = vi.fn();
-  const unit = makeUnitView({ unit_id: "build-1", attempts: [makeAttemptView({ id: "attempt-1", status: "succeeded" })] });
-  render(<RunSidebarSessions attempts={selectRunAttempts([unit])} onOpen={onOpen} />);
-  fireEvent.click(screen.getByRole("button", { name: "author #1" }));
-  expect(onOpen).toHaveBeenCalledWith("build-1");
-  expect(screen.getByText("succeeded")).toBeTruthy();
+beforeEach(() => {
+  useStore.setState(useStore.getInitialState());
+  localStorage.clear();
+  useStore.getState().seedSessions([]);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    const body = url.endsWith("/sessions") ? attempts : url.endsWith("/gates") ? [] : run;
+    return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+  });
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  useStore.setState(useStore.getInitialState());
+  localStorage.clear();
 });
 
-it("a unit with no attempts renders an explicit empty state", () => {
-  render(<RunSidebarSessions attempts={selectRunAttempts([makeUnitView({ attempts: [] })])} onOpen={() => undefined} />);
-  expect(screen.getByText("No attempts yet.")).toBeTruthy();
+const renderRun = () => render(
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <RunDetailView runId={run.id} routePane={null} onBack={() => {}} />
+  </QueryClientProvider>,
+);
+const visibleSessions = () => screen.queryAllByTestId("or-sidebar-session")
+  .map((row) => row.getAttribute("data-session-id"));
+
+it("on a fresh page hides previously deleted sessions and drops their saved panes", async () => {
+  writeStoredRunWorkspace(run.id, {
+    primary: { kind: "session", session_id: "deleted" as Sid }, secondary: null,
+  });
+  useStore.getState().applySnapshot([existing]);
+  renderRun();
+  await screen.findByTestId("or-run-workspace");
+  expect(visibleSessions()).toEqual(["existing"]);
+  expect(screen.queryByTestId("or-run-pane-session")).toBeNull();
+  expect(screen.getByTestId("or-sidebar-session-attempt").textContent).toBe("attempt 2 of 2");
+});
+
+it("does not infer deletion before inventory arrives, then reconciles the first snapshot", async () => {
+  renderRun();
+  await screen.findByTestId("or-run-workspace");
+  expect(visibleSessions()).toEqual(["deleted", "existing"]);
+  act(() => { useStore.getState().applySnapshot([existing]); });
+  await waitFor(() => expect(visibleSessions()).toEqual(["existing"]));
+});
+
+it("an empty server inventory remains authoritative over a late seed response", async () => {
+  useStore.getState().applySnapshot([]);
+  useStore.getState().seedSessions([existing]);
+  renderRun();
+  await screen.findByTestId("or-run-workspace");
+  expect(visibleSessions()).toEqual([]);
+});
+
+it("removes sessions deleted by another client after the page has loaded", async () => {
+  useStore.getState().applySnapshot([existing]);
+  renderRun();
+  await screen.findByTestId("or-run-workspace");
+  act(() => { useStore.getState().applySnapshot([]); });
+  await waitFor(() => expect(visibleSessions()).toEqual([]));
 });

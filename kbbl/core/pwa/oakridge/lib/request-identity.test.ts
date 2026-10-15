@@ -1,38 +1,49 @@
-// @vitest-environment jsdom
-import { afterEach, describe, expect, test } from "vitest";
-import { makeDecisionSubmission, makeLaunchRequest } from "../__fixtures__/read-models";
-import { operatorDraftIdentity, readPendingDecision, savePendingDecision } from "./operator-drafts";
-import { discardPendingLaunch, readPendingLaunch, savePendingLaunch } from "./operator-launch";
+import { describe, expect, it } from "vitest";
 
-afterEach(() => localStorage.clear());
+import type { CreateRunRequest, RepositoryKey } from "../types";
+import { selectRequestIdentity } from "./request-identity";
 
-describe("operator request identity", () => {
-  test("retains one decision request id when a delivery is retried", () => {
-    const first = makeDecisionSubmission({ request_id: "ping-1" });
-    savePendingDecision(first);
-    expect(readPendingDecision(first)?.request_id).toBe("ping-1");
-    expect(readPendingDecision(first)).toEqual(first);
+const launchRequest = (notes: string): CreateRunRequest => ({
+  workflow_def_id: "definition-1", project_id: null,
+  context: {
+    brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
+    base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
+    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
+  },
+  epic_profile: {
+    title: "Build it", slug: "build-it", final_merge_policy: "guarded",
+    repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
+  },
+});
+
+describe("request identity", () => {
+  it("retains one identity when the same request is retried after an unknown response", () => {
+    const first = selectRequestIdentity(null, "thread-1", () => "ping-1");
+    expect(selectRequestIdentity(first, "thread-1", () => "ping-2")).toBe(first);
   });
 
-  test("keeps different units' pending decisions under different identities", () => {
-    const first = makeDecisionSubmission({ unit_id: "unit-one", request_id: "ping-1" });
-    const second = makeDecisionSubmission({ unit_id: "unit-two", request_id: "ping-2" });
-    savePendingDecision(first);
-    savePendingDecision(second);
-    expect(operatorDraftIdentity(first)).not.toBe(operatorDraftIdentity(second));
-    expect([readPendingDecision(first)?.request_id, readPendingDecision(second)?.request_id]).toEqual(["ping-1", "ping-2"]);
+  it("creates a different identity for a different request", () => {
+    const first = selectRequestIdentity(null, "thread-1", () => "ping-1");
+    expect(selectRequestIdentity(first, "thread-2", () => "ping-2").idempotency_key).toBe("ping-2");
   });
 
-  test("retains a pinned run launch request across an uncertain response", () => {
-    const first = makeLaunchRequest({ request_id: "launch-1" });
-    savePendingLaunch(first);
-    expect(readPendingLaunch()).toEqual(first);
+  it("treats a whole run-launch body as the identity, so an unchanged resubmission replays", () => {
+    let sequence = 0;
+    const first = selectRequestIdentity(null, JSON.stringify(launchRequest("Build it")), () => `launch-${++sequence}`);
+    const retry = selectRequestIdentity(first, JSON.stringify(launchRequest("Build it")), () => `launch-${++sequence}`);
+    expect(retry).toBe(first);
   });
 
-  test("a discarded launch can be replaced with a new request id", () => {
-    savePendingLaunch(makeLaunchRequest({ request_id: "launch-1" }));
-    discardPendingLaunch();
-    savePendingLaunch(makeLaunchRequest({ request_id: "launch-2" }));
-    expect(readPendingLaunch()?.request_id).toBe("launch-2");
+  it("mints a new key once the operator edits the run they are launching", () => {
+    let sequence = 0;
+    const first = selectRequestIdentity(null, JSON.stringify(launchRequest("Build it")), () => `launch-${++sequence}`);
+    const changed = selectRequestIdentity(first, JSON.stringify(launchRequest("Build it differently")), () => `launch-${++sequence}`);
+    expect(changed.idempotency_key).toBe("launch-2");
+  });
+
+  it("keys admission retries by stage and unit, so two units never share a key", () => {
+    const foundation = selectRequestIdentity(null, "stage-1:foundation", () => "admit-1");
+    const web = selectRequestIdentity(null, "stage-1:web", () => "admit-2");
+    expect(foundation.idempotency_key).not.toBe(web.idempotency_key);
   });
 });

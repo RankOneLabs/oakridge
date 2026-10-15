@@ -1,37 +1,28 @@
-import type { OperatorDecisionDefinition, OperatorInboxItem, OperatorUnitView } from "../operator-contracts";
-import { selectTargetRevisionId } from "./operator-selectors";
+import type { ReviewInboxItem } from "../types";
 
-/** The decisions that ask for the operator: every one but the run's own cancel, which a live root always offers. */
-export const selectUnitAsks = (unit: OperatorUnitView): readonly OperatorDecisionDefinition[] =>
-  unit.decisions.filter((decision) => decision.submit.kind !== "cancel");
+/**
+ * One row of the inbox's decision list. A `settled` row is an item that left
+ * the server's queue while the operator was looking at it (decided here,
+ * decided elsewhere, or withdrawn). It keeps its place with no decision
+ * controls, so the rows below never slide up under a pointer aimed at it.
+ */
+export type DecisionQueueEntry =
+  | { readonly kind: "live"; readonly item: ReviewInboxItem }
+  | { readonly kind: "settled"; readonly item: ReviewInboxItem };
 
-export const selectActionableUnits = (units: readonly OperatorUnitView[]): readonly OperatorUnitView[] =>
-  units.filter((unit) => selectUnitAsks(unit).length > 0 && !unit.is_terminal);
-
-/** The decisions made on one revision. */
-export const selectArtifactDecisions = (unit: OperatorUnitView, revisionId: string): readonly OperatorDecisionDefinition[] =>
-  unit.decisions.filter((decision) => selectTargetRevisionId(decision) === revisionId);
-
-export type OperatorDecisionQueueEntry =
-  | { readonly kind: "live"; readonly item: OperatorInboxItem }
-  | { readonly kind: "settled"; readonly item: OperatorInboxItem };
-
-const itemKey = (item: OperatorInboxItem): string => JSON.stringify([
-  item.run_id, item.unit_id, item.kind,
-  item.kind === "decision" ? item.key : item.kind === "waiting" ? item.reason : item.detail,
-]);
-
-/** Preserve row position across refreshes so disappearing work cannot move another action beneath the pointer. */
-export function selectStableOperatorDecisionQueue(
-  previous: readonly OperatorDecisionQueueEntry[], items: readonly OperatorInboxItem[],
-): readonly OperatorDecisionQueueEntry[] {
-  const incoming = new Map(items.map((item) => [itemKey(item), item]));
-  const known = new Set(previous.map((entry) => itemKey(entry.item)));
-  return [
-    ...previous.map((entry): OperatorDecisionQueueEntry => {
-      const current = incoming.get(itemKey(entry.item));
-      return current ? { kind: "live", item: current } : { kind: "settled", item: entry.item };
-    }),
-    ...items.filter((item) => !known.has(itemKey(item))).map((item): OperatorDecisionQueueEntry => ({ kind: "live", item })),
-  ];
+/** Every previous row keeps its position; work that arrived since is appended. */
+export function selectStableDecisionQueue(
+  previous: readonly DecisionQueueEntry[],
+  incoming: readonly ReviewInboxItem[],
+): DecisionQueueEntry[] {
+  const incomingById = new Map(incoming.map((item) => [item.id, item]));
+  const kept = previous.map((entry): DecisionQueueEntry => {
+    const current = incomingById.get(entry.item.id);
+    return current ? { kind: "live", item: current } : { kind: "settled", item: entry.item };
+  });
+  const knownIds = new Set(previous.map((entry) => entry.item.id));
+  const arrived = incoming
+    .filter((item) => !knownIds.has(item.id))
+    .map((item): DecisionQueueEntry => ({ kind: "live", item }));
+  return [...kept, ...arrived];
 }
