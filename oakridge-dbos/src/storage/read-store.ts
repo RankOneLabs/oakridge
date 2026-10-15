@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Selectable } from "kysely";
+import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus, Workflow } from "../core-client/core-types";
 import type { ActionId, DecisionId, DefinitionBundleId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
@@ -183,15 +183,23 @@ export async function readRunSummaries(db: Kysely<DB>, run_ids: readonly string[
 
 export interface RunPageQuery { readonly after: { readonly created_at: string; readonly id: string } | null; readonly limit: number; readonly is_archived: boolean }
 export interface RunReadPage { readonly items: readonly RunSummaryRead[]; readonly next: { readonly created_at: string; readonly id: string } | null }
+/** PostgreSQL's full timestamp, as a stable UTC cursor string rather than a millisecond Date. */
+function cursorTimestamp<Table extends "authority.run" | "authority.event">(eb: ExpressionBuilder<DB, Table>) {
+  return eb.fn<string>("to_char", [eb.fn("timezone", [eb.val("UTC"), eb.ref("created_at")]),
+    eb.val('YYYY-MM-DD"T"HH24:MI:SS.US"Z"')]).as("cursor_created_at");
+}
+function cursorTimestampValue<Table extends "authority.run" | "authority.event">(eb: ExpressionBuilder<DB, Table>, value: string) {
+  return eb.cast<Date>(eb.val(value), "timestamptz");
+}
 /** Newest first; one listing is either the archived runs or the active ones. */
 export async function listRuns(db: Kysely<DB>, query: RunPageQuery): Promise<RunReadPage> {
   return consistent(db, async (trx) => {
-    let page = trx.selectFrom("authority.run").select(["id", "created_at",
-      sql<string>`to_char(${sql.ref("created_at")} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("cursor_created_at")])
+    let page = trx.selectFrom("authority.run").select(["id", "created_at"])
+      .select(cursorTimestamp)
       .where("root_unit_id", "is not", null)
       .where("archived_at", query.is_archived ? "is not" : "is", null);
     const after = query.after;
-    if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(sql<Date>`${after.created_at}::timestamptz`, after.id)));
+    if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(cursorTimestampValue(eb, after.created_at), after.id)));
     const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
     const items = await runSummaryReads(trx, selected.map((row) => row.id));
@@ -347,11 +355,11 @@ export async function readHistory(db: Kysely<DB>, query: HistoryQuery): Promise<
       if (!unit) return null;
     }
     let page = trx.selectFrom("authority.event").selectAll()
-      .select(sql<string>`to_char(${sql.ref("created_at")} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("cursor_created_at"))
+      .select(cursorTimestamp)
       .where("run_id", "=", query.run_id);
     if (query.unit_id !== null) page = page.where("unit_id", "=", query.unit_id);
     const after = query.after;
-    if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(sql<Date>`${after.created_at}::timestamptz`, after.id)));
+    if (after) page = page.where((eb) => eb(eb.refTuple("created_at", "id"), "<", eb.tuple(cursorTimestampValue(eb, after.created_at), after.id)));
     const rows = await page.orderBy("created_at", "desc").orderBy("id", "desc").limit(query.limit + 1).execute();
     const events = rows.slice(0, query.limit).map(eventRecord);
     const event_ids = events.map((event) => event.id);
