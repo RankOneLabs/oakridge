@@ -37,6 +37,9 @@ fi
 DBOS_URL="http://${DBOS_URL_HOST}:${DBOS_PORT}"
 POSTGRES_CONTAINER="${OAKRIDGE_POSTGRES_CONTAINER:-oakridge-postgres}"
 POSTGRES_PORT="${OAKRIDGE_POSTGRES_PORT:-54329}"
+# The data volume follows the container, so a second container never opens
+# another one's data directory. The default container keeps its historical volume.
+POSTGRES_VOLUME="${OAKRIDGE_POSTGRES_VOLUME:-${POSTGRES_CONTAINER}-data}"
 POSTGRES_IMAGE="${OAKRIDGE_POSTGRES_IMAGE:-postgres:16}"
 
 KBBL_DISPLAY_HOST="127.0.0.1"
@@ -101,7 +104,7 @@ start_managed_postgres() {
       --env POSTGRES_USER=oakridge \
       --env POSTGRES_PASSWORD=oakridge \
       --env POSTGRES_DB=oakridge \
-      --volume oakridge-postgres-data:/var/lib/postgresql/data \
+      --volume "${POSTGRES_VOLUME}:/var/lib/postgresql/data" \
       "$POSTGRES_IMAGE" >/dev/null
   fi
 
