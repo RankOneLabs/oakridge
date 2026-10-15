@@ -145,6 +145,25 @@ test("runs cursor preserves two run timestamps within one millisecond", async ()
     .toEqual({ ids: [newer, older], cursor: "2090-01-01T00:00:00.123789Z" });
 });
 
+test("history and runs reject a cursor timestamp PostgreSQL cannot cast", async () => {
+  const { run_id, unit } = await drafted();
+  const cursor = Buffer.from(JSON.stringify({ created_at: "2026", id: "x" })).toString("base64url");
+  const paths = [`/api/runs?cursor=${segment(cursor)}`, `${unitPath(run_id, unit, "/history")}?cursor=${segment(cursor)}`];
+  for (const path of paths) {
+    const response = await app.request(path);
+    expect({ status: response.status, body: await response.json() })
+      .toEqual({ status: 400, body: { error: path.startsWith("/api/runs?") ? "invalid runs cursor" : "invalid history cursor",
+        code: "malformed_request" } });
+  }
+});
+
+test("history and runs still accept millisecond cursors emitted before the precision fix", async () => {
+  const { run_id, unit } = await drafted();
+  const cursor = Buffer.from(JSON.stringify({ created_at: "2026-10-15T12:00:00.123Z", id: "x" })).toString("base64url");
+  const paths = [`/api/runs?cursor=${segment(cursor)}`, `${unitPath(run_id, unit, "/history")}?cursor=${segment(cursor)}`];
+  for (const path of paths) expect((await app.request(path)).status).toBe(200);
+});
+
 describe("each read model carries exactly its contract's fields", () => {
   test("runs and run units", async () => {
     const { run_id } = await drafted();
