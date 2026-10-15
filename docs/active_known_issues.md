@@ -60,10 +60,13 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   returns a minimal compatibility `EpicWorkflowProfile` to satisfy its frozen
   v1 signature. Its profile fields are placeholders; the run detail does not
   expose a profile from v2. The decision's committed result is the authority.
-- **Frozen run activity still reads `/oakridge/api/run_events`.** V2 exposes
-  `GET /events` and per-unit history instead. Opening run activity in the
-  frozen workspace requests the retired route. This lies outside the client,
-  hooks and adapters files this cohort may change.
+- **The frozen Activity pane has only the v2 events with a truthful v1
+  equivalent.** The kbbl proxy serves its retired `/run_events` read from
+  paginated v2 per-unit history, so publications and review decisions render
+  without changing the pane. V2 does not record separate `gate_opened` or
+  `pull_request_observed` events, so the compatibility feed cannot show those
+  v1 rows. Each Activity refresh currently reads every unit's history; this
+  should be measured on long runs before setting a shorter polling interval.
 
 ## Resolved investigation: group-unit operator decision (review-loop bundle)
 
