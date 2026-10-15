@@ -432,7 +432,7 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
   return status;
 }
 
-/** One run of a code operation, transient failures retried within the start budget: the attempt's result and output. */
+/** One code operation: one-shot retries use the start budget; a watch retries across carrier generations. */
 type OperationResult = Exclude<OperationOutcome, { readonly kind: "unavailable" }>;
 type OperationRun = OperationResult | { readonly kind: "interrupted"; readonly status: EffectStatus | null };
 async function runOperation(intent: CarriedIntent, is_watch: boolean): Promise<OperationRun> {
@@ -447,6 +447,10 @@ async function runOperation(intent: CarriedIntent, is_watch: boolean): Promise<O
       const reloaded = await loadIntentStep(intent.id);
       if (reloaded.kind !== "carried" || reloaded.intent.status !== "acknowledged")
         return { kind: "interrupted", status: reloaded.kind === "carried" ? reloaded.intent.status : null };
+      // This attempt stays running through outages, so the outer watch-run bound cannot fire.
+      // Its successor resumes the same attempt from the authority row.
+      if (attempt >= timing.carrier_max_iterations && await rollOver("start", intent.id))
+        return { kind: "interrupted", status: reloaded.intent.status };
     }
   }
 }

@@ -10,7 +10,7 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
-import { runWorkflowId, wakeRun } from "../src/workflows/topology";
+import { intentWorkflowId, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launch, openAuthority, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 import { eventually } from "./stub-kbbl";
 
@@ -242,6 +242,40 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
     expect(terminal_attempts.map((attempt) => attempt.status.kind)).toEqual(["failed"]);
   } finally { await composition.close(); await live.close(); }
 });
+
+test("a watch rolls over during repeated unavailable operations and resumes its running attempt", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  let calls = 0;
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+    operation_runner: { async run() {
+      calls++;
+      return calls <= 5 ? { kind: "unavailable", detail: "forge unavailable" } :
+        { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+          head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
+    } },
+    timing: { retry_initial_seconds: 0.02, retry_cap_seconds: 0.02, carrier_max_iterations: 2 } });
+  try {
+    const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+    if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+    const { run_id } = await response.json() as { run_id: RunId };
+    const intent = await eventually("watch intent", async () => await live.db.selectFrom("authority.effect_intent")
+      .select(["id", "status"]).where("run_id", "=", run_id).executeTakeFirst() ?? null);
+    await eventually("merged watch attempt after rollover", async () => {
+      const attempt = await live.db.selectFrom("authority.attempt").select(["seq", "status"])
+        .where("run_id", "=", run_id).where("worker", "=", "pr_watch").where("seq", "=", 1).executeTakeFirst();
+      return attempt?.status.kind === "succeeded" ? true : null;
+    }, 10_000);
+    const carriers = await DBOS.listWorkflows({ workflowName: "oakridgeEffectWorkflow", workflow_id_prefix: intentWorkflowId(intent.id) });
+    expect({ retried: calls >= 6, rolled_over: carriers.length >= 3,
+      first: carriers.find((carrier) => carrier.workflowID === intentWorkflowId(intent.id))?.status,
+      intent: (await live.db.selectFrom("authority.effect_intent").select("status").where("id", "=", intent.id).executeTakeFirstOrThrow()).status })
+      .toEqual({ retried: true, rolled_over: true, first: "SUCCESS", intent: "acknowledged" });
+    const first_steps = await DBOS.listWorkflowSteps(intentWorkflowId(intent.id)) ?? [];
+    expect(first_steps.filter((step) => step.name === "oakridgeRunOperation")).toHaveLength(2);
+  } finally { await composition.close(); await live.close(); }
+}, 90_000);
 
 test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
   const live = await openAuthority();
