@@ -74,7 +74,7 @@ the default install uses. `OAKRIDGE_SHADOW_NAME`, `OAKRIDGE_SHADOW_*_PORT` and
 (else `OAKRIDGE_GITHUB_TOKEN` or `GITHUB_TOKEN`) authenticates pull request
 observation.
 Its database starts with no projects. Add them with
-`oakridge-dbos/scripts/import-projects.ts --to=http://127.0.0.1:8800`, using
+`bun oakridge-dbos/scripts/import-projects.ts --to=http://127.0.0.1:8800`, using
 `--only=<name>` and `--repo-dir=<name>=<path>` to point each at its own clone:
 a project whose `repo_dir` is the default install's checkout would have shadow
 runs working in that checkout.

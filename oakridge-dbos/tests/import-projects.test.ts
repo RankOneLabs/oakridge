@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { parseOptions, planImports, selectProjects, toDraft, type SourceProject } from "../scripts/import-projects";
+import { parseOptions, planImports, selectProjects, selectSourceQuery, toDraft, type SourceProject } from "../scripts/import-projects";
 import type { ProjectDraft } from "../src/http/projects";
 
 const script = resolve(import.meta.dir, "../scripts/import-projects.ts");
@@ -23,6 +23,19 @@ describe("options", () => {
   });
   test("an unknown flag is refused rather than ignored", () => {
     expect(parseOptions(["--to=http://x", "--dataDir=/x"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("source schema", () => {
+  test("a v2 database is read from authority.project, its integration branch as base_branch", () => {
+    const query = selectSourceQuery({ has_authority: true, has_legacy: true });
+    expect(query).toMatchObject({ ok: true, value: expect.stringContaining("integration_branch AS base_branch FROM authority.project") });
+  });
+  test("a pre-v2 database is read from oakridge.project", () => {
+    expect(selectSourceQuery({ has_authority: false, has_legacy: true })).toMatchObject({ ok: true, value: expect.stringContaining("FROM oakridge.project") });
+  });
+  test("a database with neither table is refused", () => {
+    expect(selectSourceQuery({ has_authority: false, has_legacy: false })).toMatchObject({ ok: false });
   });
 });
 

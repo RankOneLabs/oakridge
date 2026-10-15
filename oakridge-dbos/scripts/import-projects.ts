@@ -6,9 +6,11 @@
  *     [--from=postgres://…|projects.json] [--only=scout,jig] \
  *     [--repo-dir=scout=/elsewhere/scout] [--dry-run]
  *
- * The source is a pre-v2 database (`oakridge.project`, the default install's
- * URL by default) or a JSON export of those rows; `--export=<file>` writes that
- * export instead of importing. Each project goes through `POST /api/projects`,
+ * The source is a database (the default install's URL by default) or a JSON
+ * export of its projects; `--export=<file>` writes that export instead of
+ * importing. A database is read from `authority.project` when it has one and
+ * from the pre-v2 `oakridge.project` otherwise, so an install exports the same
+ * way before and after the v2 cutover. Each project goes through `POST /api/projects`,
  * so the backend validates it and assigns its id. A project whose name the
  * target already has is skipped, so a rerun is safe. `OAKRIDGE_CONTROL_TOKEN`,
  * when set, is sent as the Bearer credential.
@@ -19,7 +21,11 @@ import { parseProjectDraft, type ProjectDraft, type ProjectList } from "../src/h
 
 const DEFAULT_SOURCE = "postgres://oakridge:oakridge@127.0.0.1:54329/oakridge";
 
-/** A row of the pre-v2 `oakridge.project` table, as the source holds it. */
+/**
+ * A source project, in the export's shape. `base_branch` is the pre-v2 column;
+ * a v2 source's `integration_branch` is read into it, so an export has one
+ * shape whichever schema it came from.
+ */
 export interface SourceProject {
   readonly name: string;
   readonly repo_dir: string;
@@ -94,15 +100,28 @@ export function planImports(drafts: readonly ProjectDraft[], existing_names: Rea
     : { kind: "create", draft });
 }
 
+/** Which project tables a source database has. */
+export interface SourceTables { readonly has_authority: boolean; readonly has_legacy: boolean }
+
+/** The query that reads a source's projects: the v2 table when present, else the pre-v2 one. */
+export function selectSourceQuery(tables: SourceTables): Result<string, string> {
+  const columns = "name, repo_dir, forge_repository";
+  if (tables.has_authority) return ok(`SELECT ${columns}, integration_branch AS base_branch FROM authority.project ORDER BY created_at, name`);
+  if (tables.has_legacy) return ok(`SELECT ${columns}, base_branch FROM oakridge.project ORDER BY created_at, name`);
+  return err("the source database has neither authority.project nor oakridge.project");
+}
+
 async function readSource(from: string): Promise<Result<readonly SourceProject[], string>> {
   try {
     if (!/^postgres(ql)?:\/\//.test(from)) return ok(await Bun.file(from).json() as SourceProject[]);
     const client = new Client({ connectionString: from });
     await client.connect();
     try {
-      const result = await client.query<SourceProject>(
-        "SELECT name, repo_dir, forge_repository, base_branch FROM oakridge.project ORDER BY created_at, name");
-      return ok(result.rows);
+      const tables = await client.query<SourceTables>(
+        "SELECT to_regclass('authority.project') IS NOT NULL AS has_authority, to_regclass('oakridge.project') IS NOT NULL AS has_legacy");
+      const query = selectSourceQuery(tables.rows[0]!);
+      if (!query.ok) return query;
+      return ok((await client.query<SourceProject>(query.value)).rows);
     } finally { await client.end(); }
   } catch (cause) { return err(`reading projects from ${redact(from)}: ${String(cause)}`); }
 }
