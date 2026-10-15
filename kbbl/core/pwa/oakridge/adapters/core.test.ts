@@ -3,7 +3,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import type { OperatorArtifactDetail, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, unitToStages } from "./core";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 
@@ -30,7 +30,7 @@ describe("v2 development adapters", () => {
   });
   it("maps reviews to gates and change effects to the feedback action", () => {
     const gates = reviewToGates(cohort);
-    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["accept", "request_revision"]);
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
     expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_revision");
   });
   it("keeps gate and artifact ids resolvable after a cold load", () => {
@@ -53,7 +53,19 @@ describe("v2 development adapters", () => {
     expect(event.ok && event.value?.operation).toBe("slot_released");
   });
   it("distinguishes a stalled worker from a parked review", () => {
-    expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts }).run).toBe("failed");
+    expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");
+  });
+  it("parks a unit awaiting the operator and leaves a dependency wait pending", () => {
+    const blocked = units.find((unit) => unit.attention?.kind === "waiting" && unit.decisions.length === 0);
+    if (!blocked) throw new Error("captured fixture lacks a dependency wait");
+    expect([deriveStatus(statusInputOf(cohort)).run, deriveStatus(statusInputOf(blocked)).run]).toEqual(["parked", "pending"]);
+  });
+  it("maps an approve-effect decision onto a v1 action the frozen gate UI renders", () => {
+    const accept = cohort.decisions.find((decision) => decision.key === "accept");
+    const merge = (cohortMerge.units as unknown as OperatorUnitView[])
+      .flatMap((unit) => unit.decisions).find((decision) => decision.key === "confirm_merged");
+    if (!accept || !merge) throw new Error("captured fixtures lack the approve decisions");
+    expect([decisionAction(accept), decisionAction(merge)]).toEqual(["approve", "confirm_merged"]);
   });
   it("classifies a development workflow inbox with a cohort lifecycle", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);

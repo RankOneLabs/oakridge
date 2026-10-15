@@ -37,8 +37,7 @@ const inbox: ReviewInbox = {
 };
 
 const runId = "run-1";
-const v2Unit = { ...capturedCohort, run_id: runId, decisions: capturedCohort.decisions.map((decision) =>
-  decision.key === "accept" ? { ...decision, key: "approve", submit: { ...decision.submit, decision: "approve" } } : decision) };
+const v2Unit = { ...capturedCohort, run_id: runId };
 const v2Run = { ...sample.run, run_id: runId };
 function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], afterDecision?: () => void) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -96,7 +95,7 @@ describe("ReviewInboxView", () => {
     fireEvent.click(await screen.findByTestId("or-decision-approve"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes(`/units/${encodeURIComponent(v2Unit.unit_id)}/reviews/assessment_review/decide`))).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "approve", target: approveTarget, payload: {} });
+    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "accept", target: approveTarget, payload: {} });
     await waitFor(() => expect(screen.queryByTestId("or-decision-approve")).toBeNull());
     expect(resumed).toBe(true);
   });

@@ -71,23 +71,32 @@ export const revisionToArtifact = (artifact: OperatorArtifactDetail): AdapterRes
     run_id: artifact.run_id, producing_stage: "", revisions });
 };
 
-export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[]; readonly hasRunStall?: boolean }
+export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];
+  readonly decisions: readonly OperatorDecisionDefinition[]; readonly hasRunStall?: boolean }
+export const statusInputOf = (unit: OperatorUnitView): StatusInput =>
+  ({ status: unit.status, attention: unit.attention, attempts: unit.attempts, decisions: unit.decisions });
+/** A wait the operator can clear: the unit offers a review decision, rather than waiting on an upstream dependency. */
+const awaitsOperator = (decisions: readonly OperatorDecisionDefinition[]): boolean =>
+  decisions.some((decision) => decision.submit.kind === "review");
 export function deriveStatus(input: StatusInput): { readonly run: RunStatus; readonly stage: StageStatus } {
-  const { status, attention, attempts, hasRunStall } = input;
+  const { status, attention, attempts, decisions, hasRunStall } = input;
   if (status.kind === "done") return { run: "complete", stage: "complete" };
   if (status.kind === "cancelled") return { run: "cancelled", stage: "failed" };
   if (hasRunStall || attention?.kind === "stalled" || attempts.some((attempt) => attempt.is_current && attempt.failure))
     return { run: "failed", stage: "failed" };
-  if (attention?.kind === "waiting") return { run: "parked", stage: "parked" };
+  if (attention?.kind === "waiting" && awaitsOperator(decisions)) return { run: "parked", stage: "parked" };
   if (status.kind === "active") return { run: "running", stage: "running" };
   return { run: "pending", stage: "pending" };
 }
 
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
+/** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
+const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
 export const decisionAction = (decision: OperatorDecisionDefinition): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
-  return decision.submit.effect === "request_changes" ? "request_revision" : decision.submit.decision;
+  if (decision.submit.effect === "request_changes") return "request_revision";
+  return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
 };
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
   .filter((decision) => decision.submit.kind === "review")
@@ -125,13 +134,13 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
   return ok([...stages].map(([name, members]) => {
-    const statuses = members.map((unit) => deriveStatus({ status: unit.status, attention: unit.attention, attempts: unit.attempts }).stage);
+    const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).stage);
     const status: StageStatus = statuses.includes("failed") ? "failed" : statuses.includes("parked") ? "parked"
       : statuses.every((item) => item === "complete") ? "complete" : statuses.includes("running") ? "running" : "pending";
     const stageUnits: StageUnit[] = members.map((unit) => ({ unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
       repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
       params: { unit_id: unit.collection_key ?? unit.unit_key, artifact: objectValue(unit.input)?.brief ?? unit.input },
-      worktree: worktreeOf(unit), status: deriveStatus({ status: unit.status, attention: unit.attention, attempts: unit.attempts }).stage,
+      worktree: worktreeOf(unit), status: deriveStatus(statusInputOf(unit)).stage,
       gate: reviewGateId(unit) }));
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
       status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision).map((artifact) => ({
@@ -150,8 +159,8 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (units.some((unit) => unit.run_id !== run.run_id)) return fail("run snapshot", "unit belongs to another run");
   const grouped = unitToStages(units);
   if (!grouped.ok) return grouped;
-  const unitStatuses = units.map((unit) => deriveStatus({ status: unit.status, attention: unit.attention, attempts: unit.attempts }).run);
-  const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [] }).run;
+  const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
+  const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
     : unitStatuses.includes("failed") ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
   const root = units.find((unit) => unit.stage === null);
