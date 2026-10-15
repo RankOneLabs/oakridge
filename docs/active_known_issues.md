@@ -47,11 +47,14 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   has no corresponding key in the v2 read contract and returns a clear
   not-found error. An opaque gate ID similarly resolves only when its supplied
   revision and action identify one current v2 review decision.
-- **Several frozen v1 controls have no v2 command.** V2 has no run deletion,
-  thread ping/resolution, or review-item update endpoint, and the v1 workflow
-  graph cannot be compiled as a v2 definition. These client methods now fail
-  explicitly. The workflow definition detail can only show a placeholder
-  graph because the v1 editor's graph model does not represent a v2 bundle.
+- **Several frozen v1 controls have no corresponding v2 command.** V2 has no
+  thread ping/resolution or review-item update endpoint. These client methods
+  fail explicitly. V2 does expose `DELETE /runs/:run_id`, but deletion is not
+  wired in the adapter because the operator chose Cancel and Archive instead.
+  The v1 workflow graph cannot be submitted as a v2 workflow definition without
+  a model translation; the v2 definition API itself exists. The workflow
+  definition detail currently shows a placeholder graph because the v1 editor's
+  graph model does not represent a v2 bundle.
 - **Final merge response metadata has no v2 equivalent.**
   `confirmFinalPullRequest` submits the v2 `confirm_merged` decision and then
   returns a minimal compatibility `EpicWorkflowProfile` to satisfy its frozen

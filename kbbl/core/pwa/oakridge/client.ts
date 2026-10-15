@@ -381,7 +381,7 @@ export function unarchiveRun(runId: string): Promise<unknown> {
 }
 
 export function deleteRun(runId: string): Promise<void> {
-  return Promise.reject(new Error(`oakridge ${runPath(runId)}: v2 has no run deletion endpoint`));
+  return Promise.reject(new Error(`oakridge ${runPath(runId)}: run deletion is not wired; use Cancel or Archive`));
 }
 
 export async function retryRunUnit(stageInstanceId: string, unitId: string): Promise<unknown> {
