@@ -113,7 +113,8 @@ export function makePlanGraphFixture(cohorts: readonly PlanCohortInput[], depend
 /** Shared defaults for operator read-model tests; callers override only the behavior under test. */
 export function makeRunSummary(overrides: Partial<OperatorRunSummary> = {}): OperatorRunSummary {
   return { run_id: "run-1", definition_bundle_id: "bundle-1", definition_digest: "digest-1",
-    created_at: "2026-01-01T00:00:00.000Z", archived_at: null, status: { kind: "active" }, ...overrides };
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", archived_at: null,
+    title: null, repository_keys: [], status: { kind: "active" }, ...overrides };
 }
 
 export function makeRunView(overrides: Partial<OperatorRunView> = {}): OperatorRunView {

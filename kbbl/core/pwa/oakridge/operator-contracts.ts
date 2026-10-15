@@ -7,7 +7,8 @@ export interface OperatorRunView extends OperatorRunSummary { readonly units: re
 
 export interface OperatorRunSummary {
   readonly run_id: string; readonly definition_bundle_id: string; readonly definition_digest: string;
-  readonly created_at: string; readonly archived_at: string | null;
+  readonly created_at: string; readonly updated_at: string; readonly archived_at: string | null;
+  readonly title: string | null; readonly repository_keys: readonly string[];
   /** The root unit's status. */
   readonly status: OperatorUnitStatus;
 }
@@ -165,7 +166,9 @@ export interface OperatorSessionHold {
   readonly action_id: string;
 }
 
-export interface OperatorSessionHoldResponse { readonly hold: OperatorSessionHold | null }
+export interface OperatorSessionHoldResponse { readonly hold: OperatorSessionHold | null; readonly location: OperatorSessionRunLocation | null }
+
+export interface OperatorSessionRunLocation { readonly run_id: string; readonly unit_id: string }
 
 export interface OperatorIngressRequest { readonly request_id: string }
 

@@ -6,7 +6,7 @@
  * only the shape that crosses the boundary, so the PWA can narrow a refusal
  * without importing a server module.
  */
-import type { OperatorSessionHold } from "../pwa/oakridge/operator-contracts";
+import type { OperatorSessionHold, OperatorSessionRunLocation } from "../pwa/oakridge/operator-contracts";
 
 /**
  * The running Oakridge attempt that still uses a session. Closing it would
@@ -15,6 +15,8 @@ import type { OperatorSessionHold } from "../pwa/oakridge/operator-contracts";
  * asks Oakridge (`GET /session_holds/:session_id`).
  */
 export type SessionHold = OperatorSessionHold;
+/** A session's run and unit for navigation, including after its attempt ends. */
+export type SessionRunLocation = OperatorSessionRunLocation;
 
 /** Narrows a hold arriving over HTTP: from Oakridge on the server, from a refusal body in the PWA. */
 export const isSessionHold = (value: unknown): value is SessionHold => {

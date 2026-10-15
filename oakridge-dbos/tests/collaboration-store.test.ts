@@ -109,3 +109,23 @@ test("a message's author is the credential that posted it, whatever the body cla
   expect({ status: posted.status, author: message.body.author })
     .toEqual({ status: 201, author: operatorWriterFromCredential(new Request("http://x", { headers })).subject });
 });
+
+test("thread titles and messages can be long while request keys and review item titles stay bounded", async () => {
+  const { run_id, unit, revisions } = await drafted(1);
+  const handlers = collaborationHandlers({ db: authority.db });
+  const app = new Hono();
+  app.post("/api/runs/:run_id/units/:unit_id/revisions/:revision_id/threads", handlers.createThread);
+  app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/messages", handlers.addMessage);
+  app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/review-items", handlers.addReviewItem);
+  const base = `/api/runs/${encodeURIComponent(run_id)}/units/${encodeURIComponent(unit)}`;
+  const post = (path: string, body: unknown) => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const thread_path = `${base}/revisions/${encodeURIComponent(revisions[0]!)}/threads`;
+  const too_long_key = await post(thread_path, { request_key: "k".repeat(301), title: "Title", anchor: null });
+  const created = await post(thread_path, { request_key: "long-title", title: "T".repeat(2000), anchor: null });
+  const thread_id = ((await created.json()) as { readonly id: string }).id;
+  const message_path = `${base}/threads/${encodeURIComponent(thread_id)}/messages`;
+  const message = await post(message_path, { request_key: "long-message", text: "M".repeat(2000) });
+  const item_path = `${base}/threads/${encodeURIComponent(thread_id)}/review-items`;
+  const too_long_title = await post(item_path, { request_key: "review", title: "R".repeat(301), detail: "detail", status: "open" });
+  expect([too_long_key.status, created.status, message.status, too_long_title.status]).toEqual([422, 201, 201, 422]);
+});

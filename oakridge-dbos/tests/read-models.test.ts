@@ -14,7 +14,7 @@ import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf
  * field is tested. Runs go through commit; reads go through the HTTP surface.
  */
 const CONTRACT_FIELDS = {
-  RunView: ["archived_at", "created_at", "definition_bundle_id", "definition_digest", "run_id", "status", "units"],
+  RunView: ["archived_at", "created_at", "definition_bundle_id", "definition_digest", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
     "run_id", "stage", "status", "unit_id", "unit_key"],
@@ -183,6 +183,20 @@ describe("each read model carries exactly its contract's fields", () => {
 });
 
 describe("derived fields", () => {
+  test("generic runs expose nullable title, empty repository keys and the latest event time", async () => {
+    const run_id = await launched(review_loop, { topic: "Oakridge" });
+    const first = await get<RunView>(`/api/runs/${segment(run_id)}`);
+    const writer = await actionOf(authority, run_id, "writer");
+    await submitter(authority)({ run_id, event: { kind: "worker_started", action: writer }, writer: executor(writer) });
+    const page = await get<RunPage>("/api/runs");
+    const listed = page.items.find((item) => item.run_id === run_id);
+    const latest = await authority.db.selectFrom("authority.event").select("created_at").where("run_id", "=", run_id)
+      .orderBy("created_at", "desc").executeTakeFirstOrThrow();
+    expect({ first: [first.title, first.repository_keys], listed: [listed?.title, listed?.repository_keys],
+      updated_at: String(listed?.updated_at), advanced: !!listed && listed.updated_at >= first.updated_at })
+      .toEqual({ first: [null, []], listed: [null, []], updated_at: latest.created_at.toISOString(), advanced: true });
+  });
+
   test("run units are labelled by key, the root by its workflow, a collection member by its stage", async () => {
     const run_id = await fanned();
     const view = await get<RunView>(`/api/runs/${segment(run_id)}`);
@@ -414,7 +428,9 @@ describe("derived fields", () => {
     const held = await get<SessionHoldResponse>(`/session_holds/${session}`);
     await submit({ run_id, event: { kind: "worker_ended", action: writer, result: { kind: "failed", code: "boom", detail: "it broke" } }, writer: executor(writer) });
     const reads: unknown = { held, free: await get<SessionHoldResponse>(`/session_holds/${session}`), unknown: await get<SessionHoldResponse>("/session_holds/sid-unknown") };
-    expect(reads).toEqual({ held: { hold: { session_id: session, run_id, unit_id: unit, worker: "writer", action_id: writer } }, free: { hold: null }, unknown: { hold: null } });
+    const location = { run_id, unit_id: unit };
+    expect(reads).toEqual({ held: { hold: { session_id: session, run_id, unit_id: unit, worker: "writer", action_id: writer }, location },
+      free: { hold: null, location }, unknown: { hold: null, location: null } });
   });
 
   test("a missing unit, artifact or run reads as 404", async () => {
