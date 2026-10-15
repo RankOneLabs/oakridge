@@ -87,7 +87,7 @@ test("the bundle lists the root with the run input and each staged unit with its
       ["planning", "{}", "Planning", [["notes", "{count: integer, done: boolean}"], ["plan", "plan"]]]] });
 });
 
-test("a member key two groups reuse keeps a bundle unit per declaration, so the development bundle lists every stage", async () => {
+test("the development bundle lists each direct collection declaration", async () => {
   const source = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
   const prompts = readWorkflowPrompts(source);
   if (!prompts.ok) throw new Error(prompts.error.detail);
@@ -98,7 +98,7 @@ test("a member key two groups reuse keeps a bundle unit per declaration, so the 
       prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
     if (!compiled.ok) throw new Error(compiled.error.detail);
     expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
-    ["prepare/repository", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs/brief", "brief"],
-    ["implementation/cohort", "cohort"], ["integration/repository", "integration"]]);
+    ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],
+    ["implementation", "cohort"], ["integration", "integration"]]);
   } finally { started.value.close(); }
 });

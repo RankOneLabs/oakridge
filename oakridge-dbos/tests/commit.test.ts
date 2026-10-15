@@ -322,7 +322,7 @@ test("a unit that starts after its dependency persists the input it resolved, an
     done_when: "published(draft)", outcome: { draft: "latest(draft)" } });
   const workflow = { workflow: "chain", input: { topic: "text" },
     run: { units: { first: { stage: "first", input: { topic: "input.topic" } },
-      second: { stage: "second", after: ["first"], input: { topic: "input.topic", draft: "first.outcome.draft" } } },
+      second: { stage: "second", input: { topic: "input.topic", draft: "first.outcome.draft" } } },
     outcome: { draft: "second.outcome.draft" } },
     stages: { first: stage({ topic: "text" }, { topic: "input.topic" }, []),
       second: stage({ topic: "text", draft: "text" }, { topic: "input.topic", draft: "input.draft" },

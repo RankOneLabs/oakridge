@@ -179,11 +179,11 @@ test("live runs are launched, unfinished and unarchived, paged by id", async () 
     .toEqual({ live: true, cancelled: false, archived: false, sorted: true });
 });
 
-test("a definition graph lists each declared unit with its dependencies as edges", () => {
+test("a source definition graph lists declared units and explicit dependencies", () => {
   const graph = selectDefinitionGraph(sampleWorkflow("fan-out"));
   expect({ nodes: graph.nodes.map((node) => [node.key, node.stage, node.depends_on]), edges: graph.edges }).toEqual({
-    nodes: [["prepare", "prepare", []], ["work", "work", ["prepare"]], ["work/item", "item", []]],
-    edges: [{ from: "prepare", to: "work" }] });
+    nodes: [["prepare", "prepare", []], ["work", "work", []], ["work/item", "item", []]],
+    edges: [] });
 });
 
 test("a page of runs reads in one batch, each run holding only its own rows", async () => {
