@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
+import { sql } from "kysely";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
 import { createHttpApp, installDefinitionApi } from "../src/http/app";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
@@ -57,6 +58,7 @@ beforeAll(async () => {
 afterAll(async () => { await authority.close(); });
 
 const segment = encodeURIComponent;
+const cursorTime = (cursor: string): string => (JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { created_at: string }).created_at;
 async function get<Body>(path: string): Promise<Body> {
   const response = await app.request(path);
   if (response.status !== 200) throw new Error(`${path}: ${response.status} ${await response.text()}`);
@@ -110,6 +112,38 @@ async function runEvents(run_id: string): Promise<readonly RunEvent[]> {
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "run_event")).orderBy("commit_txid").orderBy("created_at").execute();
   return rows.flatMap((row) => row.payload.kind === "run_event" ? [row.payload.data] : []);
 }
+
+test("history cursor preserves two event timestamps within one millisecond", async () => {
+  const { run_id, unit } = await drafted();
+  const events = await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id)
+    .where("unit_id", "=", unit).orderBy("created_at").execute();
+  const [older, newer] = events;
+  if (!older || !newer) throw new Error("draft did not produce two unit events");
+  await authority.db.updateTable("authority.event").set({ created_at: sql`'2090-01-01T00:00:00.123456Z'::timestamptz` })
+    .where("id", "=", older.id).execute();
+  await authority.db.updateTable("authority.event").set({ created_at: sql`'2090-01-01T00:00:00.123789Z'::timestamptz` })
+    .where("id", "=", newer.id).execute();
+  const path = unitPath(run_id, unit, "/history?limit=1");
+  const first = await get<UnitHistory>(path);
+  if (!first.next_cursor) throw new Error("first history page has no cursor");
+  const second = await get<UnitHistory>(`${path}&cursor=${segment(first.next_cursor)}`);
+  expect({ ids: [first.events[0]?.id, second.events[0]?.id], cursor: cursorTime(first.next_cursor) })
+    .toEqual({ ids: [newer.id, older.id], cursor: "2090-01-01T00:00:00.123789Z" });
+});
+
+test("runs cursor preserves two run timestamps within one millisecond", async () => {
+  const older = await launched(review_loop, { topic: "older" });
+  const newer = await launched(review_loop, { topic: "newer" });
+  await authority.db.updateTable("authority.run").set({ created_at: sql`'2090-01-01T00:00:00.123456Z'::timestamptz` })
+    .where("id", "=", older).execute();
+  await authority.db.updateTable("authority.run").set({ created_at: sql`'2090-01-01T00:00:00.123789Z'::timestamptz` })
+    .where("id", "=", newer).execute();
+  const first = await get<RunPage>("/api/runs?limit=1");
+  if (!first.next_cursor) throw new Error("first run page has no cursor");
+  const second = await get<RunPage>(`/api/runs?limit=1&cursor=${segment(first.next_cursor)}`);
+  expect({ ids: [first.items[0]?.run_id, second.items[0]?.run_id], cursor: cursorTime(first.next_cursor) })
+    .toEqual({ ids: [newer, older], cursor: "2090-01-01T00:00:00.123789Z" });
+});
 
 describe("each read model carries exactly its contract's fields", () => {
   test("runs and run units", async () => {

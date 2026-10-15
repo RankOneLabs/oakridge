@@ -57,7 +57,7 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
     const page = await listRuns(db, { after, limit, is_archived });
     return c.json({ items: page.items.map(selectRunView),
-      next_cursor: page.next ? encodeCursor({ created_at: page.next.created_at.toISOString(), id: page.next.id }) : null });
+      next_cursor: page.next ? encodeCursor(page.next) : null });
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/runs/:run_id", async (c) => { try {
@@ -87,11 +87,11 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (after instanceof MalformedRequestError) return errorResponse(after);
     const run_id = c.req.param("run_id");
     const unit_id = c.req.param("unit_id") as UnitId;
-    const cursor: HistoryCursor | null = after && { created_at: new Date(after.created_at), id: after.id };
+    const cursor: HistoryCursor | null = after;
     const page = await readHistory(db, { run_id, unit_id, after: cursor, limit });
     if (page === null) return errorResponse(new MissingEntityError("unit not found"));
     return c.json(selectUnitHistory(unit_id, page,
-      page.next ? encodeCursor({ created_at: page.next.created_at.toISOString(), id: page.next.id }) : null));
+      page.next ? encodeCursor(page.next) : null));
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/runs/:run_id/units/:unit_id/diagnostics", async (c) => { try {

@@ -29,18 +29,6 @@ failed, so it never observes the merge. Expected: an unavailable operation
 ends that attempt but keeps the watch alive, retries with backoff and observes
 the merge; a terminal operation failure or a stop still settles the watch.
 
-## Timestamp cursor loses microseconds (oakridge-dbos, current authority)
-
-Reproduction: place two history events, or two runs, inside one millisecond
-with different PostgreSQL microseconds. Page with limit one through the HTTP
-read model, following `next_cursor` each time.
-
-Observed: the cursor encodes `Date.toISOString()`, which truncates the
-PostgreSQL timestamp to milliseconds; the `(created_at, id)` comparison can
-repeat or skip a row. The runs cursor uses the same encoding and is affected.
-Expected: both cursors retain the full PostgreSQL timestamp while preserving
-the tuple comparison and return each item exactly once.
-
 ## Deadlock classified as serialization failure (oakridge-dbos, current authority)
 
 Reproduction: make `commit_event`'s database transaction fail with SQLSTATE
