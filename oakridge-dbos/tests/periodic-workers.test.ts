@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Cause, Workflow, WorkerResult } from "../src/core-client/core-types";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { RunId } from "../src/domain/primitives";
@@ -9,6 +10,7 @@ import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
+import { runWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launch, openAuthority, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 import { eventually } from "./stub-kbbl";
 
@@ -241,3 +243,45 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
   } finally { await composition.close(); await live.close(); }
 });
 
+test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+    operation_runner: { async run() { return { kind: "failed", code: "pull_request_mismatch", detail: "terminal" }; } },
+    timing: { wake_timeout_seconds: 20 } });
+  const real_start = DBOS.startWorkflow.bind(DBOS);
+  let release_dispatch = (): void => undefined;
+  const dispatch_released = new Promise<void>((resolve) => { release_dispatch = resolve; });
+  let signal_dispatch = (): void => undefined;
+  const dispatch_entered = new Promise<void>((resolve) => { signal_dispatch = resolve; });
+  let held = false;
+  const start = spyOn(DBOS, "startWorkflow").mockImplementation(((workflow: unknown, options: { workflowID?: string }) => {
+    const launch = real_start(workflow as never, options as never);
+    if (!held && options.workflowID?.includes("@")) {
+      held = true;
+      return async (...args: unknown[]) => {
+        signal_dispatch();
+        await dispatch_released;
+        return (launch as (...args: unknown[]) => Promise<unknown>)(...args);
+      };
+    }
+    return launch;
+  }) as never);
+  try {
+    const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+    if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+    const { run_id } = await response.json() as { run_id: RunId };
+    await dispatch_entered;
+    const before = await DBOS.listWorkflowSteps(runWorkflowId(run_id)) ?? [];
+    expect(before.filter((step) => step.name === "oakridgeAdvanceRun")).toHaveLength(1);
+    await wakeRun(run_id);
+    const released_at = Date.now();
+    release_dispatch();
+    await eventually("run advance after queued wake", async () => {
+      const steps = await DBOS.listWorkflowSteps(runWorkflowId(run_id)) ?? [];
+      return steps.filter((step) => step.name === "oakridgeAdvanceRun").length >= 2 ? true : null;
+    }, 5_000);
+    expect(Date.now() - released_at).toBeLessThan(5_000);
+  } finally { release_dispatch(); start.mockRestore(); await composition.close(); await live.close(); }
+});
