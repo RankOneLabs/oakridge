@@ -1,5 +1,5 @@
 use super::*;
-use crate::expressions::{infer, parse_expression, proven_artifacts, StageExpr};
+use crate::expressions::{expand_lets, infer, parse_expression, proven_artifacts, StageExpr};
 
 fn validate_alias(
     ty: &Type,
@@ -61,9 +61,11 @@ fn references(
 
 fn latest_artifacts(expr: &StageExpr, found: &mut BTreeSet<String>) {
     match expr {
-        StageExpr::Spanned(inner, _) | StageExpr::Not(inner) | StageExpr::Len(inner) => {
-            latest_artifacts(inner, found)
-        }
+        StageExpr::Spanned(inner, _)
+        | StageExpr::Not(inner)
+        | StageExpr::Len(inner)
+        | StageExpr::Require { value: inner, .. }
+        | StageExpr::Field { value: inner, .. } => latest_artifacts(inner, found),
         StageExpr::Or(left, right)
         | StageExpr::And(left, right)
         | StageExpr::Equality { left, right, .. }
@@ -77,7 +79,13 @@ fn latest_artifacts(expr: &StageExpr, found: &mut BTreeSet<String>) {
             latest_artifacts(source, found);
             latest_artifacts(predicate, found);
         }
-        StageExpr::MapOf { source, value } | StageExpr::Contains { source, value } => {
+        StageExpr::MapOf { source, value }
+        | StageExpr::Contains { source, value }
+        | StageExpr::Default {
+            value: source,
+            fallback: value,
+            ..
+        } => {
             latest_artifacts(source, found);
             latest_artifacts(value, found);
         }
@@ -101,7 +109,9 @@ fn latest_artifacts(expr: &StageExpr, found: &mut BTreeSet<String>) {
 fn outcome_artifacts(stage: &Stage) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
     for text in stage.outcome.values() {
-        if let Ok(expr) = parse_expression(text, "") {
+        if let Ok(expr) = parse_expression(text, "")
+            .and_then(|expr| expand_lets(expr, &stage.let_bindings, &mut BTreeSet::new()))
+        {
             latest_artifacts(&expr, &mut used);
         }
     }
@@ -249,6 +259,7 @@ pub(super) fn infer_outcomes(
             .done_when
             .as_deref()
             .and_then(|text| parse_expression(text, &format!("stages.{key}.done_when")).ok())
+            .and_then(|expr| expand_lets(expr, &stage.let_bindings, &mut BTreeSet::new()).ok())
             .map(|expr| proven_artifacts(&expr))
             .unwrap_or_default();
         let mut fields = BTreeMap::new();
@@ -262,13 +273,17 @@ pub(super) fn infer_outcomes(
                 each: None,
                 item: None,
                 aliases: &empty,
+                lets: &stage.let_bindings,
                 body: None,
                 guaranteed: guaranteed.clone(),
                 collections: BTreeSet::new(),
                 diagnostic_path: path.clone(),
                 diagnostic_span: source_span(text),
             };
-            match parse_expression(text, &path).and_then(|expr| infer(&expr, &scope)) {
+            match parse_expression(text, &path)
+                .and_then(|expr| expand_lets(expr, &stage.let_bindings, &mut BTreeSet::new()))
+                .and_then(|expr| infer(&expr, &scope))
+            {
                 Ok(ty) => {
                     fields.insert(field.clone(), ty);
                 }

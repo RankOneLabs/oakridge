@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use workflow_compiler::compile_workflow;
-use workflow_evaluator::step;
+use workflow_evaluator::{eval_expression, step, EvaluationContext};
 use workflow_model::*;
 
 fn program() -> CheckedWorkflow {
@@ -71,6 +71,182 @@ fn launch(items: Value) -> Result<StepResult, StepError> {
 
 fn member(key: &str, after: Value, text: &str) -> Value {
     json!({"meta": {"key": key, "after": after}, "text": text})
+}
+
+fn deferred_program(run: Value, input: Value) -> CheckedWorkflow {
+    let source: Workflow = serde_json::from_value(json!({
+        "workflow": "deferred",
+        "input": input,
+        "run": run,
+        "stages": {
+            "producer": {
+                "input": {},
+                "artifacts": {"items": {"schema": "list({key: ident, text: text})"}},
+                "workers": {"writer": {"kind": "agent", "prompts": {"initial": "item.md"},
+                    "inputs": {}, "creates": ["items"]}},
+                "done_when": "published(items)",
+                "outcome": {"items": "latest(items)"}
+            },
+            "item": {"input": {"text": "text"}, "artifacts": {}, "workers": {},
+                "done_when": "true", "outcome": {"result": "input.text"}},
+            "summary": {"input": {"results": "list(text)"}, "artifacts": {}, "workers": {},
+                "done_when": "true", "outcome": {"result": "input.results"}}
+        }
+    }))
+    .unwrap();
+    compile_workflow(
+        &source,
+        &[],
+        &BTreeMap::from([("item.md".to_owned(), "".to_owned())]),
+    )
+    .unwrap()
+}
+
+#[test]
+fn an_unmaterialized_collection_cannot_look_empty_to_its_dependents() {
+    let program = deferred_program(
+        json!({"units": {
+            "producer": {"stage": "producer", "input": {}},
+            "delayed": {"for_each": "producer.outcome.items", "key": "each.key",
+                "stage": "item", "input": {"text": "each.text"}},
+            "derived": {"for_each": "map(delayed, delayed.outcome.result)", "key": "each",
+                "stage": "item", "input": {"text": "each"}},
+            "summary": {"stage": "summary",
+                "input": {"results": "map(derived, derived.outcome.result)"}},
+            "tail": {"stage": "summary",
+                "input": {"results": "summary.outcome.result"}}
+        }, "outcome": {"results": "tail.outcome.result"}}),
+        json!({}),
+    );
+    let result = step(
+        &program,
+        &snapshot(),
+        &Incoming {
+            event: Event::Launched { input: json!({}) },
+            writer: Writer::Engine,
+            ingress_id: Some("launch".into()),
+        },
+    )
+    .unwrap();
+    let ids: Vec<_> = result
+        .snapshot
+        .units
+        .iter()
+        .map(|unit| unit.id.0.as_str())
+        .collect();
+    assert_eq!(ids, ["run", "run/producer"]);
+}
+
+#[test]
+fn per_member_after_retains_an_inferred_collection_prerequisite() {
+    let program = deferred_program(
+        json!({"units": {
+            "producer": {"stage": "producer", "input": {}},
+            "delayed": {"for_each": "producer.outcome.items", "key": "each.key",
+                "stage": "item", "input": {"text": "each.text"}},
+            "work": {"for_each": "input.members", "key": "each.key",
+                "after": "each.after", "stage": "summary",
+                "input": {"results": "map(delayed, delayed.outcome.result)"}}
+        }, "outcome": {"results": "map(work, work.outcome.result)"}}),
+        json!({"members": "list({key: ident, after: list(ident)})"}),
+    );
+    let result = step(
+        &program,
+        &snapshot(),
+        &Incoming {
+            event: Event::Launched {
+                input: json!({"members": [{"key": "a", "after": []}]}),
+            },
+            writer: Writer::Engine,
+            ingress_id: Some("launch".into()),
+        },
+    )
+    .unwrap();
+    assert!(result
+        .snapshot
+        .units
+        .iter()
+        .all(|unit| unit.declaration.0 != "work"));
+}
+
+#[test]
+fn default_uses_the_fallback_when_lookup_has_no_unique_match() {
+    let result = launch(json!([])).unwrap();
+    let root = result
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id.0 == "run")
+        .unwrap();
+    let literal = |value: Value| Expression::Literal {
+        schema: SchemaId::from("text"),
+        value,
+    };
+    let expression = Expression::Default {
+        value: Box::new(Expression::Lookup {
+            source: Box::new(literal(json!([{"key": "a"}]))),
+            key_field: "key".into(),
+            key: Box::new(literal(json!("missing"))),
+        }),
+        fallback: Box::new(literal(json!({"key": "fallback"}))),
+    };
+    let limits = ResourceLimits::default();
+    let mut context = EvaluationContext::new(&limits);
+    assert_eq!(
+        eval_expression(
+            &expression,
+            root,
+            &result.snapshot,
+            None,
+            None,
+            &mut context
+        )
+        .unwrap(),
+        Some(json!({"key": "fallback"}))
+    );
+}
+
+#[test]
+fn sibling_collections_with_the_same_member_keys_have_distinct_unit_ids() {
+    let source: Workflow = serde_json::from_value(json!({
+        "workflow": "siblings",
+        "input": {"items": "list({key: ident, text: text})"},
+        "run": {"units": {
+            "first": {"for_each": "input.items", "key": "each.key", "stage": "item",
+                "input": {"text": "each.text"}},
+            "second": {"for_each": "input.items", "key": "each.key", "stage": "item",
+                "input": {"text": "each.text"}}
+        }, "outcome": {"first": "map(first, first.outcome.result)",
+                       "second": "map(second, second.outcome.result)"}},
+        "stages": {"item": {"input": {"text": "text"},
+            "artifacts": {"result": {"schema": "text"}},
+            "workers": {"worker": {"kind": "agent", "prompts": {"initial": "item.md"},
+                "inputs": {"text": "input.text"}, "creates": ["result"]}},
+            "done_when": "published(result)", "outcome": {"result": "latest(result)"}}}
+    }))
+    .unwrap();
+    let prompts = BTreeMap::from([("item.md".to_owned(), "{{text}}".to_owned())]);
+    let program = compile_workflow(&source, &[], &prompts).unwrap();
+    let result = step(
+        &program,
+        &snapshot(),
+        &Incoming {
+            event: Event::Launched {
+                input: json!({"items": [{"key": "a", "text": "A"}]}),
+            },
+            writer: Writer::Engine,
+            ingress_id: Some("launch".into()),
+        },
+    )
+    .unwrap();
+    let ids: Vec<_> = result
+        .snapshot
+        .units
+        .iter()
+        .filter(|unit| unit.kind.stage().is_some())
+        .map(|unit| unit.id.0.as_str())
+        .collect();
+    assert_eq!(ids, ["run/first/a", "run/second/a"]);
 }
 
 #[test]

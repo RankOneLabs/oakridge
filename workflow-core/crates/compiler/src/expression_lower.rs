@@ -98,10 +98,29 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
             source: boxed(source),
             predicate: boxed(predicate),
         },
-        StageExpr::MapOf { source, value } => Expression::Map {
-            source: boxed(source),
-            value: boxed(value),
-        },
+        StageExpr::MapOf { source, value } => {
+            if let StageExpr::Name { head, path } = source.clone().into_unspanned() {
+                if path.is_empty() {
+                    if let StageExpr::Outcome { unit, path } = value.clone().into_unspanned() {
+                        if head == unit {
+                            return Expression::Map {
+                                source: Box::new(reference(
+                                    ReferenceRoot::MemberOutcomes {
+                                        unit: SymbolKey::from(head.as_str()),
+                                    },
+                                    &[],
+                                )),
+                                value: Box::new(reference(ReferenceRoot::Item, &path)),
+                            };
+                        }
+                    }
+                }
+            }
+            Expression::Map {
+                source: boxed(source),
+                value: boxed(value),
+            }
+        }
         StageExpr::Contains { source, value } => Expression::Contains {
             source: boxed(source),
             value: boxed(value),
@@ -122,6 +141,36 @@ pub(crate) fn resolve(expression: &StageExpr) -> Expression {
                 key: segment.clone(),
             },
         ),
+        StageExpr::Default {
+            value,
+            fallback,
+            path,
+        } => path.iter().fold(
+            Expression::Default {
+                value: boxed(value),
+                fallback: boxed(fallback),
+            },
+            |value, segment| Expression::Field {
+                value: Box::new(value),
+                key: segment.clone(),
+            },
+        ),
+        StageExpr::Require { value, path } => path.iter().fold(
+            Expression::Require {
+                value: boxed(value),
+            },
+            |value, segment| Expression::Field {
+                value: Box::new(value),
+                key: segment.clone(),
+            },
+        ),
+        StageExpr::Field { value, path } => {
+            path.iter()
+                .fold(resolve(value), |value, segment| Expression::Field {
+                    value: Box::new(value),
+                    key: segment.clone(),
+                })
+        }
         StageExpr::ValidGraph {
             source,
             key_field,

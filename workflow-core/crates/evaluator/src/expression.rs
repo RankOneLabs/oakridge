@@ -180,10 +180,22 @@ pub(super) fn eval_expression_inner(
             let mut matches = list!(source)
                 .into_iter()
                 .filter(|item| item.get(key_field) == Some(&key));
-            let found = resolved!(matches.next());
-            // Exactly one: an ambiguous key resolves to nothing.
-            matches.next().is_none().then_some(found)
+            let found = matches.next();
+            // No unique match is a typed optional absence.
+            Some(if matches.next().is_none() {
+                found.unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            })
         }
+        Expression::Default { value, fallback } => match eval!(value) {
+            Some(Value::Null) => eval!(fallback),
+            other => other,
+        },
+        Expression::Require { value } => match eval!(value) {
+            Some(Value::Null) => None,
+            other => other,
+        },
         Expression::Field { value, key } => resolved!(eval!(value)).get(key).cloned(),
         Expression::CheckCollection {
             source,

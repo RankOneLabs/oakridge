@@ -1,11 +1,23 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ParsedWorkflow, Type, Workflow } from "../src/core-client/core-types";
+import type { AuthoredWorkflow, ParsedWorkflow, Type, Workflow } from "../src/core-client/core-types";
 import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
 import { typeNode, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
-import { readWorkflowPrompts } from "../src/runtime/prompt-files";
+import { readWorkflowPrompts, selectPromptPaths } from "../src/runtime/prompt-files";
+
+test("prompt discovery applies worker and review template overrides", () => {
+  const source: AuthoredWorkflow = {
+    workflow: "template_prompts", input: {}, run: { units: {}, outcome: {} },
+    workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, creates: [] } },
+    reviews: { approval: { of: "draft", by: "operator", prompt: "unused-review.md", decisions: {} } },
+    stages: { draft: { input: {}, artifacts: {}, outcome: {}, workers: {
+      writer: { template: "writer", overrides: { prompts: { initial: "used.md" } } } },
+      reviews: { approval: { template: "approval", overrides: { prompt: "used-review.md" } } } } },
+  };
+  expect(selectPromptPaths(source)).toEqual(["used-review.md", "used.md"]);
+});
 
 const workflow: ParsedWorkflow = {
   workflow: "development",
@@ -87,7 +99,7 @@ test("the bundle lists the root with the run input and each staged unit with its
       ["planning", "{}", "Planning", [["notes", "{count: integer, done: boolean}"], ["plan", "plan"]]]] });
 });
 
-test("a member key two groups reuse keeps a bundle unit per declaration, so the development bundle lists every stage", async () => {
+test("the development bundle lists each direct collection declaration", async () => {
   const source = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
   const prompts = readWorkflowPrompts(source);
   if (!prompts.ok) throw new Error(prompts.error.detail);
@@ -98,7 +110,7 @@ test("a member key two groups reuse keeps a bundle unit per declaration, so the 
       prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
     if (!compiled.ok) throw new Error(compiled.error.detail);
     expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
-    ["prepare/repository", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs/brief", "brief"],
-    ["implementation/cohort", "cohort"], ["integration/repository", "integration"]]);
+    ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],
+    ["implementation", "cohort"], ["integration", "integration"]]);
   } finally { started.value.close(); }
 });

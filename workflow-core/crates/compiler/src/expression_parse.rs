@@ -268,6 +268,22 @@ impl Parser<'_> {
                             path,
                         }
                     }
+                    StageExpr::Default {
+                        value,
+                        fallback,
+                        mut path,
+                    } => {
+                        path.push(name);
+                        StageExpr::Default {
+                            value,
+                            fallback,
+                            path,
+                        }
+                    }
+                    StageExpr::Require { value, mut path } => {
+                        path.push(name);
+                        StageExpr::Require { value, path }
+                    }
                     _ => return Err(self.error("field path is not allowed here")),
                 };
                 if let StageExpr::Name { head, path } = &left {
@@ -354,8 +370,8 @@ impl Parser<'_> {
             return Err(self.error("call target must be a name"));
         }
         let count = match head.as_str() {
-            "len" | "published" | "approved" | "changes_requested" | "latest" => 1,
-            "every" | "any" | "filter" | "map" | "contains" => 2,
+            "len" | "published" | "approved" | "changes_requested" | "latest" | "require" => 1,
+            "every" | "any" | "filter" | "map" | "contains" | "default" => 2,
             "lookup" | "valid_graph" => 3,
             _ => return Err(self.error(format!("unknown function {head}"))),
         };
@@ -395,6 +411,10 @@ impl Parser<'_> {
         };
         Ok(match head.as_str() {
             "len" => StageExpr::Len(boxed),
+            "require" => StageExpr::Require {
+                value: boxed,
+                path: Vec::new(),
+            },
             "published" => StageExpr::Published(
                 name(first).ok_or_else(|| self.error("published needs artifact name"))?,
             ),
@@ -427,6 +447,11 @@ impl Parser<'_> {
             "contains" => StageExpr::Contains {
                 source: boxed,
                 value: Box::new(args.next().unwrap()),
+            },
+            "default" => StageExpr::Default {
+                value: boxed,
+                fallback: Box::new(args.next().unwrap()),
+                path: Vec::new(),
             },
             "lookup" => StageExpr::Lookup {
                 source: boxed,

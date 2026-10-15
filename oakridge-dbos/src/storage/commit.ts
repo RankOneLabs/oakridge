@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
+import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -233,7 +233,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     return { ok: true, value: { kind: "rejected", reason } };
   };
   if (!unit_id.ok) return reject(unit_id.reason, null);
-  const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "prompts"])
+  const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "checked_program", "prompts"])
     .where("id", "=", run.definition_bundle_id).executeTakeFirst();
   if (!definition) return { ok: false, error: fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`) };
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
@@ -253,6 +253,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     return { ok: true, value: { kind: "rejected", reason } };
   }
   const existing = await readCommitExisting(trx, { request, digest, unit_id: unit_id.value, source: definition.source,
+    parsed_workflow: definition.checked_program.workflow,
     prompts: definition.prompts, config: run.config, step: stepped.value.step });
   const planned = selectCommitPlan(snapshot, stepped.value.step, existing);
   if (!planned.ok) return { ok: false, error: fault(run_id, planned.error.detail) };
@@ -422,6 +423,7 @@ interface CommitReadInput {
   readonly digest: string;
   readonly unit_id: string | null;
   readonly source: Workflow;
+  readonly parsed_workflow?: import("../core-client/core-types").ParsedWorkflow;
   readonly prompts: { readonly [path: string]: string };
   readonly config: RunConfig | null;
   readonly step: StepResult;
@@ -434,14 +436,19 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
 }
+function reviewPromptPath(source: Workflow, parsed: ParsedWorkflow | undefined, stage: string | null, review: string): string | null {
+  if (stage === null) return null;
+  return parsed?.stages[stage]?.reviews?.[review]?.prompt
+    ?? source.stages[stage]?.reviews?.[review]?.prompt ?? null;
+}
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
-  const { request, step, source, prompts } = input;
+  const { request, step, source, parsed_workflow, prompts } = input;
   const unit_ids = step.snapshot.units.map((unit) => unit.id);
   const wanted = selectWanted(step);
   const paths = step.reviews.flatMap((review) => {
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    const path = reviewPromptPath(source, parsed_workflow, stage, review.review);
     return path ? [path] : [];
   });
   const [intent_rows, review_rows, logged_rows, prompt_texts] = await Promise.all([
@@ -456,7 +463,8 @@ async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInp
       .orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute() : Promise.resolve([]),
     readPromptTexts(trx, paths.flatMap((path) => prompts[path] ?? [])),
   ]);
-  return { request, digest: input.digest, unit_id: input.unit_id, source, prompts, config: input.config,
+  return { request, digest: input.digest, unit_id: input.unit_id, source,
+    parsed_workflow: input.parsed_workflow, prompts, config: input.config,
     intent_actions: intent_rows.map((row) => row.action_id), review_rows, prompt_texts,
     logged_wanted: new Map(logged_rows.map((row) => [row.unit_id, row.actions])), event_id: crypto.randomUUID() };
 }
@@ -505,7 +513,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     if (known.has(action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === worker.unit);
     if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ run_id, workflow: source, prompts, stage: unit.kind.stage, config,
+    const instruction = selectEffectInstruction({ run_id, workflow: source, parsed_workflow: existing.parsed_workflow,
+      prompts, stage: unit.kind.stage, config,
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
     intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: instruction.value });
@@ -517,7 +526,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   for (const review of step.reviews) {
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
+    const path = reviewPromptPath(source, existing.parsed_workflow, stage, review.review);
     const digest = path ? prompts[path] : undefined;
     const text = digest === undefined ? undefined : existing.prompt_texts.get(digest);
     if (text === undefined) return violation(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);

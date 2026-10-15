@@ -77,6 +77,13 @@ fn both_samples_compile_from_yaml_json() {
 }
 
 #[test]
+fn authored_development_fixture_matches_the_editor_source_model() {
+    let _: AuthoredWorkflow =
+        serde_json::from_slice(include_bytes!("../../../fixtures/bundles/development.json"))
+            .unwrap();
+}
+
+#[test]
 fn collection_dependencies_must_be_lists_of_keys() {
     let mut source =
         decode_workflow(include_bytes!("../../../fixtures/bundles/fan-out.json")).unwrap();

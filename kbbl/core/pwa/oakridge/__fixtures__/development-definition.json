@@ -197,7 +197,7 @@
           },
           {
             "key": "build_result",
-            "schema": "build_body"
+            "schema": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}"
           },
           {
             "key": "cohort_id",
@@ -214,6 +214,143 @@
           {
             "key": "title",
             "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "changed_files",
+            "schema": "list(text)"
+          },
+          {
+            "key": "delegated_session_metadata",
+            "schema": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})"
+          },
+          {
+            "key": "known_issues",
+            "schema": "list({description: text, severity: enum(blocking, warning, info)})"
+          },
+          {
+            "key": "repository_key",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          },
+          {
+            "key": "tests",
+            "schema": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(text)",
+      "shape": {
+        "kind": "list",
+        "item": "text",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})",
+      "shape": {
+        "kind": "optional",
+        "item": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}"
+      }
+    },
+    {
+      "key": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "branch",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "cohort_id",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "session_id",
+            "schema": "optional(ident)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(ident)",
+      "shape": {
+        "kind": "optional",
+        "item": "ident"
+      }
+    },
+    {
+      "key": "list({description: text, severity: enum(blocking, warning, info)})",
+      "shape": {
+        "kind": "list",
+        "item": "{description: text, severity: enum(blocking, warning, info)}",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "{description: text, severity: enum(blocking, warning, info)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "severity",
+            "schema": "enum(blocking, warning, info)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "enum(blocking, warning, info)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "blocking",
+          "warning",
+          "info"
+        ]
+      }
+    },
+    {
+      "key": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "cargo_test_output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "failed",
+            "schema": "integer"
+          },
+          {
+            "key": "output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "passed",
+            "schema": "integer"
+          },
+          {
+            "key": "summary",
+            "schema": "optional(text)"
           }
         ]
       }
@@ -310,14 +447,6 @@
       "shape": {
         "kind": "list",
         "item": "risk",
-        "max_items": 9007199254740991
-      }
-    },
-    {
-      "key": "list(text)",
-      "shape": {
-        "kind": "list",
-        "item": "text",
         "max_items": 9007199254740991
       }
     },
@@ -478,13 +607,6 @@
             "schema": "text"
           }
         ]
-      }
-    },
-    {
-      "key": "optional(ident)",
-      "shape": {
-        "kind": "optional",
-        "item": "ident"
       }
     },
     {
@@ -1034,9 +1156,9 @@
       "artifacts": []
     },
     {
-      "key": "prepare/repository",
+      "key": "prepare",
       "stage": "prepare",
-      "label": "Repository",
+      "label": "Prepare",
       "input_schema": "{repository: repository}",
       "artifacts": [
         {
@@ -1070,9 +1192,9 @@
       ]
     },
     {
-      "key": "briefs/brief",
+      "key": "briefs",
       "stage": "brief",
-      "label": "Brief",
+      "label": "Briefs",
       "input_schema": "{analysis: analysis_body, cohort: plan_cohort, plan: plan_body, spec: text, workspaces: list(prepared)}",
       "artifacts": [
         {
@@ -1082,9 +1204,9 @@
       ]
     },
     {
-      "key": "implementation/cohort",
+      "key": "implementation",
       "stage": "cohort",
-      "label": "Cohort",
+      "label": "Implementation",
       "input_schema": "{admission: boolean, brief: brief_body, repository: repository, workspace: workspace}",
       "artifacts": [
         {
@@ -1110,9 +1232,9 @@
       ]
     },
     {
-      "key": "integration/repository",
+      "key": "integration",
       "stage": "integration",
-      "label": "Repository",
+      "label": "Integration",
       "input_schema": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
       "artifacts": [
         {

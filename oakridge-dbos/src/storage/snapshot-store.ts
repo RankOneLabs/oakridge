@@ -7,16 +7,15 @@ import { anyOf, type DatabaseTransaction } from "./database";
 type Reader = Kysely<DB> | DatabaseTransaction;
 
 /**
- * The step snapshot `step` needs for one event: the affected unit, its
- * ancestors and every direct child of an ancestor (so each ancestor can be
- * recomputed), with the attempts, revisions, decisions and retries of those
- * units. With no affected unit (launch, cancel) it is the whole run.
+ * The step snapshot `step` needs for one event: every unit in the run and
+ * their evidence. The evaluator may revisit any active group, including a
+ * sibling of the affected unit, so its persisted children must be present.
  */
 export async function readStepSnapshot(db: Reader, run_id: string, unit_id: string | null): Promise<StepSnapshot | null> {
   const run = await db.selectFrom("authority.run").select(["id", "root_unit_id"])
     .where("id", "=", run_id).executeTakeFirst();
   if (!run) return null;
-  const units = await readStepUnits(db, run_id, unit_id);
+  const units = await readStepUnits(db, run_id);
   if (unit_id !== null && !units.some((unit) => unit.id === unit_id)) return null;
   const ids = units.map((unit) => unit.id);
   const [dependencies, attempts, revisions, decisions, retries] = ids.length === 0 ? [[], [], [], [], []] : await Promise.all([
@@ -60,16 +59,7 @@ export async function readStepSnapshot(db: Reader, run_id: string, unit_id: stri
   };
 }
 
-async function readStepUnits(db: Reader, run_id: string, unit_id: string | null) {
+async function readStepUnits(db: Reader, run_id: string) {
   const columns = ["id", "parent_id", "declaration", "stage", "collection_key", "pool", "input", "status"] as const;
-  if (unit_id === null) return db.selectFrom("authority.unit").select(columns).where("run_id", "=", run_id).orderBy("id").execute();
-  return db.withRecursive("ancestors(id, parent_id)", (recursive) => recursive.selectFrom("authority.unit")
-    .select(["id", "parent_id"]).where("run_id", "=", run_id).where("id", "=", unit_id)
-    .unionAll((ancestor) => ancestor.selectFrom("authority.unit as parent")
-      .innerJoin("ancestors as child", "child.parent_id", "parent.id")
-      .select(["parent.id", "parent.parent_id"]).where("parent.run_id", "=", run_id)))
-    .selectFrom("authority.unit").select(columns).where("run_id", "=", run_id)
-    .where((eb) => eb.or([eb("id", "in", eb.selectFrom("ancestors").select("ancestors.id")),
-      eb("parent_id", "in", eb.selectFrom("ancestors").select("ancestors.id"))]))
-    .orderBy("id").execute();
+  return db.selectFrom("authority.unit").select(columns).where("run_id", "=", run_id).orderBy("id").execute();
 }

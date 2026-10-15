@@ -163,6 +163,9 @@ pub fn generate() -> String {
         "request": schema_for!(Request),
         "response": schema_for!(Response),
     });
+    let mut authored_schema = serde_json::to_value(schema_for!(workflow_model::AuthoredWorkflow))
+        .expect("authored workflow schema is JSON");
+    authored_schema["$defs"]["Type"] = compact_type_schema();
     // A compile request carries compact source. A compiled response carries
     // the same workflow after its types were parsed and serialized as tags.
     schemas["request"]["$defs"]["Type"] = compact_type_schema();
@@ -176,10 +179,13 @@ pub fn generate() -> String {
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
     output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\nexport const ROOT_DECLARATION = {ROOT_DECLARATION:?};\nexport const VALIDATION_REVIEW = {VALIDATION_REVIEW:?};\n"));
-    for (name, schema) in definitions {
+    for (name, schema) in &definitions {
         output.push_str(&format!(
             "export type {name} = {};\n",
-            schema_to_ts_with_source(schema, name != "Type" && name != "CompiledWorkflow")
+            schema_to_ts_with_source(
+                schema,
+                name.as_str() != "Type" && name.as_str() != "CompiledWorkflow"
+            )
         ));
         if PARSED_SOURCE_DEFS.contains(&name.as_str()) {
             output.push_str(&format!(
@@ -191,6 +197,20 @@ pub fn generate() -> String {
     output.push_str(
         "export type TypeExpression = string | { readonly [key: string]: TypeExpression };\n",
     );
+    if let Some(items) = authored_schema["$defs"].as_object() {
+        for (name, schema) in items {
+            if !definitions.contains_key(name) {
+                output.push_str(&format!(
+                    "export type {name} = {};\n",
+                    schema_to_ts_with_source(schema, true)
+                ));
+            }
+        }
+    }
+    output.push_str(&format!(
+        "export type AuthoredWorkflow = {};\n",
+        schema_to_ts_with_source(&authored_schema, true)
+    ));
     output.push_str(&format!(
         "export type CoreRequest = {};\n",
         request_type(&schemas["request"])
@@ -207,13 +227,13 @@ pub fn generate() -> String {
 
 /// Source-only descriptors for the definition editor, generated from the compiler's model.
 pub fn generate_source() -> String {
-    let mut schema =
-        serde_json::to_value(schema_for!(workflow_model::Workflow)).expect("source schema is JSON");
+    let mut schema = serde_json::to_value(schema_for!(workflow_model::AuthoredWorkflow))
+        .expect("source schema is JSON");
     // The editor validates the compact source surface, which the model's
     // custom Deserialize parses before its tagged serialization is used.
     schema["$defs"]["Type"] = compact_type_schema();
     let mut output = format!(
-        "// Generated from workflow-model::Workflow. Run scripts/generate-core-contracts.sh.\nexport const SOURCE_SCHEMA = {schema} as const;\n"
+        "// Generated from workflow-model::AuthoredWorkflow. Run scripts/generate-core-contracts.sh.\nexport const SOURCE_SCHEMA = {schema} as const;\n"
     );
     if let Some(definitions) = schema["$defs"].as_object() {
         for (name, definition) in definitions {

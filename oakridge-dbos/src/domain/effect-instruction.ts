@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
+import type { Action, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
 import { selectSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { ActionId, Result, RunId } from "./primitives";
 
@@ -74,6 +74,7 @@ export function selectSessionKey(action: RunWorkerAction, action_id: string, ses
 export interface InstructionSource {
   readonly run_id: RunId;
   readonly workflow: Workflow;
+  readonly parsed_workflow?: ParsedWorkflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
   readonly stage: string;
@@ -120,7 +121,8 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
   const stage = source.workflow.stages[source.stage];
-  const declared = stage?.workers[action.worker];
+  const declared = source.parsed_workflow?.stages[source.stage]?.workers[action.worker]
+    ?? stage?.workers[action.worker];
   if (!stage || !declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
   const pin = (path: string): Result<PinnedPrompt, InstructionError> => {
     const digest = source.prompts[path];

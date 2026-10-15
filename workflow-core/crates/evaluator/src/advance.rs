@@ -1,12 +1,103 @@
 use super::*;
+
+fn static_after_keys(after: &CheckedUnitDependencies) -> &[SymbolKey] {
+    match after {
+        CheckedUnitDependencies::None => &[],
+        CheckedUnitDependencies::Fixed { keys } | CheckedUnitDependencies::Each { keys } => keys,
+    }
+}
+
+fn ready_collection_members(
+    group: &CheckedGroup,
+    declaration: &CheckedUnit,
+    parent: &UnitState,
+    state: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+    visiting: &mut BTreeSet<SymbolKey>,
+) -> Result<Option<Vec<UnitId>>, StepError> {
+    if !visiting.insert(declaration.key.clone()) {
+        return Err(invalid("collection dependency cycle"));
+    }
+    let result = (|| {
+        if static_dependency_ids(group, &declaration.after, parent, state, context, visiting)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let collection = declaration
+            .collection
+            .as_ref()
+            .ok_or_else(|| invalid("collection declaration absent"))?;
+        let source = eval_expression(
+            &collection.source.expression,
+            parent,
+            state,
+            None,
+            None,
+            context,
+        )?;
+        let Some(Value::Array(expected)) = source else {
+            return match source {
+                None => Ok(None),
+                Some(_) => Err(rejected(format!(
+                    "collection {} source is not a list",
+                    declaration.key
+                ))),
+            };
+        };
+        let children: Vec<_> = state
+            .units
+            .iter()
+            .filter(|child| {
+                child.parent.as_ref() == Some(&parent.id) && child.declaration == declaration.key
+            })
+            .map(|child| child.id.clone())
+            .collect();
+        Ok((children.len() == expected.len()).then_some(children))
+    })();
+    visiting.remove(&declaration.key);
+    result
+}
+
+fn static_dependency_ids(
+    group: &CheckedGroup,
+    after: &CheckedUnitDependencies,
+    parent: &UnitState,
+    state: &StepSnapshot,
+    context: &mut EvaluationContext<'_>,
+    visiting: &mut BTreeSet<SymbolKey>,
+) -> Result<Option<Vec<UnitId>>, StepError> {
+    let mut dependencies = Vec::new();
+    for key in static_after_keys(after) {
+        let declaration = checked_unit(group, &key.0)?;
+        if declaration.collection.is_some() {
+            let Some(members) =
+                ready_collection_members(group, declaration, parent, state, context, visiting)?
+            else {
+                return Ok(None);
+            };
+            dependencies.extend(members);
+        } else {
+            let Some(member) = state.units.iter().find(|child| {
+                child.parent.as_ref() == Some(&parent.id) && child.declaration == *key
+            }) else {
+                return Ok(None);
+            };
+            dependencies.push(member.id.clone());
+        }
+    }
+    Ok(Some(dependencies))
+}
+
 pub(super) fn materialize_group(
     program: &CheckedWorkflow,
     snapshot: &StepSnapshot,
     group_id: &UnitId,
     context: &mut EvaluationContext<'_>,
-) -> Result<Vec<Delta>, StepError> {
+) -> Result<(Vec<Delta>, bool), StepError> {
     let mut state = snapshot.clone();
     let mut deltas = Vec::new();
+    let mut has_pending = false;
     let parent = state
         .units
         .iter()
@@ -14,22 +105,45 @@ pub(super) fn materialize_group(
         .cloned()
         .ok_or_else(|| invalid("group absent"))?;
     let group = group_for(program, &state, &parent)?.clone();
-    let mut units = group.units.iter().collect::<Vec<_>>();
-    units.sort_by_key(|unit| &unit.key);
-    for unit in units {
+    for unit in &group.units {
         let key = &unit.key.0;
+        let Some(fixed_dependencies) = static_dependency_ids(
+            &group,
+            &unit.after,
+            &parent,
+            &state,
+            context,
+            &mut BTreeSet::new(),
+        )?
+        else {
+            has_pending = true;
+            continue;
+        };
+        if unit.collection.is_none()
+            && state.units.iter().any(|child| {
+                child.parent.as_ref() == Some(group_id) && child.declaration == unit.key
+            })
+        {
+            continue;
+        }
         let collection = unit.collection.clone();
         let each_values = if let Some(collection) = &collection {
-            eval_expression(
+            let source = eval_expression(
                 &collection.source.expression,
                 &parent,
                 &state,
                 None,
                 None,
                 context,
-            )?
-            .and_then(|v| v.as_array().cloned())
-            .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
+            )?;
+            match source {
+                None => {
+                    has_pending = true;
+                    continue;
+                }
+                Some(Value::Array(items)) => items,
+                Some(_) => return Err(rejected(format!("collection {key} source is not a list"))),
+            }
         } else {
             vec![Value::Null]
         };
@@ -57,45 +171,66 @@ pub(super) fn materialize_group(
                     "collection {key} has illegal or duplicate key"
                 )));
             }
-            let dependencies = match &unit.after {
-                CheckedUnitDependencies::None => vec![],
-                CheckedUnitDependencies::Fixed { keys: items } => {
-                    items.iter().map(|v| v.0.clone()).collect()
-                }
-                CheckedUnitDependencies::Each => {
-                    let after = collection
-                        .as_ref()
-                        .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
-                    eval_expression(
-                        &after.after.expression,
-                        &parent,
-                        &state,
-                        Some(each),
-                        None,
-                        context,
-                    )?
-                    .and_then(|v| v.as_array().cloned())
-                    .ok_or_else(|| rejected(format!("collection {key} after is not a list")))?
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| rejected("prerequisite key is not text"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                }
+            let member_id = if collection.is_some() && group.units.len() > 1 {
+                format!("{group_id}/{key}/{member}")
+            } else {
+                format!("{group_id}/{member}")
             };
+            if let Some(existing) = state.units.iter().find(|child| child.id.0 == member_id) {
+                if existing.parent.as_ref() == Some(group_id) && existing.declaration == unit.key {
+                    continue;
+                }
+                return Err(rejected(format!(
+                    "collection {key} member {member} collides with sibling"
+                )));
+            }
+            let mut dependencies = fixed_dependencies.clone();
+            if let CheckedUnitDependencies::Each { .. } = &unit.after {
+                let after = collection
+                    .as_ref()
+                    .ok_or_else(|| invalid("each prerequisites outside a collection"))?;
+                let members = eval_expression(
+                    &after.after.expression,
+                    &parent,
+                    &state,
+                    Some(each),
+                    None,
+                    context,
+                )?
+                .and_then(|v| v.as_array().cloned())
+                .ok_or_else(|| rejected(format!("collection {key} after is not a list")))?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| rejected("prerequisite key is not text"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+                let prefix = if group.units.len() > 1 {
+                    format!("{group_id}/{key}")
+                } else {
+                    group_id.to_string()
+                };
+                dependencies.extend(
+                    members
+                        .into_iter()
+                        .map(|member| UnitId(format!("{prefix}/{member}"))),
+                );
+            }
             let declared_input = &unit.input;
             let input = if unit.collection.is_some() {
-                Some(
-                    eval_fields(declared_input, &parent, &state, Some(each), context)?
-                        .ok_or_else(|| rejected("collection input unresolved"))?,
-                )
+                match eval_fields(declared_input, &parent, &state, Some(each), context)? {
+                    Some(input) => Some(input),
+                    None => {
+                        has_pending = true;
+                        break;
+                    }
+                }
             } else {
                 None
             };
             let delta = Delta::PushUnit(UnitState {
-                id: UnitId(format!("{group_id}/{member}")),
+                id: UnitId(member_id),
                 parent: Some(group_id.clone()),
                 declaration: SymbolKey::from(key.as_str()),
                 kind: match &unit.stage {
@@ -105,10 +240,7 @@ pub(super) fn materialize_group(
                 collection_key: collection.as_ref().map(|_| member.clone()),
                 status: UnitStatus::NotStarted,
                 input,
-                after: dependencies
-                    .into_iter()
-                    .map(|d| UnitId(format!("{group_id}/{d}")))
-                    .collect(),
+                after: dependencies,
                 pool: unit.pool.clone(),
             });
             apply(&mut state, context, delta.clone());
@@ -131,7 +263,7 @@ pub(super) fn materialize_group(
     if !is_acyclic(&prerequisites) {
         return Err(rejected("cyclic prerequisite"));
     }
-    Ok(deltas)
+    Ok((deltas, has_pending))
 }
 pub(super) fn group_outcome(
     program: &CheckedWorkflow,
@@ -158,12 +290,13 @@ pub(super) fn start_group(
     context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
-    let mut deltas = materialize_group(program, &state, group_id, context)?;
+    let (mut deltas, has_pending) = materialize_group(program, &state, group_id, context)?;
     apply_all(&mut state, context, deltas.clone());
-    if state
-        .units
-        .iter()
-        .any(|unit| unit.parent.as_ref() == Some(group_id))
+    if has_pending
+        || state
+            .units
+            .iter()
+            .any(|unit| unit.parent.as_ref() == Some(group_id))
     {
         return Ok(deltas);
     }
@@ -304,15 +437,21 @@ pub(super) fn next_move(
                 }
                 return Ok(None);
             }
+            let (created, has_pending) = materialize_group(program, state, &unit.id, context)?;
+            if !created.is_empty() {
+                return Ok(Some(created));
+            }
+            if has_pending {
+                return Ok(None);
+            }
             let children: Vec<_> = state
                 .units
                 .iter()
                 .filter(|child| child.parent.as_ref() == Some(&unit.id))
                 .collect();
-            if !children.is_empty()
-                && children
-                    .iter()
-                    .all(|child| matches!(child.status, UnitStatus::Done { .. }))
+            if children
+                .iter()
+                .all(|child| matches!(child.status, UnitStatus::Done { .. }))
             {
                 let outcome = group_outcome(program, state, unit, context)?;
                 return Ok(Some(vec![Delta::UnitStatus {

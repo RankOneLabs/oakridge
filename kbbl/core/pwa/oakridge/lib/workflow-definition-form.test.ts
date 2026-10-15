@@ -1,4 +1,6 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
 import { formatWorkflowText, parseWorkflowText, selectCloneWorkflow, selectDefinitionSummary } from "./workflow-definition-form";
 
@@ -6,6 +8,11 @@ describe("workflow definition editing", () => {
   test("reads the editor's text back as the workflow it formats", () => {
     const workflow = makeWorkflowSource();
     expect(parseWorkflowText(formatWorkflowText(workflow))).toEqual({ ok: true, value: workflow });
+  });
+
+  test("accepts development's reusable source declarations for editing", () => {
+    const source = readFileSync(resolve(import.meta.dirname, "../../../../../workflow-core/fixtures/bundles/development.json"), "utf8");
+    expect(parseWorkflowText(source).ok).toBe(true);
   });
 
   test("refuses text that is not JSON, or JSON that is not a workflow", () => {

@@ -55,6 +55,11 @@ pub(super) fn parse(source: &Workflow) -> Result<ParsedWorkflow, Vec<CompileErro
     for (key, stage) in &source.stages {
         let stage_path = format!("stages.{key}");
         parse_fields(
+            &stage.let_bindings,
+            &format!("{stage_path}.let"),
+            &mut errors,
+        );
+        parse_fields(
             &stage.outcome,
             &format!("{stage_path}.outcome"),
             &mut errors,

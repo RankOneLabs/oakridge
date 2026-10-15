@@ -69,7 +69,7 @@ fn transport(id: String, kind: TransportErrorKind, detail: impl Into<String>) ->
 }
 
 fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
-    let raw = match workflow_compiler::decode_unique_json(bytes) {
+    let mut raw = match workflow_compiler::decode_unique_json(bytes) {
         Ok(value) => value,
         Err(error) if error.kind == DomainErrorKind::DuplicateKey => {
             return Response {
@@ -119,14 +119,21 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         );
     }
     if let Some(source) = raw.get("input").and_then(|input| input.get("workflow")) {
-        if let Err(errors) = workflow_compiler::decode_workflow_value_detailed(source.clone()) {
-            return Response {
-                version: PROTOCOL_VERSION,
-                request_id: id,
-                truncated: false,
-                result: ResponseResult::CompileErrors(errors),
-            };
+        match workflow_compiler::decode_workflow_value_detailed(source.clone()) {
+            Ok(_) => {}
+            Err(errors) => {
+                return Response {
+                    version: PROTOCOL_VERSION,
+                    request_id: id,
+                    truncated: false,
+                    result: ResponseResult::CompileErrors(errors),
+                }
+            }
         }
+        let mut expanded = source.clone();
+        workflow_compiler::expand_workflow_templates_value(&mut expanded)
+            .expect("workflow templates were validated by decoding");
+        raw["input"]["workflow"] = expanded;
     }
     let request: Request = match serde_json::from_value(raw) {
         Ok(value) => value,
