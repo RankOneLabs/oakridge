@@ -1,12 +1,8 @@
 # Workflow configuration
 
-The development workflow is `development.yaml` (part 2 §1, rescue spec R5):
-prepare, analysis, planning, a brief per plan cohort, a cohort per brief built,
-assessed and merged in dependency order, and an integration PR per
-repository. Its prompts live under `prompts/development/`, and its six
-artifact bodies are the named schemas the PWA picks its viewers by
-(`analysis_body`, `plan_body`, `brief_body`, `build_body`,
-`assessment_body`, `pr_body`).
+`development.yaml` defines shared decision sets and worker and review templates.
+Stages can bind expressions with `let`, and unit dependencies follow the outcomes
+their inputs read. A collection can sit beside other units in its group.
 
 The v2 examples are authored in `samples/review-loop.yaml` and
 `samples/fan-out.yaml`. `bun workflow-config/src/generate.ts` parses every

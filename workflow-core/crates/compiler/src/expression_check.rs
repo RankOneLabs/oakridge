@@ -94,8 +94,22 @@ fn read_path(
     if path.is_empty() {
         return Ok(ty.clone());
     }
-    field_type(ty, &segments(path), scope.aliases)
-        .ok_or_else(|| scope.error(CheckKind::Name, missing.to_owned()))
+    let mut current = resolve_type(ty, scope.aliases);
+    for (index, segment) in path.iter().enumerate() {
+        if matches!(current, Type::Optional { .. }) {
+            return Err(scope.error(
+                CheckKind::ExpressionType,
+                format!("optional field {} needs default", path[..=index].join(".")),
+            ));
+        }
+        current = match current {
+            Type::Record { fields } => fields.get(segment).cloned(),
+            _ => None,
+        }
+        .ok_or_else(|| scope.error(CheckKind::Name, missing.to_owned()))?;
+        current = resolve_type(&current, scope.aliases);
+    }
+    Ok(current)
 }
 pub(crate) fn infer(
     expression: &StageExpr,
@@ -210,6 +224,29 @@ pub(crate) fn infer(
             })
         }
         StageExpr::MapOf { source, value } => {
+            if let StageExpr::Name { head, path } = source.clone().into_unspanned() {
+                if path.is_empty() && scope.collections.contains(&head) {
+                    let member = scope.outcomes.get(&head).ok_or_else(|| {
+                        scope.error(
+                            CheckKind::Scope,
+                            format!("collection {head} outside read scope"),
+                        )
+                    })?;
+                    if let StageExpr::Outcome { unit, path } = value.clone().into_unspanned() {
+                        if unit == head {
+                            let value_type =
+                                read_path(member, &path, scope, "collection outcome field absent")?;
+                            return Ok(Type::List {
+                                item: Box::new(value_type),
+                            });
+                        }
+                    }
+                    return Err(scope.error(
+                        CheckKind::Outcome,
+                        "map projection outside collection outcome",
+                    ));
+                }
+            }
             let item = list_item(&infer(source, scope)?, &scope.for_expr(source), "map")?;
             let value_type = infer(value, &scope.with_item(item))?;
             Ok(Type::List {
@@ -243,7 +280,45 @@ pub(crate) fn infer(
                     format!("lookup key does not compare with {field}"),
                 ));
             }
-            read_path(&item, path, scope, "lookup field absent")
+            if !path.is_empty() {
+                return Err(scope.error(
+                    CheckKind::ExpressionType,
+                    format!("optional lookup field {} needs default", path.join(".")),
+                ));
+            }
+            Ok(Type::Optional {
+                value: Box::new(item),
+            })
+        }
+        StageExpr::Default {
+            value,
+            fallback,
+            path,
+        } => {
+            let value_type = resolve_type(&infer(value, scope)?, scope.aliases);
+            let Type::Optional { value: inner } = value_type else {
+                return Err(
+                    scope.error(CheckKind::ExpressionType, "default requires optional value")
+                );
+            };
+            let fallback_type = resolve_type(&infer(fallback, scope)?, scope.aliases);
+            if *inner != fallback_type {
+                return Err(scope.error(
+                    CheckKind::ExpressionType,
+                    format!("default fallback must be {inner}, got {fallback_type}"),
+                ));
+            }
+            read_path(&inner, path, scope, "default field absent")
+        }
+        StageExpr::Require { value, path } => {
+            let value_type = resolve_type(&infer(value, scope)?, scope.aliases);
+            let Type::Optional { value: inner } = value_type else {
+                return Err(scope.error(CheckKind::ExpressionType, "require needs optional value"));
+            };
+            read_path(&inner, path, scope, "required field absent")
+        }
+        StageExpr::Field { value, path } => {
+            read_path(&infer(value, scope)?, path, scope, "let field absent")
         }
         StageExpr::ValidGraph {
             source,
@@ -323,8 +398,12 @@ pub(crate) fn infer(
             if path.is_empty() {
                 return Ok(ty.clone());
             }
-            field_type(ty, &segments(path), scope.aliases)
-                .ok_or_else(|| scope.error(CheckKind::Outcome, "unit outcome field absent"))
+            read_path(ty, path, scope, "unit outcome field absent").map_err(|mut error| {
+                if error.check == CheckKind::Name {
+                    error.check = CheckKind::Outcome;
+                }
+                error
+            })
         }
         StageExpr::Name { head, path } => {
             if let Some((bound, ty)) = scope.body {

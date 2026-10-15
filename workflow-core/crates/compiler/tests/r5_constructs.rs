@@ -86,6 +86,103 @@ fn the_fixture_compiles() {
 }
 
 #[test]
+fn stage_let_bindings_expand_in_guards_inputs_and_outcomes() {
+    let value = fixture(&[
+        (
+            "/stages/cohort/let",
+            json!({
+                "brief_value": "input.brief",
+                "pr_published": "published(pr)",
+                "merged_pr": "published(pr_state) and latest(pr_state).state == \"merged\""
+            }),
+        ),
+        (
+            "/stages/cohort/workers/builder/inputs/brief",
+            json!("brief_value"),
+        ),
+        (
+            "/stages/cohort/workers/pr_watch/when",
+            json!("pr_published"),
+        ),
+        (
+            DONE,
+            json!("approved(assessment) and pr_published and merged_pr"),
+        ),
+        (
+            "/stages/cohort/outcome/brief_key",
+            json!("brief_value.repository_key"),
+        ),
+    ]);
+    let program = compile(&value).unwrap();
+    let cohort = program
+        .stages
+        .iter()
+        .find(|stage| stage.key.0 == "cohort")
+        .unwrap();
+    assert!(cohort
+        .outcome
+        .iter()
+        .any(|field| field.key == "brief_key" && field.value.value_type == Type::Ident));
+}
+
+#[test]
+fn worker_templates_and_decision_sets_expand_typed_overrides() {
+    let mut value = fixture(&[]);
+    let worker = value["stages"]["cohort"]["workers"]["pr_watch"].take();
+    let decisions = value["stages"]["cohort"]["reviews"]["assessment_review"]["decisions"].take();
+    value["workers"] = json!({"watch": worker});
+    value["decisions"] = json!({"assessment": decisions});
+    value["stages"]["cohort"]["workers"]["pr_watch"] =
+        json!({"template": "watch", "overrides": {"every": "2m"}});
+    value["stages"]["cohort"]["reviews"]["assessment_review"]["decisions"] = json!({
+        "set": "assessment", "overrides": {
+            "accept": {"payload": "text"},
+            "request_build_changes": {"label": "Revise build"}
+        }
+    });
+    compile(&value).unwrap();
+    value["stages"]["cohort"]["workers"]["pr_watch"]["overrides"]["unknown"] = json!("x");
+    let error = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+    assert_eq!(&*error.path, "stages.cohort.workers.pr_watch");
+}
+
+#[test]
+fn lookup_is_optional_and_default_handles_the_missing_case() {
+    let check = "/stages/plan/artifacts/plan/validate/0/check";
+    let value = fixture(&[
+        (check, json!("every(plan.cohorts, default(lookup(plan.cohorts, id, item.id), item).id == item.id)")),
+        ("/stages/plan/outcome/matched", json!("lookup(latest(plan).cohorts, id, \"a\")")),
+    ]);
+    let program = compile(&value).unwrap();
+    let plan = program
+        .stages
+        .iter()
+        .find(|stage| stage.key.0 == "plan")
+        .unwrap();
+    assert!(matches!(
+        plan.outcome
+            .iter()
+            .find(|field| field.key == "matched")
+            .unwrap()
+            .value
+            .value_type,
+        Type::Optional { .. }
+    ));
+    let bad = fixture(&[(
+        check,
+        json!("every(plan.cohorts, lookup(plan.cohorts, id, item.id).id == item.id)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&bad).unwrap()).unwrap();
+    let error = workflow_compiler::compile_workflow_detailed(&source, &operations(), &prompts())
+        .unwrap_err();
+    assert_eq!(
+        error[0].path.0,
+        "stages.plan.artifacts.plan.validate.0.check"
+    );
+    assert_eq!(error[0].check, CheckKind::ExpressionType);
+}
+
+#[test]
 fn an_and_lets_its_left_guard_type_its_right_operand() {
     let program = compile(&fixture(&[(
         DONE,

@@ -69,6 +69,19 @@ pub(crate) enum StageExpr {
         key: Box<StageExpr>,
         path: Vec<String>,
     },
+    Default {
+        value: Box<StageExpr>,
+        fallback: Box<StageExpr>,
+        path: Vec<String>,
+    },
+    Require {
+        value: Box<StageExpr>,
+        path: Vec<String>,
+    },
+    Field {
+        value: Box<StageExpr>,
+        path: Vec<String>,
+    },
     /// Keys legal and unique, dependencies unique and present, no cycle.
     ValidGraph {
         source: Box<StageExpr>,
@@ -147,9 +160,6 @@ pub(crate) fn guaranteed_artifacts(expression: &StageExpr) -> BTreeSet<String> {
         _ => BTreeSet::new(),
     }
 }
-fn segments(path: &[String]) -> Vec<&str> {
-    path.iter().map(String::as_str).collect()
-}
 #[derive(Clone)]
 pub(crate) struct Scope<'a> {
     pub input: &'a TypeExpression,
@@ -158,6 +168,7 @@ pub(crate) struct Scope<'a> {
     pub each: Option<TypeExpression>,
     pub item: Option<TypeExpression>,
     pub aliases: &'a BTreeMap<String, TypeExpression>,
+    pub lets: &'a BTreeMap<String, String>,
     pub body: Option<(&'a str, &'a TypeExpression)>,
     pub guaranteed: BTreeSet<String>,
     /// Collection units in `outcomes`: a collection has one outcome per
@@ -201,12 +212,145 @@ impl Scope<'_> {
         }
     }
 }
+pub(crate) fn expand_lets(
+    expression: StageExpr,
+    definitions: &BTreeMap<String, String>,
+    visiting: &mut BTreeSet<String>,
+) -> Result<StageExpr, CompileError> {
+    let expand = |value, visiting: &mut BTreeSet<String>| expand_lets(value, definitions, visiting);
+    Ok(match expression {
+        StageExpr::Name { head, path } if definitions.contains_key(&head) => {
+            let source = &definitions[&head];
+            let location = format!("stages.let.{head}");
+            if !visiting.insert(head.clone()) {
+                return Err(CompileError::new(
+                    CheckKind::Name,
+                    location,
+                    SourceSpan {
+                        start: 0,
+                        end: source.len(),
+                    },
+                    format!("recursive let {head}"),
+                ));
+            }
+            let value = expand(parse_expression(source, &location)?, visiting)?;
+            visiting.remove(&head);
+            if path.is_empty() {
+                value
+            } else {
+                StageExpr::Field {
+                    value: Box::new(value),
+                    path,
+                }
+            }
+        }
+        StageExpr::Spanned(inner, span) => {
+            StageExpr::Spanned(Box::new(expand(*inner, visiting)?), span)
+        }
+        StageExpr::Or(left, right) => StageExpr::Or(
+            Box::new(expand(*left, visiting)?),
+            Box::new(expand(*right, visiting)?),
+        ),
+        StageExpr::And(left, right) => StageExpr::And(
+            Box::new(expand(*left, visiting)?),
+            Box::new(expand(*right, visiting)?),
+        ),
+        StageExpr::Not(inner) => StageExpr::Not(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Equality {
+            is_negated,
+            left,
+            right,
+        } => StageExpr::Equality {
+            is_negated,
+            left: Box::new(expand(*left, visiting)?),
+            right: Box::new(expand(*right, visiting)?),
+        },
+        StageExpr::Compare {
+            operator,
+            left,
+            right,
+        } => StageExpr::Compare {
+            operator,
+            left: Box::new(expand(*left, visiting)?),
+            right: Box::new(expand(*right, visiting)?),
+        },
+        StageExpr::Len(inner) => StageExpr::Len(Box::new(expand(*inner, visiting)?)),
+        StageExpr::Every { source, predicate } => StageExpr::Every {
+            source: Box::new(expand(*source, visiting)?),
+            predicate: Box::new(expand(*predicate, visiting)?),
+        },
+        StageExpr::Any { source, predicate } => StageExpr::Any {
+            source: Box::new(expand(*source, visiting)?),
+            predicate: Box::new(expand(*predicate, visiting)?),
+        },
+        StageExpr::Filter { source, predicate } => StageExpr::Filter {
+            source: Box::new(expand(*source, visiting)?),
+            predicate: Box::new(expand(*predicate, visiting)?),
+        },
+        StageExpr::MapOf { source, value } => StageExpr::MapOf {
+            source: Box::new(expand(*source, visiting)?),
+            value: Box::new(expand(*value, visiting)?),
+        },
+        StageExpr::Contains { source, value } => StageExpr::Contains {
+            source: Box::new(expand(*source, visiting)?),
+            value: Box::new(expand(*value, visiting)?),
+        },
+        StageExpr::Lookup {
+            source,
+            field,
+            key,
+            path,
+        } => StageExpr::Lookup {
+            source: Box::new(expand(*source, visiting)?),
+            field,
+            key: Box::new(expand(*key, visiting)?),
+            path,
+        },
+        StageExpr::Default {
+            value,
+            fallback,
+            path,
+        } => StageExpr::Default {
+            value: Box::new(expand(*value, visiting)?),
+            fallback: Box::new(expand(*fallback, visiting)?),
+            path,
+        },
+        StageExpr::Require { value, path } => StageExpr::Require {
+            value: Box::new(expand(*value, visiting)?),
+            path,
+        },
+        StageExpr::Field { value, path } => StageExpr::Field {
+            value: Box::new(expand(*value, visiting)?),
+            path,
+        },
+        StageExpr::ValidGraph {
+            source,
+            key_field,
+            dependencies_field,
+        } => StageExpr::ValidGraph {
+            source: Box::new(expand(*source, visiting)?),
+            key_field,
+            dependencies_field,
+        },
+        StageExpr::Record(fields) => StageExpr::Record(
+            fields
+                .into_iter()
+                .map(|(key, value)| Ok((key, expand(value, visiting)?)))
+                .collect::<Result<_, CompileError>>()?,
+        ),
+        other => other,
+    })
+}
 pub(crate) fn checked(
     text: &str,
     scope: &Scope<'_>,
     path: &str,
 ) -> Result<CheckedStageExpression, CompileError> {
-    let parsed = parse_expression(text, path)?;
+    let parsed = expand_lets(
+        parse_expression(text, path)?,
+        scope.lets,
+        &mut BTreeSet::new(),
+    )?;
     let scope = scope.at(path, text);
     Ok(CheckedStageExpression {
         source: text.into(),
@@ -223,7 +367,11 @@ pub(crate) fn checked_guard(
     check: CheckKind,
     what: &str,
 ) -> Result<(CheckedStageExpression, BTreeSet<String>), CompileError> {
-    let parsed = parse_expression(text, path)?;
+    let parsed = expand_lets(
+        parse_expression(text, path)?,
+        scope.lets,
+        &mut BTreeSet::new(),
+    )?;
     let scope = scope.at(path, text);
     let value_type = infer(&parsed, &scope)?;
     if value_type != Type::Boolean {

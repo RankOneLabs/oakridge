@@ -250,6 +250,13 @@ pub enum Expression {
         key_field: String,
         key: Box<Expression>,
     },
+    Default {
+        value: Box<Expression>,
+        fallback: Box<Expression>,
+    },
+    Require {
+        value: Box<Expression>,
+    },
     Filter {
         source: Box<Expression>,
         predicate: Box<Expression>,
@@ -579,6 +586,8 @@ pub enum UnitDependencies {
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     pub input: TypeExpression,
+    #[serde(default, rename = "let")]
+    pub let_bindings: BTreeMap<String, String>,
     pub artifacts: BTreeMap<String, Artifact>,
     pub workers: BTreeMap<String, Worker>,
     #[serde(default)]

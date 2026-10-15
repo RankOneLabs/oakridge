@@ -16,6 +16,7 @@ pub(super) fn compile_stage(
         each: None,
         item: None,
         aliases: &workflow.schemas,
+        lets: &stage.let_bindings,
         body: None,
         guaranteed: BTreeSet::new(),
         collections: BTreeSet::new(),
@@ -32,6 +33,10 @@ pub(super) fn compile_stage(
         owners: BTreeMap::new(),
         errors: Vec::new(),
     };
+    for (name, source) in &stage.let_bindings {
+        let path = format!("stages.{key}.let.{name}");
+        state.capture(checked(source, &state.base, &path));
+    }
     let mut workers = Vec::new();
     for (worker_key, worker) in &stage.workers {
         if let Some(checked) = state.worker(worker_key, worker) {

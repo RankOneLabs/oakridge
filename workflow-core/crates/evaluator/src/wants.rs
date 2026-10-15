@@ -17,14 +17,19 @@ pub(super) fn reads_artifact(expression: &Expression, artifact: &SymbolKey) -> b
         Expression::List { items, .. } | Expression::All { items } | Expression::Any { items } => {
             items.iter().any(reads)
         }
-        Expression::Equals { left, right }
+        Expression::Default {
+            value: left,
+            fallback: right,
+        }
+        | Expression::Equals { left, right }
         | Expression::GreaterThan { left, right }
         | Expression::GreaterOrEqual { left, right }
         | Expression::LessThan { left, right }
         | Expression::LessOrEqual { left, right } => reads(left) || reads(right),
-        Expression::Len { value } | Expression::Not { value } | Expression::Field { value, .. } => {
-            reads(value)
-        }
+        Expression::Len { value }
+        | Expression::Not { value }
+        | Expression::Field { value, .. }
+        | Expression::Require { value } => reads(value),
         Expression::Map { source, value, .. }
         | Expression::Contains { source, value }
         | Expression::Lookup {

@@ -3,7 +3,7 @@
     { "name": "1 unknown stage", "base": "review-loop", "pointer": "/run/units/document/stage", "value": "missing", "reason": "check 1" },
     { "name": "1 unknown schema", "base": "review-loop", "pointer": "/stages/document/artifacts/draft/schema/body", "value": "missing_type", "reason": "check 1" },
     { "name": "2 neither stage nor group", "base": "review-loop", "pointer": "/run/units/document/stage", "value": null, "reason": "check 2" },
-    { "name": "3 read outside after", "base": "fan-out", "pointer": "/run/units/work/after", "value": [], "reason": "check 3" },
+    { "name": "3 redundant after", "base": "fan-out", "pointer": "/run/units/work/after", "value": ["prepare"], "reason": "check 3" },
     { "name": "4 group outcome reads private field", "base": "review-loop", "pointer": "/run/outcome/draft", "value": "document.outcome.secret", "reason": "check 4" },
     { "name": "5 static dependency cycle", "base": "fan-out", "pointer": "/run/units/prepare/after", "value": ["work"], "reason": "check 5" },
     { "name": "6 stage input mismatch", "base": "review-loop", "pointer": "/run/units/document/input/topic", "value": "true", "reason": "check 6" },
@@ -24,7 +24,7 @@
     ,{ "name": "7 handoff prompt on a resume session", "base": "review-loop", "pointer": "/stages/document/workers/writer/prompts/handoff", "value": "review-loop/revise.md", "reason": "check 7" }
     ,{ "name": "12 every that is not a duration", "base": "fan-out", "pointer": "/stages/prepare/workers/git/every", "value": "soon", "reason": "check 12" }
     ,{ "name": "2 after names a collection", "base": "fan-out", "pointer": "/run/units/work/group/units/tail", "value": { "stage": "item", "after": ["item"], "input": { "text": "\"tail\"", "workspace": "input.workspace" } }, "reason": "check 2" }
-    ,{ "name": "2 collection beside a sibling", "base": "fan-out", "pointer": "/run/units/work/group/units/tail", "value": { "stage": "item", "input": { "text": "\"tail\"", "workspace": "input.workspace" } }, "reason": "check 2" }
+    ,{ "name": "2 collection missing key", "base": "fan-out", "pointer": "/run/units/work/group/units/item/key", "value": null, "reason": "check 2" }
     ,{ "name": "4 group outcome reads a collection outside map", "base": "fan-out", "pointer": "/run/units/work/group", "value": {"pools": {"slots": 2}, "units": {"task": {"for_each": "input.items", "key": "each.key", "after": "each.after", "stage": "item", "input": {"text": "each.text", "workspace": "input.workspace"}, "pool": "slots"}}, "outcome": {"results": "map(task, task.outcome.result)", "first": "task.outcome.result"}}, "reason": "check 4" }
   ]
 }

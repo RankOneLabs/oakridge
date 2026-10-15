@@ -7,6 +7,7 @@ run:
 stages:
   document:
     input: { topic: text }
+    let: { topic_value: input.topic }
     artifacts:
       draft:
         schema: { title: text, body: text }
@@ -16,7 +17,7 @@ stages:
       writer:
         kind: agent
         prompts: { initial: review-loop/write.md, revise: review-loop/revise.md }
-        inputs: { topic: input.topic, critique: latest(critique) }
+        inputs: { topic: topic_value, critique: latest(critique) }
         creates: [draft]
       critic:
         kind: agent

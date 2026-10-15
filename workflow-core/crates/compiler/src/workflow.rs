@@ -439,7 +439,9 @@ pub fn compile_workflow_with_limits(
 }
 #[path = "workflow_decode.rs"]
 mod decode;
-pub use decode::{decode_workflow, decode_workflow_value_detailed};
+pub use decode::{
+    decode_workflow, decode_workflow_value_detailed, expand_workflow_templates_value,
+};
 
 #[cfg(test)]
 mod review_regressions {

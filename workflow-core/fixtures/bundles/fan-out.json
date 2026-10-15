@@ -16,9 +16,6 @@
         }
       },
       "work": {
-        "after": [
-          "prepare"
-        ],
         "input": {
           "items": "input.items",
           "workspace": "prepare.outcome.workspace"

@@ -1,4 +1,80 @@
 use super::*;
+use crate::expressions::{parse_expression, StageExpr};
+
+fn read_units(expr: &StageExpr, found: &mut BTreeSet<String>) {
+    match expr {
+        StageExpr::Spanned(inner, _)
+        | StageExpr::Not(inner)
+        | StageExpr::Len(inner)
+        | StageExpr::Require { value: inner, .. }
+        | StageExpr::Field { value: inner, .. } => read_units(inner, found),
+        StageExpr::Outcome { unit, .. } => {
+            found.insert(unit.clone());
+        }
+        StageExpr::Or(left, right)
+        | StageExpr::And(left, right)
+        | StageExpr::Equality { left, right, .. }
+        | StageExpr::Compare { left, right, .. } => {
+            read_units(left, found);
+            read_units(right, found);
+        }
+        StageExpr::Every { source, predicate }
+        | StageExpr::Any { source, predicate }
+        | StageExpr::Filter { source, predicate } => {
+            read_units(source, found);
+            read_units(predicate, found);
+        }
+        StageExpr::MapOf { source, value } | StageExpr::Contains { source, value } => {
+            if let StageExpr::Name { head, path } = source.clone().into_unspanned() {
+                if path.is_empty() {
+                    found.insert(head);
+                }
+            }
+            read_units(source, found);
+            read_units(value, found);
+        }
+        StageExpr::Lookup { source, key, .. } => {
+            read_units(source, found);
+            read_units(key, found);
+        }
+        StageExpr::Default {
+            value, fallback, ..
+        } => {
+            read_units(value, found);
+            read_units(fallback, found);
+        }
+        StageExpr::ValidGraph { source, .. } => read_units(source, found),
+        StageExpr::Record(fields) => {
+            for (_, value) in fields {
+                read_units(value, found);
+            }
+        }
+        _ => {}
+    }
+}
+fn inferred_after(unit: &Unit) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    for text in unit
+        .input
+        .values()
+        .chain(unit.for_each.iter())
+        .chain(unit.key.iter())
+    {
+        if let Ok(expression) = parse_expression(text, "") {
+            read_units(&expression, &mut found);
+        }
+    }
+    found
+}
+fn after_keys(unit: &Unit) -> Vec<SymbolKey> {
+    let mut keys = inferred_after(unit);
+    if let UnitDependencies::Fixed(explicit) = &unit.after {
+        keys.extend(explicit.iter().map(|key| key.0.clone()));
+    }
+    keys.into_iter()
+        .map(|key| SymbolKey::from(key.as_str()))
+        .collect()
+}
 pub(super) struct GroupErrors(pub(super) Vec<CompileError>);
 impl From<CompileError> for GroupErrors {
     fn from(error: CompileError) -> Self {
@@ -60,6 +136,13 @@ pub(super) fn check_structure(
         }
         if let UnitDependencies::Fixed(after) = &unit.after {
             for dependency in after {
+                if inferred_after(unit).contains(&dependency.0) {
+                    report!(
+                        CheckKind::Scope,
+                        format!("{unit_path}.after"),
+                        format!("unit {key} explicitly repeats inferred dependency {dependency}")
+                    );
+                }
                 match group.units.get(&dependency.0) {
                     None => report!(
                         CheckKind::Name,
@@ -77,16 +160,17 @@ pub(super) fn check_structure(
                 }
             }
         }
+        for dependency in inferred_after(unit) {
+            if !group.units.contains_key(&dependency) {
+                report!(
+                    CheckKind::Name,
+                    format!("{unit_path}.input"),
+                    format!("unit {dependency} absent")
+                );
+            }
+        }
         if let Some(nested) = &unit.group {
             check_structure(nested, &format!("{unit_path}.group"), workflow, errors);
-        }
-    }
-    if group.units.len() > 1 {
-        for (key, unit) in &group.units {
-            if unit.for_each.is_some() {
-                report!(CheckKind::Collection, format!("{path}.units.{key}"),
-                    format!("collection {key} shares its group, so a member key could collide with a sibling"));
-            }
         }
     }
 }
@@ -119,8 +203,8 @@ pub(super) fn compile_group(
                 format!("dependency cycle through {key}"),
             ));
         }
-        if let Some(UnitDependencies::Fixed(after)) = group.units.get(key).map(|u| &u.after) {
-            for dependency in after {
+        if let Some(unit) = group.units.get(key) {
+            for dependency in after_keys(unit) {
                 visit(
                     &dependency.0,
                     group,
@@ -160,28 +244,23 @@ pub(super) fn compile_group(
         return Err(GroupErrors(cycles));
     }
     let empty = BTreeMap::new();
+    let empty_lets = BTreeMap::<String, String>::new();
     let mut outcomes = BTreeMap::<String, TypeExpression>::new();
     let mut checked_units = Vec::new();
     let mut errors = Vec::new();
     let mut failed_units = BTreeSet::new();
     for key in &order {
-        if let UnitDependencies::Fixed(after) = &group.units[key].after {
-            if after
-                .iter()
-                .any(|dependency| failed_units.contains(&dependency.0))
-            {
-                failed_units.insert(key.clone());
-                continue;
-            }
+        if after_keys(&group.units[key])
+            .iter()
+            .any(|dependency| failed_units.contains(&dependency.0))
+        {
+            failed_units.insert(key.clone());
+            continue;
         }
         let result = (|| -> Result<(CheckedUnit, TypeExpression), GroupErrors> {
             let mut diagnostic_path: String;
             let unit = &group.units[key];
-            let after_keys: Vec<_> = if let UnitDependencies::Fixed(after) = &unit.after {
-                after.clone()
-            } else {
-                vec![]
-            };
+            let after_keys = after_keys(unit);
             let allowed: BTreeMap<_, _> = after_keys
                 .iter()
                 .filter_map(|key| outcomes.get(&key.0).map(|ty| (key.0.clone(), ty.clone())))
@@ -193,9 +272,15 @@ pub(super) fn compile_group(
                 each: None,
                 item: None,
                 aliases: &workflow.schemas,
+                lets: &empty_lets,
                 body: None,
                 guaranteed: BTreeSet::new(),
-                collections: BTreeSet::new(),
+                collections: group
+                    .units
+                    .iter()
+                    .filter(|(_, sibling)| sibling.for_each.is_some())
+                    .map(|(key, _)| key.clone())
+                    .collect(),
                 diagnostic_path: String::new(),
                 diagnostic_span: SourceSpan::default(),
             };
@@ -310,11 +395,11 @@ pub(super) fn compile_group(
                     stage: unit.stage.clone(),
                     pool: unit.pool.clone(),
                     after: match &unit.after {
-                        UnitDependencies::None => CheckedUnitDependencies::None,
-                        UnitDependencies::Fixed(keys) => {
-                            CheckedUnitDependencies::Fixed { keys: keys.clone() }
-                        }
                         UnitDependencies::Each(_) => CheckedUnitDependencies::Each,
+                        _ if after_keys.is_empty() => CheckedUnitDependencies::None,
+                        _ => CheckedUnitDependencies::Fixed {
+                            keys: after_keys.clone(),
+                        },
                     },
                     collection,
                     group: nested,
@@ -343,6 +428,7 @@ pub(super) fn compile_group(
         each: None,
         item: None,
         aliases: &workflow.schemas,
+        lets: &empty_lets,
         body: None,
         guaranteed: BTreeSet::new(),
         collections: group

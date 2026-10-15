@@ -207,7 +207,7 @@ fn a_schema_cannot_shadow_a_primitive_type() {
 const NESTED_OUTCOME_READ: &str = "filter(input.items, item.key != prepare.outcome.workspace.head)";
 
 #[test]
-fn a_unit_input_reads_an_after_units_outcome_inside_a_list_function() {
+fn a_unit_input_infers_its_dependency_inside_a_list_function() {
     let compiled = compile_fan_out(|value| {
         value["run"]["units"]["work"]["input"]["items"] = NESTED_OUTCOME_READ.into();
     });
@@ -215,22 +215,18 @@ fn a_unit_input_reads_an_after_units_outcome_inside_a_list_function() {
 }
 
 #[test]
-fn a_unit_input_cannot_read_an_outcome_outside_after_inside_a_list_function() {
+fn an_explicit_after_cannot_repeat_an_inferred_dependency() {
     let error = compile_fan_out(|value| {
         let work = &mut value["run"]["units"]["work"];
-        work["after"] = serde_json::json!([]);
-        work["input"]["workspace"] = "input.repository".into();
+        work["after"] = serde_json::json!(["prepare"]);
         work["input"]["items"] = NESTED_OUTCOME_READ.into();
     })
     .unwrap_err();
-    assert_eq!(&*error.path, "run.units.work.input.items");
-    assert_eq!(
-        (&*error.entity_id, &*error.detail),
-        (
-            "check 3",
-            "unit outcome prepare absent or outside read scope"
-        )
-    );
+    assert_eq!(&*error.path, "run.units.work.after");
+    assert_eq!(&*error.entity_id, "check 3");
+    assert!(error
+        .detail
+        .contains("explicitly repeats inferred dependency prepare"));
 }
 
 fn tail_unit(after: Value) -> Value {
@@ -247,23 +243,15 @@ fn a_unit_cannot_wait_on_a_collection() {
     assert!(error
         .detail
         .contains("unit tail waits on collection item, which is no one unit"));
-    assert!(error.detail.contains("collection item shares its group"));
     assert_eq!(&*error.path, "run.units.work.group.units.tail.after");
 }
 
 #[test]
-fn a_collection_cannot_share_its_group() {
-    let error = fan_out_compile_error(|value| {
+fn a_collection_can_share_its_group() {
+    let result = compile_fan_out(|value| {
         value["run"]["units"]["work"]["group"]["units"]["tail"] = tail_unit(Value::Null);
     });
-    assert_eq!(
-        &*error.detail,
-        "collection item shares its group, so a member key could collide with a sibling"
-    );
-    assert!(
-        error.path.starts_with("run.units.work.group.units"),
-        "{error:?}"
-    );
+    assert!(result.is_ok(), "{result:?}");
 }
 
 #[test]

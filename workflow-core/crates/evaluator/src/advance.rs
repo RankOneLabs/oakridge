@@ -4,9 +4,10 @@ pub(super) fn materialize_group(
     snapshot: &StepSnapshot,
     group_id: &UnitId,
     context: &mut EvaluationContext<'_>,
-) -> Result<Vec<Delta>, StepError> {
+) -> Result<(Vec<Delta>, bool), StepError> {
     let mut state = snapshot.clone();
     let mut deltas = Vec::new();
+    let mut has_pending = false;
     let parent = state
         .units
         .iter()
@@ -14,22 +15,80 @@ pub(super) fn materialize_group(
         .cloned()
         .ok_or_else(|| invalid("group absent"))?;
     let group = group_for(program, &state, &parent)?.clone();
-    let mut units = group.units.iter().collect::<Vec<_>>();
-    units.sort_by_key(|unit| &unit.key);
-    for unit in units {
+    for unit in &group.units {
         let key = &unit.key.0;
+        let mut fixed_dependencies = Vec::new();
+        let mut dependencies_pending = false;
+        if let CheckedUnitDependencies::Fixed { keys } = &unit.after {
+            for dependency in keys {
+                let declaration = checked_unit(&group, &dependency.0)?;
+                if let Some(collection) = &declaration.collection {
+                    let source = eval_expression(
+                        &collection.source.expression,
+                        &parent,
+                        &state,
+                        None,
+                        None,
+                        context,
+                    )?;
+                    let Some(Value::Array(expected)) = source else {
+                        dependencies_pending = true;
+                        break;
+                    };
+                    let children: Vec<_> = state
+                        .units
+                        .iter()
+                        .filter(|child| {
+                            child.parent.as_ref() == Some(group_id)
+                                && child.declaration == dependency.clone()
+                        })
+                        .collect();
+                    if children.len() != expected.len() {
+                        dependencies_pending = true;
+                        break;
+                    }
+                    fixed_dependencies.extend(children.iter().map(|child| {
+                        child
+                            .id
+                            .0
+                            .strip_prefix(&format!("{group_id}/"))
+                            .unwrap_or("")
+                            .to_owned()
+                    }));
+                } else {
+                    fixed_dependencies.push(dependency.0.clone());
+                }
+            }
+        }
+        if dependencies_pending {
+            has_pending = true;
+            continue;
+        }
+        if unit.collection.is_none()
+            && state.units.iter().any(|child| {
+                child.parent.as_ref() == Some(group_id) && child.declaration == unit.key
+            })
+        {
+            continue;
+        }
         let collection = unit.collection.clone();
         let each_values = if let Some(collection) = &collection {
-            eval_expression(
+            let source = eval_expression(
                 &collection.source.expression,
                 &parent,
                 &state,
                 None,
                 None,
                 context,
-            )?
-            .and_then(|v| v.as_array().cloned())
-            .ok_or_else(|| rejected(format!("collection {key} source is not a list")))?
+            )?;
+            match source {
+                None => {
+                    has_pending = true;
+                    continue;
+                }
+                Some(Value::Array(items)) => items,
+                Some(_) => return Err(rejected(format!("collection {key} source is not a list"))),
+            }
         } else {
             vec![Value::Null]
         };
@@ -57,11 +116,22 @@ pub(super) fn materialize_group(
                     "collection {key} has illegal or duplicate key"
                 )));
             }
+            let member_id = if collection.is_some() && group.units.len() > 1 {
+                format!("{group_id}/{key}/{member}")
+            } else {
+                format!("{group_id}/{member}")
+            };
+            if let Some(existing) = state.units.iter().find(|child| child.id.0 == member_id) {
+                if existing.parent.as_ref() == Some(group_id) && existing.declaration == unit.key {
+                    continue;
+                }
+                return Err(rejected(format!(
+                    "collection {key} member {member} collides with sibling"
+                )));
+            }
             let dependencies = match &unit.after {
                 CheckedUnitDependencies::None => vec![],
-                CheckedUnitDependencies::Fixed { keys: items } => {
-                    items.iter().map(|v| v.0.clone()).collect()
-                }
+                CheckedUnitDependencies::Fixed { .. } => fixed_dependencies.clone(),
                 CheckedUnitDependencies::Each => {
                     let after = collection
                         .as_ref()
@@ -87,15 +157,18 @@ pub(super) fn materialize_group(
             };
             let declared_input = &unit.input;
             let input = if unit.collection.is_some() {
-                Some(
-                    eval_fields(declared_input, &parent, &state, Some(each), context)?
-                        .ok_or_else(|| rejected("collection input unresolved"))?,
-                )
+                match eval_fields(declared_input, &parent, &state, Some(each), context)? {
+                    Some(input) => Some(input),
+                    None => {
+                        has_pending = true;
+                        break;
+                    }
+                }
             } else {
                 None
             };
             let delta = Delta::PushUnit(UnitState {
-                id: UnitId(format!("{group_id}/{member}")),
+                id: UnitId(member_id),
                 parent: Some(group_id.clone()),
                 declaration: SymbolKey::from(key.as_str()),
                 kind: match &unit.stage {
@@ -107,7 +180,16 @@ pub(super) fn materialize_group(
                 input,
                 after: dependencies
                     .into_iter()
-                    .map(|d| UnitId(format!("{group_id}/{d}")))
+                    .map(|dependency| {
+                        let prefix = if matches!(&unit.after, CheckedUnitDependencies::Each)
+                            && group.units.len() > 1
+                        {
+                            format!("{group_id}/{key}")
+                        } else {
+                            group_id.to_string()
+                        };
+                        UnitId(format!("{prefix}/{dependency}"))
+                    })
                     .collect(),
                 pool: unit.pool.clone(),
             });
@@ -131,7 +213,7 @@ pub(super) fn materialize_group(
     if !is_acyclic(&prerequisites) {
         return Err(rejected("cyclic prerequisite"));
     }
-    Ok(deltas)
+    Ok((deltas, has_pending))
 }
 pub(super) fn group_outcome(
     program: &CheckedWorkflow,
@@ -158,12 +240,13 @@ pub(super) fn start_group(
     context: &mut EvaluationContext<'_>,
 ) -> Result<Vec<Delta>, StepError> {
     let mut state = snapshot.clone();
-    let mut deltas = materialize_group(program, &state, group_id, context)?;
+    let (mut deltas, has_pending) = materialize_group(program, &state, group_id, context)?;
     apply_all(&mut state, context, deltas.clone());
-    if state
-        .units
-        .iter()
-        .any(|unit| unit.parent.as_ref() == Some(group_id))
+    if has_pending
+        || state
+            .units
+            .iter()
+            .any(|unit| unit.parent.as_ref() == Some(group_id))
     {
         return Ok(deltas);
     }
@@ -304,15 +387,21 @@ pub(super) fn next_move(
                 }
                 return Ok(None);
             }
+            let (created, has_pending) = materialize_group(program, state, &unit.id, context)?;
+            if !created.is_empty() {
+                return Ok(Some(created));
+            }
+            if has_pending {
+                return Ok(None);
+            }
             let children: Vec<_> = state
                 .units
                 .iter()
                 .filter(|child| child.parent.as_ref() == Some(&unit.id))
                 .collect();
-            if !children.is_empty()
-                && children
-                    .iter()
-                    .all(|child| matches!(child.status, UnitStatus::Done { .. }))
+            if children
+                .iter()
+                .all(|child| matches!(child.status, UnitStatus::Done { .. }))
             {
                 let outcome = group_outcome(program, state, unit, context)?;
                 return Ok(Some(vec![Delta::UnitStatus {
