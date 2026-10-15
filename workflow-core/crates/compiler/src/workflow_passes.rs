@@ -4,6 +4,8 @@ use workflow_model::SourceSpan;
 
 #[path = "workflow_outcomes.rs"]
 mod outcomes;
+#[path = "workflow_projection.rs"]
+mod projection;
 
 pub use workflow_model::{CheckKind, CompileError};
 pub(super) struct ParsedWorkflow {
@@ -319,12 +321,12 @@ pub(super) fn lower(parts: CheckedParts) -> Result<(CheckedWorkflow, Workflow), 
             error.inner().to_string(),
         )]
     })?;
-    let resolved = parts.source.clone();
+    let projected = projection::workflow(&parts.original, &parts.source);
     let program = CheckedWorkflow {
         digest: BundleDigest(format!("{:x}", Sha256::digest(encoded))),
         input: parts.source.input,
         stages: parts.stages,
         root: parts.root,
     };
-    Ok((program, resolved))
+    Ok((program, projected))
 }

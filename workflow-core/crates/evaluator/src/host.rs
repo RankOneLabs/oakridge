@@ -140,13 +140,13 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             workflow,
             operations,
             prompts,
-        } => workflow_compiler::compile_workflow_with_limits_and_resolved_detailed(
+        } => workflow_compiler::compile_workflow_with_limits_and_projection_detailed(
             &workflow,
             &operations,
             &prompts,
             &limits,
         )
-        .map(|(program, resolved_workflow)| {
+        .map(|(program, projected_workflow)| {
             let output = CompiledWorkflow {
                 digest: program.digest.clone(),
                 stages: program
@@ -154,7 +154,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
-                workflow: Box::new(resolved_workflow),
+                workflow: Box::new(projected_workflow),
             };
             state.insert(program);
             Output::Compiled(output)

@@ -392,10 +392,10 @@ pub fn compile_workflow_with_limits_detailed(
     prompts: &BTreeMap<String, String>,
     limits: &ResourceLimits,
 ) -> Result<CheckedWorkflow, Vec<CompileError>> {
-    compile_workflow_with_limits_and_resolved_detailed(source, operations, prompts, limits)
+    compile_workflow_with_limits_and_projection_detailed(source, operations, prompts, limits)
         .map(|(program, _)| program)
 }
-pub fn compile_workflow_with_limits_and_resolved_detailed(
+pub fn compile_workflow_with_limits_and_projection_detailed(
     source: &Workflow,
     operations: &[CodeOperation],
     prompts: &BTreeMap<String, String>,

@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use workflow_compiler::{
-    compile_workflow_detailed, compile_workflow_with_limits_and_resolved_detailed, decode_workflow,
+    compile_workflow_detailed, compile_workflow_with_limits_and_projection_detailed,
+    decode_workflow,
 };
 use workflow_model::{ResourceLimits, Type};
 
@@ -39,7 +40,7 @@ fn outcome_dependencies_resolve_before_dependent_inference() {
     value["stages"]["c"] = stage(json!("outcome_of(b)"), json!({"z": "input.y"}));
     value["schemas"]["future"] = "outcome_of(c)".into();
     let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
-    let (_, resolved) = compile_workflow_with_limits_and_resolved_detailed(
+    let (_, projected) = compile_workflow_with_limits_and_projection_detailed(
         &source,
         &[],
         &prompts(),
@@ -47,7 +48,7 @@ fn outcome_dependencies_resolve_before_dependent_inference() {
     )
     .unwrap();
     assert_eq!(
-        resolved.schemas["future"],
+        projected.schemas["future"],
         Type::Record {
             fields: BTreeMap::from([("z".into(), Type::Integer)])
         }

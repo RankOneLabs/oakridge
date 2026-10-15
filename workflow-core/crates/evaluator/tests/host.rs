@@ -1,10 +1,9 @@
 use workflow_evaluator::host::{core_alloc, core_dealloc, core_process, core_response_len};
 use workflow_model::protocol::{
-    Output, Response, ResponseResult, TransportError, TransportErrorKind, PROTOCOL_VERSION,
+    Response, ResponseResult, TransportError, TransportErrorKind, PROTOCOL_VERSION,
 };
-use workflow_model::Type;
 
-fn request(bytes: &[u8]) -> Response {
+fn request_value(bytes: &[u8]) -> serde_json::Value {
     let pointer = core_alloc(bytes.len());
     unsafe {
         std::slice::from_raw_parts_mut(pointer, bytes.len()).copy_from_slice(bytes);
@@ -15,6 +14,10 @@ fn request(bytes: &[u8]) -> Response {
         core_dealloc(pointer, bytes.len());
         result
     }
+}
+
+fn request(bytes: &[u8]) -> Response {
+    serde_json::from_value(request_value(bytes)).unwrap()
 }
 
 #[test]
@@ -109,6 +112,8 @@ fn compile_response_exposes_resolved_types_with_the_source_digest() {
     let mut workflow: serde_json::Value =
         serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
     workflow["schemas"]["future"] = "outcome_of(document)".into();
+    workflow["schemas"]["label"] = "text".into();
+    workflow["stages"]["document"]["input"]["topic"] = "label".into();
     let prompts: std::collections::BTreeMap<String, String> = [
         ("review-loop/write.md", "{{topic}}"),
         ("review-loop/revise.md", "{{topic}} {{feedback}}"),
@@ -123,7 +128,7 @@ fn compile_response_exposes_resolved_types_with_the_source_digest() {
     let expected_digest = workflow_compiler::compile_workflow_detailed(&source, &[], &prompts)
         .unwrap()
         .digest;
-    let response = request(
+    let response = request_value(
         &serde_json::to_vec(&serde_json::json!({
             "version": PROTOCOL_VERSION,
             "request_id": "resolved-workflow",
@@ -132,12 +137,13 @@ fn compile_response_exposes_resolved_types_with_the_source_digest() {
         }))
         .unwrap(),
     );
-    let ResponseResult::Ok(Output::Compiled(compiled)) = response.result else {
-        panic!("expected compiled response: {:?}", response.result)
-    };
-    assert_eq!(compiled.digest, expected_digest);
-    assert!(matches!(
-        compiled.workflow.schemas["future"],
-        Type::Record { .. }
-    ));
+    let compiled = &response["result"]["value"]["value"];
+    assert_eq!(response["result"]["status"], "ok");
+    assert_eq!(response["result"]["value"]["kind"], "compiled");
+    assert_eq!(compiled["digest"], expected_digest.0);
+    assert_eq!(compiled["workflow"]["schemas"]["future"]["kind"], "record");
+    assert_eq!(
+        compiled["workflow"]["stages"]["document"]["input"]["fields"]["topic"],
+        serde_json::json!({ "kind": "named", "schema": "label" })
+    );
 }
