@@ -1,28 +1,74 @@
-import type { OperatorBodyValue } from "../operator-contracts";
-import { selectBodyText, selectFieldItems, selectFieldText } from "../artifact-types";
+import dagre from "dagre";
+import type { CohortId } from "../types";
+import type { PlanCohort } from "./plan";
 
-export interface PlanGraphNode { readonly id: string; readonly title: string; readonly depends_on: readonly string[]; readonly cohort: OperatorBodyValue }
-export interface PlanGraphLayoutNode extends PlanGraphNode { readonly x: number; readonly y: number }
-export interface PlanGraphLayout { readonly nodes: readonly PlanGraphLayoutNode[]; readonly edges: readonly { readonly from: string; readonly to: string; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number }[]; readonly width: number; readonly height: number }
+export const PLAN_GRAPH_NODE = { width: 240, height: 92 } as const;
+const RANK_GAP = 48;
+const NODE_GAP = 24;
+const MARGIN = 4;
 
-const texts = (items: readonly OperatorBodyValue[]): readonly string[] => items.flatMap((item) => {
-  const text = selectBodyText(item); return text === null ? [] : [text];
-});
+export interface PlanGraphNode {
+  cohort: PlanCohort;
+  /** Top-left corner, in graph pixels. */
+  x: number;
+  y: number;
+}
 
-export function selectPlanGraph(body: OperatorBodyValue): PlanGraphLayout {
-  const dependencyOrder = texts(selectFieldItems(body, "dependency_order"));
-  const order = new Map(dependencyOrder.map((id, index) => [id, index]));
-  const cohorts = selectFieldItems(body, "cohorts").map((cohort) => ({
-    id: selectFieldText(cohort, "id") ?? "",
-    title: selectFieldText(cohort, "title") ?? "Untitled cohort",
-    depends_on: texts(selectFieldItems(cohort, "depends_on")),
-    cohort,
-  })).filter((cohort) => cohort.id.length > 0)
-    .sort((left, right) => (order.get(left.id) ?? dependencyOrder.length) - (order.get(right.id) ?? dependencyOrder.length));
-  const nodes = cohorts.map((cohort, index) => ({ ...cohort, x: 24 + index * 230, y: 36 }));
-  const edges = nodes.flatMap((to) => to.depends_on.flatMap((from) => {
-    const source = nodes.find((node) => node.id === from);
-    return source ? [{ from, to: to.id, x1: source.x + 180, y1: source.y + 35, x2: to.x, y2: to.y + 35 }] : [];
-  }));
-  return { nodes, edges, width: Math.max(320, cohorts.length * 230 + 24), height: 150 };
+export interface PlanGraphEdge {
+  from: CohortId;
+  to: CohortId;
+  /** SVG path data from the dependency to its dependent. */
+  path: string;
+}
+
+/** A fixed, 1:1 layout of the whole cohort graph: no pan or zoom needed to see every cohort. */
+export interface PlanGraphLayout {
+  width: number;
+  height: number;
+  nodes: PlanGraphNode[];
+  edges: PlanGraphEdge[];
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+/** Straight first and last legs with smooth bends between, so arrowheads meet nodes square-on. */
+function selectEdgePath(points: Point[]): string {
+  const first = points[0];
+  const last = points.at(-1);
+  if (!first || !last) return "";
+  const bends = points.slice(1, -1);
+  const curves = bends.map((bend, index) => {
+    const next = bends[index + 1] ?? last;
+    return ` Q${bend.x},${bend.y} ${(bend.x + next.x) / 2},${(bend.y + next.y) / 2}`;
+  });
+  return `M${first.x},${first.y}${curves.join("")} L${last.x},${last.y}`;
+}
+
+export function selectPlanGraphLayout(cohorts: PlanCohort[]): PlanGraphLayout {
+  const graph = new dagre.graphlib.Graph();
+  graph.setGraph({ rankdir: "TB", ranksep: RANK_GAP, nodesep: NODE_GAP, marginx: MARGIN, marginy: MARGIN });
+  graph.setDefaultEdgeLabel(() => ({}));
+
+  const ids = new Set(cohorts.map((cohort) => cohort.id));
+  for (const cohort of cohorts) graph.setNode(cohort.id, { ...PLAN_GRAPH_NODE });
+  // A dependency on a cohort the plan does not contain would make dagre invent a node.
+  const dependencies = cohorts.flatMap((cohort) =>
+    [...new Set(cohort.depends_on)].filter((from) => ids.has(from)).map((from) => ({ from, to: cohort.id })));
+  for (const { from, to } of dependencies) graph.setEdge(from, to);
+
+  dagre.layout(graph);
+
+  const { width = 0, height = 0 } = graph.graph();
+  return {
+    width,
+    height,
+    nodes: cohorts.map((cohort) => {
+      const { x, y } = graph.node(cohort.id);
+      return { cohort, x: x - PLAN_GRAPH_NODE.width / 2, y: y - PLAN_GRAPH_NODE.height / 2 };
+    }),
+    edges: dependencies.map(({ from, to }) => ({ from, to, path: selectEdgePath(graph.edge(from, to).points) })),
+  };
 }

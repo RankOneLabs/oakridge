@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { RUN_ACCENT_CLASSES, selectRunAccentClass } from "./run-accent";
-import { makeRunSummary } from "../__fixtures__/read-models";
 
 const RUN_IDS = [
   "run-1",
@@ -10,7 +9,7 @@ const RUN_IDS = [
   "",
   "a",
   "a".repeat(512),
-].map((run_id) => makeRunSummary({ run_id }).run_id);
+];
 
 describe("selectRunAccentClass", () => {
   it("returns the same class for the same run id across calls", () => {

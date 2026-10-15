@@ -1,28 +1,83 @@
-import { describe, expect, test } from "vitest";
-import { makeDevelopmentRootFields, makeDevelopmentSchemas, makeProject, makeProjectFormValues } from "./__fixtures__/read-models";
-import { selectProjectDraft } from "./lib/project-draft";
-import { selectProjectLaunchDrafts } from "./lib/project-launch";
+import { describe, expect, it } from "vitest";
+import { repositoryDraftFromProject, validateRepositoryInputs } from "./repository-inputs";
+import type { ProjectId } from "./types";
 
-describe("repository inputs for pinned launches", () => {
-  test("prefills the pinned repository input from a saved project's forge identity", () => {
-    const project = makeProject({ name: "PAA dot DEV", repo_dir: "/repos/paa",
-      forge_repository: { provider: "github", owner: "RankOneLabs", name: "paa_site" }, integration_branch: "develop" });
-    const drafts = selectProjectLaunchDrafts(project, makeDevelopmentRootFields(), makeDevelopmentSchemas());
-    expect(JSON.parse(drafts.repositories!)[0]).toMatchObject({
-      key: "PAA dot DEV", preparation: { repository_path: "/repos/paa" },
-      forge: { owner: "RankOneLabs", name: "paa_site", build_base: "develop", final_base: "develop" },
+const projectId = "project-1" as ProjectId;
+
+describe("repositoryDraftFromProject", () => {
+  it("prefills forge identity derived from the local repository", () => {
+    expect(repositoryDraftFromProject({
+      id: projectId, name: "PAA dot DEV", repo_dir: "/repos/paa", created_at: "2026-08-12T00:00:00Z",
+      forge_repository: { provider: "github", owner: "RankOneLabs", name: "paa_site" }, base_branch: "develop",
+    }, { key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" })).toEqual({
+      key: "paa-dot-dev", path: "/repos/paa", forge_owner: "RankOneLabs", forge_name: "paa_site", integration_branch: "develop",
     });
   });
 
-  test("keeps the operator's explicit forge fields in a project draft", () => {
-    const draft = selectProjectDraft(makeProjectFormValues({ owner: "acme", repository: "api", integration_branch: "release" }));
-    expect(draft).toMatchObject({ forge_repository: { owner: "acme", name: "api" }, integration_branch: "release" });
+  it("keeps explicit overrides when identity cannot be derived", () => {
+    expect(repositoryDraftFromProject({
+      id: projectId, name: "API", repo_dir: "/repos/api", created_at: "2026-08-12T00:00:00Z",
+    }, { key: "old", path: "/old", forge_owner: "acme", forge_name: "api", integration_branch: "release" })).toMatchObject({
+      forge_owner: "acme", forge_name: "api", integration_branch: "release",
+    });
+  });
+});
+
+describe("validateRepositoryInputs", () => {
+  it("normalizes multiple keyed repositories", () => {
+    expect(validateRepositoryInputs([
+      { key: " api ", path: " /repos/api ", forge_owner: " acme ", forge_name: " api ", integration_branch: " main " },
+      { key: "web", path: "/repos/web", forge_owner: "acme", forge_name: "web", integration_branch: "main" },
+    ])).toEqual({
+      ok: true,
+      repositories: [
+        { key: "api", path: "/repos/api", forge_owner: "acme", forge_name: "api", integration_branch: "main" },
+        { key: "web", path: "/repos/web", forge_owner: "acme", forge_name: "web", integration_branch: "main" },
+      ],
+    });
   });
 
-  test("trims project and repository text before submission", () => {
-    const draft = selectProjectDraft(makeProjectFormValues({ name: " API ", repo_dir: " /repos/api ",
-      owner: " acme ", repository: " api ", integration_branch: " main " }));
-    expect(draft).toEqual({ name: "API", repo_dir: "/repos/api",
-      forge_repository: { provider: "github", owner: "acme", name: "api" }, integration_branch: "main" });
+  it("rejects duplicate keys", () => {
+    expect(validateRepositoryInputs([
+      { key: "api", path: "/repos/one", forge_owner: "acme", forge_name: "one", integration_branch: "main" },
+      { key: "api", path: "/repos/two", forge_owner: "acme", forge_name: "two", integration_branch: "main" },
+    ])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: "api",
+        detail: "Repository keys must be unique.",
+      },
+    });
+  });
+
+  it("rejects relative paths", () => {
+    expect(validateRepositoryInputs([
+      { key: "api", path: "repos/api", forge_owner: "acme", forge_name: "api", integration_branch: "main" },
+    ])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: 0,
+        detail: "Repository paths must be absolute.",
+      },
+    });
+  });
+
+  it("requires durable GitHub identity and an integration branch", () => {
+    expect(validateRepositoryInputs([{
+      key: "api",
+      path: "/repos/api",
+      forge_owner: "",
+      forge_name: "api",
+      integration_branch: "main",
+    }])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: 0,
+        detail: "Every repository needs a key, local path, GitHub owner/name, and integration branch.",
+      },
+    });
   });
 });

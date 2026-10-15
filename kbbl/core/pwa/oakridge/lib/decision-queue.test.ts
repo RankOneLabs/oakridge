@@ -1,47 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { makeArtifactRevision, makeDecision, makeInboxDecision, makeArtifact, makeUnitView } from "../__fixtures__/read-models";
-import { selectActionableUnits, selectArtifactDecisions, selectStableOperatorDecisionQueue, selectUnitAsks } from "./decision-queue";
 
-describe("projected decision queue", () => {
-  it("keeps actionable units in projection order", () => {
-    const decision = makeDecision();
-    const units = [
-      makeUnitView({ unit_id: "first", decisions: [decision] }),
-      makeUnitView({ unit_id: "waiting", decisions: [] }),
-      makeUnitView({ unit_id: "last", decisions: [decision] }),
-    ];
-    expect(selectActionableUnits(units).map((unit) => unit.unit_id)).toEqual(["first", "last"]);
+import { selectStableDecisionQueue, type DecisionQueueEntry } from "./decision-queue";
+import type { ReviewInboxItem } from "../types";
+
+function gate(id: string): ReviewInboxItem {
+  return { id, kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v14", stage_instance_id: "stage", stage_name: "brief_writer",
+    unit_id: id, lifecycle: "artifact_review", artifact_revision_id: `revision-${id}`, gate_id: id, resume_actions: ["approve", "request_revision"], blocked_by: [] };
+}
+
+const live = (id: string): DecisionQueueEntry => ({ kind: "live", item: gate(id) });
+
+describe("selectStableDecisionQueue", () => {
+  it("keeps a departed item in its place as settled so the rows below do not move", () => {
+    expect(selectStableDecisionQueue([live("a"), live("b"), live("c")], [gate("b"), gate("c")]))
+      .toEqual([{ kind: "settled", item: gate("a") }, live("b"), live("c")]);
   });
 
-  it("does not count the run's cancel as a decision waiting", () => {
-    const cancel = makeDecision({ key: "cancel", label: "Cancel run", submit: { kind: "cancel" } });
-    const root = makeUnitView({ unit_id: "root", decisions: [cancel] });
-    const asking = makeUnitView({ unit_id: "build", decisions: [makeDecision(), cancel] });
-    expect({ units: selectActionableUnits([root, asking]).map((unit) => unit.unit_id), labels: selectUnitAsks(asking).map((decision) => decision.label) })
-      .toEqual({ units: ["build"], labels: ["Approve"] });
+  it("appends newly arrived work after the existing rows, even when the server lists it first", () => {
+    expect(selectStableDecisionQueue([live("a"), live("b")], [gate("assessment"), gate("a"), gate("b")]))
+      .toEqual([live("a"), live("b"), live("assessment")]);
   });
 
-  it("offers an artifact decision only on the revision it targets", () => {
-    const revision = makeArtifactRevision();
-    const decision = makeDecision();
-    const unit = makeUnitView({ decisions: [decision], artifacts: [makeArtifact({ latest_revision: revision })] });
-    expect(selectArtifactDecisions(unit, revision.id)).toEqual([decision]);
-    expect(selectArtifactDecisions(unit, "earlier-revision")).toEqual([]);
-  });
-
-  it("keeps a departed item settled in its old row", () => {
-    const a = makeInboxDecision({ key: "a" });
-    const b = makeInboxDecision({ key: "b" });
-    const c = makeInboxDecision({ key: "c" });
-    expect(selectStableOperatorDecisionQueue([a, b, c].map((item) => ({ kind: "live", item })), [b, c]))
-      .toEqual([{ kind: "settled", item: a }, { kind: "live", item: b }, { kind: "live", item: c }]);
-  });
-
-  it("appends newly arrived work after existing rows despite server reorder", () => {
-    const a = makeInboxDecision({ key: "a" });
-    const b = makeInboxDecision({ key: "b" });
-    const assessment = makeInboxDecision({ key: "assessment" });
-    expect(selectStableOperatorDecisionQueue([a, b].map((item) => ({ kind: "live", item })), [assessment, a, b]))
-      .toEqual([{ kind: "live", item: a }, { kind: "live", item: b }, { kind: "live", item: assessment }]);
+  it("starts from the server order when nothing was on screen", () => {
+    expect(selectStableDecisionQueue([], [gate("b"), gate("a")])).toEqual([live("b"), live("a")]);
   });
 });

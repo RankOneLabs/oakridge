@@ -12,18 +12,23 @@ const runtimeDescriptors: RuntimeDescriptors = [
     label: "Claude Code",
     models: [...RUNTIME_MODELS["claude-code"]],
     efforts: [...RUNTIME_EFFORTS["claude-code"]],
+    supportsCompaction: false,
   },
   {
     id: "codex",
     label: "Codex",
     models: [...RUNTIME_MODELS.codex],
     efforts: [...RUNTIME_EFFORTS.codex],
+    supportsCompaction: false,
   },
 ];
 
-describe("launch role model choices", () => {
-  test("defaults to Opus on Claude Code and Sol on Codex", () => {
-    expect([roleDefaultModel(runtimeDescriptors[0]), roleDefaultModel(runtimeDescriptors[1])]).toEqual(["opus", "gpt-5.6-sol"]);
+describe("Oakridge v2 role model choices", () => {
+  test("uses Opus and Sol as both role defaults", () => {
+    for (const role of ["planner", "worker"] as const) {
+      expect(roleDefaultModel(role, runtimeDescriptors[0])).toBe("opus");
+      expect(roleDefaultModel(role, runtimeDescriptors[1])).toBe("gpt-5.6-sol");
+    }
   });
 
   test("switches between the Claude Code and Codex launch catalogs", () => {

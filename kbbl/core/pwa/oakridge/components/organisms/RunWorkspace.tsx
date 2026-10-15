@@ -1,94 +1,234 @@
-import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import type { ArtifactId } from "../../../lib/ids";
-import { formatRunWorkspaceHash, type RoutePaneTarget } from "../../../lib/hash";
-import { useRun } from "../../hooks/useRun";
-import { usePinnedDefinition } from "../../hooks/usePinnedDefinition";
-import { useRunUnits } from "../../hooks/useRunUnits";
-import { selectRunUnit, selectUnitDetail } from "../../lib/run-overview";
-import { selectPendingDecisionsForRecovery, selectRunAttention } from "../../lib/run-attention";
-import { clearOperatorDraft, clearPendingDecision, listPendingDecisions, operatorDraftIdentity } from "../../lib/operator-drafts";
-import { isDefinitiveRequestRejection } from "../../lib/client-errors";
-import { invalidateRunDetail } from "../../lib/operator-invalidation";
-import { useRunAttention } from "../../hooks/useRunAttention";
-import { useSubmitOperatorDecision } from "../../hooks/useSubmitOperatorDecision";
-import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
-import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
-import { RunOverviewPane } from "./RunOverviewPane";
-import { RunDetail } from "./RunDetail";
-import { RunSessionPane } from "./RunSessionPane";
-import { ArtifactReview } from "./ArtifactReview";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-interface Props { readonly runId: string; readonly routePane: RoutePaneTarget | null; readonly unitId: string | null; readonly onBack: () => void }
-export function RunWorkspace({ runId, routePane, unitId, onBack }: Props) {
-  const client = useQueryClient();
-  const [recovery, setRecovery] = useState("");
-  const attempted = useRef(new Set<string>());
-  const inFlight = useRef(new Set<string>());
+import { useRun } from "../../hooks/useRun";
+import { useRunGates } from "../../hooks/useRunGates";
+import { useRunSessions } from "../../hooks/useRunSessions";
+import { useRunWorkspaceState } from "../../hooks/useRunWorkspaceState";
+import { selectRunAccentClass } from "../../lib/run-accent";
+import { selectPurgedRunSessionIds, selectRunSessionsRead } from "../../lib/run-sessions";
+import {
+  selectRunArtifacts,
+  selectRunGatesRead,
+  selectRunOverview,
+  selectRunSidebarSessions,
+  type RunOverview,
+} from "../../lib/run-overview";
+import {
+  canMoveToOtherSlot,
+  describePane,
+  isTwinView,
+  shouldReadRunActivity,
+  type RoutePaneTarget,
+  type RunWorkspacePane,
+  type RunWorkspaceSlot,
+} from "../../lib/run-workspace";
+import type { ArtifactId, Sid } from "../../../lib/ids";
+import { useStore } from "../../../state/store";
+import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
+import { RunPaneChrome } from "../molecules/RunPaneChrome";
+import { ArtifactReview } from "./ArtifactReview";
+import { RunOverviewPane } from "./RunOverviewPane";
+import { RunSessionPane } from "./RunSessionPane";
+import { RunWorkspaceSidebar } from "./RunWorkspaceSidebar";
+import { RunDetail } from "./RunDetail";
+import { fetchRunEvents, selectRunActivity, type RunActivityRead } from "../../lib/run-activity";
+
+interface RunWorkspaceProps {
+  runId: string;
+  routePane: RoutePaneTarget | null;
+  onBack: () => void;
+}
+
+/**
+ * The run command center: identity header, persistent sidebar, and a workspace
+ * of one or two panes.
+ *
+ * This is the only component here that reads — `useRun`, `useRunGates` and
+ * `useRunSessions` — and the only one that owns workspace state. Everything
+ * below it takes derived values as props.
+ */
+export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
   const runQuery = useRun(runId);
-  const attentionQuery = useRunAttention(runId);
-  const attention = attentionQuery.data ? selectRunAttention(attentionQuery.data.items) : null;
-  const decision = useSubmitOperatorDecision();
-  const bundleId = runQuery.data?.definition_bundle_id ?? null;
-  const definition = usePinnedDefinition(bundleId);
-  const unitQuery = useRunUnits(runId, !!runQuery.data);
-  const units = unitQuery.data ?? [];
-  useEffect(() => {
-    if (units.length === 0) return;
-    const pending = selectPendingDecisionsForRecovery({ pending: listPendingDecisions(runId), units,
-      attempted: attempted.current, inFlight: inFlight.current });
-    if (pending.length === 0) return;
-    for (const submission of pending) {
-      const identity = operatorDraftIdentity(submission);
-      attempted.current.add(identity);
-      inFlight.current.add(identity);
-    }
-    void Promise.all(pending.map(async (submission) => {
-      try {
-        await decision.mutateAsync(submission);
-        clearPendingDecision(submission);
-        clearOperatorDraft(submission);
-        return `Receipt recovered for ${submission.decision_key}.`;
-      } catch (cause) {
-        if (isDefinitiveRequestRejection(cause)) clearPendingDecision(submission);
-        return `${submission.decision_key}: ${cause instanceof Error ? cause.message : "Receipt still pending"}`;
-      } finally {
-        inFlight.current.delete(operatorDraftIdentity(submission));
-      }
-    })).then((messages) => {
-      setRecovery(messages.join(" "));
-    });
-  }, [runId, units, decision.mutateAsync]);
+  const gatesQuery = useRunGates(runId);
+  const sessionsQuery = useRunSessions(runId);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   const run = runQuery.data;
-  if (runQuery.isError && !runQuery.data) return <main className="or-page" role="alert">Could not load run: {String(runQuery.error)}</main>;
-  if (!run) return <main className="or-page" role="status">Loading run…</main>;
-  const selected = selectRunUnit(run, unitId, definition.data?.bundle.root ?? null);
-  const detail = selectUnitDetail(units, selected?.unit_id ?? null);
-  const schemas = definition.data?.bundle.schemas ?? [];
-  const navigate = (target: RoutePaneTarget | string | null) => { window.location.hash = formatRunWorkspaceHash(runId, target); };
-  const refresh = () => invalidateRunDetail(client, runId);
-  return <main className="or-run-workspace" data-testid="or-run-workspace">
-    <RunIdentityHeader run={run} attentionCount={attention?.count ?? null} isAttentionLoading={attentionQuery.isPending} onBack={onBack} />
-    {recovery && <p role="status">{recovery}</p>}
-    {runQuery.isError && <p role="alert">Refresh failed: {String(runQuery.error)}. Showing the last snapshot.</p>}
-    {attentionQuery.isError && <p role="alert">Could not load run attention: {String(attentionQuery.error)}. Run details remain available.</p>}
-    {definition.isError && <p role="alert">Could not load pinned definition: {String(definition.error)}</p>}
-    {unitQuery.isError && <p role="alert">Some units could not be refreshed. Showing the ones that loaded.</p>}
-    <div className="or-run-workspace__body">
-      <RunWorkspaceSidebar run={run} units={units} attention={attention} isAttentionLoading={attentionQuery.isPending} onOpenUnit={(id) => navigate(id)}
-        onOpenArtifact={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
-      <div className="or-run-workspace__panes" data-testid="or-run-panes">
-        {routePane?.kind === "artifact" ? <ArtifactReview revisionId={routePane.artifact_id} units={units} schemas={schemas}
-          onBack={() => navigate(unitId)} onRefresh={refresh} onRevised={(id) => navigate({ kind: "artifact", artifact_id: id as ArtifactId })} />
-          : routePane?.kind === "session" ? <RunSessionPane sessionId={routePane.session_id} onOpenSession={(id) => navigate({ kind: "session", session_id: id })} />
-          : <><RunOverviewPane run={run} units={units} attentionCount={attention?.count ?? null}
-            isAttentionLoading={attentionQuery.isPending} onOpenUnit={(id) => navigate(id)} />
-            {detail ? <RunDetail unit={detail} schemas={schemas} onRefresh={refresh} />
-              : unitQuery.isError ? <p role="alert">Could not load unit: {String(unitQuery.error)}</p>
-              : selected || definition.isPending ? <p role="status">Loading unit…</p>
-              : definition.data ? <p role="alert">This run has no unit under its definition's root key.</p>
-              : null}</>}
+  // A sessions read that failed is not a run with no sessions — the same
+  // distinction `selectRunGatesRead` draws, and it matters more here, because
+  // pane validation acts on the answer: read as "no sessions", an outage
+  // concludes every stored session pane is stale and prunes the operator's
+  // arrangement out of storage on the way past.
+  const sessions = selectRunSessionsRead({
+    attempts: sessionsQuery.data,
+    is_pending: sessionsQuery.isPending,
+    is_error: sessionsQuery.isError,
+  });
+  const inventorySessions = useStore((state) => state.sessions);
+  const hasInboxSnapshot = useStore((state) => state.hasInboxSnapshot);
+  const hasSessionSeed = useStore((state) => state.hasSessionSeed);
+  const removedSids = useStore((state) => state.removedSids);
+  const purgedSessionIds = selectPurgedRunSessionIds({
+    run,
+    sessions,
+    inventory: { sessions: inventorySessions, hasInboxSnapshot, hasSessionSeed, removedSids },
+  });
+  const workspace = useRunWorkspaceState({ runId, routePane, run, sessions, purgedSessionIds });
+  const activityQuery = useQuery({
+    queryKey: ["oakridge", "run", runId, "activity"],
+    queryFn: () => fetchRunEvents(runId),
+    enabled: workspace.state !== null && shouldReadRunActivity(workspace.state),
+    refetchInterval: 10_000,
+  });
+
+  if (runQuery.isError) {
+    return (
+      <div className="or-page or-page--wide" data-testid="or-run-workspace-error">
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+        >
+          {runQuery.error instanceof Error ? runQuery.error.message : "Failed to load run"}
+        </div>
+      </div>
+    );
+  }
+
+  if (run === undefined || workspace.state === null) {
+    return (
+      <div className="or-page or-page--wide" data-testid="or-run-workspace-loading">
+        <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
+      </div>
+    );
+  }
+
+  const state = workspace.state;
+  // A gate read that never landed is not an empty gate list — `selectRunGatesRead`
+  // keeps the two apart so neither surface can render an outage as "nothing needs you".
+  const gates = selectRunGatesRead({
+    gates: gatesQuery.data,
+    is_pending: gatesQuery.isPending,
+    is_error: gatesQuery.isError,
+  });
+  const overview = selectRunOverview({ run, sessions, gates });
+  const sidebarSessions = selectRunSidebarSessions({
+    sessions,
+    gates,
+    purgedSessionIds,
+  });
+  const sidebarArtifacts = selectRunArtifacts(run);
+  const activity: RunActivityRead = activityQuery.data !== undefined
+    ? { kind: "loaded", items: selectRunActivity(activityQuery.data, runId) }
+    : activityQuery.isError && !activityQuery.isPending
+      ? { kind: "unavailable" }
+      : { kind: "pending" };
+
+  const renderPane = (slot: RunWorkspaceSlot, pane: RunWorkspacePane) => {
+    const heading = describePane(pane);
+    return (
+      <RunPaneChrome
+        slot={slot}
+        title={heading.title}
+        subtitle={heading.subtitle}
+        actions={{
+          onOpenInOtherPane: canMoveToOtherSlot(state, slot)
+            ? () => workspace.moveSlot(slot)
+            : null,
+          onClose: () => workspace.closeSlot(slot),
+        }}
+      >
+        <PaneBody
+          pane={pane}
+          runId={runId}
+          onRunDeleted={onBack}
+          onOpenPane={(next) => workspace.openPane(next, slot)}
+          overview={overview}
+          activity={activity}
+        />
+      </RunPaneChrome>
+    );
+  };
+
+  return (
+    <div
+      className={`or-run-workspace ${selectRunAccentClass(runId)}`}
+      data-testid="or-run-workspace"
+    >
+      <RunIdentityHeader
+        run={run}
+        accentClass={selectRunAccentClass(runId)}
+        isSidebarOpen={isSidebarOpen}
+        onToggleSidebar={() => setIsSidebarOpen((open) => !open)}
+        onBack={onBack}
+      />
+      <div className="or-run-workspace__body">
+        <RunWorkspaceSidebar
+          isOpen={isSidebarOpen}
+          workspace={state}
+          sessions={sidebarSessions}
+          artifacts={sidebarArtifacts}
+          onOpenPane={(pane, slot) => workspace.openPane(pane, slot)}
+          onCollapse={workspace.collapse}
+        />
+        <div
+          className={`or-run-workspace__panes ${isTwinView(state) ? "or-run-workspace__panes--twin" : ""}`}
+          data-testid="or-run-panes"
+          data-twin={isTwinView(state)}
+        >
+          {renderPane("primary", state.primary)}
+          {state.secondary !== null && renderPane("secondary", state.secondary)}
+        </div>
       </div>
     </div>
-  </main>;
+  );
+}
+
+interface PaneBodyProps {
+  pane: RunWorkspacePane;
+  runId: string;
+  overview: RunOverview;
+  activity: RunActivityRead;
+  /** Leave the run because it was deleted from inside the list pane. */
+  onRunDeleted: () => void;
+  onOpenPane: (pane: RunWorkspacePane) => void;
+}
+
+/**
+ * What each pane variant renders.
+ *
+ * Every variant mounts an existing organism rather than a pane-local copy of
+ * one: the list pane `RunDetail`, the artifact pane `ArtifactReview` with its
+ * descriptor-driven viewer, review items, threads and gate decisions intact,
+ * and the session pane `SessionView` through `RunSessionPane`. Both entity
+ * renderers keep owning their own fetching — lifting their queries up here
+ * would give one renderer two fetching paths, which is the duplication reuse
+ * was meant to avoid.
+ */
+function PaneBody({ pane, runId, overview, activity, onRunDeleted, onOpenPane }: PaneBodyProps) {
+  switch (pane.kind) {
+    case "overview":
+      return <RunOverviewPane overview={overview} activity={activity} onOpenPane={onOpenPane} />;
+    case "list":
+      return (
+        <RunDetail
+          runId={runId}
+          onRunDeleted={onRunDeleted}
+          onSelectArtifact={(artifactId) =>
+            onOpenPane({ kind: "artifact", artifact_id: artifactId as ArtifactId })
+          }
+        />
+      );
+    case "artifact":
+      return <ArtifactReview artifactId={pane.artifact_id} />;
+    case "session":
+      return (
+        <RunSessionPane
+          sessionId={pane.session_id}
+          onOpenSession={(sessionId: Sid) =>
+            onOpenPane({ kind: "session", session_id: sessionId })
+          }
+        />
+      );
+  }
 }
