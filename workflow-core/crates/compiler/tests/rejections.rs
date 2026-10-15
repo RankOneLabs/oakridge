@@ -203,6 +203,67 @@ fn a_schema_cannot_shadow_a_primitive_type() {
     }
 }
 
+#[test]
+fn a_schema_that_expands_exponentially_is_rejected() {
+    // Each alias names the next twice: 2^40 types once expanded.
+    let error = fan_out_compile_error(|value| {
+        for level in 0..40 {
+            let next = format!("k{}", level + 1);
+            value["schemas"][format!("k{level}")] = serde_json::json!({ "x": next, "y": next });
+        }
+        value["schemas"]["k40"] = "text".into();
+    });
+    assert!(error.detail.contains("expands to more than"), "{error:?}");
+    assert_eq!(&*error.path, "schemas.k0");
+}
+
+#[test]
+fn a_long_alias_chain_is_rejected() {
+    let error = fan_out_compile_error(|value| {
+        for level in 0..5_000 {
+            value["schemas"][format!("k{level}")] = format!("list(k{})", level + 1).into();
+        }
+        value["schemas"]["k5000"] = "text".into();
+    });
+    assert!(error.detail.contains("nests deeper than"), "{error:?}");
+}
+
+#[test]
+fn a_long_chain_of_plain_aliases_is_rejected_in_any_order() {
+    // Sorted names measure each alias after the one it names, so every
+    // measurement but the first hits the cache.
+    let error = fan_out_compile_error(|value| {
+        value["schemas"]["k00000"] = "text".into();
+        for level in 1..=5_000 {
+            value["schemas"][format!("k{level:05}")] = format!("k{:05}", level - 1).into();
+        }
+    });
+    assert!(error.detail.contains("nests deeper than"), "{error:?}");
+}
+
+#[test]
+fn a_stage_outcome_that_doubles_through_outcome_of_is_rejected() {
+    // Each stage's outcome repeats its input twice, and each input is the
+    // previous stage's outcome: 2^40 types once resolved.
+    let error = fan_out_compile_error(|value| {
+        for level in 0..40 {
+            let input = if level == 0 {
+                Value::from("text")
+            } else {
+                Value::from(format!("k{}", level - 1))
+            };
+            value["schemas"][format!("k{level}")] = format!("outcome_of(c{level})").into();
+            value["stages"][format!("c{level}")] = serde_json::json!({
+                "input": { "v": input },
+                "artifacts": {},
+                "workers": {},
+                "outcome": { "x": "input.v", "y": "input.v" },
+            });
+        }
+    });
+    assert!(error.detail.contains("expands to more than"), "{error:?}");
+}
+
 /// A `work` input that reads `prepare`'s outcome inside a list function.
 const NESTED_OUTCOME_READ: &str = "filter(input.items, item.key != prepare.outcome.workspace.head)";
 

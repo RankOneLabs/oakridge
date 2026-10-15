@@ -61,3 +61,20 @@ test("an oversized in-process snapshot has a clear error", async () => {
     detail: { kind: "oversized_payload", detail: expect.stringContaining("snapshot is") } } });
   started.value.close();
 });
+
+test("a core that trapped is replaced, so later requests still run", async () => {
+  const started = CoreClient.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const client = started.value;
+  const compile = () => client.request("compile", { workflow, prompts: { "write.md": "write" } });
+  // Trap inside the core's state borrow, as a panic or stack overflow would:
+  // an input that runs past linear memory.
+  const { core } = client as unknown as { core: { memory: WebAssembly.Memory; core_process(pointer: number, length: number): number } };
+  expect(() => core.core_process(core.memory.buffer.byteLength, 64)).toThrow();
+  expect(await compile()).toMatchObject({ ok: false, error: { kind: "transport",
+    detail: { kind: "malformed_request", detail: expect.stringContaining("core invocation failed") } } });
+  expect(client.health.restart_count).toBe(1);
+  expect(await compile()).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  client.close();
+});

@@ -772,3 +772,61 @@ fn a_merge_observed_of_a_replaced_pr_does_not_complete_the_cohort() {
     run.observe("merged");
     assert!(matches!(run.status(COHORT), UnitStatus::Done { .. }));
 }
+
+#[test]
+fn an_accepted_assessment_of_a_replaced_build_does_not_complete_the_cohort() {
+    let mut run = Run::through_build(false);
+    run.start(COHORT, "assessor");
+    run.publish(
+        COHORT,
+        "assessor",
+        "assessment",
+        json!({ "verdict": "pass" }),
+    )
+    .unwrap();
+    run.end(COHORT, "assessor");
+    run.decide(
+        COHORT,
+        "assessment_review",
+        "accept",
+        "assessment",
+        json!({}),
+    )
+    .unwrap();
+    // The PR closes unmerged, and the builder replaces the build and its PR.
+    run.observe("closed_unmerged");
+    run.start(COHORT, "builder");
+    run.publish(COHORT, "builder", "build", json!({ "summary": "rebuilt" }))
+        .unwrap();
+    run.publish(
+        COHORT,
+        "builder",
+        "pr",
+        json!({ "pr_url": "https://forge/pr/2", "branch": "cohort-a" }),
+    )
+    .unwrap();
+    run.end(COHORT, "builder");
+    // The replaced build is owed a new assessment.
+    assert!(run.wants(COHORT, "assessor"));
+    // The replacement merges before anyone assesses it.
+    run.observe("merged");
+    assert!(matches!(run.status(COHORT), UnitStatus::Active));
+    run.start(COHORT, "assessor");
+    run.publish(
+        COHORT,
+        "assessor",
+        "assessment",
+        json!({ "verdict": "pass" }),
+    )
+    .unwrap();
+    run.end(COHORT, "assessor");
+    run.decide(
+        COHORT,
+        "assessment_review",
+        "accept",
+        "assessment",
+        json!({}),
+    )
+    .unwrap();
+    assert!(matches!(run.status(COHORT), UnitStatus::Done { .. }));
+}

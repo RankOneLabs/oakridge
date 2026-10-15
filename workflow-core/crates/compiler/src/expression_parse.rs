@@ -126,11 +126,18 @@ fn tokenize(source: &str, path: &str) -> Result<Vec<Token>, CompileError> {
     }
     Ok(tokens)
 }
+/// How deeply one expression may nest. Every recursion of the parser and every
+/// operator, call or field the infix loop wraps around its left side is one
+/// level, so this bounds both the parser's stack and the height of the tree it
+/// builds (a flat `a and b and …` chain nests on the left). Let expansion
+/// bounds the expanded tree on its own.
+const MAX_EXPRESSION_NESTING: usize = 64;
 struct Parser<'a> {
     tokens: Vec<Token>,
     cursor: usize,
     source: &'a str,
     path: &'a str,
+    depth: usize,
 }
 impl Parser<'_> {
     fn peek(&self) -> Option<&TokenKind> {
@@ -176,7 +183,23 @@ impl Parser<'_> {
             _ => Err(self.error("expected name")),
         }
     }
+    fn deepen(&mut self) -> Result<(), CompileError> {
+        if self.depth >= MAX_EXPRESSION_NESTING {
+            return Err(self.error(format!(
+                "expression nests deeper than {MAX_EXPRESSION_NESTING} levels"
+            )));
+        }
+        self.depth += 1;
+        Ok(())
+    }
     fn expression(&mut self, min_binding: u8) -> Result<StageExpr, CompileError> {
+        let entry = self.depth;
+        self.deepen()?;
+        let expression = self.nested_expression(min_binding);
+        self.depth = entry;
+        expression
+    }
+    fn nested_expression(&mut self, min_binding: u8) -> Result<StageExpr, CompileError> {
         let start = self
             .tokens
             .get(self.cursor)
@@ -224,10 +247,12 @@ impl Parser<'_> {
         };
         loop {
             if min_binding <= 7 && self.consume('(') {
+                self.deepen()?;
                 left = self.call(left.into_unspanned())?;
                 continue;
             }
             if min_binding <= 7 && self.consume('.') {
+                self.deepen()?;
                 let name = self.name()?;
                 left = match left.into_unspanned() {
                     StageExpr::Input(mut path) => {
@@ -306,6 +331,7 @@ impl Parser<'_> {
                 break;
             }
             self.take();
+            self.deepen()?;
             let right = self.expression(right_bp)?;
             left = match operator {
                 "or" => StageExpr::Or(Box::new(left), Box::new(right)),
@@ -476,6 +502,7 @@ pub(crate) fn parse_expression(text: &str, path: &str) -> Result<StageExpr, Comp
         cursor: 0,
         source: text,
         path,
+        depth: 0,
     };
     let expression = parser.expression(0)?;
     if parser.peek().is_some() {
@@ -490,6 +517,7 @@ pub(crate) fn parse_repository<'a>(text: &'a str, path: &str) -> Result<&'a str,
         cursor: 0,
         source: text,
         path,
+        depth: 0,
     };
     if parser.name()? != "repository" {
         return Err(parser.error("workspace must be repository(<expr>)"));

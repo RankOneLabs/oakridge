@@ -50,15 +50,30 @@ pub(super) fn eval_expression_inner(
         artifact: &SymbolKey,
         is_request_changes: bool,
     ) -> Value {
-        Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
-            state.decisions.iter().any(|decision| {
-                decision.unit() == &unit.id
-                    && decision.target() == &revision.id
-                    && decision.effect().is_some_and(|effect| {
-                        matches!(effect, DecisionEffect::RequestChanges { .. })
-                            == is_request_changes
+        // A review decides only while what it reviewed is still current: a
+        // decision on the review of a replaced revision no longer holds.
+        let is_current = |revision: &RevisionState| {
+            revision.subject.as_ref().is_none_or(|subject| {
+                state
+                    .revisions
+                    .iter()
+                    .find(|r| r.id == *subject)
+                    .is_some_and(|reviewed| {
+                        latest(state, &reviewed.unit, &reviewed.artifact)
+                            .is_some_and(|current| current.id == reviewed.id)
                     })
             })
+        };
+        Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
+            is_current(revision)
+                && state.decisions.iter().any(|decision| {
+                    decision.unit() == &unit.id
+                        && decision.target() == &revision.id
+                        && decision.effect().is_some_and(|effect| {
+                            matches!(effect, DecisionEffect::RequestChanges { .. })
+                                == is_request_changes
+                        })
+                })
         }))
     }
     macro_rules! resolved {

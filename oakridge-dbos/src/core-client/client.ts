@@ -15,7 +15,7 @@ export type CoreResult<T> = { readonly ok: true; readonly value: T }
 export type CoreStartupResult = { readonly ok: true; readonly value: CoreClient }
   | { readonly ok: false; readonly error: { readonly kind: "transport"; readonly detail: CoreTransportError } };
 export interface CoreClientOptions { readonly wasm_path?: string }
-export interface CoreChildHealth { readonly pid: null; readonly uptime_ms: number; readonly restart_count: 0; readonly last_stderr_lines: readonly string[] }
+export interface CoreChildHealth { readonly pid: null; readonly uptime_ms: number; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 interface CoreWasmExports {
   readonly memory: WebAssembly.Memory;
@@ -25,21 +25,26 @@ interface CoreWasmExports {
   core_response_len(): number;
 }
 
+function instantiate(module: WebAssembly.Module): CoreWasmExports {
+  return new WebAssembly.Instance(module, {}).exports as unknown as CoreWasmExports;
+}
+
 function transport(kind: CoreTransportError["kind"], detail: string): CoreResult<never> {
   return { ok: false, error: { kind: "transport", detail: { kind, detail } } };
 }
 
 /** One synchronous WebAssembly instance keeps the compiled-workflow cache in process. */
 export class CoreClient {
-  private readonly core: CoreWasmExports;
+  private readonly module: WebAssembly.Module;
+  private core: CoreWasmExports;
   private readonly startedAt = Date.now();
   private nextId = 0;
+  private restartCount = 0;
   private closed = false;
 
   private constructor(wasm_path: string) {
-    const bytes = new Uint8Array(readFileSync(wasm_path));
-    const module = new WebAssembly.Module(bytes);
-    this.core = new WebAssembly.Instance(module, {}).exports as unknown as CoreWasmExports;
+    this.module = new WebAssembly.Module(new Uint8Array(readFileSync(wasm_path)));
+    this.core = instantiate(this.module);
   }
 
   static start(options: CoreClientOptions = {}): CoreStartupResult {
@@ -48,7 +53,7 @@ export class CoreClient {
   }
 
   get health(): CoreChildHealth {
-    return { pid: null, uptime_ms: Date.now() - this.startedAt, restart_count: 0, last_stderr_lines: [] };
+    return { pid: null, uptime_ms: Date.now() - this.startedAt, restart_count: this.restartCount, last_stderr_lines: [] };
   }
 
   async request<O extends CoreRequest["operation"]>(operation: O, input: RequestInput<O>): Promise<CoreResult<Output>> {
@@ -64,24 +69,32 @@ export class CoreClient {
       encoded = new TextEncoder().encode(JSON.stringify({ version: CORE_PROTOCOL_VERSION,
         request_id: String(++this.nextId), operation, input }));
     } catch (cause) { return transport("malformed_request", String(cause)); }
+    let responseBytes: Uint8Array;
     try {
       const pointer = this.core.core_alloc(encoded.length);
-      try {
-        new Uint8Array(this.core.memory.buffer, pointer, encoded.length).set(encoded);
-        const responsePointer = this.core.core_process(pointer, encoded.length);
-        const responseBytes = new Uint8Array(this.core.memory.buffer, responsePointer, this.core.core_response_len()).slice();
-        const response = decodeCoreResponse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBytes)));
-        if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
-        switch (response.result.status) {
-          case "ok": return { ok: true, value: response.result.value };
-          case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
-          case "compile_errors": return { ok: false, error: { kind: "compile", detail: response.result.value } };
-          case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
-        }
-      } finally {
-        this.core.core_dealloc(pointer, encoded.length);
+      new Uint8Array(this.core.memory.buffer, pointer, encoded.length).set(encoded);
+      const responsePointer = this.core.core_process(pointer, encoded.length);
+      responseBytes = new Uint8Array(this.core.memory.buffer, responsePointer, this.core.core_response_len()).slice();
+      this.core.core_dealloc(pointer, encoded.length);
+    } catch (cause) {
+      // A trap leaves the instance unusable: its state stays mutably borrowed and
+      // its allocator may be mid-update, so every later call would trap too.
+      // Replace it. Its program cache goes with it; commit recompiles a pinned
+      // program the core has not cached.
+      this.core = instantiate(this.module);
+      this.restartCount += 1;
+      return transport("malformed_request", `core invocation failed: ${String(cause)}`);
+    }
+    try {
+      const response = decodeCoreResponse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBytes)));
+      if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
+      switch (response.result.status) {
+        case "ok": return { ok: true, value: response.result.value };
+        case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
+        case "compile_errors": return { ok: false, error: { kind: "compile", detail: response.result.value } };
+        case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
       }
-    } catch (cause) { return transport("malformed_request", `core invocation failed: ${String(cause)}`); }
+    } catch (cause) { return transport("malformed_request", `core response is not valid JSON: ${String(cause)}`); }
   }
 
   close(): void { this.closed = true; }
