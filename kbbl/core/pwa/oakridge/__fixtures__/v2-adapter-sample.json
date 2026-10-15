@@ -1,0 +1,51 @@
+{
+  "provenance": "synthetic contract sample; replace with capture-pwa-adapter-fixtures.ts after backend-contract and a live run are available",
+  "run": {
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "definition_bundle_id": "development-v2",
+    "definition_digest": "sha256:development",
+    "created_at": "2026-10-15T12:00:00.000Z",
+    "archived_at": null,
+    "status": { "kind": "active" },
+    "units": [
+      { "unit_id": "00000000-0000-4000-8000-000000000001", "unit_key": "$root", "label": "Development", "stage": null, "status": { "kind": "active" }, "is_terminal": false, "asks": [] },
+      { "unit_id": "00000000-0000-4000-8000-000000000002", "unit_key": "implementation/api", "label": "Build API", "stage": "cohort", "status": { "kind": "active" }, "is_terminal": false, "asks": ["request_build_changes", "confirm_merged"] },
+      { "unit_id": "00000000-0000-4000-8000-000000000003", "unit_key": "integration/api", "label": "Integrate API", "stage": "integration", "status": { "kind": "active" }, "is_terminal": false, "asks": ["confirm_merged"] }
+    ]
+  },
+  "units": [
+    {
+      "unit_id": "00000000-0000-4000-8000-000000000001", "run_id": "00000000-0000-4000-8000-000000000001",
+      "unit_key": "$root", "label": "Development", "stage": null, "collection_key": null,
+      "input": { "title": "Build API", "repositories": [{ "key": "api" }] }, "depends_on": [], "status": { "kind": "active" },
+      "outcome": null, "is_terminal": false, "attention": null, "decisions": [], "attempts": [], "artifacts": []
+    },
+    {
+      "unit_id": "00000000-0000-4000-8000-000000000002", "run_id": "00000000-0000-4000-8000-000000000001",
+      "unit_key": "implementation/api", "label": "Build API", "stage": "cohort", "collection_key": "api",
+      "input": { "brief": { "cohort_id": "api", "repository_key": "api" }, "repository": { "key": "api" } }, "depends_on": [],
+      "status": { "kind": "active" }, "outcome": null, "is_terminal": false, "attention": { "kind": "waiting", "reason": "review" },
+      "decisions": [
+        { "key": "request_build_changes", "label": "Request build changes", "payload_schema": "{feedback: text}", "fields": [{ "key": "feedback", "label": "What must change?" }], "submit": { "kind": "review", "review": "assessment_review", "decision": "request_build_changes", "effect": "request_changes", "target_revision_id": "revision-build" } },
+        { "key": "accept", "label": "Accept", "payload_schema": "{}", "fields": [], "submit": { "kind": "review", "review": "assessment_review", "decision": "accept", "effect": "approve", "target_revision_id": "revision-build" } },
+        { "key": "confirm_merged", "label": "Confirm merged", "payload_schema": "{}", "fields": [], "submit": { "kind": "review", "review": "merge_confirmation", "decision": "confirm_merged", "effect": "approve", "target_revision_id": "revision-pr" } }
+      ],
+      "attempts": [{ "id": "action-1:1", "unit_id": "00000000-0000-4000-8000-000000000002", "worker": "builder", "number": 1, "status": "succeeded", "failure": null, "mode": "initial", "cause": { "kind": "missing" }, "kbbl_session_id": "session-1", "created_at": "2026-10-15T12:05:00.000Z", "is_current": true }],
+      "artifacts": [
+        { "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "build_result", "schema": "build_body", "is_reviewable": true, "is_editable": true, "revision_count": 1, "latest_revision": { "id": "revision-build", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "build_result", "attempt_id": "action-1:1", "body": { "summary": "API built" }, "predecessor_id": null, "subject_id": null, "created_at": "2026-10-15T12:06:00.000Z", "number": 1 } },
+        { "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "pr", "schema": "pr_body", "is_reviewable": true, "is_editable": false, "revision_count": 1, "latest_revision": { "id": "revision-pr", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "pr", "attempt_id": "action-1:1", "body": { "pr_url": "https://example.test/pr/1" }, "predecessor_id": null, "subject_id": null, "created_at": "2026-10-15T12:07:00.000Z", "number": 1 } }
+      ]
+    },
+    {
+      "unit_id": "00000000-0000-4000-8000-000000000003", "run_id": "00000000-0000-4000-8000-000000000001",
+      "unit_key": "integration/api", "label": "Integrate API", "stage": "integration", "collection_key": "api",
+      "input": { "repository": { "key": "api" } }, "depends_on": ["00000000-0000-4000-8000-000000000002"], "status": { "kind": "active" },
+      "outcome": null, "is_terminal": false, "attention": { "kind": "waiting", "reason": "review" },
+      "decisions": [{ "key": "confirm_merged", "label": "Confirm merged", "payload_schema": "{}", "fields": [], "submit": { "kind": "review", "review": "merge_confirmation", "decision": "confirm_merged", "effect": "approve", "target_revision_id": "revision-integration-pr" } }],
+      "attempts": [], "artifacts": [{ "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000003", "artifact_key": "pr", "schema": "pr_body", "is_reviewable": true, "is_editable": false, "revision_count": 1, "latest_revision": { "id": "revision-integration-pr", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000003", "artifact_key": "pr", "attempt_id": null, "body": { "pr_url": "https://example.test/pr/2" }, "predecessor_id": null, "subject_id": null, "created_at": "2026-10-15T12:08:00.000Z", "number": 1 } }]
+    }
+  ],
+  "inbox": { "run_id": "00000000-0000-4000-8000-000000000001", "items": [{ "kind": "decision", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "key": "request_build_changes", "label": "Request build changes", "submit": { "kind": "review", "review": "assessment_review", "decision": "request_build_changes", "effect": "request_changes", "target_revision_id": "revision-build" }, "prompt": "Review the build" }] },
+  "artifact": { "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "build_result", "schema": "build_body", "is_reviewable": true, "is_editable": true, "status": "draft", "revisions": [{ "id": "revision-build", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "artifact_key": "build_result", "attempt_id": "action-1:1", "body": { "summary": "API built" }, "predecessor_id": null, "subject_id": null, "created_at": "2026-10-15T12:06:00.000Z", "number": 1 }], "decisions": [] },
+  "event": { "event_id": "event-1", "run_id": "00000000-0000-4000-8000-000000000001", "unit_id": "00000000-0000-4000-8000-000000000002", "unit_key": "implementation/api", "kind": "revision_published", "awaiting": { "review": "assessment_review", "label": "Review build" }, "is_terminal": false, "run_status": "active", "occurred_at": "2026-10-15T12:06:00.000Z" }
+}
