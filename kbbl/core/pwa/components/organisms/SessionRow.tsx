@@ -157,7 +157,7 @@ export function SessionRow({
           <span className="session-row-remove-error__message">{removeError}</span>
           {/* Only a hold is overridable, and only once the operator has read
               why — which is exactly the authority the server grants ?force=1. */}
-          {refusal?.kind === "held_by_attempt" && (
+          {refusal?.kind === "held_by_execution" && (
             <Button
               type="button"
               variant="danger-strong"

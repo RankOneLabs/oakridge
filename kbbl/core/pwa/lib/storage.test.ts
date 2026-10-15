@@ -13,6 +13,7 @@ const claudeRuntime: RuntimeDescriptor = {
   label: "Claude Code",
   models: [...RUNTIME_MODELS["claude-code"]],
   efforts: [...RUNTIME_EFFORTS["claude-code"]],
+  supportsCompaction: true,
 };
 
 const codexRuntime: RuntimeDescriptor = {
@@ -20,6 +21,7 @@ const codexRuntime: RuntimeDescriptor = {
   label: "Codex",
   models: [...RUNTIME_MODELS.codex],
   efforts: [...RUNTIME_EFFORTS.codex],
+  supportsCompaction: false,
 };
 
 class MemoryStorage {

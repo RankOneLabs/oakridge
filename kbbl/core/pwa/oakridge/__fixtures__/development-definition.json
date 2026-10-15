@@ -1,0 +1,1251 @@
+{
+  "key": "development",
+  "root": "$root",
+  "schemas": [
+    {
+      "key": "final_merge_policy",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "require_merge",
+          "allow_close_without_merge"
+        ]
+      }
+    },
+    {
+      "key": "repository",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "forge",
+            "schema": "forge"
+          },
+          {
+            "key": "key",
+            "schema": "ident"
+          },
+          {
+            "key": "preparation",
+            "schema": "{expected_head: optional(text), repository_path: repo_path}"
+          }
+        ]
+      }
+    },
+    {
+      "key": "ident",
+      "shape": {
+        "kind": "string",
+        "min_length": 1,
+        "max_length": 100
+      }
+    },
+    {
+      "key": "{expected_head: optional(text), repository_path: repo_path}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "expected_head",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "repository_path",
+            "schema": "repo_path"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(text)",
+      "shape": {
+        "kind": "optional",
+        "item": "text"
+      }
+    },
+    {
+      "key": "text",
+      "shape": {
+        "kind": "string",
+        "min_length": 0,
+        "max_length": 9007199254740991
+      }
+    },
+    {
+      "key": "repo_path",
+      "shape": {
+        "kind": "string",
+        "min_length": 0,
+        "max_length": 9007199254740991
+      }
+    },
+    {
+      "key": "forge",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "build_base",
+            "schema": "text"
+          },
+          {
+            "key": "final_base",
+            "schema": "text"
+          },
+          {
+            "key": "name",
+            "schema": "ident"
+          },
+          {
+            "key": "owner",
+            "schema": "ident"
+          }
+        ]
+      }
+    },
+    {
+      "key": "workspace",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "head",
+            "schema": "ident"
+          },
+          {
+            "key": "push_remote_owner",
+            "schema": "ident"
+          },
+          {
+            "key": "repository_path",
+            "schema": "repo_path"
+          }
+        ]
+      }
+    },
+    {
+      "key": "prepared",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "key",
+            "schema": "ident"
+          },
+          {
+            "key": "workspace",
+            "schema": "workspace"
+          }
+        ]
+      }
+    },
+    {
+      "key": "pr_status",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "head_sha",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "merged_at",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "number",
+            "schema": "integer"
+          },
+          {
+            "key": "state",
+            "schema": "enum(open, merged, closed_unmerged)"
+          },
+          {
+            "key": "url",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "integer",
+      "shape": {
+        "kind": "integer",
+        "min": -9007199254740991,
+        "max": 9007199254740991
+      }
+    },
+    {
+      "key": "enum(open, merged, closed_unmerged)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "open",
+          "merged",
+          "closed_unmerged"
+        ]
+      }
+    },
+    {
+      "key": "completed_cohort",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "branch",
+            "schema": "text"
+          },
+          {
+            "key": "build_result",
+            "schema": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}"
+          },
+          {
+            "key": "cohort_id",
+            "schema": "ident"
+          },
+          {
+            "key": "pr_url",
+            "schema": "text"
+          },
+          {
+            "key": "repository_key",
+            "schema": "ident"
+          },
+          {
+            "key": "title",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{changed_files: list(text), delegated_session_metadata: optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}), known_issues: list({description: text, severity: enum(blocking, warning, info)}), repository_key: optional(ident), summary: text, tests: {cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "changed_files",
+            "schema": "list(text)"
+          },
+          {
+            "key": "delegated_session_metadata",
+            "schema": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})"
+          },
+          {
+            "key": "known_issues",
+            "schema": "list({description: text, severity: enum(blocking, warning, info)})"
+          },
+          {
+            "key": "repository_key",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          },
+          {
+            "key": "tests",
+            "schema": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(text)",
+      "shape": {
+        "kind": "list",
+        "item": "text",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "optional({branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)})",
+      "shape": {
+        "kind": "optional",
+        "item": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}"
+      }
+    },
+    {
+      "key": "{branch: optional(ident), cohort_id: optional(ident), session_id: optional(ident)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "branch",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "cohort_id",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "session_id",
+            "schema": "optional(ident)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(ident)",
+      "shape": {
+        "kind": "optional",
+        "item": "ident"
+      }
+    },
+    {
+      "key": "list({description: text, severity: enum(blocking, warning, info)})",
+      "shape": {
+        "kind": "list",
+        "item": "{description: text, severity: enum(blocking, warning, info)}",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "{description: text, severity: enum(blocking, warning, info)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "severity",
+            "schema": "enum(blocking, warning, info)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "enum(blocking, warning, info)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "blocking",
+          "warning",
+          "info"
+        ]
+      }
+    },
+    {
+      "key": "{cargo_test_output: optional(text), failed: integer, output: optional(text), passed: integer, summary: optional(text)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "cargo_test_output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "failed",
+            "schema": "integer"
+          },
+          {
+            "key": "output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "passed",
+            "schema": "integer"
+          },
+          {
+            "key": "summary",
+            "schema": "optional(text)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "severity",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "blocking",
+          "warning",
+          "info"
+        ]
+      }
+    },
+    {
+      "key": "risk",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "mitigation",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "issue",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "severity",
+            "schema": "severity"
+          }
+        ]
+      }
+    },
+    {
+      "key": "analysis_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "findings",
+            "schema": "list(spec_finding)"
+          },
+          {
+            "key": "requirements",
+            "schema": "list(requirement)"
+          },
+          {
+            "key": "risks",
+            "schema": "list(risk)"
+          },
+          {
+            "key": "source_spec_refs",
+            "schema": "list(text)"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(spec_finding)",
+      "shape": {
+        "kind": "list",
+        "item": "spec_finding",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "list(requirement)",
+      "shape": {
+        "kind": "list",
+        "item": "requirement",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "list(risk)",
+      "shape": {
+        "kind": "list",
+        "item": "risk",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "spec_finding",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "id",
+            "schema": "ident"
+          },
+          {
+            "key": "severity",
+            "schema": "severity"
+          }
+        ]
+      }
+    },
+    {
+      "key": "requirement",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "description",
+            "schema": "text"
+          },
+          {
+            "key": "id",
+            "schema": "ident"
+          },
+          {
+            "key": "status",
+            "schema": "requirement_status"
+          }
+        ]
+      }
+    },
+    {
+      "key": "requirement_status",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "implementable",
+          "blocked",
+          "ambiguous"
+        ]
+      }
+    },
+    {
+      "key": "plan_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "acceptance_criteria",
+            "schema": "list(text)"
+          },
+          {
+            "key": "cohorts",
+            "schema": "list(plan_cohort)"
+          },
+          {
+            "key": "dependency_order",
+            "schema": "list(ident)"
+          },
+          {
+            "key": "risks",
+            "schema": "list(risk)"
+          },
+          {
+            "key": "scope",
+            "schema": "{in_scope: list(text), out_of_scope: list(text)}"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(plan_cohort)",
+      "shape": {
+        "kind": "list",
+        "item": "plan_cohort",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "list(ident)",
+      "shape": {
+        "kind": "list",
+        "item": "ident",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "{in_scope: list(text), out_of_scope: list(text)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "in_scope",
+            "schema": "list(text)"
+          },
+          {
+            "key": "out_of_scope",
+            "schema": "list(text)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "plan_cohort",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "acceptance_criteria",
+            "schema": "list(text)"
+          },
+          {
+            "key": "decisions",
+            "schema": "list(text)"
+          },
+          {
+            "key": "depends_on",
+            "schema": "list(ident)"
+          },
+          {
+            "key": "description",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "files_in_scope",
+            "schema": "list(text)"
+          },
+          {
+            "key": "id",
+            "schema": "ident"
+          },
+          {
+            "key": "repository_key",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "scope",
+            "schema": "text"
+          },
+          {
+            "key": "title",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "brief_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "acceptance_criteria",
+            "schema": "list(text)"
+          },
+          {
+            "key": "approaches_rejected",
+            "schema": "list(rejected_approach)"
+          },
+          {
+            "key": "cohort_id",
+            "schema": "ident"
+          },
+          {
+            "key": "decisions_made",
+            "schema": "list(brief_decision)"
+          },
+          {
+            "key": "depends_on",
+            "schema": "list(ident)"
+          },
+          {
+            "key": "files_in_scope",
+            "schema": "list(text)"
+          },
+          {
+            "key": "goal",
+            "schema": "text"
+          },
+          {
+            "key": "next_action",
+            "schema": "text"
+          },
+          {
+            "key": "repository_key",
+            "schema": "ident"
+          },
+          {
+            "key": "title",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(rejected_approach)",
+      "shape": {
+        "kind": "list",
+        "item": "rejected_approach",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "list(brief_decision)",
+      "shape": {
+        "kind": "list",
+        "item": "brief_decision",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "brief_decision",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "decision",
+            "schema": "text"
+          },
+          {
+            "key": "rationale",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "rejected_approach",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "approach",
+            "schema": "text"
+          },
+          {
+            "key": "reason",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "build_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "changed_files",
+            "schema": "list(text)"
+          },
+          {
+            "key": "delegated_session_metadata",
+            "schema": "optional(build_metadata)"
+          },
+          {
+            "key": "known_issues",
+            "schema": "list(issue)"
+          },
+          {
+            "key": "repository_key",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          },
+          {
+            "key": "tests",
+            "schema": "test_evidence"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(build_metadata)",
+      "shape": {
+        "kind": "optional",
+        "item": "build_metadata"
+      }
+    },
+    {
+      "key": "list(issue)",
+      "shape": {
+        "kind": "list",
+        "item": "issue",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "test_evidence",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "cargo_test_output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "failed",
+            "schema": "integer"
+          },
+          {
+            "key": "output",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "passed",
+            "schema": "integer"
+          },
+          {
+            "key": "summary",
+            "schema": "optional(text)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "build_metadata",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "branch",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "cohort_id",
+            "schema": "optional(ident)"
+          },
+          {
+            "key": "session_id",
+            "schema": "optional(ident)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "assessment_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "findings",
+            "schema": "list(assessment_finding)"
+          },
+          {
+            "key": "recommended_next_actions",
+            "schema": "list(text)"
+          },
+          {
+            "key": "test_evidence",
+            "schema": "optional(test_evidence)"
+          },
+          {
+            "key": "verdict",
+            "schema": "enum(pass, pass_with_notes, fail)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(assessment_finding)",
+      "shape": {
+        "kind": "list",
+        "item": "assessment_finding",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "optional(test_evidence)",
+      "shape": {
+        "kind": "optional",
+        "item": "test_evidence"
+      }
+    },
+    {
+      "key": "enum(pass, pass_with_notes, fail)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "pass",
+          "pass_with_notes",
+          "fail"
+        ]
+      }
+    },
+    {
+      "key": "assessment_finding",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "criterion",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "description",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "evidence",
+            "schema": "optional(text)"
+          },
+          {
+            "key": "status",
+            "schema": "optional(enum(met, not_met, partial))"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(enum(met, not_met, partial))",
+      "shape": {
+        "kind": "optional",
+        "item": "enum(met, not_met, partial)"
+      }
+    },
+    {
+      "key": "enum(met, not_met, partial)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "met",
+          "not_met",
+          "partial"
+        ]
+      }
+    },
+    {
+      "key": "pr_body",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "branch",
+            "schema": "text"
+          },
+          {
+            "key": "pr_url",
+            "schema": "text"
+          },
+          {
+            "key": "review_status",
+            "schema": "optional(enum(draft, ready, changes_requested, approved, merged, closed))"
+          },
+          {
+            "key": "summary",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "optional(enum(draft, ready, changes_requested, approved, merged, closed))",
+      "shape": {
+        "kind": "optional",
+        "item": "enum(draft, ready, changes_requested, approved, merged, closed)"
+      }
+    },
+    {
+      "key": "enum(draft, ready, changes_requested, approved, merged, closed)",
+      "shape": {
+        "kind": "enum",
+        "variants": [
+          "draft",
+          "ready",
+          "changes_requested",
+          "approved",
+          "merged",
+          "closed"
+        ]
+      }
+    },
+    {
+      "key": "{admission: boolean, final_merge_policy: final_merge_policy, repositories: list(repository), spec: text, title: text}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "admission",
+            "schema": "boolean"
+          },
+          {
+            "key": "final_merge_policy",
+            "schema": "final_merge_policy"
+          },
+          {
+            "key": "repositories",
+            "schema": "list(repository)"
+          },
+          {
+            "key": "spec",
+            "schema": "text"
+          },
+          {
+            "key": "title",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "boolean",
+      "shape": {
+        "kind": "boolean"
+      }
+    },
+    {
+      "key": "list(repository)",
+      "shape": {
+        "kind": "list",
+        "item": "repository",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "{}",
+      "shape": {
+        "kind": "record",
+        "fields": []
+      }
+    },
+    {
+      "key": "{repository: repository}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "repository",
+            "schema": "repository"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{repositories: list(repository), spec: text, workspaces: list(prepared)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "repositories",
+            "schema": "list(repository)"
+          },
+          {
+            "key": "spec",
+            "schema": "text"
+          },
+          {
+            "key": "workspaces",
+            "schema": "list(prepared)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(prepared)",
+      "shape": {
+        "kind": "list",
+        "item": "prepared",
+        "max_items": 9007199254740991
+      }
+    },
+    {
+      "key": "{feedback: text}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "feedback",
+            "schema": "text"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{analysis: analysis_body, repositories: list(repository), spec: text, workspaces: list(prepared)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "analysis",
+            "schema": "analysis_body"
+          },
+          {
+            "key": "repositories",
+            "schema": "list(repository)"
+          },
+          {
+            "key": "spec",
+            "schema": "text"
+          },
+          {
+            "key": "workspaces",
+            "schema": "list(prepared)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{analysis: analysis_body, cohort: plan_cohort, plan: plan_body, spec: text, workspaces: list(prepared)}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "analysis",
+            "schema": "analysis_body"
+          },
+          {
+            "key": "cohort",
+            "schema": "plan_cohort"
+          },
+          {
+            "key": "plan",
+            "schema": "plan_body"
+          },
+          {
+            "key": "spec",
+            "schema": "text"
+          },
+          {
+            "key": "workspaces",
+            "schema": "list(prepared)"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{admission: boolean, brief: brief_body, repository: repository, workspace: workspace}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "admission",
+            "schema": "boolean"
+          },
+          {
+            "key": "brief",
+            "schema": "brief_body"
+          },
+          {
+            "key": "repository",
+            "schema": "repository"
+          },
+          {
+            "key": "workspace",
+            "schema": "workspace"
+          }
+        ]
+      }
+    },
+    {
+      "key": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
+      "shape": {
+        "kind": "record",
+        "fields": [
+          {
+            "key": "cohorts",
+            "schema": "list(completed_cohort)"
+          },
+          {
+            "key": "final_merge_policy",
+            "schema": "final_merge_policy"
+          },
+          {
+            "key": "repository",
+            "schema": "repository"
+          },
+          {
+            "key": "workspace",
+            "schema": "workspace"
+          }
+        ]
+      }
+    },
+    {
+      "key": "list(completed_cohort)",
+      "shape": {
+        "kind": "list",
+        "item": "completed_cohort",
+        "max_items": 9007199254740991
+      }
+    }
+  ],
+  "units": [
+    {
+      "key": "$root",
+      "stage": null,
+      "label": "Development",
+      "input_schema": "{admission: boolean, final_merge_policy: final_merge_policy, repositories: list(repository), spec: text, title: text}",
+      "artifacts": []
+    },
+    {
+      "key": "prepare",
+      "stage": "prepare",
+      "label": "Prepare",
+      "input_schema": "{repository: repository}",
+      "artifacts": [
+        {
+          "key": "workspace",
+          "schema": "workspace"
+        }
+      ]
+    },
+    {
+      "key": "analysis",
+      "stage": "analysis",
+      "label": "Analysis",
+      "input_schema": "{repositories: list(repository), spec: text, workspaces: list(prepared)}",
+      "artifacts": [
+        {
+          "key": "analysis",
+          "schema": "analysis_body"
+        }
+      ]
+    },
+    {
+      "key": "planning",
+      "stage": "planning",
+      "label": "Planning",
+      "input_schema": "{analysis: analysis_body, repositories: list(repository), spec: text, workspaces: list(prepared)}",
+      "artifacts": [
+        {
+          "key": "plan",
+          "schema": "plan_body"
+        }
+      ]
+    },
+    {
+      "key": "briefs",
+      "stage": "brief",
+      "label": "Briefs",
+      "input_schema": "{analysis: analysis_body, cohort: plan_cohort, plan: plan_body, spec: text, workspaces: list(prepared)}",
+      "artifacts": [
+        {
+          "key": "brief",
+          "schema": "brief_body"
+        }
+      ]
+    },
+    {
+      "key": "implementation",
+      "stage": "cohort",
+      "label": "Implementation",
+      "input_schema": "{admission: boolean, brief: brief_body, repository: repository, workspace: workspace}",
+      "artifacts": [
+        {
+          "key": "assessment",
+          "schema": "assessment_body"
+        },
+        {
+          "key": "brief",
+          "schema": "brief_body"
+        },
+        {
+          "key": "build_result",
+          "schema": "build_body"
+        },
+        {
+          "key": "pr",
+          "schema": "pr_body"
+        },
+        {
+          "key": "pr_state",
+          "schema": "pr_status"
+        }
+      ]
+    },
+    {
+      "key": "integration",
+      "stage": "integration",
+      "label": "Integration",
+      "input_schema": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
+      "artifacts": [
+        {
+          "key": "pr",
+          "schema": "pr_body"
+        },
+        {
+          "key": "pr_state",
+          "schema": "pr_status"
+        }
+      ]
+    }
+  ]
+}

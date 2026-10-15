@@ -1,3 +1,8 @@
+// `RoutePaneTarget` is defined once in the workspace model
+// (`oakridge/lib/run-workspace.ts`) so a parsed route and a workspace pane are
+// the same type rather than two kept in step by hand. This module already owns
+// the oakridge sub-route namespace, so the reference is not a new coupling.
+import type { RoutePaneTarget } from "../oakridge/lib/run-workspace";
 import type { ArtifactId, Sid } from "./ids";
 
 export function readHashSid(): string | null {
@@ -54,21 +59,15 @@ export function readHashSessionTarget(): SessionHashTarget | null {
   return params.get("focus") === "pending-permission" ? "pending-permission" : null;
 }
 
-/**
- * The run-workspace panes that name a domain entity, and so the only ones a URL
- * can carry: `#oakridge/run/:id/session/:sid` and `#oakridge/run/:id/artifact/:artifactId`.
- */
-export type RoutePaneTarget =
-  | { kind: "session"; session_id: Sid }
-  | { kind: "artifact"; artifact_id: ArtifactId };
-
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "review-inbox" }
-  /** A run can address its workspace pane, or a unit needing attention. */
-  | { sub: "run"; id: string; pane?: RoutePaneTarget | null; unit_id?: string | null }
+  /** `#oakridge/run/:id`, optionally naming the pane to open in `#oakridge/run/:id/session/:sid` form. */
+  | { sub: "run"; id: string; pane: RoutePaneTarget | null }
+  | { sub: "artifact"; id: string }
+  /** `#oakridge/session/:sid` — resolved to its run and replaced with the run-scoped form. */
+  | { sub: "session"; session_id: Sid }
   | { sub: "new-run" }
-  | { sub: "projects" }
   | { sub: "create-project" }
   | { sub: "defs" }
   | { sub: "def"; id: string }
@@ -88,8 +87,8 @@ function tryDecode(s: string): string {
 }
 
 /**
- * `#oakridge/run/:id`, with the optional `/unit/:unit_id` suffix that names
- * the unit to open; any other suffix opens the run at its root unit.
+ * `#oakridge/run/:id`, with the optional `/session/:sid` or `/artifact/:id`
+ * suffix that names the pane to open.
  *
  * Segments are split while still percent-encoded: every id reaches the hash
  * through `encodeURIComponent`, so a literal `/` inside one is `%2F` here and
@@ -97,27 +96,42 @@ function tryDecode(s: string): string {
  */
 function parseRunRoute(rest: string): OakridgeSubRoute | null {
   const segments = rest.slice("/run/".length).split("/");
-  const [rawId, suffix, rawTargetId] = segments;
+  const [rawId, paneKind, rawPaneId] = segments;
   if (!rawId) return null;
   const id = tryDecode(rawId);
-  const target = segments.length === 3 && rawTargetId ? tryDecode(rawTargetId) : null;
-  const unit_id = suffix === "unit" ? target : null;
-  const pane: RoutePaneTarget | null = suffix === "session" && target ? { kind: "session", session_id: target as Sid }
-    : suffix === "artifact" && target ? { kind: "artifact", artifact_id: target as ArtifactId } : null;
-  return { sub: "run", id, pane, unit_id };
+  if (segments.length === 3 && rawPaneId) {
+    if (paneKind === "session") {
+      return { sub: "run", id, pane: { kind: "session", session_id: tryDecode(rawPaneId) as Sid } };
+    }
+    if (paneKind === "artifact") {
+      return { sub: "run", id, pane: { kind: "artifact", artifact_id: tryDecode(rawPaneId) as ArtifactId } };
+    }
+  }
+  return { sub: "run", id, pane: null };
 }
 
 /**
- * The canonical URL for a run, optionally opened at one unit. The one place
- * these hashes are built, so the parser above and every navigation that
+ * The canonical in-workspace URL for a run, with or without a pane. The one
+ * place these hashes are built, so the parser above and every navigation that
  * produces one cannot disagree about encoding.
  */
-export function formatRunWorkspaceHash(runId: string, target: RoutePaneTarget | string | null): string {
+export function formatRunWorkspaceHash(runId: string, pane: RoutePaneTarget | null): string {
   const base = `oakridge/run/${encodeURIComponent(runId)}`;
-  if (target === null) return base;
-  if (typeof target === "string") return `${base}/unit/${encodeURIComponent(target)}`;
-  return target.kind === "session" ? `${base}/session/${encodeURIComponent(target.session_id)}`
-    : `${base}/artifact/${encodeURIComponent(target.artifact_id)}`;
+  if (pane === null) return base;
+  if (pane.kind === "session") return `${base}/session/${encodeURIComponent(pane.session_id)}`;
+  return `${base}/artifact/${encodeURIComponent(pane.artifact_id)}`;
+}
+
+/**
+ * Swap the current hash for another without pushing a history entry, so Back
+ * skips the legacy URL that was redirected away from instead of bouncing the
+ * operator straight back into the redirect. `replaceState` doesn't fire
+ * `hashchange`, so sibling hash hooks are nudged manually — same reason as
+ * `writeHashSid`.
+ */
+export function replaceHashRoute(hash: string): void {
+  history.replaceState(null, "", `#${hash}`);
+  window.dispatchEvent(new Event("hashchange"));
 }
 
 export function readHashRoute(
@@ -135,16 +149,31 @@ export function readHashRoute(
       const route = parseRunRoute(rest);
       if (route) return { view: "oakridge", route };
     }
+    if (rest.startsWith("/session/")) {
+      const raw = rest.slice("/session/".length);
+      if (raw) {
+        return {
+          view: "oakridge",
+          route: { sub: "session", session_id: tryDecode(raw) as Sid },
+        };
+      }
+    }
+    if (rest.startsWith("/artifact/")) {
+      const raw = rest.slice("/artifact/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "artifact", id } };
+      }
+    }
     if (rest === "/new-run") {
       return { view: "oakridge", route: { sub: "new-run" } };
     }
     if (rest === "/review-inbox") {
       return { view: "oakridge", route: { sub: "review-inbox" } };
     }
-    if (rest === "/projects") {
-      return { view: "oakridge", route: { sub: "projects" } };
+    if (rest === "/create-project") {
+      return { view: "oakridge", route: { sub: "create-project" } };
     }
-    if (rest === "/create-project") return { view: "oakridge", route: { sub: "create-project" } };
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
     }

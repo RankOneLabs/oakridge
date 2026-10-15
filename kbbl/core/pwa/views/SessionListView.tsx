@@ -24,8 +24,8 @@ import { useUrlPrefill } from "../hooks/useUrlPrefill";
 import { useRun } from "../oakridge/hooks/useRun";
 import { useRuns } from "../oakridge/hooks/useRuns";
 import {
-  selectSessionRunLabel,
-  selectSessionUnitLabel,
+  selectSessionRunTitle,
+  selectSessionStageName,
 } from "../lib/session";
 
 interface StartSessionBody {
@@ -87,7 +87,7 @@ function SessionRunSection({
       </h2>
       {run.units.map((group) => (
         <section key={group.key} className="session-cohort-group">
-          <SessionUnitHeading title={selectSessionUnitLabel(group.unitId, runQuery.data) ?? group.unitId} />
+          <SessionUnitHeading title={selectSessionStageName(group.unitId, runQuery.data) ?? group.unitId} />
           <SessionRowList
             sessions={group.sessions}
             onSelect={onSelect}
@@ -139,7 +139,7 @@ export function SessionListView({
     ),
     [orderingTick, sessions],
   );
-  const runsQuery = useRuns(grouping.runs.length > 0);
+  const runsQuery = useRuns("all", grouping.runs.length > 0);
   const totalCount = sessions.size;
 
   const startMutation = useMutation({
@@ -251,7 +251,7 @@ export function SessionListView({
             <SessionRunSection
               key={run.runId}
               run={run}
-              title={selectSessionRunLabel(run.runId, runsQuery.data ?? [])}
+              title={selectSessionRunTitle(run.runId, runsQuery.data ?? [])}
               onSelect={onSelect}
               onResume={(sid) => void startSession(undefined, sid)}
               resumeDisabled={startMutation.isPending}

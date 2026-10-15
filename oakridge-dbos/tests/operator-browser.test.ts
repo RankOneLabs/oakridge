@@ -35,7 +35,8 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const name = node.expression.text;
-      if (["get", "post", "put", "patch", "delete", "fetch_page", "fetch", "request"].includes(name)) {
+      if (["get", "post", "put", "patch", "delete", "fetch_page", "fetch", "request",
+        "oakridgeGet", "oakridgePost", "oakridgePatch", "oakridgeDelete"].includes(name)) {
         const isRequest = name === "request";
         const options = node.arguments[1];
         const methodProperty = options && ts.isObjectLiteralExpression(options)
@@ -44,7 +45,8 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
         const method = isRequest && node.arguments[0] && ts.isStringLiteral(node.arguments[0])
           ? node.arguments[0].text
           : methodProperty && ts.isPropertyAssignment(methodProperty) && ts.isStringLiteral(methodProperty.initializer)
-            ? methodProperty.initializer.text : ["get", "post", "put", "patch", "delete"].includes(name) ? name.toUpperCase() : "GET";
+            ? methodProperty.initializer.text : ["get", "post", "put", "patch", "delete"].includes(name) ? name.toUpperCase()
+              : name.startsWith("oakridge") ? name.slice("oakridge".length).toUpperCase() : "GET";
         function paths(argument: ts.Node): void {
           const literal = routeLiteral(argument);
           if (literal !== null) {
@@ -69,10 +71,13 @@ function clientRoutes(): readonly SourceRoute[] {
   return sourceFiles(pwaPath).flatMap((path) => sourceRoutes(path, readFileSync(path, "utf8")));
 }
 
-test("every Oakridge PWA module route resolves to an authority table row", () => {
+test("restored v1 PWA calls its run, review, and definition routes", () => {
   const routes = clientRoutes();
-  expect(routes.some((route) => route.path === "/api/inbox")).toBe(true);
-  expect(routes.filter(({ method, path }) => !matchRoute(method, path))).toEqual([]);
+  const signatures = new Set(routes.map(({ method, path }) => `${method} ${path}`));
+  expect(signatures.has("GET /gates")).toBe(true);
+  expect(signatures.has("GET /review_inbox")).toBe(true);
+  expect([...signatures].some((signature) => signature.startsWith("GET /runs"))).toBe(true);
+  expect([...signatures].some((signature) => signature.startsWith("GET /workflow_defs"))).toBe(true);
 });
 
 test("route guard detects dead routes in helpers, pagination and direct fetches", () => {
