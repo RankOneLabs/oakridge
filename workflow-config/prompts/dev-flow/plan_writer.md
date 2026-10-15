@@ -25,6 +25,34 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
    - `risks` — risks that remain after planning, with mitigations.
 4. Emit the artifact and stop.
 
+## Cohort sizing and review
+
+A cohort is an implementation and PR review unit. Choose boundaries for both
+functional coherence and thorough review of the complete diff. Functional
+isolation alone is not a reason to create another cohort.
+
+- Start with one cohort for the change. Split further only when the expected
+  diff would be too large or cognitively broad to review thoroughly, or when a
+  concrete dependency, risk, or rollout boundary warrants a separate PR. Each
+  cohort must leave tests passing and typecheck clean.
+- Combine small, isolated changes into one cohort when a reviewer can understand
+  and fully review them together. They can remain separate tasks or commits
+  within that PR. Do not create a cohort per helper, file, requirement,
+  architectural layer, or test update merely because each could be implemented
+  independently.
+- Keep implementation, its tests, and the small documentation or wiring changes
+  needed to verify it together. For example, a helper, its caller adaptation,
+  tests, and two small related fixes can share one cohort; separate model, API,
+  and UI cohorts are unnecessary when their combined diff is readily reviewable.
+- Avoid a series of roughly 20-line PRs. Lines of code are a signal, not a quota:
+  neither pad tiny changes nor combine work into a diff too broad to review.
+  A tiny standalone cohort needs a concrete risk, dependency, or rollout reason
+  that outweighs the extra review and merge overhead.
+- Before emitting, consolidate cohorts whose combined diff remains readily
+  reviewable. For every remaining split, explain its review, dependency, risk,
+  or rollout rationale in the cohort's `description`. Remove dependencies that
+  existed only because small tasks were unnecessarily split.
+
 ## Emit the artifact
 
 Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body (the same key with a different body is refused as `idempotency_conflict`). Publication is final for this work order: an output slot takes one artifact, and a second PUT with a different body is refused — `slot_pending` while the first awaits review, `slot_already_released` once it is released. There is no withdraw, supersede, or correction call, so check the body before you PUT it. If you find after publishing that the artifact is wrong, do not PUT again: say exactly what is wrong, and where, in your final message so the reviewer can act on it. Do not emit speculative duplicates. Stop only after Oakridge confirms the typed result.

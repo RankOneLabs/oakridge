@@ -36,6 +36,36 @@ the plan. Do not reinterpret the ordinary fact that code must change to satisfy
 the brief as a discrepancy: that before-to-after difference is the work being
 planned.
 
+## Cohort sizing and review
+
+A cohort is an implementation and PR review unit. Choose boundaries for both
+functional coherence and thorough review of the complete diff. Functional
+isolation alone is not a reason to create another cohort.
+
+- Start with one cohort per repository involved in the change. Split further
+  only when the expected diff would be too large or cognitively broad to review
+  thoroughly, or when a concrete dependency, risk, or rollout boundary warrants
+  a separate PR. Each cohort must leave tests passing and typecheck clean.
+- Combine small, isolated changes in the same repository into one cohort when
+  a reviewer can understand and fully review them together. They can remain
+  separate tasks or commits within that PR. Do not create a cohort per helper,
+  file, requirement, architectural layer, or test update merely because each
+  could be implemented independently.
+- Keep implementation, its tests, and the small documentation or wiring changes
+  needed to verify it together. For example, a helper, its caller adaptation,
+  tests, and two small related fixes can share one cohort; separate model, API,
+  and UI cohorts are unnecessary when their combined diff is readily reviewable.
+- Avoid a series of roughly 20-line PRs. Lines of code are a signal, not a quota:
+  neither pad tiny changes nor combine work into a diff too broad to review.
+  A tiny standalone cohort needs a concrete repository, risk, dependency, or
+  rollout reason that outweighs the extra review and merge overhead.
+- Before emitting, consolidate cohorts whose combined diff remains readily
+  reviewable. For every remaining split within a repository, explain its review,
+  dependency, risk, or rollout rationale in the cohort's `description`. Remove
+  dependencies that existed only because small tasks were unnecessarily split.
+
+## Output
+
 Emit the standard `dev.plan` shape. Every cohort must include:
 
 ```json
