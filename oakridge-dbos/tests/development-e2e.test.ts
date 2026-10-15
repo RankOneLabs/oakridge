@@ -25,6 +25,10 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const root = resolve(import.meta.dir, "../..");
 const BODY_SCHEMAS = { analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
+interface DevelopmentRunOutcome {
+  readonly cohorts: readonly { readonly cohort_id: string }[];
+  readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[];
+}
 const VIEWER_COMPONENTS = {
   "dev-spec-analysis-viewer": "SpecAnalysisViewer",
   "dev-plan-viewer": "PlanViewer",
@@ -260,8 +264,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const statesOf = (unit: string): readonly string[] => pr_states.filter((revision) => revision.unit_id === unit)
     .map((revision) => JSON.stringify(revision.body));
   const isChangesOnly = (states: readonly string[]): boolean => states.length > 0 && states.every((state, index) => index === 0 || state !== states[index - 1]);
-  const outcome = (run as { readonly outcome: { readonly cohorts: readonly { readonly cohort_id: string }[];
-    readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[] } }).outcome;
+  const outcome = (run as { readonly outcome: DevelopmentRunOutcome }).outcome;
   const listed = (await (await api("GET", "/api/runs")).json() as { readonly items: readonly { readonly run_id: string; readonly title: string | null;
     readonly repository_keys: readonly string[]; readonly created_at: string; readonly updated_at: string }[] }).items.find((item) => item.run_id === run_id);
   expect({
@@ -313,7 +316,7 @@ test("confirmation completes both PR stages after observation, while accept alon
     { readonly decisions: readonly { readonly key: string }[] };
   const unseen = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
     .where("unit_id", "=", integration.id).where("artifact", "=", "pr_state").executeTakeFirst();
-  expect({ observed: !!unseen, confirmation: before.decisions.some((decision) => decision.key === "merge_confirmation.confirm_merged") })
+  expect({ observed: !!unseen, confirmation: before.decisions.some((decision) => decision.key === "confirm_merged") })
     .toEqual({ observed: false, confirmation: false });
 
   forge.withhold_integration_observation = false;
@@ -338,11 +341,12 @@ test("confirmation completes both PR stages after observation, while accept alon
   const before_confirm = await db.selectFrom("authority.unit").select("status").where("id", "=", integration.id).executeTakeFirstOrThrow();
   expect(before_confirm.status.kind).toBe("active");
 
-  await eventually("the confirmed run to finish", async () => {
+  const completed = await eventually("the confirmed run to finish", async () => {
     await operate(run_id, decided, admitted, "all");
     const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
-    return root.status.kind === "done" ? true : null;
+    return root.status.kind === "done" ? root.status : null;
   }, 120_000);
+  const outcome = (completed as { readonly outcome: DevelopmentRunOutcome }).outcome;
   const confirmations = await db.selectFrom("authority.review_decision").select(["unit_id", "target_revision_id"])
     .where("run_id", "=", run_id).where("review", "=", "merge_confirmation").execute();
   const units = await db.selectFrom("authority.unit").select(["id", "stage", "status", "review_prompts"])
@@ -351,8 +355,10 @@ test("confirmation completes both PR stages after observation, while accept alon
   const integration_state = units.find((unit) => unit.id === integration.id);
   expect({ confirmations: confirmations.length, cohort_done: cohorts.every((unit) => unit.status.kind === "done"),
     integration_done: integration_state?.status.kind, confirmation_offered: units.some((unit) => "merge_confirmation" in unit.review_prompts),
-    integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":pr_state:") })
-    .toEqual({ confirmations: 4, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true });
+    integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":pr_state:"),
+    integrations: outcome.integrations })
+    .toEqual({ confirmations: 4, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
+      integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }] });
 }, 150_000);
 
 test("a closed unmerged integration PR asks for replacement, not merge confirmation", async () => {

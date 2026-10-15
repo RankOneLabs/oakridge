@@ -729,7 +729,7 @@
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",
-        "is_merged": "latest(pr_state).state == \"merged\""
+        "is_merged": "latest(pr_state).state == \"merged\" or approved(pr_state)"
       }
     }
   }
