@@ -7,9 +7,10 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 
 ## Frozen v1 operator UI on v2 (v1-data-layer)
 
-- **Browser coverage now seeds the v2 contract, but is narrow.** The two
-  browser cases exercise launch/read-back and run-workspace loading against
-  the captured v2 run fixture. They pass with `cd kbbl && bun run test:browser`.
+- **Browser coverage now seeds the v2 contract, but is narrow.** The three
+  browser cases exercise launch/read-back, run-workspace loading, and responsive
+  pane layout against the captured v2 run fixture. They pass with
+  `cd kbbl && bun run test:browser`.
   They do not yet automate every control in the frozen UI. The isolated shadow
   install rendered the run list and detail; live button checks verified Cancel
   and Archive on a disposable run and intercepted review decision submissions
@@ -34,8 +35,14 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 - **The default install at `127.0.0.1:8790` still lacks v2 `/api/runs`.** The
   isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders a
-  seeded run list and detail in a browser check; the operator confirmed the
-  visual checkpoint. Functional validation remains separate. The default
+  seeded run list and detail, but the seed `run-9e88f4b61c072a35` is not a
+  valid full-workflow checkpoint: it has no projects or repositories, its brief
+  is one sentence, and it is awaiting `analysis_review` after an analysis that
+  says the subject system is missing. Planning is materialized but pending;
+  later stages have not materialized. A browser-intercepted click on the v1
+  Approve button generated the correct v2 review request without committing it.
+  Replace this seed with a real repository and a testable specification before
+  asking the operator to assess progression or button behavior. The default
   install needs its database cutover before this PWA branch can run against it.
 - **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
   A composite v2 ID resolves on a cold load, and the client can find a bare v2
