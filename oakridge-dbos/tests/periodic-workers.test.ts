@@ -246,8 +246,10 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
 test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
   const live = await openAuthority();
   const { digest } = await pinWorkflow(live, PR_WATCH);
+  let release_operation = (): void => undefined;
+  const operation_released = new Promise<void>((resolve) => { release_operation = resolve; });
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
-    operation_runner: { async run() { return { kind: "failed", code: "pull_request_mismatch", detail: "terminal" }; } },
+    operation_runner: { async run() { await operation_released; return { kind: "failed", code: "pull_request_mismatch", detail: "terminal" }; } },
     timing: { wake_timeout_seconds: 20 } });
   const real_start = DBOS.startWorkflow.bind(DBOS);
   let release_dispatch = (): void => undefined;
@@ -283,5 +285,5 @@ test("a wake sent during carrier dispatch advances the run before its wake timeo
       return steps.filter((step) => step.name === "oakridgeAdvanceRun").length >= 2 ? true : null;
     }, 5_000);
     expect(Date.now() - released_at).toBeLessThan(5_000);
-  } finally { release_dispatch(); start.mockRestore(); await composition.close(); await live.close(); }
+  } finally { release_dispatch(); release_operation(); start.mockRestore(); await composition.close(); await live.close(); }
 });
