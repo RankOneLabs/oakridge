@@ -26,9 +26,9 @@ test("a pending decision still offered is left to its form", () => {
 const workspaceFetch = (posts: string[], answer: () => Response) => vi.fn(async (url: string, init?: RequestInit) => {
   if (init?.method === "POST") { posts.push(JSON.parse(String(init.body)).request_id as string); return answer(); }
   if (url.endsWith("/runs/run-1")) return Response.json(makeRunView({ units: [makeRunUnitSummary()] }));
-  if (url.endsWith("/definition")) return Response.json({ bundle: { root: "development", schemas: [], units: [] } });
+  if (url.endsWith("/definitions/bundle-1")) return Response.json({ bundle: { root: "development", schemas: [], units: [] } });
   if (url.endsWith("/history")) return Response.json({ unit_id: "unit-1", events: [], next_cursor: null });
-  if (url.endsWith("/units/unit-1")) return Response.json(makeUnitView());
+  if (url.endsWith("/units")) return Response.json([makeUnitView()]);
   throw new Error(url);
 });
 const renderWorkspace = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -50,8 +50,8 @@ test("an uncertain decision is resubmitted under its retained request id when th
 test("a failed selected-unit request shows the failure instead of loading forever", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/runs/run-1")) return Response.json(makeRunView({ units: [makeRunUnitSummary()] }));
-    if (url.endsWith("/definition")) return Response.json({ bundle: { root: "development", schemas: [], units: [] } });
-    if (url.endsWith("/units/unit-1")) return Response.json({ detail: "projection unavailable" }, { status: 503 });
+    if (url.endsWith("/definitions/bundle-1")) return Response.json({ bundle: { root: "development", schemas: [], units: [] } });
+    if (url.endsWith("/units")) return Response.json({ detail: "projection unavailable" }, { status: 503 });
     throw new Error(url);
   }));
   renderWorkspace();

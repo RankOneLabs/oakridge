@@ -1,15 +1,33 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { Workflow } from "../core-client/core-types";
+import type { AuthoredReview, AuthoredWorker, AuthoredWorkflow } from "../core-client/core-types";
 import { traced, type Traced } from "../domain/primitives";
 import type { PromptContent } from "../storage/registry-store";
 
-/** Every prompt path a workflow names: each agent worker's modes and each review's prompt. */
-export function selectPromptPaths(workflow: Workflow): readonly string[] {
+function workerPromptPaths(worker: AuthoredWorker, templates: AuthoredWorkflow["workers"]): readonly string[] {
+  const concrete = "template" in worker ? templates?.[worker.template] : worker;
+  if (!concrete || concrete.kind !== "agent") return [];
+  const overrides = "template" in worker ? worker.overrides?.prompts : undefined;
+  return (["initial", "revise", "review", "handoff"] as const).flatMap((mode) => {
+    const path = overrides?.[mode] ?? concrete.prompts[mode];
+    return path === undefined || path === null ? [] : [path];
+  });
+}
+
+function reviewPromptPath(review: AuthoredReview, templates: AuthoredWorkflow["reviews"]): string | null {
+  const concrete = "template" in review ? templates?.[review.template] : review;
+  return ("template" in review ? review.overrides?.prompt : null) ?? concrete?.prompt ?? null;
+}
+
+/** Every prompt used after source template overrides are applied. */
+export function selectPromptPaths(workflow: AuthoredWorkflow): readonly string[] {
   const paths = Object.values(workflow.stages).flatMap((stage) => [
-    ...Object.values(stage.workers).flatMap((worker) => worker.kind === "agent" ? Object.values(worker.prompts) : []),
-    ...Object.values(stage.reviews ?? {}).flatMap((review) => review.prompt ? [review.prompt] : []),
+    ...Object.values(stage.workers).flatMap((worker) => workerPromptPaths(worker, workflow.workers)),
+    ...Object.values(stage.reviews ?? {}).flatMap((review) => {
+      const path = reviewPromptPath(review, workflow.reviews);
+      return path === null ? [] : [path];
+    }),
   ]);
   return [...new Set(paths)].sort();
 }
@@ -34,7 +52,7 @@ export function readAuthoredPrompt(path: string): Traced<PromptContent> {
 }
 
 /** The text of every prompt a workflow names, by path, as it compiles and pins. */
-export function readWorkflowPrompts(workflow: Workflow): Traced<{ readonly [path: string]: PromptContent }> {
+export function readWorkflowPrompts(workflow: AuthoredWorkflow): Traced<{ readonly [path: string]: PromptContent }> {
   const prompts: { [path: string]: PromptContent } = {};
   for (const path of selectPromptPaths(workflow)) {
     const read = readAuthoredPrompt(path);

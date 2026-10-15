@@ -1,8 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "../queryKeys";
 import { LiveSubscription } from "../../lib/live-stream";
-import { invalidateOperatorTarget, parseInvalidationFrame } from "../lib/operator-invalidation";
+import { invalidateOperatorFallback, invalidateOperatorTarget, parseInvalidationFrame } from "../lib/operator-invalidation";
 
 /** Fallback refresh while no event arrives, using the configured interval. */
 export function useOakridgeInvalidationStream(isEnabled: boolean, fallbackRefreshMs = 30_000): void {
@@ -24,7 +23,7 @@ export function useOakridgeInvalidationStream(isEnabled: boolean, fallbackRefres
   }, [client]);
   useEffect(() => {
     if (!isEnabled || !Number.isFinite(fallbackRefreshMs) || fallbackRefreshMs < 1_000) return;
-    const timer = window.setInterval(() => { void client.invalidateQueries({ queryKey: queryKeys.operator }); }, fallbackRefreshMs);
+    const timer = window.setInterval(() => invalidateOperatorFallback(client), fallbackRefreshMs);
     return () => window.clearInterval(timer);
   }, [client, isEnabled, fallbackRefreshMs]);
 }

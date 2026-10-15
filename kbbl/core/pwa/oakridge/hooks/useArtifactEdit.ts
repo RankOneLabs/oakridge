@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { OperatorArtifactRevisionView, OperatorBodyValue } from "../operator-contracts";
 import { publishOperatorEdit } from "../client";
-import { queryKeys } from "../queryKeys";
+import { invalidateRunDetail } from "../lib/operator-invalidation";
 import { randomUuid } from "../../lib/random-uuid";
 
 interface ArtifactEditInput { readonly revision: OperatorArtifactRevisionView; readonly body: OperatorBodyValue }
@@ -11,7 +11,6 @@ export function useArtifactEdit() {
   return useMutation({ mutationFn: async ({ revision, body }: ArtifactEditInput) => {
     const receipt = await publishOperatorEdit({ run_id: revision.run_id, unit_id: revision.unit_id, artifact_key: revision.artifact_key,
       request_id: randomUuid(), body, predecessor: revision.id, subject: revision.subject_id });
-    void client.invalidateQueries({ queryKey: queryKeys.run(revision.run_id) });
     return receipt;
-  } });
+  }, onSuccess: (_receipt, { revision }) => invalidateRunDetail(client, revision.run_id) });
 }

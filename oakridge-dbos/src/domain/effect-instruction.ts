@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { Action, Mode, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
+import type { Action, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
 import { selectSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
-import type { Result } from "./primitives";
+import type { ActionId, Result, RunId } from "./primitives";
 
 /** Provider start attempts an instruction may claim until the YAML carries a budget. */
 export const DEFAULT_MAX_START_ATTEMPTS = 3;
@@ -39,9 +39,9 @@ export interface EngineInputs {
  */
 export interface EffectInstruction {
   readonly version: 1;
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly action: RunWorkerAction;
-  readonly attempt: { readonly action_id: string; readonly seq: number };
+  readonly attempt: { readonly action_id: ActionId; readonly seq: number };
   readonly worker: WorkerInstruction;
   readonly inputs: unknown;
   readonly engine_inputs: EngineInputs;
@@ -72,8 +72,9 @@ export function selectSessionKey(action: RunWorkerAction, action_id: string, ses
 }
 
 export interface InstructionSource {
-  readonly run_id: string;
+  readonly run_id: RunId;
   readonly workflow: Workflow;
+  readonly parsed_workflow?: ParsedWorkflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
   readonly stage: string;
@@ -120,7 +121,8 @@ export function selectReferencedSchemas(types: readonly TypeExpression[], schema
 export function selectEffectInstruction(source: InstructionSource): Result<EffectInstruction, InstructionError> {
   const { action, resolved } = source;
   const stage = source.workflow.stages[source.stage];
-  const declared = stage?.workers[action.worker];
+  const declared = source.parsed_workflow?.stages[source.stage]?.workers[action.worker]
+    ?? stage?.workers[action.worker];
   if (!stage || !declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
   const pin = (path: string): Result<PinnedPrompt, InstructionError> => {
     const digest = source.prompts[path];
@@ -129,12 +131,12 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   let worker: WorkerInstruction;
   if (declared.kind === "agent") {
     const path = declared.prompts[action.mode.kind];
-    if (path === undefined) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
+    if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
     const prompt = pin(path);
     if (!prompt.ok) return prompt;
     const session = declared.session ?? "resume";
     const handoff_path = session === "fresh" ? declared.prompts[HANDOFF_PROMPT] : undefined;
-    const handoff = handoff_path === undefined ? null : pin(handoff_path);
+    const handoff = handoff_path == null ? null : pin(handoff_path);
     if (handoff && !handoff.ok) return handoff;
     const creates: CreatedArtifact[] = [];
     for (const key of declared.creates) {
@@ -153,7 +155,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const every = action.cause.kind === "periodic" ? declared.every ?? null : null;
     worker = { kind: "code", operation: declared.operation, every, artifact };
   }
-  return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id, seq: source.seq }, worker,
+  return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
     engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? null, subject: resolved.subject ?? null },
     workspace: resolved.workspace ?? null,

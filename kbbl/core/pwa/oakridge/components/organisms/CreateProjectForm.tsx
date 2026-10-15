@@ -1,21 +1,18 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { createOperatorProject } from "../../client";
-import { queryKeys } from "../../queryKeys";
+import { useCreateOperatorProject } from "../../hooks/useCreateOperatorProject";
 import { EMPTY_PROJECT_FORM, selectProjectDraft, type ProjectFormValues } from "../../lib/project-draft";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { Button } from "../../../components/atoms/Button";
 
 interface Props { readonly onCreated: () => void }
 export function CreateProjectForm({ onCreated }: Props) {
-  const client = useQueryClient();
+  const createProject = useCreateOperatorProject();
   const [values, setValues] = useState<ProjectFormValues>(EMPTY_PROJECT_FORM);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null); setIsSaving(true);
-    try { await createOperatorProject(selectProjectDraft(values));
-      void client.invalidateQueries({ queryKey: queryKeys.projects }); onCreated(); }
+    try { await createProject.mutateAsync(selectProjectDraft(values)); onCreated(); }
     catch (cause) { setError(String(cause)); }
     finally { setIsSaving(false); }
   };

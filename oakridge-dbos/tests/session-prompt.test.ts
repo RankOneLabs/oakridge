@@ -5,7 +5,7 @@ import { renderSessionPreamble, renderSessionTask, renderTemplate, selectSession
 import { sampleWorkflow } from "./authority-fixture";
 
 const unit = "run-1/document";
-const r1: RevisionState = { id: `${unit}:draft:1`, unit, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
+const r1: RevisionState = { id: `${unit}:draft:1`, unit, seq: 1, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
 const revise: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: `${unit}:d1` } };
 function writerInstruction(input: { readonly action: RunWorkerAction; readonly fresh?: boolean }): EffectInstruction {
   const workflow = sampleWorkflow("review-loop");
@@ -14,7 +14,7 @@ function writerInstruction(input: { readonly action: RunWorkerAction; readonly f
     ? { ...workflow, stages: { document: { ...workflow.stages.document!, workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "fresh" as const } } } } }
     : workflow;
   const is_revise = input.action.mode.kind === "revise";
-  const selected = selectEffectInstruction({ run_id: "run-1", workflow: source, stage: "document", config: null, action: input.action, seq: 0,
+  const selected = selectEffectInstruction({ run_id: "run-1" as import("../src/domain/primitives").RunId, workflow: source, stage: "document", config: null, action: input.action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
     resolved: { action_id: "a2", inputs: { topic: "Oakridge", critique: null },
       ...(is_revise ? { previous: r1, feedback: { feedback: "shorter" } } : {}) } });

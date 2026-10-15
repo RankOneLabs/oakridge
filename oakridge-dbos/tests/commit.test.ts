@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
 import { requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 let bundle_id: DefinitionBundleId;
@@ -34,8 +35,10 @@ test("a launch commits the run, its units, the event with its writer, the receip
     intents(run_id),
     authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id).execute(),
   ]);
+  const root = await authority.db.selectFrom("authority.unit").select("status")
+    .where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow();
   const instruction = decodeEffectInstruction(intent_rows[0]?.payload);
-  expect({ root: run.root_unit_id, status: run.status.kind, writers: events.map((event) => event.writer.kind),
+  expect({ root: run.root_unit_id, status: root.status.kind, writers: events.map((event) => event.writer.kind),
     receipts: receipts.map((receipt) => receipt.result.kind), intents: intent_rows.length,
     inputs: instruction.ok ? instruction.value.inputs : null, worker: instruction.ok ? instruction.value.worker.kind : null,
     operator_events: operator_events.length, wakes }).toEqual({ root: run_id, status: "active", writers: ["operator", "executor"],
@@ -146,6 +149,36 @@ test("an event that leaves a unit's wanted set unchanged logs nothing for the un
   expect({ logged: logged.length > 0, repeats: repeats.length }).toEqual({ logged: true, repeats: 0 });
 });
 
+test("the operator event uses the timestamp returned by the event insert", async () => {
+  const run_id = await launched();
+  await sql`CREATE FUNCTION authority.override_event_time() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.payload->>'kind' = 'cancel_requested' THEN
+        NEW.created_at := TIMESTAMPTZ '2001-02-03 04:05:06.123+00';
+      END IF;
+      RETURN NEW;
+    END
+  $$`.execute(authority.db);
+  await sql`CREATE TRIGGER override_event_time BEFORE INSERT ON authority.event
+    FOR EACH ROW EXECUTE FUNCTION authority.override_event_time()`.execute(authority.db);
+  try {
+    const committed = await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
+    if (!committed.ok || committed.value.kind !== "committed") throw new Error("cancel did not commit");
+    const event_id = committed.value.event_id;
+    const [event, operator_events] = await Promise.all([
+      authority.db.selectFrom("authority.event").select("created_at").where("id", "=", event_id).executeTakeFirstOrThrow(),
+      authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
+        .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "run_event")).execute(),
+    ]);
+    const operator = operator_events.find((row) => row.payload.kind === "run_event" && row.payload.data.event_id === event_id);
+    expect({ stored: event.created_at.toISOString(), delivered: operator?.payload.kind === "run_event" ? operator.payload.data.occurred_at : null })
+      .toEqual({ stored: "2001-02-03T04:05:06.123Z", delivered: "2001-02-03T04:05:06.123Z" });
+  } finally {
+    await sql`DROP TRIGGER override_event_time ON authority.event`.execute(authority.db);
+    await sql`DROP FUNCTION authority.override_event_time()`.execute(authority.db);
+  }
+});
+
 test("C4: a decision on a non-latest revision is refused at commit", async () => {
   const run_id = await launched();
   const submit = submitter(authority);
@@ -177,7 +210,7 @@ test("cancel requests the stop of every live intent of the run", async () => {
   const run_id = await launched();
   await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
   const [rows, run] = await Promise.all([intents(run_id),
-    authority.db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow()]);
+    authority.db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow()]);
   expect({ statuses: rows.map((row) => row.status), run: run.status.kind }).toEqual({ statuses: ["stop_requested"], run: "cancelled" });
 });
 
@@ -211,7 +244,8 @@ const PERIODIC: Workflow = {
 };
 test("a periodic worker keeps one intent across its attempts, which carries the schedule", async () => {
   const { bundle_id: periodic } = await pinWorkflow(authority, PERIODIC);
-  const { run_id } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  const { run_id, result } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  if (!result.ok || result.value.kind !== "committed") throw new Error(JSON.stringify(result));
   const [first] = await intents(run_id);
   if (!first) throw new Error("launch wrote no intent");
   const submit = submitter(authority);
@@ -269,6 +303,31 @@ test("an awaiting operator review's prompt is rendered with its resolved inputs,
     .toEqual({ target: `${unit}:draft:1`, topic: true, draft: true, no_critique_yet: true, critique: true, decided: {} });
 });
 
+test("a templated operator review renders its pinned prompt", async () => {
+  const source = sampleWorkflow("review-loop");
+  const editor = source.stages.document?.reviews?.editor;
+  if (!editor) throw new Error("editor review absent");
+  const templated = { ...source, reviews: { editor }, stages: {
+    ...source.stages,
+    document: { ...source.stages.document!, reviews: { editor: { template: "editor" } } },
+  } } as unknown as Workflow;
+  const pinned = await pinWorkflow(authority, templated);
+  const { run_id, result } = await launch(authority, {
+    bundle_id: pinned.bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
+  });
+  if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
+  const unit = unitOf(run_id, "document");
+  const writer = await writerAction(run_id);
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-template" }, writer: executor(writer) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Body" },
+    predecessor: null, subject: null, by: writer },
+    writer: { kind: "session", session: "sid-template", attempt: writer } });
+  const row = await authority.db.selectFrom("authority.unit").select("review_prompts")
+    .where("run_id", "=", run_id).where("id", "=", unit).executeTakeFirstOrThrow();
+  expect(row.review_prompts.editor?.prompt.includes("topic Oakridge")).toBe(true);
+});
+
 // ---------------------------------------------------- commit correctness -----
 
 const attemptsOf = (run_id: RunId, worker: string) => authority.db.selectFrom("authority.attempt").select(["action_id", "seq", "status", "cause"])
@@ -288,7 +347,7 @@ test("a unit that starts after its dependency persists the input it resolved, an
     done_when: "published(draft)", outcome: { draft: "latest(draft)" } });
   const workflow = { workflow: "chain", input: { topic: "text" },
     run: { units: { first: { stage: "first", input: { topic: "input.topic" } },
-      second: { stage: "second", after: ["first"], input: { topic: "input.topic", draft: "first.outcome.draft" } } },
+      second: { stage: "second", input: { topic: "input.topic", draft: "first.outcome.draft" } } },
     outcome: { draft: "second.outcome.draft" } },
     stages: { first: stage({ topic: "text" }, { topic: "input.topic" }, []),
       second: stage({ topic: "text", draft: "text" }, { topic: "input.topic", draft: "input.draft" },

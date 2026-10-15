@@ -2,18 +2,25 @@ import type { OperatorInboxItem, OperatorUnitView } from "../operator-contracts"
 import { operatorDraftIdentity, type OperatorDecisionSubmission } from "./operator-drafts";
 import { selectDraftKey } from "./operator-selectors";
 
-/** Per run, the inbox items that ask for the operator (a unit merely waiting does not). */
-export const selectRunAttentionCounts = (items: readonly OperatorInboxItem[]): ReadonlyMap<string, number> => {
-  const counts = new Map<string, number>();
+export interface RunAttention {
+  readonly count: number;
+  readonly decision_count: number;
+  readonly by_unit: ReadonlyMap<string, number>;
+}
+
+/** One shape for a run's actionable attention from either inbox read. */
+export const selectRunAttention = (items: readonly OperatorInboxItem[]): RunAttention => {
+  const by_unit = new Map<string, number>();
+  let count = 0;
+  let decision_count = 0;
   for (const item of items) {
     if (item.kind === "waiting") continue;
-    counts.set(item.run_id, (counts.get(item.run_id) ?? 0) + 1);
+    count += 1;
+    if (item.kind === "decision") decision_count += 1;
+    by_unit.set(item.unit_id, (by_unit.get(item.unit_id) ?? 0) + 1);
   }
-  return counts;
+  return { count, decision_count, by_unit };
 };
-
-export const selectAttentionCount = (items: readonly OperatorInboxItem[] | undefined): number =>
-  items?.filter((item) => item.kind === "decision").length ?? 0;
 
 interface RecoveryCandidatesInput {
   readonly pending: readonly OperatorDecisionSubmission[];

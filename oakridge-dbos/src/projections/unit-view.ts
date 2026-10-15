@@ -1,6 +1,6 @@
-import type { AttemptStatus, Cause, DecisionEffect, Mode, Review, Stage, UnitStatus } from "../core-client/core-types";
+import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, ParsedStage, UnitStatus } from "../core-client/core-types";
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
-import { isTerminalStatus } from "../domain/unit-status";
+import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
 import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
@@ -62,7 +62,7 @@ export interface ArtifactView {
 
 /** What a decision submits: a review's decision on its target revision, a stalled worker's retry, or the run's cancel. */
 export type DecisionSubmit =
-  | { readonly kind: "review"; readonly review: string; readonly decision: string; readonly effect: DecisionEffect; readonly target_revision_id: string }
+  | { readonly kind: "review"; readonly review: string; readonly decision: string; readonly effect: DeclaredDecisionEffect; readonly target_revision_id: string }
   | { readonly kind: "retry"; readonly worker: string }
   | { readonly kind: "cancel" };
 export interface DecisionField { readonly key: string; readonly label: string }
@@ -113,27 +113,27 @@ export function selectAttemptViews(attempts: readonly AttemptRecord[]): readonly
 
 /** One artifact's revisions, oldest first, numbered from 1. */
 export function selectRevisionViews(revisions: readonly ArtifactRevisionRecord[]): readonly ArtifactRevisionView[] {
-  return revisions.map((revision, index) => ({ id: revision.id, run_id: revision.run_id, unit_id: revision.unit_id,
+  return [...revisions].sort((left, right) => left.seq - right.seq).map((revision) => ({ id: revision.id, run_id: revision.run_id, unit_id: revision.unit_id,
     artifact_key: revision.artifact, attempt_id: revision.by_id, body: revision.body as BodyValue,
-    predecessor_id: revision.predecessor_id, subject_id: revision.subject, created_at: revision.created_at, number: index + 1 }));
+    predecessor_id: revision.predecessor_id, subject_id: revision.subject, created_at: revision.created_at, number: revision.seq }));
 }
 const revisionsOf = <Revision extends RevisionRef>(revisions: readonly Revision[], unit_id: string, artifact: string): readonly Revision[] =>
   revisions.filter((revision) => revision.unit_id === unit_id && revision.artifact === artifact);
 
 /** The schema name of an artifact's body: its alias where it names one. */
-export const selectArtifactSchema = (stage: Stage, artifact: string): string => {
+export const selectArtifactSchema = (stage: ParsedStage, artifact: string): string => {
   const declared = stage.artifacts[artifact];
   return declared ? typeSchemaKey(declared.schema) : "";
 };
 /** An operator review has `of` this artifact; an engine review decides by itself and asks no one. */
-export const isReviewable = (stage: Stage, artifact: string): boolean =>
+export const isReviewable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.reviews ?? {}).some((review) => review.of === artifact && review.by === "operator");
 /** The core refuses an operator's edit of an artifact a code worker creates. */
-export const isEditable = (stage: Stage, artifact: string): boolean =>
+export const isEditable = (stage: ParsedStage, artifact: string): boolean =>
   Object.values(stage.workers).some((worker) => worker.kind === "agent" && worker.creates.includes(artifact));
 
 function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly ArtifactView[] {
-  const stage = unit.stage === null ? undefined : read.definition.workflow.stages[unit.stage];
+  const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
   if (!stage) return [];
   return Object.keys(stage.artifacts).sort().map((artifact) => {
     const revisions = selectRevisionViews(revisionsOf(read.revisions, unit.id, artifact));
@@ -144,14 +144,14 @@ function selectArtifactViews(read: RunRead, unit: UnitRecord): readonly Artifact
 }
 
 /** A decision key reused by two reviews of one stage is qualified by its review, so keys stay unique per unit. */
-function decisionKey(stage: Stage, review: string, decision: string): string {
+function decisionKey(stage: ParsedStage, review: string, decision: string): string {
   const reuses = Object.values(stage.reviews ?? {}).filter((candidate) => decision in candidate.decisions).length;
   return reuses > 1 ? `${review}:${decision}` : decision;
 }
 
-function reviewDecisions(stage: Stage, attention: UnitAttention): readonly DecisionDefinition[] {
+function reviewDecisions(stage: ParsedStage, attention: UnitAttention): readonly DecisionDefinition[] {
   return attention.awaiting.flatMap((awaiting) => {
-    const review: Review | undefined = stage.reviews?.[awaiting.review];
+    const review: ParsedReview | undefined = stage.reviews?.[awaiting.review];
     if (!review) return [];
     return Object.entries(review.decisions).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, decision]) => {
       // The core names each decision's target; a decision it does not list is not legal now.
@@ -170,8 +170,8 @@ const CANCEL: DecisionDefinition = { key: "cancel", label: "Cancel run", payload
 
 /** What the operator may decide on a unit now: its awaiting reviews' decisions, a retry per stalled worker, and cancel on a live run's root. */
 export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummaryRecord, attention: UnitAttention): readonly DecisionDefinition[] {
-  const stage = unit.stage === null ? undefined : read.definition.workflow.stages[unit.stage];
-  const cancel = selectUnitKey(unit) === ROOT_UNIT_KEY && !isTerminalStatus(read.run.status) ? [CANCEL] : [];
+  const stage = unit.stage === null ? undefined : read.definition.parsed_workflow.stages[unit.stage];
+  const cancel = selectUnitKey(unit) === ROOT_UNIT_KEY && !isTerminalStatus(selectRootStatus(read.run, read.units)) ? [CANCEL] : [];
   return [...(stage ? reviewDecisions(stage, attention) : []), ...retryDecisions(attention), ...cancel];
 }
 /** Decisions that ask for the operator: everything but the run's own cancel (part 2: counts come from asks). */
@@ -180,7 +180,7 @@ export const isAsk = (decision: DecisionDefinition): boolean => decision.submit.
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
-    stage: unit.stage, collection_key: selectCollectionKey(unit, tree), input: unit.input as BodyValue,
+    stage: unit.stage, collection_key: selectCollectionKey(unit), input: unit.input as BodyValue,
     depends_on: read.dependencies.filter((edge) => edge.unit_id === unit.id).map((edge) => edge.depends_on_id),
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),

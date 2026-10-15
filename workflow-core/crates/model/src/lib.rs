@@ -11,6 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use source::*;
 pub use values::*;
+pub const ROOT_DECLARATION: &str = "$root";
+pub const VALIDATION_REVIEW: &str = "engine:validator";
 pub type CoreResult<T> = Result<T, DomainError>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

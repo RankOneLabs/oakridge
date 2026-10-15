@@ -19,7 +19,9 @@ CREATE TABLE authority.definition_bundle (
   id text PRIMARY KEY,
   digest text NOT NULL UNIQUE,
   source jsonb NOT NULL,
-  checked_program jsonb NOT NULL,
+  -- The parsed workflow is required by every read projection. Changing this
+  -- baseline digest enforces the W4 database cutover at startup.
+  checked_program jsonb NOT NULL CHECK (checked_program ? 'workflow'),
   -- prompt path -> content digest, pinned at compile (D9). Editing a prompt
   -- file afterwards cannot change what this definition renders.
   prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -50,7 +52,6 @@ CREATE TABLE authority.run (
   input jsonb,
   -- The operator's launch-time session settings, by stage (RunConfig).
   config jsonb,
-  status jsonb NOT NULL DEFAULT '{"kind":"not_started"}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   archived_at timestamptz
 );
@@ -61,9 +62,13 @@ CREATE TABLE authority.unit (
   parent_id text,
   declaration text NOT NULL,
   stage text,
+  collection_key text,
   pool text,
-  input jsonb NOT NULL,
+  input jsonb,
   status jsonb NOT NULL,
+  -- Core emits blocked-ness with each step; commit carries that read onto the
+  -- unit row so inbox and attention can read it without stepping the run.
+  blocked_reason jsonb,
   -- Each operator review awaiting a decision, by review key: the revision it
   -- decides on and its prompt rendered with its resolved inputs. Commit
   -- rewrites it on every event that steps the unit; nothing is asked or stored
@@ -95,7 +100,6 @@ CREATE TABLE authority.attempt (
   mode jsonb NOT NULL,
   cause jsonb NOT NULL,
   status jsonb NOT NULL,
-  ended_at bigint,
   kbbl_session_id text,
   publication_secret_hash text CHECK (publication_secret_hash IS NULL OR publication_secret_hash ~ '^[0-9a-f]{64}$'),
   -- When commit opened the attempt, stamped after it took the run row lock
@@ -113,6 +117,7 @@ CREATE TABLE authority.artifact_revision (
   run_id text NOT NULL,
   unit_id text NOT NULL,
   artifact text NOT NULL,
+  seq integer NOT NULL,
   body jsonb NOT NULL,
   -- The attempt that published it; null for an operator's edit (part 1 §12, D2).
   by_id text,
@@ -122,6 +127,7 @@ CREATE TABLE authority.artifact_revision (
   -- run order by when commit wrote them (see attempt.created_at).
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE (run_id, id),
+  UNIQUE (run_id, unit_id, artifact, seq),
   FOREIGN KEY (run_id, unit_id) REFERENCES authority.unit(run_id, id),
   FOREIGN KEY (run_id, predecessor_id) REFERENCES authority.artifact_revision(run_id, id)
 );
@@ -135,6 +141,8 @@ CREATE TABLE authority.review_decision (
   effect authority.decision_effect NOT NULL,
   target_revision_id text NOT NULL,
   payload jsonb NOT NULL,
+  validation_artifact text,
+  validation_messages text[],
   -- The order commit wrote it, stamped under the run row lock. The core reads
   -- a unit's decisions in this order; the id (`<unit>:d<n>`) does not sort.
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -181,6 +189,7 @@ CREATE TABLE authority.effect_intent (
   tries integer NOT NULL DEFAULT 0 CHECK (tries >= 0),
   next_try_at timestamptz,
   last_error text,
+  stop_error text,
   -- Set with the stop request, and kept once it settles; null while none was requested.
   stop_origin authority.stop_origin CHECK (status <> 'stop_requested' OR stop_origin IS NOT NULL),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -279,9 +288,9 @@ COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}'
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.run.config IS '@type {RunConfig}';
-COMMENT ON COLUMN authority.run.status IS '@type {UnitStatus}';
 COMMENT ON COLUMN authority.unit.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.unit.status IS '@type {UnitStatus}';
+COMMENT ON COLUMN authority.unit.blocked_reason IS '@type {BlockedReason}';
 COMMENT ON COLUMN authority.unit.review_prompts IS '@type {ReviewPrompts}';
 COMMENT ON COLUMN authority.attempt.mode IS '@type {Mode}';
 COMMENT ON COLUMN authority.attempt.cause IS '@type {Cause}';
@@ -290,7 +299,7 @@ COMMENT ON COLUMN authority.artifact_revision.body IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.review_decision.payload IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.event.payload IS '@type {CoreEvent}';
 COMMENT ON COLUMN authority.event.writer IS '@type {Writer}';
-COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedActions}';
+COMMENT ON COLUMN authority.wanted_log.actions IS '@type {WantedWorkers}';
 COMMENT ON COLUMN authority.effect_intent.payload IS '@type {EffectInstruction}';
 COMMENT ON COLUMN authority.ingress_receipt.result IS '@type {CommitReceipt}';
 COMMENT ON COLUMN authority.collaboration_thread.context IS '@type {CollaborationThreadContext}';

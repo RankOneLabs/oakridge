@@ -2,9 +2,19 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 
 const root = resolve(import.meta.dir, "../..");
 const isCheck = process.argv.includes("--check");
+
+const registryOutput = resolve(root, "workflow-config/operation-registry.json");
+const registry = JSON.stringify(OPERATION_REGISTRY, null, 2) + "\n";
+if (isCheck) {
+  if (readFileSync(registryOutput, "utf8") !== registry)
+    throw new Error(`${registryOutput} differs from OPERATION_REGISTRY; run bun workflow-config/src/generate.ts`);
+} else {
+  await Bun.write(registryOutput, registry);
+}
 
 for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   const source = resolve(root, path);

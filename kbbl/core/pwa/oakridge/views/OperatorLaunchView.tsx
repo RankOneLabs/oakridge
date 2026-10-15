@@ -1,7 +1,8 @@
 import { queryKeys } from "../queryKeys";
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchOperatorDefinitions, fetchOperatorProjects, launchOperatorRun } from "../client";
+import { useQuery } from "@tanstack/react-query";
+import { fetchOperatorDefinitions, fetchOperatorProjects } from "../client";
+import { useLaunchOperatorRun } from "../hooks/useLaunchOperatorRun";
 import { selectProjectLaunchDrafts } from "../lib/project-launch";
 import { Button } from "../../components/atoms/Button";
 
@@ -10,7 +11,6 @@ import { clearPendingLaunch, discardPendingLaunch, readPendingLaunch, savePendin
 import { isDefinitiveRequestRejection } from "../lib/client-errors";
 import type { OperatorLaunchRequest, OperatorSchema, OperatorDefinitionBundle } from "../operator-contracts";
 import { buildRootInput, inputRecord, isOptionalSchema, type FieldDrafts, type InputField } from "../lib/operator-input";
-import { invalidateRunLists } from "../lib/operator-invalidation";
 import { selectLaunchDigest } from "../lib/operator-selectors";
 import { readSpecFile } from "../lib/spec-file";
 import { defaultRuntimeIdForConfig, runtimeDescriptorsForConfig, useServerConfigState } from "../../hooks/useServerConfig";
@@ -34,7 +34,7 @@ function fieldText(value: unknown, schema: OperatorSchema | undefined): string {
 
 interface Props { readonly onBack: () => void; readonly onCreated: (runId: string) => void; readonly onEdit: () => void }
 export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
-  const client = useQueryClient();
+  const launchRun = useLaunchOperatorRun();
   const definitions = useQuery({ queryKey: queryKeys.definitionList(false), queryFn: () => fetchOperatorDefinitions(false) });
   const [stored] = useState<{ readonly pending: OperatorLaunchRequest | null; readonly error: string | null }>(() => {
     try { return { pending: readPendingLaunch(), error: null }; } // Submission re-reads and fails closed if storage is unavailable or corrupt.
@@ -103,10 +103,9 @@ export function OperatorLaunchView({ onBack, onCreated, onEdit }: Props) {
     deliveryInProgress.current = true;
     setLaunching(true);
     try {
-      const run = await launchOperatorRun(request);
+      const run = await launchRun.mutateAsync(request);
       clearPendingLaunch(request);
       setPending(null);
-      invalidateRunLists(client);
       onCreated(run.run_id);
     } catch (cause) {
       if (isDefinitiveRequestRejection(cause)) {

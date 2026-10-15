@@ -76,7 +76,7 @@ test.skipIf(!kbbl_url)("I5: sample A runs once against real kbbl with a real age
   }, 600_000);
   expect((await decide("approve", r2.id, {})).status).toBe(201);
   await eventually("the run to finish", async () =>
-    (await db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow()).status.kind === "done", 120_000);
+    (await db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow()).status.kind === "done", 120_000);
   const writer = await db.selectFrom("authority.attempt").select(["kbbl_session_id", "status"]).where("run_id", "=", run_id).where("worker", "=", "writer").execute();
   expect({ sessions: new Set(writer.map((attempt) => attempt.kbbl_session_id)).size, writer_attempts: writer.length })
     .toEqual({ sessions: 1, writer_attempts: 2 });

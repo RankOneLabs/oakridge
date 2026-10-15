@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { randomUuid } from "../../../lib/random-uuid";
-import { submitOperatorDecision } from "../../client";
+import { useSubmitOperatorDecision } from "../../hooks/useSubmitOperatorDecision";
 import { isDefinitiveRequestRejection } from "../../lib/client-errors";
 import { clearOperatorDraft, clearPendingDecision, findRetainedDrafts, readOperatorDraft, readPendingDecision, saveOperatorDraft, savePendingDecision,
   type OperatorDecisionSubmission } from "../../lib/operator-drafts";
@@ -14,6 +14,7 @@ interface Props { readonly unit: OperatorUnitView; readonly decision: OperatorDe
   readonly schemas: readonly OperatorSchema[]; readonly onRefresh: () => void }
 
 export function OperatorDecisionForm({ unit, decision, schemas, onRefresh }: Props) {
+  const submitDecision = useSubmitOperatorDecision();
   const key = selectDraftKey(unit, decision);
   const isMounted = useRef(true);
   useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; }; }, []);
@@ -27,14 +28,13 @@ export function OperatorDecisionForm({ unit, decision, schemas, onRefresh }: Pro
   async function deliver(input: OperatorDecisionSubmission): Promise<void> {
     setIsSubmitting(true);
     try {
-      await submitOperatorDecision(input);
+      await submitDecision.mutateAsync(input);
       clearPendingDecision(input);
       clearOperatorDraft(input);
       if (isMounted.current) {
         setDraft("");
         setIsAccepted(true);
         setError("");
-        onRefresh();
       }
     } catch (cause) {
       if (isDefinitiveRequestRejection(cause)) {

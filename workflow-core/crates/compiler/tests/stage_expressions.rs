@@ -46,9 +46,9 @@ fn stage_input_type(program: &CheckedWorkflow, worker: &str, input: &str) -> Typ
     program.stages[0]
         .workers
         .iter()
-        .find(|candidate| candidate.key.0 == worker)
+        .find(|candidate| candidate.key().0 == worker)
         .expect("worker")
-        .inputs
+        .inputs()
         .iter()
         .find(|candidate| candidate.key == input)
         .expect("input")
@@ -129,12 +129,12 @@ fn calls_and_comparisons_tolerate_their_own_whitespace() {
     ]))
     .unwrap();
     let draft = program.stages[0]
-        .validations
+        .artifacts
         .iter()
-        .find(|validation| validation.artifact.0 == "draft")
+        .find(|artifact| artifact.key.0 == "draft")
         .expect("draft validation");
     assert_eq!(
-        draft.checks[0].value_type,
+        draft.validations[0].expression.value_type,
         TypeExpression::Name("boolean".into())
     );
 }
@@ -148,4 +148,131 @@ fn a_comparison_inside_a_call_does_not_split_the_outer_expression() {
     .unwrap_err();
     // The inner comparison is checked as a comparison, not as a length argument.
     assert_eq!(&*error.entity_id, "check 9", "{error:?}");
+}
+
+#[test]
+fn not_accepts_parenthesized_operand() {
+    let program = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("not(published(draft))"),
+    )]))
+    .unwrap();
+    let draft = program.stages[0]
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.key.0 == "draft")
+        .unwrap();
+    assert_eq!(draft.validations[0].expression.value_type, Type::Boolean);
+}
+
+#[test]
+fn signed_integer_literals_keep_their_range_and_type() {
+    for expression in ["len(input.topic) > -1", "len(input.topic) >= +1"] {
+        let compiled = compile(&review_loop(&[(
+            "/stages/document/artifacts/draft/validate/0/check",
+            json!(expression),
+        )]));
+        assert!(compiled.is_ok(), "{expression}: {compiled:?}");
+    }
+}
+
+#[test]
+fn not_binds_after_a_comparison() {
+    let compiled = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("not len(input.topic) == 0"),
+    )]));
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn whitespace_around_none_workspace_is_accepted() {
+    let compiled = compile(&review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!(" none "),
+    )]));
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn nested_call_inside_comparison_is_typed() {
+    let program = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("len(input.topic) > len(\"a\")"),
+    )]))
+    .unwrap();
+    let draft = program.stages[0]
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.key.0 == "draft")
+        .unwrap();
+    assert_eq!(draft.validations[0].expression.value_type, Type::Boolean);
+}
+
+#[test]
+fn unterminated_string_reports_its_span() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("\"unterminated"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(
+        errors[0].path.0,
+        "stages.document.artifacts.draft.validate.0.check"
+    );
+    assert_eq!(errors[0].span, SourceSpan { start: 0, end: 13 });
+}
+
+#[test]
+fn nested_type_error_reports_the_read_span() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("len(input.missing) > 1"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(
+        errors[0].path.0,
+        "stages.document.artifacts.draft.validate.0.check"
+    );
+    assert_eq!(errors[0].span, SourceSpan { start: 4, end: 17 });
+}
+
+#[test]
+fn not_call_reports_the_operand_span_when_it_is_not_boolean() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[("/stages/document/done_when", json!("not(input.topic)"))]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.done_when");
+    assert_eq!(errors[0].span, SourceSpan { start: 3, end: 16 });
+}
+
+#[test]
+fn workspace_type_error_span_uses_the_full_workspace_source() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!("repository(input.missing)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
+    assert_eq!(errors[0].span, SourceSpan { start: 11, end: 24 });
+}
+
+#[test]
+fn workspace_expression_span_includes_leading_whitespace() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!("  repository(input.missing)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
+    assert_eq!(errors[0].span, SourceSpan { start: 13, end: 26 });
 }

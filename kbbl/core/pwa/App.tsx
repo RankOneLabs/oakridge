@@ -22,7 +22,7 @@ import { useOakridgeInvalidationStream } from "./oakridge/hooks/useOakridgeInval
 import { useOakridgeRunEventStream } from "./oakridge/hooks/useOakridgeRunEventStream";
 import { useReviewInbox } from "./oakridge/hooks/useReviewInbox";
 import { selectEventNotification } from "./oakridge/lib/run-notifications";
-import { selectAttentionCount } from "./oakridge/lib/run-attention";
+import { selectRunAttention } from "./oakridge/lib/run-attention";
 
 export function App() {
   const route = useHashRoute();
@@ -32,7 +32,7 @@ export function App() {
   const isOakridgeAvailable = oakridgeConfig.data?.available === true;
   const reviewInbox = useReviewInbox(isOakridgeAvailable);
   const pushToast = useToastStore((state) => state.pushToast);
-  const attentionCount = selectAttentionCount(reviewInbox.data?.items);
+  const attentionCount = selectRunAttention(reviewInbox.data?.items ?? []).decision_count;
 
   // Both Oakridge subscriptions live above the route branch so changing
   // surfaces keeps the shared query cache current and the single EventSource

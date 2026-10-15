@@ -94,14 +94,24 @@ export function rustLibraryGraph(root: string): readonly string[] {
     if (!file || seen.has(file)) continue;
     seen.add(file);
     const tokens = productionTokens(readFileSync(file, "utf8"));
-    if (tokens.some((token, index) => token.text === "path" && tokens[index - 1]?.text === "[")) throw new Error(`unresolved Rust path attribute: ${file}`);
+    const resolvedPaths = new Set<number>();
     for (let index = 0; index < tokens.length; index++) {
       if (tokens[index]?.text !== "mod" || tokens[index + 1]?.kind !== "word" || tokens[index + 2]?.text !== ";") continue;
       const name = tokens[index + 1]?.text;
       const directory = /(?:lib|mod)\.rs$/.test(file) ? dirname(file) : file.replace(/\.rs$/, "");
-      const module = [resolve(directory, `${name}.rs`), resolve(directory, `${name}/mod.rs`)].find(existsSync);
+      const attribute = tokens.slice(index - 6, index);
+      const hasPath = attribute.length === 6 && attribute[0]?.text === "#" && attribute[1]?.text === "["
+        && attribute[2]?.text === "path" && attribute[3]?.text === "=" && attribute[4]?.kind === "string"
+        && attribute[5]?.text === "]";
+      if (hasPath) resolvedPaths.add(index - 4);
+      const module = (hasPath
+        ? [resolve(dirname(file), attribute[4]!.text)]
+        : [resolve(directory, `${name}.rs`), resolve(directory, `${name}/mod.rs`)]).find(existsSync);
       if (!module) throw new Error(`unresolved Rust module: ${file} -> ${name}`);
       queue.push(module);
+    }
+    if (tokens.some((token, index) => token.text === "path" && tokens[index - 1]?.text === "[" && !resolvedPaths.has(index))) {
+      throw new Error(`unresolved Rust path attribute: ${file}`);
     }
   }
   return [...seen];

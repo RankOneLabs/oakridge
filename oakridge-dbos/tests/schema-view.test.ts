@@ -1,23 +1,40 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Workflow } from "../src/core-client/core-types";
+import type { AuthoredWorkflow, ParsedWorkflow, Type, Workflow } from "../src/core-client/core-types";
+import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
-import { parseType, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
+import { typeNode, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
+import { readWorkflowPrompts, selectPromptPaths } from "../src/runtime/prompt-files";
 
-const workflow: Workflow = {
+test("prompt discovery applies worker and review template overrides", () => {
+  const source: AuthoredWorkflow = {
+    workflow: "template_prompts", input: {}, run: { units: {}, outcome: {} },
+    workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, creates: [] } },
+    reviews: { approval: { of: "draft", by: "operator", prompt: "unused-review.md", decisions: {} } },
+    stages: { draft: { input: {}, artifacts: {}, outcome: {}, workers: {
+      writer: { template: "writer", overrides: { prompts: { initial: "used.md" } } } },
+      reviews: { approval: { template: "approval", overrides: { prompt: "used-review.md" } } } } },
+  };
+  expect(selectPromptPaths(source)).toEqual(["used-review.md", "used.md"]);
+});
+
+const workflow: ParsedWorkflow = {
   workflow: "development",
-  input: { spec: "text", repositories: "list(repository)" },
-  schemas: { repository: { owner: "ident", name: "ident", path: "optional(repo_path)" }, plan_body: { summary: "text" }, plan: "plan_body" },
+  input: { kind: "record", fields: { spec: { kind: "text" }, repositories: { kind: "list", item: { kind: "named", schema: "repository" } } } },
+  schemas: { repository: { kind: "record", fields: { owner: { kind: "ident" }, name: { kind: "ident" },
+    path: { kind: "optional", value: { kind: "repo_path" } } } },
+  plan_body: { kind: "record", fields: { summary: { kind: "text" } } }, plan: { kind: "named", schema: "plan_body" } },
   run: { units: { planning: { stage: "planning", input: {} } }, outcome: {} },
   stages: {
     planning: {
-      input: {}, outcome: {}, workers: {},
-      artifacts: { plan: { schema: "plan" }, notes: { schema: "{count: integer, done: boolean}" } },
+      input: { kind: "record", fields: {} }, outcome: {}, workers: {},
+      artifacts: { plan: { schema: { kind: "named", schema: "plan" } }, notes: { schema: { kind: "record", fields: {
+        count: { kind: "integer" }, done: { kind: "boolean" } } } } },
       reviews: { chief: { of: "plan", by: "operator", inputs: {}, decisions: {
         approve: { effect: "approve", label: "Approve" },
         request_changes: { effect: "request_changes", label: "Request changes", fields: { feedback: "What should change?", scope: "Which part?" } },
-        grade: { effect: "approve", label: "Grade", payload: { score: "integer" } },
+        grade: { effect: "approve", label: "Grade", payload: { kind: "record", fields: { score: { kind: "integer" } } } },
       } } },
     },
   },
@@ -25,8 +42,9 @@ const workflow: Workflow = {
 const schemas = selectWorkflowSchemas(workflow);
 const shape = (key: string) => schemas.find((schema) => schema.key === key)?.shape;
 
-test("a record expression and its inline form share one canonical key, fields sorted", () => {
-  expect([typeSchemaKey({ b: "text", a: "list(ident)" }), typeSchemaKey("{ b: text, a: list(ident) }")]).toEqual(["{a: list(ident), b: text}", "{a: list(ident), b: text}"]);
+test("tagged contract types project without reading compact syntax", () => {
+  expect(typeSchemaKey({ kind: "record", fields: { b: { kind: "list", item: { kind: "ident" } }, a: { kind: "text" } } }))
+    .toBe("{a: text, b: list(ident)}");
 });
 
 test("an alias keeps its name; an alias of an alias takes the shape it resolves to", () => {
@@ -52,7 +70,8 @@ test("primitives map to the PWA's shapes, with the core's ident bound", () => {
 });
 
 test("an enum expression becomes the PWA's enum shape", () => {
-  expect({ key: schemaKey(parseType("enum(fast, safe)")), shape: selectWorkflowSchemas({ ...workflow, input: { mode: "enum(fast, safe)" } })
+  const type: Type = { kind: "enum", variants: ["fast", "safe"] };
+  expect({ key: schemaKey(typeNode(type)), shape: selectWorkflowSchemas({ ...workflow, input: { kind: "record", fields: { mode: type } } })
     .find((schema) => schema.key === "enum(fast, safe)")?.shape }).toEqual({ key: "enum(fast, safe)", shape: { kind: "enum", variants: ["fast", "safe"] } });
 });
 
@@ -80,9 +99,18 @@ test("the bundle lists the root with the run input and each staged unit with its
       ["planning", "{}", "Planning", [["notes", "{count: integer, done: boolean}"], ["plan", "plan"]]]] });
 });
 
-test("a member key two groups reuse keeps a bundle unit per declaration, so the development bundle lists every stage", () => {
-  const development = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
-  expect(selectDefinitionBundle(development).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
-    ["prepare/repository", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs/brief", "brief"],
-    ["implementation/cohort", "cohort"], ["integration/repository", "integration"]]);
+test("the development bundle lists each direct collection declaration", async () => {
+  const source = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
+  const prompts = readWorkflowPrompts(source);
+  if (!prompts.ok) throw new Error(prompts.error.detail);
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(started.error.detail.detail);
+  try {
+    const compiled = await compileWorkflow(started.value, { workflow: source,
+      prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+    expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
+    ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],
+    ["implementation", "cohort"], ["integration", "integration"]]);
+  } finally { started.value.close(); }
 });

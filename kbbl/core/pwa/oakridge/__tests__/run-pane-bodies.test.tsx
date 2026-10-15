@@ -31,15 +31,15 @@ it("an artifact route mounts the checked review renderer in the workspace", asyn
     schema: "build_body", unit: { decisions: [makeDecision({ label: "Approve the build" })] } });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/runs/run-1")) return Response.json(makeRunView({ units: [makeRunUnitSummary()] }));
-    if (url.endsWith("/definition")) return Response.json(makeDefinitionSummary());
-    if (url.endsWith("/units/unit-1")) return Response.json(unit);
+    if (url.endsWith("/definitions/bundle-1")) return Response.json(makeDefinitionSummary());
+    if (url.endsWith("/units")) return Response.json([unit]);
     if (url.endsWith("/threads")) return Response.json([]);
     throw new Error(url);
   }));
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <RunWorkspace runId="run-1" routePane={{ kind: "artifact", artifact_id: revisionId }} unitId="unit-1" onBack={() => undefined} />
   </QueryClientProvider>);
-  expect((await screen.findByTestId("or-artifact-review")).textContent).toContain("Two panes, one renderer");
+  await screen.findByText("Two panes, one renderer");
   expect(screen.getByRole("button", { name: "← Overview" })).toBeTruthy();
   expect(screen.getByTestId("or-artifact-threads")).toBeTruthy();
   expect(screen.getByTestId("or-gate-actions").textContent).toContain("Approve the build");

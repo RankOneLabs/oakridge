@@ -4,7 +4,7 @@
  * scripts/generate-storage-records.ts imports them into db-types.ts.
  */
 import type { ColumnType } from "kysely";
-import type { Action, Event, ResolvedDecision, Workflow } from "../core-client/core-types";
+import type { Event, ResolvedDecision, WantedWorker, Workflow } from "../core-client/core-types";
 
 /**
  * A jsonb value serialized for a write. pg would send an array as a Postgres
@@ -15,7 +15,7 @@ export type JsonText<Value> = string & { readonly __json: Value };
 export type JsonColumn<Value> = ColumnType<Value, JsonText<Value>, JsonText<Value>>;
 export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value> | null, JsonText<Value> | null>;
 
-export type { AttemptStatus, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
+export type { AttemptStatus, BlockedReason, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
 export type { EffectInstruction } from "../domain/effect-instruction";
 export type { RunConfig } from "../domain/run-config";
 export type { OperatorEventPayload } from "../projections/operator-event";
@@ -23,7 +23,7 @@ export type { OperatorEventPayload } from "../projections/operator-event";
 export type RuntimeValue = unknown;
 export type CoreEvent = Event;
 export type DefinitionBundleSource = Workflow;
-export type WantedActions = readonly Action[];
+export type WantedWorkers = readonly WantedWorker[];
 /**
  * An operator review awaiting a decision: the revision it reviews, each decision legal now with the revision
  * that decision names (a decision `on` another artifact names that artifact's latest), and its prompt

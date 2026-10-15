@@ -1,4 +1,4 @@
-import type { CompiledWorkflow, Group, Unit, Workflow } from "../core-client/core-types";
+import type { CompiledWorkflow, Group, ParsedWorkflow, Unit, Workflow } from "../core-client/core-types";
 import { selectWorkflowSchemas, typeSchemaKey, type Schema } from "./schema-view";
 import { ROOT_UNIT_KEY, titleCase } from "./unit-label";
 
@@ -41,22 +41,24 @@ function declaredUnits(group: Group, prefix = ""): readonly DeclaredUnit[] {
   });
 }
 
-export function selectDefinitionBundle(workflow: Workflow): DefinitionBundle {
+export function selectDefinitionBundle(workflow: ParsedWorkflow, source?: Workflow): DefinitionBundle {
   const root: UnitDefinition = { key: ROOT_UNIT_KEY, stage: null, label: titleCase(workflow.workflow), input_schema: typeSchemaKey(workflow.input), artifacts: [] };
-  const staged = declaredUnits(workflow.run).flatMap(({ key, path, unit }): UnitDefinition[] => {
+  const staged = declaredUnits((source ?? workflow).run).flatMap(({ key, path, unit }): UnitDefinition[] => {
     const stage = unit.stage == null ? undefined : workflow.stages[unit.stage];
     if (!stage) return [];
     return [{ key: path, stage: unit.stage ?? null, label: titleCase(key), input_schema: typeSchemaKey(stage.input),
       artifacts: Object.entries(stage.artifacts).sort(([left], [right]) => left.localeCompare(right))
         .map(([artifact, declared]) => ({ key: artifact, schema: typeSchemaKey(declared.schema) })) }];
   });
-  return { key: workflow.workflow, root: ROOT_UNIT_KEY, schemas: selectWorkflowSchemas(workflow), units: [root, ...staged] };
+  const order = source ? { schema_names: Object.keys(source.schemas ?? {}), stage_names: Object.keys(source.stages) } : undefined;
+  return { key: workflow.workflow, root: ROOT_UNIT_KEY, schemas: selectWorkflowSchemas(workflow, order), units: [root, ...staged] };
 }
 
-export interface DefinitionSource { readonly bundle_id: string; readonly digest: string; readonly source: Workflow; readonly archived_at: Date | null }
+export interface DefinitionSource { readonly bundle_id: string; readonly digest: string; readonly source: Workflow;
+  readonly checked_program: CompiledWorkflow; readonly archived_at: Date | null }
 export const selectDefinitionSummary = (definition: DefinitionSource): DefinitionSummary => ({ bundle_id: definition.bundle_id,
-  digest: definition.digest, bundle: selectDefinitionBundle(definition.source), archived_at: definition.archived_at });
-export const selectPinnedDefinition = (definition: DefinitionSource & { readonly checked_program: CompiledWorkflow }): PinnedDefinition =>
+  digest: definition.digest, bundle: selectDefinitionBundle(definition.checked_program.workflow, definition.source), archived_at: definition.archived_at });
+export const selectPinnedDefinition = (definition: DefinitionSource): PinnedDefinition =>
   ({ ...selectDefinitionSummary(definition), checked_program: definition.checked_program });
 export const selectDefinitionDetail = (definition: DefinitionSource): DefinitionDetail =>
   ({ ...selectDefinitionSummary(definition), workflow: definition.source, graph: selectDefinitionGraph(definition.source) });

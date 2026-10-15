@@ -1,5 +1,4 @@
-# The development workflow (part 2 §1, rescue spec R5), using only part 1
-# constructs and the R5 additions recorded in part 1 §12.
+# The development workflow uses shared decisions, workers and inferred dependencies.
 #
 #   prepare         code worker repository.prepare per repository
 #   analysis        author agent + operator review
@@ -29,7 +28,7 @@ schemas:
   workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident }
   prepared: { key: ident, workspace: workspace }
   pr_status: { state: "enum(open, merged, closed_unmerged)", number: integer, url: text, head_sha: optional(text), merged_at: optional(text) }
-  completed_cohort: { cohort_id: ident, repository_key: ident, title: text, pr_url: text, branch: text, build_result: build_body }
+  completed_cohort: outcome_of(cohort)
 
   severity: enum(blocking, warning, info)
   risk: { description: text, mitigation: text }
@@ -109,90 +108,83 @@ schemas:
     summary: text
     review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
 
+decisions:
+  accept_or_request:
+    accept: { effect: approve, label: Accept }
+    request_changes:
+      effect: request_changes
+      label: Request changes
+      fields: { feedback: "What must the analysis change?" }
+
+workers:
+  pr_watch:
+    kind: code
+    operation: pull_request.observe
+    when: pr_published
+    inputs:
+      query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+    every: 2m
+    creates: [pr_state]
+
+reviews:
+  pr_closed:
+    of: build_result
+    by: engine
+    when: closed_pr
+    decisions:
+      replace_pr: { effect: request_changes, label: Replace the closed PR,
+                    feedback: "The pull request was closed without being merged. Open a new pull request for this build and publish the build result and the PR summary again." }
+
 run:
+  pools: { writers: 4, builders: 4 }
   units:
     prepare:
-      input: { repositories: input.repositories }
-      group:
-        units:
-          repository:
-            for_each: input.repositories
-            key: each.key
-            stage: prepare
-            input: { repository: each }
-        outcome: { workspaces: "map(repository, repository.outcome)" }
+      for_each: input.repositories
+      key: each.key
+      stage: prepare
+      input: { repository: each }
     analysis:
       stage: analysis
-      after: [prepare]
-      input: { spec: input.spec, repositories: input.repositories, workspaces: prepare.outcome.workspaces }
+      input: { spec: input.spec, repositories: input.repositories, workspaces: "map(prepare, prepare.outcome)" }
     planning:
       stage: planning
-      after: [prepare, analysis]
       input:
         spec: input.spec
         repositories: input.repositories
-        workspaces: prepare.outcome.workspaces
+        workspaces: "map(prepare, prepare.outcome)"
         analysis: analysis.outcome.analysis
     briefs:
-      after: [prepare, analysis, planning]
+      for_each: planning.outcome.plan.cohorts
+      key: each.id
+      stage: brief
+      pool: writers
       input:
-        spec: input.spec
-        workspaces: prepare.outcome.workspaces
-        analysis: analysis.outcome.analysis
+        cohort: each
         plan: planning.outcome.plan
-      group:
-        pools: { writers: 4 }
-        units:
-          brief:
-            for_each: input.plan.cohorts
-            key: each.id
-            stage: brief
-            pool: writers
-            input: { cohort: each, plan: input.plan, analysis: input.analysis, spec: input.spec, workspaces: input.workspaces }
-        outcome: { briefs: "map(brief, brief.outcome.brief)" }
+        spec: input.spec
+        workspaces: "map(prepare, prepare.outcome)"
+        analysis: analysis.outcome.analysis
     implementation:
-      after: [prepare, briefs]
+      for_each: "map(briefs, briefs.outcome.brief)"
+      key: each.cohort_id
+      after: each.depends_on
+      stage: cohort
+      pool: builders
       input:
-        briefs: briefs.outcome.briefs
-        repositories: input.repositories
-        workspaces: prepare.outcome.workspaces
+        brief: each
+        repository: "require(lookup(input.repositories, key, each.repository_key))"
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
         admission: input.admission
-      group:
-        pools: { builders: 4 }
-        units:
-          cohort:
-            for_each: input.briefs
-            key: each.cohort_id
-            after: each.depends_on
-            stage: cohort
-            pool: builders
-            input:
-              brief: each
-              repository: lookup(input.repositories, key, each.repository_key)
-              workspace: lookup(input.workspaces, key, each.repository_key).workspace
-              admission: input.admission
-        outcome: { cohorts: "map(cohort, cohort.outcome)" }
     integration:
-      after: [prepare, implementation]
+      for_each: "filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))"
+      key: each.key
+      stage: integration
       input:
-        repositories: input.repositories
-        workspaces: prepare.outcome.workspaces
-        cohorts: implementation.outcome.cohorts
+        repository: each
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace"
+        cohorts: "filter(map(implementation, implementation.outcome), item.repository_key == each.key)"
         final_merge_policy: input.final_merge_policy
-      group:
-        units:
-          repository:
-            # One integration per repository that carried a cohort (D6).
-            for_each: filter(input.repositories, contains(map(input.cohorts, item.repository_key), item.key))
-            key: each.key
-            stage: integration
-            input:
-              repository: each
-              workspace: lookup(input.workspaces, key, each.key).workspace
-              cohorts: filter(input.cohorts, item.repository_key == each.key)
-              final_merge_policy: input.final_merge_policy
-        outcome: { integrations: "map(repository, repository.outcome)" }
-  outcome: { cohorts: implementation.outcome.cohorts, integrations: integration.outcome.integrations }
+  outcome: { cohorts: "map(implementation, implementation.outcome)", integrations: "map(integration, integration.outcome)" }
 
 stages:
   prepare:
@@ -226,10 +218,7 @@ stages:
         by: operator
         prompt: development/analysis-review.md
         inputs: { spec: input.spec, analysis: latest(analysis) }
-        decisions:
-          accept: { effect: approve, label: Accept }
-          request_changes: { effect: request_changes, label: Request changes,
-                             fields: { feedback: "What must the analysis change?" } }
+        decisions: { set: accept_or_request }
     done_when: approved(analysis)
     outcome: { analysis: latest(analysis) }
 
@@ -257,10 +246,7 @@ stages:
         by: operator
         prompt: development/plan-review.md
         inputs: { analysis: input.analysis, plan: latest(plan) }
-        decisions:
-          accept: { effect: approve, label: Accept }
-          request_changes: { effect: request_changes, label: Request changes,
-                             fields: { feedback: "What must the plan change?" } }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the plan change?" } } } }
     done_when: approved(plan)
     outcome: { plan: latest(plan) }
 
@@ -288,15 +274,18 @@ stages:
         by: operator
         prompt: development/brief-review.md
         inputs: { cohort: input.cohort, brief: latest(brief) }
-        decisions:
-          accept: { effect: approve, label: Accept }
-          request_changes: { effect: request_changes, label: Request changes,
-                             fields: { feedback: "What must the brief change?" } }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the brief change?" } } } }
     done_when: approved(brief)
     outcome: { brief: latest(brief) }
 
   cohort:
     input: { brief: brief_body, repository: repository, workspace: workspace, admission: boolean }
+    let:
+      brief_value: input.brief
+      watch_base: input.repository.forge.build_base
+      pr_published: published(pr)
+      closed_pr: published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
+      merged_pr: published(pr_state) and latest(pr_state).state == "merged"
     artifacts:
       brief: { schema: brief_body }
       build_result: { schema: build_body }
@@ -314,24 +303,17 @@ stages:
         kind: agent
         when: approved(brief) or not input.admission
         prompts: { initial: development/build.md, revise: development/build-revise.md }
-        inputs: { brief: input.brief, repository: input.repository }
+        inputs: { brief: brief_value, repository: input.repository }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
         kind: agent
         prompts: { review: development/assess.md }
-        inputs: { brief: input.brief, pr: latest(pr) }
+        inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
         reviews: build_result
         creates: [assessment]
-      pr_watch:
-        kind: code
-        operation: pull_request.observe
-        when: published(pr)
-        inputs:
-          query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.build_base, pr_url: latest(pr).pr_url}"
-        every: 2m
-        creates: [pr_state]
+      pr_watch: { template: pr_watch }
     reviews:
       admission:
         of: brief
@@ -347,20 +329,16 @@ stages:
         prompt: development/assessment-review.md
         inputs: { brief: input.brief, build_result: latest(build_result), pr: latest(pr), assessment: latest(assessment) }
         decisions:
-          accept: { effect: approve, label: Accept }
-          request_build_changes: { effect: request_changes, on: build_result, label: Request build changes,
-                                   fields: { feedback: "What must the builder change?" } }
+          set: accept_or_request
+          rename: { request_changes: request_build_changes }
+          overrides:
+            request_changes: { on: build_result, label: Request build changes,
+                               fields: { feedback: "What must the builder change?" } }
       # D5: a closed, unmerged PR counts as changes requested on the build.
-      pr_closed:
-        of: build_result
-        by: engine
-        when: published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-        decisions:
-          replace_pr: { effect: request_changes, label: Replace the closed PR,
-                        feedback: "The pull request was closed without being merged. Open a new pull request for this build and publish the build result and the PR summary again." }
-    done_when: approved(assessment) and published(build_result) and published(pr) and published(pr_state) and latest(pr_state).state == "merged"
+      pr_closed: { template: pr_closed }
+    done_when: approved(assessment) and published(build_result) and pr_published and merged_pr
     outcome:
-      cohort_id: input.brief.cohort_id
+      cohort_id: brief_value.cohort_id
       repository_key: input.brief.repository_key
       title: input.brief.title
       pr_url: latest(pr).pr_url
@@ -369,6 +347,11 @@ stages:
 
   integration:
     input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), final_merge_policy: final_merge_policy }
+    let:
+      pr_published: published(pr)
+      watch_base: input.repository.forge.final_base
+      closed_pr: input.final_merge_policy == "require_merge" and published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
+      final_state: published(pr_state) and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
@@ -379,33 +362,23 @@ stages:
         inputs: { repository: input.repository, cohorts: input.cohorts }
         workspace: repository(input.workspace)
         creates: [pr]
-      pr_watch:
-        kind: code
-        operation: pull_request.observe
-        when: published(pr)
-        inputs:
-          query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: input.repository.forge.final_base, pr_url: latest(pr).pr_url}"
-        every: 2m
-        creates: [pr_state]
+      pr_watch: { template: pr_watch }
     reviews:
       integration_review:
         of: pr
         by: operator
         prompt: development/integration-review.md
         inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
-        decisions:
-          accept: { effect: approve, label: Accept }
-          request_changes: { effect: request_changes, label: Request changes,
-                             fields: { feedback: "What must the integration change?" } }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       pr_closed:
-        of: pr
-        by: engine
-        when: input.final_merge_policy == "require_merge" and published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-        decisions:
-          replace_pr: { effect: request_changes, label: Replace the closed PR,
-                        feedback: "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again." }
+        template: pr_closed
+        overrides:
+          of: pr
+          decisions:
+            replace_pr:
+              feedback: "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again."
     # Done when its PR merges; under allow_close_without_merge, also when it closes unmerged.
-    done_when: approved(pr) and published(pr_state) and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
+    done_when: approved(pr) and final_state
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url

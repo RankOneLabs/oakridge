@@ -50,6 +50,7 @@ const DEVELOPMENT_NAMES = selectDeclaredNames(Bun.YAML.parse(readFileSync(resolv
 test("reachable Rust library modules and Cargo dependencies have no declared IO capability", () => {
   const files = rustLibraryGraph(root);
   expect(files.length).toBeGreaterThan(5);
+  expect(files.some((file) => file.endsWith("/compiler/src/workflow_passes.rs"))).toBe(true);
   expect(files.flatMap((file) => rustCapabilityViolations(readFileSync(file, "utf8")).map((detail) => `${label(file)}: ${detail}`))).toEqual([]);
   const forbiddenCrate = /^\s*(?:tokio|reqwest|ureq|rand|getrandom|chrono|postgres|sqlx|rusqlite|diesel)\s*=/m;
   expect(["model", "compiler", "evaluator"].filter((name) => forbiddenCrate.test(readFileSync(resolve(root, `workflow-core/crates/${name}/Cargo.toml`), "utf8")))).toEqual([]);

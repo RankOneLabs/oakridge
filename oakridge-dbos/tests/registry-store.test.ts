@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { compileWorkflow } from "../src/core-client/client";
 import type { ProjectId, RunId } from "../src/domain/primitives";
 import { readWorkflowPrompts } from "../src/runtime/prompt-files";
 import { createProject, findLaunchableDefinition, hasProject, listProjects, pinDefinition, readPromptTexts,
@@ -92,6 +93,9 @@ test("pinDefinition records a newly pinned bundle on the operator stream", async
   const workflow = { ...sampleWorkflow("review-loop"), workflow: "review_loop_variant" };
   const prompts = readWorkflowPrompts(workflow);
   if (!prompts.ok) throw new Error(prompts.error.detail);
-  const pinned = await pinDefinition(authority.db, { source: workflow, compiled: { digest: "f".repeat(64), stages: ["document"] }, prompts: prompts.value });
+  const compiled = await compileWorkflow(authority.core, { workflow,
+    prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+  if (!compiled.ok) throw new Error(compiled.error.detail);
+  const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts: prompts.value });
   expect((await announcements(pinned.bundle.id)).map((row) => row.payload.kind)).toEqual(["invalidate"]);
 });

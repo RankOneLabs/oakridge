@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 import type { DB } from "./db-types";
 import type { Database, DatabaseTransaction } from "./database";
 import type { AttemptRecord, EffectIntentRecord, EffectStatus } from "./schema-records";
+import type { ActionId, IntentId, RunId, UnitId } from "../domain/primitives";
 
 type Reader = Kysely<DB> | DatabaseTransaction;
 
@@ -25,14 +26,16 @@ export const OWED_STATUSES = [...START_OWED_STATUSES, "stop_requested"] as const
 export const isStartOwed = (status: EffectStatus): boolean => (START_OWED_STATUSES as readonly EffectStatus[]).includes(status);
 
 export async function readIntent(db: Reader, intent_id: string): Promise<EffectIntent | null> {
-  return (await db.selectFrom("authority.effect_intent").selectAll().where("id", "=", intent_id).executeTakeFirst() ?? null) as EffectIntent | null;
+  const row = await db.selectFrom("authority.effect_intent").selectAll().where("id", "=", intent_id).executeTakeFirst();
+  return row ? { ...row, id: row.id as IntentId, run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId,
+    action_id: row.action_id as ActionId } : null;
 }
 
-export interface OwedIntent { readonly id: string; readonly status: EffectStatus }
+export interface OwedIntent { readonly id: IntentId; readonly status: EffectStatus }
 /** Intents a run still owes the outside world: starts to carry and stops to confirm. */
 export async function listOwedIntents(db: Reader, run_id: string): Promise<readonly OwedIntent[]> {
-  return db.selectFrom("authority.effect_intent").select(["id", "status"]).where("run_id", "=", run_id)
-    .where("status", "in", OWED_STATUSES).orderBy("id").execute();
+  return (await db.selectFrom("authority.effect_intent").select(["id", "status"]).where("run_id", "=", run_id)
+    .where("status", "in", OWED_STATUSES).orderBy("id").execute()).map((row) => ({ ...row, id: row.id as IntentId }));
 }
 
 /** Per-run work holds the run row; this is the one serialization mechanism for a run. */
@@ -97,7 +100,8 @@ export async function markAcknowledged(db: Database, intent_id: string): Promise
 export async function abandonIntent(db: Database, input: { readonly intent_id: string; readonly last_error: string }): Promise<EffectStatus | null> {
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return null;
-    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", last_error: input.last_error, next_try_at: null, updated_at: new Date() })
+    await trx.updateTable("authority.effect_intent").set({ status: "stop_requested", stop_origin: "executor", stop_error: input.last_error,
+      last_error: input.last_error, next_try_at: null, updated_at: new Date() })
       .where("id", "=", input.intent_id).where("status", "in", START_OWED_STATUSES).execute();
     return readStatus(trx, input.intent_id);
   });

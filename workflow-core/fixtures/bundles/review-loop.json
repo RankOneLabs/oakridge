@@ -21,6 +21,9 @@
       "input": {
         "topic": "text"
       },
+      "let": {
+        "topic_value": "input.topic"
+      },
       "artifacts": {
         "draft": {
           "schema": {
@@ -48,7 +51,7 @@
             "revise": "review-loop/revise.md"
           },
           "inputs": {
-            "topic": "input.topic",
+            "topic": "topic_value",
             "critique": "latest(critique)"
           },
           "creates": [

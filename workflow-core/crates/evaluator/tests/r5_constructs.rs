@@ -24,14 +24,12 @@ fn program() -> CheckedWorkflow {
     let operations = vec![
         CodeOperation {
             key: SymbolKey::from("value.publish"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("value".into(), ty("$value"))])),
             output_schema: ty("$value"),
             error_codes: vec![],
         },
         CodeOperation {
             key: SymbolKey::from("pull.observe"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
             output_schema: TypeExpression::Record(BTreeMap::from([(
                 "state".into(),
@@ -62,8 +60,6 @@ impl Run {
                 run: RunState {
                     id: "run".into(),
                     root: UnitId::from("run"),
-                    status: UnitStatus::NotStarted,
-                    input: None,
                 },
                 units: vec![],
                 attempts: vec![],
@@ -111,9 +107,10 @@ impl Run {
             .unwrap()
             .wanted
             .iter()
-            .filter(|(id, _)| id.0 == unit)
-            .flat_map(|(_, actions)| actions.iter())
-            .map(|Action::RunWorker { worker, mode, .. }| (worker.0.clone(), mode.clone()))
+            .filter(|wanted| wanted.unit.0 == unit)
+            .map(|wanted| match &wanted.action {
+                Action::RunWorker { worker, mode, .. } => (worker.0.clone(), mode.clone()),
+            })
             .collect()
     }
     fn wants(&self, unit: &str, worker: &str) -> bool {
@@ -265,9 +262,9 @@ fn feedback_of(run: &Run, unit: &str) -> Vec<String> {
     run.state
         .decisions
         .iter()
-        .filter(|decision| decision.unit.0 == unit)
+        .filter(|decision| decision.unit().0 == unit)
         .map(|decision| {
-            decision.payload["feedback"]
+            decision.payload()["feedback"]
                 .as_str()
                 .unwrap_or("")
                 .to_owned()
@@ -278,8 +275,6 @@ fn feedback_of(run: &Run, unit: &str) -> Vec<String> {
 #[test]
 fn an_enum_input_outside_its_variants_fails_the_launch_schema() {
     let mut state = Run::launch(false).state;
-    state.run.input = None;
-    state.run.status = UnitStatus::NotStarted;
     state.units.clear();
     state.attempts.clear();
     let refused = step(
@@ -294,7 +289,7 @@ fn an_enum_input_outside_its_variants_fails_the_launch_schema() {
         },
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "launch input fails schema")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "launch input fails schema")
     );
 }
 
@@ -369,7 +364,7 @@ fn without_admission_the_builder_starts_at_once_and_the_admission_review_stays_c
     assert!(run.last.as_ref().unwrap().reviews.is_empty());
     let refused = run.decide(COHORT, "admission", "admit", "brief", json!({}));
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "review is not open")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "review is not open")
     );
 }
 
@@ -388,11 +383,11 @@ fn a_periodic_observer_waits_until_its_guard_and_inputs_resolve() {
         .last
         .as_ref()
         .unwrap()
-        .resolved
+        .wanted
         .iter()
         .find(|r| r.action_id == run.action(COHORT, "pr_watch"))
         .unwrap();
-    assert_eq!(resolved.inputs, json!({ "url": PR_URL }));
+    assert_eq!(resolved.resolved.inputs, json!({ "url": PR_URL }));
 }
 
 #[test]
@@ -404,14 +399,17 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
         .state
         .decisions
         .iter()
-        .filter(|d| d.review.0 == "pr_closed")
+        .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
         .cloned()
         .collect();
     assert_eq!(engine.len(), 1);
-    assert_eq!(engine[0].target, build);
-    assert_eq!(engine[0].effect, DecisionEffect::RequestChanges);
+    assert_eq!(engine[0].target(), &build);
+    assert!(matches!(
+        engine[0].effect(),
+        Some(DecisionEffect::RequestChanges { .. })
+    ));
     assert_eq!(
-        engine[0].payload,
+        engine[0].payload(),
         json!({ "feedback": "The PR was closed without merging. Open a new one." })
     );
     let revise = run
@@ -425,7 +423,7 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
     assert_eq!(
         revise.cause,
         Cause::ChangesRequested {
-            decision: engine[0].id.clone()
+            decision: engine[0].id().clone()
         }
     );
     // Another observation of the same state decides nothing new.
@@ -434,7 +432,7 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
         run.state
             .decisions
             .iter()
-            .filter(|d| d.review.0 == "pr_closed")
+            .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
             .count(),
         1
     );
@@ -443,6 +441,16 @@ fn a_closed_unmerged_pr_requests_build_changes_once_per_build_revision() {
 #[test]
 fn an_operator_cannot_decide_an_engine_review() {
     let mut run = Run::through_build(false);
+    let absent = run.decide(
+        COHORT,
+        "pr_closed",
+        "missing",
+        "build",
+        json!({ "feedback": "x" }),
+    );
+    assert!(
+        matches!(absent, Err(StepError::Rejected { reason, .. }) if reason == "decision absent")
+    );
     let refused = run.decide(
         COHORT,
         "pr_closed",
@@ -451,7 +459,7 @@ fn an_operator_cannot_decide_an_engine_review() {
         json!({ "feedback": "x" }),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "the engine decides this review")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "the engine decides this review")
     );
 }
 
@@ -478,7 +486,7 @@ fn the_cohort_is_done_once_its_assessment_is_accepted_and_its_pr_is_merged() {
     assert!(matches!(run.status(COHORT), UnitStatus::Active));
     run.observe("merged");
     assert!(matches!(run.status(COHORT), UnitStatus::Done { .. }));
-    assert!(matches!(run.state.run.status, UnitStatus::Done { .. }));
+    assert!(matches!(run.status("run"), UnitStatus::Done { .. }));
 }
 
 #[test]
@@ -492,7 +500,7 @@ fn an_assessment_outside_its_enum_fails_its_schema() {
         json!({ "verdict": "maybe" }),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason == "artifact body fails schema")
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason == "artifact body fails schema")
     );
 }
 
@@ -545,7 +553,9 @@ fn a_revision_names_an_attempt_exactly_when_its_writer_is_not_the_operator() {
         ),
     ] {
         let refused = run.apply(event, writer);
-        assert!(matches!(refused, Err(StepError::Rejected { reason: actual }) if actual == reason));
+        assert!(
+            matches!(refused, Err(StepError::Rejected { reason: actual, .. }) if actual == reason)
+        );
     }
 }
 
@@ -567,7 +577,7 @@ fn an_operator_cannot_edit_a_code_workers_artifact() {
         operator(),
     );
     assert!(
-        matches!(refused, Err(StepError::Rejected { reason }) if reason.contains("code worker"))
+        matches!(refused, Err(StepError::Rejected { reason, .. }) if reason.contains("code worker"))
     );
 }
 
@@ -623,7 +633,7 @@ fn an_engine_review_waits_for_the_revise_it_asked_for_to_publish_everything() {
         run.state
             .decisions
             .iter()
-            .filter(|d| d.review.0 == "pr_closed")
+            .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
             .count()
     };
     assert_eq!(pr_closed(&run), 1);
@@ -665,8 +675,8 @@ fn pr_closed_targets(run: &Run) -> Vec<RevisionId> {
     run.state
         .decisions
         .iter()
-        .filter(|d| d.review.0 == "pr_closed")
-        .map(|d| d.target.clone())
+        .filter(|d| d.review().is_some_and(|review| review.0 == "pr_closed"))
+        .map(|d| d.target().clone())
         .collect()
 }
 

@@ -24,14 +24,12 @@ pub fn operations() -> Vec<CodeOperation> {
     vec![
         CodeOperation {
             key: SymbolKey::from("value.publish"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("value".into(), ty("$value"))])),
             output_schema: ty("$value"),
             error_codes: vec![],
         },
         CodeOperation {
             key: SymbolKey::from("items.publish"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([(
                 "items".into(),
                 ty("list($value)"),
@@ -41,7 +39,6 @@ pub fn operations() -> Vec<CodeOperation> {
         },
         CodeOperation {
             key: SymbolKey::from("pull.observe"),
-            version: 1,
             input_schema: TypeExpression::Record(BTreeMap::from([("url".into(), ty("text"))])),
             output_schema: TypeExpression::Record(BTreeMap::from([(
                 "state".into(),
@@ -86,6 +83,122 @@ const DONE: &str = "/stages/cohort/done_when";
 #[test]
 fn the_fixture_compiles() {
     compile(&fixture(&[])).unwrap();
+}
+
+#[test]
+fn stage_let_bindings_expand_in_guards_inputs_and_outcomes() {
+    let value = fixture(&[
+        (
+            "/stages/cohort/let",
+            json!({
+                "brief_value": "input.brief",
+                "pr_published": "published(pr)",
+                "merged_pr": "published(pr_state) and latest(pr_state).state == \"merged\""
+            }),
+        ),
+        (
+            "/stages/cohort/workers/builder/inputs/brief",
+            json!("brief_value"),
+        ),
+        (
+            "/stages/cohort/workers/pr_watch/when",
+            json!("pr_published"),
+        ),
+        (
+            DONE,
+            json!("approved(assessment) and pr_published and merged_pr"),
+        ),
+        (
+            "/stages/cohort/outcome/brief_key",
+            json!("brief_value.repository_key"),
+        ),
+    ]);
+    let program = compile(&value).unwrap();
+    let cohort = program
+        .stages
+        .iter()
+        .find(|stage| stage.key.0 == "cohort")
+        .unwrap();
+    assert!(cohort
+        .outcome
+        .iter()
+        .any(|field| field.key == "brief_key" && field.value.value_type == Type::Ident));
+}
+
+#[test]
+fn repeated_let_bindings_stop_before_exponential_expansion() {
+    let mut value = fixture(&[]);
+    let mut bindings = serde_json::Map::new();
+    bindings.insert("a0".into(), json!("true"));
+    for index in 1..20 {
+        bindings.insert(
+            format!("a{index}"),
+            json!(format!("a{} and a{}", index - 1, index - 1)),
+        );
+    }
+    value["stages"]["cohort"]["let"] = Value::Object(bindings);
+    value["stages"]["cohort"]["done_when"] = json!("a19");
+    let error = compile(&value).unwrap_err();
+    assert!(error
+        .detail
+        .contains("let expansion exceeds depth or node budget"));
+}
+
+#[test]
+fn worker_templates_and_decision_sets_expand_typed_overrides() {
+    let mut value = fixture(&[]);
+    let worker = value["stages"]["cohort"]["workers"]["pr_watch"].take();
+    let decisions = value["stages"]["cohort"]["reviews"]["assessment_review"]["decisions"].take();
+    value["workers"] = json!({"watch": worker});
+    value["decisions"] = json!({"assessment": decisions});
+    value["stages"]["cohort"]["workers"]["pr_watch"] =
+        json!({"template": "watch", "overrides": {"every": "2m"}});
+    value["stages"]["cohort"]["reviews"]["assessment_review"]["decisions"] = json!({
+        "set": "assessment", "overrides": {
+            "accept": {"payload": "text"},
+            "request_build_changes": {"label": "Revise build"}
+        }
+    });
+    compile(&value).unwrap();
+    value["stages"]["cohort"]["workers"]["pr_watch"]["overrides"]["unknown"] = json!("x");
+    let error = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+    assert_eq!(&*error.path, "stages.cohort.workers.pr_watch");
+}
+
+#[test]
+fn lookup_is_optional_and_default_handles_the_missing_case() {
+    let check = "/stages/plan/artifacts/plan/validate/0/check";
+    let value = fixture(&[
+        (check, json!("every(plan.cohorts, default(lookup(plan.cohorts, id, item.id), item).id == item.id)")),
+        ("/stages/plan/outcome/matched", json!("lookup(latest(plan).cohorts, id, \"a\")")),
+    ]);
+    let program = compile(&value).unwrap();
+    let plan = program
+        .stages
+        .iter()
+        .find(|stage| stage.key.0 == "plan")
+        .unwrap();
+    assert!(matches!(
+        plan.outcome
+            .iter()
+            .find(|field| field.key == "matched")
+            .unwrap()
+            .value
+            .value_type,
+        Type::Optional { .. }
+    ));
+    let bad = fixture(&[(
+        check,
+        json!("every(plan.cohorts, lookup(plan.cohorts, id, item.id).id == item.id)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&bad).unwrap()).unwrap();
+    let error = workflow_compiler::compile_workflow_detailed(&source, &operations(), &prompts())
+        .unwrap_err();
+    assert_eq!(
+        error[0].path.0,
+        "stages.plan.artifacts.plan.validate.0.check"
+    );
+    assert_eq!(error[0].check, CheckKind::ExpressionType);
 }
 
 #[test]

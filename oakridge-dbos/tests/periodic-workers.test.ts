@@ -117,6 +117,29 @@ test("the replacing watch observes the new input, and the replaced watch is refu
     .toEqual({ late_start: "periodic action is superseded", observations: ["one", "two"] });
 });
 
+test("a replacement watch's second attempt keeps its own action identity and sequence in the wanted log", async () => {
+  const { run_id, unit, first } = await watchingOne();
+  await runAttempt(run_id, { action_id: first, seq: 1 }, { unit, artifact: "observation", body: "one" });
+  await editPr(run_id, unit, "two");
+  const replacement = (await attemptsOf(run_id, "observer")).at(-1);
+  if (!replacement) throw new Error("the edit opened no replacement watch");
+  await runAttempt(run_id, replacement, { unit, artifact: "observation", body: "two" });
+  const refusals = await runAttempt(run_id, { action_id: replacement.action_id, seq: 2 },
+    { unit, artifact: "observation", body: "two" });
+  if (refusals.length) throw new Error(`second attempt refused: ${refusals.join(", ")}`);
+  const attempts = await attemptsOf(run_id, "observer");
+  const latest = await authority.db.selectFrom("authority.wanted_log as wanted")
+    .innerJoin("authority.event as event", "event.id", "wanted.event_id")
+    .select("wanted.actions").where("wanted.run_id", "=", run_id).where("wanted.unit_id", "=", unit)
+    .orderBy("event.created_at", "desc").orderBy("event.id", "desc").executeTakeFirstOrThrow();
+  const worker = latest.actions.find((item) => item.worker === "observer");
+  expect({ wanted_count: latest.actions.length, action_id: worker?.action_id, attempt_seq: worker?.attempt_seq,
+    distinct_from_first: worker?.action_id !== first,
+    committed_attempt: attempts.some((attempt) => attempt.action_id === worker?.action_id && attempt.seq === worker?.attempt_seq) })
+    .toEqual({ wanted_count: 1, action_id: replacement.action_id, attempt_seq: 2,
+      distinct_from_first: true, committed_attempt: true });
+});
+
 test("a failed watch, retried, succeeds on an unchanged observation and its schedule resumes under a new watch", async () => {
   const { run_id, unit, first } = await watchingOne();
   await runAttempt(run_id, { action_id: first, seq: 1 }, { unit, artifact: "observation", body: "one" });

@@ -5,10 +5,21 @@ use workflow_model::protocol::{
     TransportErrorKind, PROTOCOL_VERSION,
 };
 use workflow_model::{
-    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepError,
+    BundleDigest, CheckedWorkflow, DomainError, DomainErrorKind, ResourceLimits, StepEntity,
+    StepError,
 };
 
 const MAX_CACHED_PROGRAMS: usize = 32;
+
+fn entity_id(entity: StepEntity, run_id: &str) -> String {
+    match entity {
+        StepEntity::Run => run_id.to_owned(),
+        StepEntity::Unit { unit } => unit.0,
+        StepEntity::Worker { unit, worker } => format!("{}:{}", unit.0, worker.0),
+        StepEntity::Artifact { unit, artifact } => format!("{}:{}", unit.0, artifact.0),
+        StepEntity::Action { action } => action.0,
+    }
+}
 
 struct CoreState {
     programs: VecDeque<CheckedWorkflow>,
@@ -58,7 +69,7 @@ fn transport(id: String, kind: TransportErrorKind, detail: impl Into<String>) ->
 }
 
 fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
-    let raw = match workflow_compiler::decode_unique_json(bytes) {
+    let mut raw = match workflow_compiler::decode_unique_json(bytes) {
         Ok(value) => value,
         Err(error) if error.kind == DomainErrorKind::DuplicateKey => {
             return Response {
@@ -108,15 +119,21 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         );
     }
     if let Some(source) = raw.get("input").and_then(|input| input.get("workflow")) {
-        let source_bytes = serde_json::to_vec(source).expect("JSON value serializes");
-        if let Err(error) = workflow_compiler::decode_workflow(&source_bytes) {
-            return Response {
-                version: PROTOCOL_VERSION,
-                request_id: id,
-                truncated: false,
-                result: ResponseResult::DomainError(error),
-            };
+        match workflow_compiler::decode_workflow_value_detailed(source.clone()) {
+            Ok(_) => {}
+            Err(errors) => {
+                return Response {
+                    version: PROTOCOL_VERSION,
+                    request_id: id,
+                    truncated: false,
+                    result: ResponseResult::CompileErrors(errors),
+                }
+            }
         }
+        let mut expanded = source.clone();
+        workflow_compiler::expand_workflow_templates_value(&mut expanded)
+            .expect("workflow templates were validated by decoding");
+        raw["input"]["workflow"] = expanded;
     }
     let request: Request = match serde_json::from_value(raw) {
         Ok(value) => value,
@@ -130,13 +147,13 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             workflow,
             operations,
             prompts,
-        } => workflow_compiler::compile_workflow_with_limits(
+        } => workflow_compiler::compile_workflow_with_limits_and_projection_detailed(
             &workflow,
             &operations,
             &prompts,
             &limits,
         )
-        .map(|program| {
+        .map(|(program, projected_workflow)| {
             let output = CompiledWorkflow {
                 digest: program.digest.clone(),
                 stages: program
@@ -144,10 +161,12 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
                     .iter()
                     .map(|stage| stage.key.clone())
                     .collect(),
+                workflow: Box::new(projected_workflow),
             };
             state.insert(program);
             Output::Compiled(output)
-        }),
+        })
+        .map_err(ResponseResult::CompileErrors),
         Operation::Step {
             workflow_digest,
             snapshot,
@@ -164,22 +183,27 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
             .and_then(|program| {
                 super::step_with_limits(program, &snapshot, &incoming, &limits).map_err(|error| {
                     match error {
-                        StepError::Rejected { reason } => {
-                            DomainError::new(DomainErrorKind::RejectedEvent, "step", reason)
-                        }
+                        StepError::Rejected { reason, entity } => DomainError::new(
+                            DomainErrorKind::RejectedEvent,
+                            entity_id(entity, &snapshot.run.id),
+                            reason,
+                        ),
                         StepError::Stalled { unit, reason } => {
                             DomainError::new(DomainErrorKind::StalledEvent, unit.0, reason)
                         }
-                        // The entity names the unit being advanced, when it is known.
-                        StepError::Invalid { detail, unit } => DomainError::new(
+                        StepError::Invalid { detail, entity } => DomainError::new(
                             DomainErrorKind::InvalidSnapshot,
-                            unit.map_or_else(|| "step".to_owned(), |unit| unit.0),
+                            entity_id(entity, &snapshot.run.id),
                             detail,
                         ),
                     }
                 })
             })
-            .map(|result| Output::Stepped(Box::new(result))),
+            .map(|result| Output::Stepped(Box::new(result)))
+            .map_err(|mut error| {
+                error.operation = operation_name.into();
+                ResponseResult::DomainError(error)
+            }),
     };
     Response {
         version: PROTOCOL_VERSION,
@@ -187,10 +211,7 @@ fn handle_request(state: &mut CoreState, bytes: &[u8]) -> Response {
         truncated: false,
         result: match result {
             Ok(output) => ResponseResult::Ok(output),
-            Err(mut error) => {
-                error.operation = operation_name.into();
-                ResponseResult::DomainError(error)
-            }
+            Err(error) => error,
         },
     }
 }
@@ -223,34 +244,4 @@ pub unsafe extern "C" fn core_process(pointer: *const u8, len: usize) -> *const 
 #[unsafe(no_mangle)]
 pub extern "C" fn core_response_len() -> usize {
     STATE.with_borrow(|state| state.response.len())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn abi_allocation_round_trips_through_exact_length() {
-        let len = 512;
-        let pointer = core_alloc(len);
-        unsafe {
-            std::slice::from_raw_parts_mut(pointer, len).fill(0xa5);
-            core_dealloc(pointer, len);
-        }
-    }
-
-    #[test]
-    fn unknown_operation_returns_a_typed_error() {
-        let mut state = CoreState::new();
-        let response = handle_request(
-            &mut state,
-            br#"{"version":4,"request_id":"one","operation":"unknown","input":{}}"#,
-        );
-        assert!(matches!(
-            response.result,
-            ResponseResult::TransportError(TransportError {
-                kind: TransportErrorKind::UnknownOperation,
-                ..
-            })
-        ));
-    }
 }

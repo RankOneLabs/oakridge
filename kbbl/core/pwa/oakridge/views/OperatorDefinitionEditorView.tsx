@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { compileOperatorDefinition, fetchOperatorDefinitionDetail, pinOperatorDefinition } from "../client";
+import { useQuery } from "@tanstack/react-query";
+import { compileOperatorDefinition, fetchOperatorDefinitionDetail } from "../client";
 import { queryKeys } from "../queryKeys";
-import { invalidateDefinitions } from "../lib/operator-invalidation";
+import { usePinOperatorDefinition } from "../hooks/usePinOperatorDefinition";
 import { formatWorkflowText, parseWorkflowText, selectCloneWorkflow } from "../lib/workflow-definition-form";
 import { Button } from "../../components/atoms/Button";
 
@@ -10,7 +10,7 @@ interface Props { readonly cloneFromId: string | null; readonly onBack: () => vo
 
 /** Author a workflow source as JSON: the authority compiles it against its prompts, and only the text that compiled is pinned. */
 export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: Props) {
-  const client = useQueryClient();
+  const pinDefinition = usePinOperatorDefinition();
   const detail = useQuery({ queryKey: queryKeys.definitionDetail(cloneFromId),
     queryFn: () => fetchOperatorDefinitionDetail(cloneFromId ?? ""), enabled: cloneFromId !== null });
   const [text, setText] = useState("");
@@ -47,7 +47,7 @@ export function OperatorDefinitionEditorView({ cloneFromId, onBack, onPinned }: 
     const parsed = parseWorkflowText(compiled);
     if (!parsed.ok) { setError(parsed.error); return; }
     setError(null); setIsPinning(true);
-    try { await pinOperatorDefinition(parsed.value); invalidateDefinitions(client); onPinned(); }
+    try { await pinDefinition.mutateAsync(parsed.value); onPinned(); }
     catch (cause) { setError(String(cause)); }
     finally { setIsPinning(false); }
   };

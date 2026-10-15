@@ -33,7 +33,6 @@ fn prompts() -> BTreeMap<String, String> {
 fn operations() -> Vec<CodeOperation> {
     vec![CodeOperation {
         key: SymbolKey::from("repository.prepare"),
-        version: 1,
         input_schema: TypeExpression::Record(
             [
                 (
@@ -75,6 +74,13 @@ fn both_samples_compile_from_yaml_json() {
         let checked = compile_workflow(&source, &operations(), &prompts()).unwrap();
         assert_eq!(checked.stages.len(), source.stages.len());
     }
+}
+
+#[test]
+fn authored_development_fixture_matches_the_editor_source_model() {
+    let _: AuthoredWorkflow =
+        serde_json::from_slice(include_bytes!("../../../fixtures/bundles/development.json"))
+            .unwrap();
 }
 
 #[test]

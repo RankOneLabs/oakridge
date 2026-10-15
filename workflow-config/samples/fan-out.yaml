@@ -6,7 +6,6 @@ run:
   units:
     prepare: { stage: prepare, input: { repository: input.repository } }
     work:
-      after: [prepare]
       input: { items: input.items, workspace: prepare.outcome.workspace }
       group:
         pools: { slots: 2 }

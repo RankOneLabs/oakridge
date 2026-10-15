@@ -32,7 +32,7 @@ async function revisionStanding(trx: DatabaseTransaction, run_id: string, revisi
   if (!revision) return null;
   const latest = await trx.selectFrom("authority.artifact_revision").select("id")
     .where("run_id", "=", run_id).where("unit_id", "=", revision.unit_id).where("artifact", "=", revision.artifact)
-    .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+    .orderBy("seq", "desc").executeTakeFirst();
   return { unit_id: revision.unit_id, is_latest: latest?.id === revision_id };
 }
 
@@ -141,7 +141,7 @@ export async function readCollaborationThreads(db: Reader, input: { readonly run
     .where("run_id", "=", input.run_id).where("id", "=", input.revision_id).executeTakeFirstOrThrow();
   const latest = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", input.run_id)
     .where("unit_id", "=", head.unit_id).where("artifact", "=", head.artifact)
-    .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+    .orderBy("seq", "desc").executeTakeFirst();
   const depth = new Map(chain.map((id, index) => [id, index]));
   const thread_rows = await db.selectFrom("authority.collaboration_thread").selectAll()
     .where("run_id", "=", input.run_id).where("unit_id", "=", input.unit_id).where("artifact_revision_id", "=", anyOf(chain))

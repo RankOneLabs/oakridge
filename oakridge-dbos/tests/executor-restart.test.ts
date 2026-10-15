@@ -81,7 +81,7 @@ test("I4: a run survives a killed server, with no session started twice", async 
     released = true;
 
     await eventually("the run to finish", async () =>
-      (await db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirst())?.status.kind === "done", 150_000);
+      (await db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirst())?.status.kind === "done", 150_000);
     expect({ sessions: stub.sessions.size, created_twice: [...stub.creates.values()].filter((count) => count > 1).length })
       .toEqual({ sessions: 4, created_twice: 0 });
   } finally { rmSync(repo, { recursive: true, force: true }); }

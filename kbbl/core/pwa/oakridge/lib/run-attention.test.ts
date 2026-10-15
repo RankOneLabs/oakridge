@@ -1,28 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { makeInboxDecision, makeInboxStalled, makeInboxWaiting } from "../__fixtures__/read-models";
-import { selectAttentionCount, selectRunAttentionCounts } from "./run-attention";
+import { selectRunAttention } from "./run-attention";
 
-describe("run attention counts", () => {
-  it("groups actionable decisions by run", () => {
-    const counts = selectRunAttentionCounts([
-      makeInboxDecision({ run_id: "run-a", unit_id: "unit-1" }),
-      makeInboxDecision({ run_id: "run-a", unit_id: "unit-2" }),
-      makeInboxDecision({ run_id: "run-b" }),
+describe("run attention", () => {
+  it("counts two asks on one unit in the list, header, badge and sidebar shape", () => {
+    const attention = selectRunAttention([
+      makeInboxDecision({ run_id: "run-a", unit_id: "unit-1", key: "approve" }),
+      makeInboxDecision({ run_id: "run-a", unit_id: "unit-1", key: "request_changes" }),
     ]);
-    expect([...counts]).toEqual([["run-a", 2], ["run-b", 1]]);
+    expect({ list: attention.count, header: attention.count, badge: attention.decision_count,
+      sidebar: attention.by_unit.get("unit-1") }).toEqual({ list: 2, header: 2, badge: 2, sidebar: 2 });
   });
 
-  it("does not treat a downstream wait as operator attention", () => {
-    const counts = selectRunAttentionCounts([makeInboxWaiting({ run_id: "run-a" })]);
-    expect(counts.get("run-a")).toBeUndefined();
-  });
-
-  it("counts a projected diagnostic as run attention", () => {
-    const counts = selectRunAttentionCounts([makeInboxStalled({ run_id: "run-a" })]);
-    expect(counts.get("run-a")).toBe(1);
-  });
-
-  it("keeps the decision-only toolbar badge distinct from diagnostic attention", () => {
-    expect(selectAttentionCount([makeInboxDecision(), makeInboxStalled()])).toBe(1);
+  it("excludes waits and includes projected diagnostics", () => {
+    const attention = selectRunAttention([makeInboxWaiting(), makeInboxStalled()]);
+    expect({ count: attention.count, decisions: attention.decision_count }).toEqual({ count: 1, decisions: 0 });
   });
 });
