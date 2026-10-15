@@ -7,7 +7,7 @@ import { selectInboxPage, selectRunInboxBatch, selectRunInboxItems } from "../pr
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
-import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold,
+import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold, readSessionRunLocation,
   readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
@@ -150,7 +150,9 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
   } catch (cause) { return fault(cause); } });
 
   app.get("/session_holds/:session_id", async (c) => { try {
-    return c.json({ hold: await readSessionHold(db, c.req.param("session_id")) } satisfies SessionHoldResponse);
+    const session_id = c.req.param("session_id");
+    const [hold, location] = await Promise.all([readSessionHold(db, session_id), readSessionRunLocation(db, session_id)]);
+    return c.json({ hold, location } satisfies SessionHoldResponse);
   } catch (cause) { return fault(cause); } });
 
   app.get("/api/definitions/:bundle_id", async (c) => { try {

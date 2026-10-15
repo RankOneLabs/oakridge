@@ -610,13 +610,10 @@
             }
           }
         },
-        "pr_closed": {
-          "template": "pr_closed"
-        },
         "merge_confirmation": {
-          "of": "pr_state",
+          "of": "pr",
           "by": "operator",
-          "when": "merged_pr",
+          "when": "pr_published and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
             "pr": "latest(pr)",
@@ -628,9 +625,12 @@
               "label": "Confirm merged"
             }
           }
+        },
+        "pr_closed": {
+          "template": "pr_closed"
         }
       },
-      "done_when": "approved(assessment) and published(build_result) and pr_published and approved(pr_state)",
+      "done_when": "approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))",
       "outcome": {
         "cohort_id": "brief_value.cohort_id",
         "repository_key": "input.brief.repository_key",
@@ -703,16 +703,10 @@
             }
           }
         },
-        "pr_closed": {
-          "template": "pr_closed",
-          "overrides": {
-            "of": "pr"
-          }
-        },
         "merge_confirmation": {
-          "of": "pr_state",
+          "of": "pr",
           "by": "operator",
-          "when": "published(pr_state) and latest(pr_state).state == \"merged\"",
+          "when": "pr_published and not final_state and not closed_pr and not approved(pr_state)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
             "pr": "latest(pr)",
@@ -720,17 +714,24 @@
           },
           "decisions": {
             "confirm_merged": {
+              "on": "pr_state",
               "effect": "approve",
               "label": "Confirm merged"
             }
           }
+        },
+        "pr_closed": {
+          "template": "pr_closed",
+          "overrides": {
+            "of": "pr"
+          }
         }
       },
-      "done_when": "approved(pr) and (approved(pr_state) or (input.final_merge_policy == \"allow_close_without_merge\" and final_state))",
+      "done_when": "approved(pr) and (final_state or approved(pr_state))",
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",
-        "is_merged": "latest(pr_state).state == \"merged\""
+        "is_merged": "latest(pr_state).state == \"merged\" or approved(pr_state)"
       }
     }
   }

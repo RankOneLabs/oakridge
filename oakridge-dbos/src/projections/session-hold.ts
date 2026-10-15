@@ -14,4 +14,6 @@ export interface SessionHold {
   /** The attempt's action id: the identity its own close carries. */
   readonly action_id: string;
 }
-export interface SessionHoldResponse { readonly hold: SessionHold | null }
+/** Unconditional navigation target for a session, whether its attempt is running or ended. */
+export interface SessionRunLocation { readonly run_id: RunId; readonly unit_id: UnitId }
+export interface SessionHoldResponse { readonly hold: SessionHold | null; readonly location: SessionRunLocation | null }

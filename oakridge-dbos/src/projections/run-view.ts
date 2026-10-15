@@ -20,7 +20,8 @@ export interface RunUnitSummary {
 }
 export interface RunSummary {
   readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string;
-  readonly created_at: Date; readonly archived_at: Date | null;
+  readonly created_at: Date; readonly updated_at: Date; readonly archived_at: Date | null;
+  readonly title: string | null; readonly repository_keys: readonly string[];
   /** The root unit's status. */
   readonly status: UnitStatus;
 }
@@ -30,11 +31,28 @@ export interface RunPage { readonly items: readonly RunView[]; readonly next_cur
 const attentionOf = (attention: readonly UnitAttention[], unit_id: string): UnitAttention =>
   attention.find((item) => item.unit_id === unit_id) ?? { unit_id, run_stalls: [], awaiting: [], stalled: [], blocked: null };
 
+interface RunLaunchLabel { readonly title: string | null; readonly repository_keys: readonly string[] }
+function selectRunLaunchLabel(input: unknown): RunLaunchLabel {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return { title: null, repository_keys: [] };
+  const source = input as { readonly title?: unknown; readonly repositories?: unknown };
+  return { title: typeof source.title === "string" ? source.title : null,
+    repository_keys: Array.isArray(source.repositories) ? source.repositories.flatMap((repository: unknown) =>
+      typeof repository === "object" && repository !== null && !Array.isArray(repository)
+        && typeof (repository as { readonly key?: unknown }).key === "string"
+        ? [(repository as { readonly key: string }).key] : []) : [] };
+}
+
+function selectRunUpdatedAt(read: RunSummaryRead): Date {
+  return read.latest_events.reduce((latest, event) => event.created_at > latest ? event.created_at : latest, read.run.created_at);
+}
+
 export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   const tree = selectUnitTree(read.units, read.definition.workflow);
+  const label = selectRunLaunchLabel(read.run.input);
   return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
-    created_at: read.run.created_at, archived_at: read.run.archived_at, status: selectRootStatus(read.run, read.units),
+    created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
+    ...label, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
       stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),
       asks: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).filter(isAsk).map((decision) => decision.key) })) };

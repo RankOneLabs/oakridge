@@ -1,18 +1,23 @@
 {
-  "source": "/api/runs/run-a67b2bcf52a6edc6",
-  "captured_at": "2026-10-15T22:08:49.772Z",
+  "source": "/api/runs/run-cf40de5f78dccdcd",
+  "captured_at": "2026-10-15T23:43:13.284Z",
   "run": {
-    "run_id": "run-a67b2bcf52a6edc6",
-    "definition_bundle_id": "28e10a21-b3b8-4962-9a63-2f83871a21f5",
-    "definition_digest": "b50690177f8beb3cf37b9941dd53834fe84133547056e28674d1477e8b54c449",
-    "created_at": "2026-10-15T22:08:47.024Z",
+    "run_id": "run-cf40de5f78dccdcd",
+    "definition_bundle_id": "ea5fa9f5-0b14-4898-bf78-d20c344f2dab",
+    "definition_digest": "f7d866741495554f869facf7ef64a797fd6a7d502f31ccb562bb3bf68666fcf8",
+    "created_at": "2026-10-15T23:43:11.783Z",
+    "updated_at": "2026-10-15T23:43:12.963Z",
     "archived_at": null,
+    "title": "Confirm PRs",
+    "repository_keys": [
+      "app"
+    ],
     "status": {
       "kind": "active"
     },
     "units": [
       {
-        "unit_id": "run-a67b2bcf52a6edc6",
+        "unit_id": "run-cf40de5f78dccdcd",
         "unit_key": "$root",
         "label": "Development",
         "stage": null,
@@ -23,7 +28,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/analysis",
+        "unit_id": "run-cf40de5f78dccdcd/analysis",
         "unit_key": "analysis",
         "label": "Analysis",
         "stage": "analysis",
@@ -51,7 +56,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+        "unit_id": "run-cf40de5f78dccdcd/briefs/a",
         "unit_key": "briefs",
         "label": "Brief",
         "stage": "brief",
@@ -78,7 +83,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+        "unit_id": "run-cf40de5f78dccdcd/briefs/b",
         "unit_key": "briefs",
         "label": "Brief",
         "stage": "brief",
@@ -107,7 +112,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
         "unit_key": "implementation",
         "label": "Cohort",
         "stage": "cohort",
@@ -120,7 +125,7 @@
         ]
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/b",
         "unit_key": "implementation",
         "label": "Cohort",
         "stage": "cohort",
@@ -131,7 +136,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/planning",
+        "unit_id": "run-cf40de5f78dccdcd/planning",
         "unit_key": "planning",
         "label": "Planning",
         "stage": "planning",
@@ -191,7 +196,7 @@
         "asks": []
       },
       {
-        "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+        "unit_id": "run-cf40de5f78dccdcd/prepare/app",
         "unit_key": "prepare",
         "label": "Prepare",
         "stage": "prepare",
@@ -200,8 +205,8 @@
           "outcome": {
             "key": "app",
             "workspace": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             }
           }
@@ -213,15 +218,15 @@
   },
   "units": [
     {
-      "unit_id": "run-a67b2bcf52a6edc6",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "$root",
       "label": "Development",
       "stage": null,
       "collection_key": null,
       "input": {
-        "spec": "Build the thing in two parts.",
-        "title": "Two cohorts",
+        "spec": "Confirm both PR stages.",
+        "title": "Confirm PRs",
         "admission": true,
         "repositories": [
           {
@@ -234,7 +239,7 @@
             },
             "preparation": {
               "expected_head": null,
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
             }
           }
         ],
@@ -262,20 +267,20 @@
       "artifacts": []
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/analysis",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/analysis",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "analysis",
       "label": "Analysis",
       "stage": "analysis",
       "collection_key": null,
       "input": {
-        "spec": "Build the thing in two parts.",
+        "spec": "Confirm both PR stages.",
         "workspaces": [
           {
             "key": "app",
             "workspace": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             }
           }
@@ -291,13 +296,13 @@
             },
             "preparation": {
               "expected_head": null,
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
             }
           }
         ]
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "done",
@@ -341,36 +346,39 @@
       "decisions": [],
       "attempts": [
         {
-          "id": "9e56e4ebb1b7bc2897baf63e05e6369e:1",
-          "unit_id": "run-a67b2bcf52a6edc6/analysis",
+          "id": "5c9d43ae457ecfb4e6e7e4d8897d93d1:1",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
           "worker": "author",
           "number": 1,
-          "status": "succeeded",
-          "failure": null,
+          "status": "failed",
+          "failure": {
+            "code": "attempt_stopped",
+            "detail": "stopped because its unit is no longer active"
+          },
           "mode": "initial",
           "cause": {
             "kind": "missing"
           },
-          "kbbl_session_id": "eb01a307-8d7d-4a77-9753-cdd156ff4acf",
-          "created_at": "2026-10-15T22:08:47.222Z",
+          "kbbl_session_id": "04445256-f20e-4d8e-bb74-89315e17fffc",
+          "created_at": "2026-10-15T23:43:11.899Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/analysis",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
           "artifact_key": "analysis",
           "schema": "analysis_body",
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/analysis:analysis:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/analysis",
+            "id": "run-cf40de5f78dccdcd/analysis:analysis:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/analysis",
             "artifact_key": "analysis",
-            "attempt_id": "9e56e4ebb1b7bc2897baf63e05e6369e",
+            "attempt_id": "5c9d43ae457ecfb4e6e7e4d8897d93d1",
             "body": {
               "risks": [],
               "summary": "Feasible.",
@@ -388,15 +396,15 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:47.417Z",
+            "created_at": "2026-10-15T23:43:12.048Z",
             "number": 1
           }
         }
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "briefs",
       "label": "Brief",
       "stage": "brief",
@@ -449,7 +457,7 @@
             "it works"
           ]
         },
-        "spec": "Build the thing in two parts.",
+        "spec": "Confirm both PR stages.",
         "cohort": {
           "id": "a",
           "scope": "part",
@@ -482,17 +490,17 @@
           {
             "key": "app",
             "workspace": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             }
           }
         ]
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/analysis",
-        "run-a67b2bcf52a6edc6/planning",
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/planning",
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "done",
@@ -534,8 +542,8 @@
       "decisions": [],
       "attempts": [
         {
-          "id": "caf425e9fa69740a360e668a043228aa:1",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+          "id": "0ab3cd8df2a82bdcc80e85bf667994eb:1",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
           "worker": "writer",
           "number": 1,
           "status": "succeeded",
@@ -544,26 +552,26 @@
           "cause": {
             "kind": "missing"
           },
-          "kbbl_session_id": "dd720572-7ff8-4e16-9078-de319321a64d",
-          "created_at": "2026-10-15T22:08:47.661Z",
+          "kbbl_session_id": "21b3adf3-5f5a-46f5-b251-54d452db56ae",
+          "created_at": "2026-10-15T23:43:12.267Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
           "artifact_key": "brief",
           "schema": "brief_body",
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/briefs/a:brief:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+            "id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/briefs/a",
             "artifact_key": "brief",
-            "attempt_id": "caf425e9fa69740a360e668a043228aa",
+            "attempt_id": "0ab3cd8df2a82bdcc80e85bf667994eb",
             "body": {
               "goal": "Build it.",
               "title": "Cohort a",
@@ -580,15 +588,15 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:47.840Z",
+            "created_at": "2026-10-15T23:43:12.434Z",
             "number": 1
           }
         }
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "briefs",
       "label": "Brief",
       "stage": "brief",
@@ -641,7 +649,7 @@
             "it works"
           ]
         },
-        "spec": "Build the thing in two parts.",
+        "spec": "Confirm both PR stages.",
         "cohort": {
           "id": "b",
           "scope": "part",
@@ -676,17 +684,17 @@
           {
             "key": "app",
             "workspace": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             }
           }
         ]
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/analysis",
-        "run-a67b2bcf52a6edc6/planning",
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/planning",
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "done",
@@ -732,8 +740,8 @@
       "decisions": [],
       "attempts": [
         {
-          "id": "8eb25d6cca66ef0fb0b35ac79bd3f6b2:1",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+          "id": "3ef2d8b55f70a0d48dcd54468c283103:1",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
           "worker": "writer",
           "number": 1,
           "status": "succeeded",
@@ -742,26 +750,26 @@
           "cause": {
             "kind": "missing"
           },
-          "kbbl_session_id": "fa5966f4-fedd-4e17-abff-3ccc3c20ca44",
-          "created_at": "2026-10-15T22:08:47.661Z",
+          "kbbl_session_id": "d2c0a5a9-2fab-48d3-b65f-e179a2ca68d4",
+          "created_at": "2026-10-15T23:43:12.268Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
           "artifact_key": "brief",
           "schema": "brief_body",
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/briefs/b:brief:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+            "id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/briefs/b",
             "artifact_key": "brief",
-            "attempt_id": "8eb25d6cca66ef0fb0b35ac79bd3f6b2",
+            "attempt_id": "3ef2d8b55f70a0d48dcd54468c283103",
             "body": {
               "goal": "Build it.",
               "title": "Cohort b",
@@ -780,15 +788,15 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:47.816Z",
+            "created_at": "2026-10-15T23:43:12.455Z",
             "number": 1
           }
         }
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "implementation",
       "label": "Cohort",
       "stage": "cohort",
@@ -810,8 +818,8 @@
         },
         "admission": true,
         "workspace": {
-          "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-          "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
           "push_remote_owner": "oakridge-e2e"
         },
         "repository": {
@@ -824,14 +832,14 @@
           },
           "preparation": {
             "expected_head": null,
-            "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
           }
         }
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/briefs/a",
-        "run-a67b2bcf52a6edc6/briefs/b",
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/briefs/a",
+        "run-cf40de5f78dccdcd/briefs/b",
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "active"
@@ -853,14 +861,14 @@
             "review": "merge_confirmation",
             "decision": "confirm_merged",
             "effect": "approve",
-            "target_revision_id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:2"
+            "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1"
           }
         }
       ],
       "attempts": [
         {
-          "id": "5cc2d201bbec5233859aa03b73649e0f:1",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "c8d82121304da9338a3f7e8545ee0489:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "worker": "publish_brief",
           "number": 1,
           "status": "succeeded",
@@ -870,12 +878,12 @@
             "kind": "missing"
           },
           "kbbl_session_id": null,
-          "created_at": "2026-10-15T22:08:47.962Z",
+          "created_at": "2026-10-15T23:43:12.582Z",
           "is_current": true
         },
         {
-          "id": "418348f8cf6e75c368c1d1ed0fb5d391:1",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "4220c08feca065465a442e38db6c1b99:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "worker": "builder",
           "number": 1,
           "status": "succeeded",
@@ -884,16 +892,16 @@
           "cause": {
             "kind": "missing"
           },
-          "kbbl_session_id": "56ae4ad3-a2c3-420a-a473-86efd8156c49",
-          "created_at": "2026-10-15T22:08:48.150Z",
+          "kbbl_session_id": "6a24997f-a0ad-4df7-9a3e-a8b0c98945a3",
+          "created_at": "2026-10-15T23:43:12.775Z",
           "is_current": true
         },
         {
-          "id": "3aa76caa21bc911be7248523120c5c29:1",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "5ab451cad7845af7be5cf316cb86c8d3:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "worker": "pr_watch",
           "number": 1,
-          "status": "succeeded",
+          "status": "pending",
           "failure": null,
           "mode": "initial",
           "cause": {
@@ -902,91 +910,51 @@
             "replaces": null
           },
           "kbbl_session_id": null,
-          "created_at": "2026-10-15T22:08:48.279Z",
-          "is_current": false
+          "created_at": "2026-10-15T23:43:12.921Z",
+          "is_current": true
         },
         {
-          "id": "de5ccca467ece00981a865f6fe03e3cc:1",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "d27a0703da44e8a02cefe175c9f95486:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "worker": "assessor",
           "number": 1,
-          "status": "succeeded",
+          "status": "pending",
           "failure": null,
           "mode": "review",
           "cause": {
             "kind": "review_of",
-            "revision": "run-a67b2bcf52a6edc6/implementation/a:build_result:1"
-          },
-          "kbbl_session_id": "c4c2620e-f8cc-4396-abda-7555d6990990",
-          "created_at": "2026-10-15T22:08:48.317Z",
-          "is_current": true
-        },
-        {
-          "id": "3aa76caa21bc911be7248523120c5c29:2",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-          "worker": "pr_watch",
-          "number": 2,
-          "status": "succeeded",
-          "failure": null,
-          "mode": "initial",
-          "cause": {
-            "kind": "periodic",
-            "inputs": "f183f973875b07d7be3fe27cc93ebbdd",
-            "replaces": null
+            "revision": "run-cf40de5f78dccdcd/implementation/a:build_result:1"
           },
           "kbbl_session_id": null,
-          "created_at": "2026-10-15T22:08:49.499Z",
+          "created_at": "2026-10-15T23:43:12.962Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "assessment",
           "schema": "assessment_body",
           "is_reviewable": true,
           "is_editable": true,
-          "revision_count": 1,
-          "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/implementation/a:assessment:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-            "artifact_key": "assessment",
-            "attempt_id": "de5ccca467ece00981a865f6fe03e3cc",
-            "body": {
-              "verdict": "pass",
-              "findings": [
-                {
-                  "status": "met",
-                  "evidence": "tests",
-                  "criterion": "it works",
-                  "description": null
-                }
-              ],
-              "test_evidence": null,
-              "recommended_next_actions": []
-            },
-            "predecessor_id": null,
-            "subject_id": "run-a67b2bcf52a6edc6/implementation/a:build_result:1",
-            "created_at": "2026-10-15T22:08:48.493Z",
-            "number": 1
-          }
+          "revision_count": 0,
+          "latest_revision": null
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "brief",
           "schema": "brief_body",
           "is_reviewable": true,
           "is_editable": false,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/implementation/a:brief:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+            "id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
             "artifact_key": "brief",
-            "attempt_id": "5cc2d201bbec5233859aa03b73649e0f",
+            "attempt_id": "c8d82121304da9338a3f7e8545ee0489",
             "body": {
               "goal": "Build it.",
               "title": "Cohort a",
@@ -1003,24 +971,24 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:48.081Z",
+            "created_at": "2026-10-15T23:43:12.710Z",
             "number": 1
           }
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "build_result",
           "schema": "build_body",
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/implementation/a:build_result:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+            "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
             "artifact_key": "build_result",
-            "attempt_id": "418348f8cf6e75c368c1d1ed0fb5d391",
+            "attempt_id": "4220c08feca065465a442e38db6c1b99",
             "body": {
               "tests": {
                 "failed": 0,
@@ -1039,24 +1007,24 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:48.253Z",
+            "created_at": "2026-10-15T23:43:12.892Z",
             "number": 1
           }
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "pr",
           "schema": "pr_body",
-          "is_reviewable": false,
+          "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/implementation/a:pr:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+            "id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
             "artifact_key": "pr",
-            "attempt_id": "418348f8cf6e75c368c1d1ed0fb5d391",
+            "attempt_id": "4220c08feca065465a442e38db6c1b99",
             "body": {
               "branch": "cohort-a",
               "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
@@ -1065,42 +1033,25 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:48.281Z",
+            "created_at": "2026-10-15T23:43:12.921Z",
             "number": 1
           }
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "pr_state",
           "schema": "pr_status",
-          "is_reviewable": true,
+          "is_reviewable": false,
           "is_editable": false,
-          "revision_count": 2,
-          "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:2",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-            "artifact_key": "pr_state",
-            "attempt_id": "3aa76caa21bc911be7248523120c5c29",
-            "body": {
-              "url": "https://github.com/oakridge-e2e/app/pull/1",
-              "state": "merged",
-              "number": 1,
-              "head_sha": "abc123",
-              "merged_at": "2026-10-12T00:00:00Z"
-            },
-            "predecessor_id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:1",
-            "subject_id": null,
-            "created_at": "2026-10-15T22:08:49.535Z",
-            "number": 2
-          }
+          "revision_count": 0,
+          "latest_revision": null
         }
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "implementation",
       "label": "Cohort",
       "stage": "cohort",
@@ -1124,8 +1075,8 @@
         },
         "admission": true,
         "workspace": {
-          "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-          "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
           "push_remote_owner": "oakridge-e2e"
         },
         "repository": {
@@ -1138,15 +1089,15 @@
           },
           "preparation": {
             "expected_head": null,
-            "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
           }
         }
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/briefs/a",
-        "run-a67b2bcf52a6edc6/briefs/b",
-        "run-a67b2bcf52a6edc6/implementation/a",
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/briefs/a",
+        "run-cf40de5f78dccdcd/briefs/b",
+        "run-cf40de5f78dccdcd/implementation/a",
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "not_started"
@@ -1161,8 +1112,8 @@
       "attempts": [],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
           "artifact_key": "assessment",
           "schema": "assessment_body",
           "is_reviewable": true,
@@ -1171,8 +1122,8 @@
           "latest_revision": null
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
           "artifact_key": "brief",
           "schema": "brief_body",
           "is_reviewable": true,
@@ -1181,8 +1132,8 @@
           "latest_revision": null
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
           "artifact_key": "build_result",
           "schema": "build_body",
           "is_reviewable": true,
@@ -1191,21 +1142,21 @@
           "latest_revision": null
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
           "artifact_key": "pr",
           "schema": "pr_body",
-          "is_reviewable": false,
+          "is_reviewable": true,
           "is_editable": true,
           "revision_count": 0,
           "latest_revision": null
         },
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
           "artifact_key": "pr_state",
           "schema": "pr_status",
-          "is_reviewable": true,
+          "is_reviewable": false,
           "is_editable": false,
           "revision_count": 0,
           "latest_revision": null
@@ -1213,14 +1164,14 @@
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/planning",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/planning",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "planning",
       "label": "Planning",
       "stage": "planning",
       "collection_key": null,
       "input": {
-        "spec": "Build the thing in two parts.",
+        "spec": "Confirm both PR stages.",
         "analysis": {
           "risks": [],
           "summary": "Feasible.",
@@ -1240,8 +1191,8 @@
           {
             "key": "app",
             "workspace": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             }
           }
@@ -1257,14 +1208,14 @@
             },
             "preparation": {
               "expected_head": null,
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
             }
           }
         ]
       },
       "depends_on": [
-        "run-a67b2bcf52a6edc6/analysis",
-        "run-a67b2bcf52a6edc6/prepare/app"
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/prepare/app"
       ],
       "status": {
         "kind": "done",
@@ -1372,8 +1323,8 @@
       "decisions": [],
       "attempts": [
         {
-          "id": "e49fea7663ed6d4cdabba0be8002bde3:1",
-          "unit_id": "run-a67b2bcf52a6edc6/planning",
+          "id": "ae9a06d5b09c208114b170a3a9c22de1:1",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
           "worker": "planner",
           "number": 1,
           "status": "succeeded",
@@ -1382,26 +1333,26 @@
           "cause": {
             "kind": "missing"
           },
-          "kbbl_session_id": "de2ec66e-ca10-4b49-902e-883d81d9317c",
-          "created_at": "2026-10-15T22:08:47.467Z",
+          "kbbl_session_id": "f0998c2f-e520-4b2f-941d-8661a7e461c1",
+          "created_at": "2026-10-15T23:43:12.079Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/planning",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
           "artifact_key": "plan",
           "schema": "plan_body",
           "is_reviewable": true,
           "is_editable": true,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/planning:plan:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/planning",
+            "id": "run-cf40de5f78dccdcd/planning:plan:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/planning",
             "artifact_key": "plan",
-            "attempt_id": "e49fea7663ed6d4cdabba0be8002bde3",
+            "attempt_id": "ae9a06d5b09c208114b170a3a9c22de1",
             "body": {
               "risks": [],
               "scope": {
@@ -1451,15 +1402,15 @@
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:47.621Z",
+            "created_at": "2026-10-15T23:43:12.225Z",
             "number": 1
           }
         }
       ]
     },
     {
-      "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
-      "run_id": "run-a67b2bcf52a6edc6",
+      "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+      "run_id": "run-cf40de5f78dccdcd",
       "unit_key": "prepare",
       "label": "Prepare",
       "stage": "prepare",
@@ -1475,7 +1426,7 @@
           },
           "preparation": {
             "expected_head": null,
-            "repository_path": "/tmp/oakridge-development-repo-ZItmhD"
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
           }
         }
       },
@@ -1485,8 +1436,8 @@
         "outcome": {
           "key": "app",
           "workspace": {
-            "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-            "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+            "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
             "push_remote_owner": "oakridge-e2e"
           }
         }
@@ -1494,8 +1445,8 @@
       "outcome": {
         "key": "app",
         "workspace": {
-          "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-          "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
           "push_remote_owner": "oakridge-e2e"
         }
       },
@@ -1504,8 +1455,8 @@
       "decisions": [],
       "attempts": [
         {
-          "id": "74c7da83254febc0f647392c6d0b3d7a:1",
-          "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+          "id": "0d53d7e555236020d0b2dda3f3c386f6:1",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
           "worker": "git",
           "number": 1,
           "status": "succeeded",
@@ -1515,33 +1466,33 @@
             "kind": "missing"
           },
           "kbbl_session_id": null,
-          "created_at": "2026-10-15T22:08:47.059Z",
+          "created_at": "2026-10-15T23:43:11.798Z",
           "is_current": true
         }
       ],
       "artifacts": [
         {
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
           "artifact_key": "workspace",
           "schema": "workspace",
           "is_reviewable": false,
           "is_editable": false,
           "revision_count": 1,
           "latest_revision": {
-            "id": "run-a67b2bcf52a6edc6/prepare/app:workspace:1",
-            "run_id": "run-a67b2bcf52a6edc6",
-            "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+            "id": "run-cf40de5f78dccdcd/prepare/app:workspace:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/prepare/app",
             "artifact_key": "workspace",
-            "attempt_id": "74c7da83254febc0f647392c6d0b3d7a",
+            "attempt_id": "0d53d7e555236020d0b2dda3f3c386f6",
             "body": {
-              "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-              "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
               "push_remote_owner": "oakridge-e2e"
             },
             "predecessor_id": null,
             "subject_id": null,
-            "created_at": "2026-10-15T22:08:47.223Z",
+            "created_at": "2026-10-15T23:43:11.900Z",
             "number": 1
           }
         }
@@ -1549,11 +1500,11 @@
     }
   ],
   "inbox": {
-    "run_id": "run-a67b2bcf52a6edc6",
+    "run_id": "run-cf40de5f78dccdcd",
     "items": [
       {
-        "run_id": "run-a67b2bcf52a6edc6",
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
         "kind": "decision",
         "key": "confirm_merged",
         "label": "Confirm merged",
@@ -1562,20 +1513,20 @@
           "review": "merge_confirmation",
           "decision": "confirm_merged",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:2"
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1"
         },
-        "prompt": "The forge reports that this pull request merged. Check the pull request and observation, then confirm the merge to let the workflow continue.\n\n## Pull request\n\n{\n  \"branch\": \"cohort-a\",\n  \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/1\",\n  \"review_status\": \"ready\",\n  \"summary\": \"Cohort a.\"\n}\n\n## Forge observation\n\n{\n  \"head_sha\": \"abc123\",\n  \"merged_at\": \"2026-10-12T00:00:00Z\",\n  \"number\": 1,\n  \"state\": \"merged\",\n  \"url\": \"https://github.com/oakridge-e2e/app/pull/1\"\n}\n"
+        "prompt": "Confirm that the pull request has merged into its intended base branch.\n\nCheck the PR URL, base branch, merge status, and merged commit in the forge before choosing **Confirm merged**. The observed PR state may be stale or unavailable; use the forge as the source for this confirmation. If the PR has not merged, leave this review open.\n\n## Pull request\n\n{\n  \"branch\": \"cohort-a\",\n  \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/1\",\n  \"review_status\": \"ready\",\n  \"summary\": \"Cohort a.\"\n}\n\n## Forge observation\n\nnone\n"
       },
       {
-        "run_id": "run-a67b2bcf52a6edc6",
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
         "kind": "waiting",
         "reason": "awaiting merge_confirmation review",
         "label": "Cohort"
       },
       {
-        "run_id": "run-a67b2bcf52a6edc6",
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/b",
         "kind": "waiting",
         "reason": "waiting on Cohort",
         "label": "Cohort"
@@ -1583,8 +1534,8 @@
     ]
   },
   "artifact": {
-    "run_id": "run-a67b2bcf52a6edc6",
-    "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+    "run_id": "run-cf40de5f78dccdcd",
+    "unit_id": "run-cf40de5f78dccdcd/implementation/a",
     "artifact_key": "build_result",
     "schema": "build_body",
     "is_reviewable": true,
@@ -1592,11 +1543,11 @@
     "status": "draft",
     "revisions": [
       {
-        "id": "run-a67b2bcf52a6edc6/implementation/a:build_result:1",
-        "run_id": "run-a67b2bcf52a6edc6",
-        "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+        "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
         "artifact_key": "build_result",
-        "attempt_id": "418348f8cf6e75c368c1d1ed0fb5d391",
+        "attempt_id": "4220c08feca065465a442e38db6c1b99",
         "body": {
           "tests": {
             "failed": 0,
@@ -1615,7 +1566,7 @@
         },
         "predecessor_id": null,
         "subject_id": null,
-        "created_at": "2026-10-15T22:08:48.253Z",
+        "created_at": "2026-10-15T23:43:12.892Z",
         "number": 1
       }
     ],
@@ -1623,8 +1574,8 @@
   },
   "artifacts": [
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/analysis",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/analysis",
       "artifact_key": "analysis",
       "schema": "analysis_body",
       "is_reviewable": true,
@@ -1632,11 +1583,11 @@
       "status": "approved",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/analysis:analysis:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/analysis",
+          "id": "run-cf40de5f78dccdcd/analysis:analysis:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
           "artifact_key": "analysis",
-          "attempt_id": "9e56e4ebb1b7bc2897baf63e05e6369e",
+          "attempt_id": "5c9d43ae457ecfb4e6e7e4d8897d93d1",
           "body": {
             "risks": [],
             "summary": "Feasible.",
@@ -1654,25 +1605,25 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:47.417Z",
+          "created_at": "2026-10-15T23:43:12.048Z",
           "number": 1
         }
       ],
       "decisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/analysis:d1",
+          "id": "run-cf40de5f78dccdcd/analysis:d1",
           "review": "analysis_review",
           "decision": "accept",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/analysis:analysis:1",
+          "target_revision_id": "run-cf40de5f78dccdcd/analysis:analysis:1",
           "payload": {},
-          "created_at": "2026-10-15T22:08:47.468Z"
+          "created_at": "2026-10-15T23:43:12.079Z"
         }
       ]
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/a",
       "artifact_key": "brief",
       "schema": "brief_body",
       "is_reviewable": true,
@@ -1680,11 +1631,11 @@
       "status": "approved",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/briefs/a:brief:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/a",
+          "id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
           "artifact_key": "brief",
-          "attempt_id": "caf425e9fa69740a360e668a043228aa",
+          "attempt_id": "0ab3cd8df2a82bdcc80e85bf667994eb",
           "body": {
             "goal": "Build it.",
             "title": "Cohort a",
@@ -1701,25 +1652,25 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:47.840Z",
+          "created_at": "2026-10-15T23:43:12.434Z",
           "number": 1
         }
       ],
       "decisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/briefs/a:d1",
+          "id": "run-cf40de5f78dccdcd/briefs/a:d1",
           "review": "brief_review",
           "decision": "accept",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/briefs/a:brief:1",
+          "target_revision_id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
           "payload": {},
-          "created_at": "2026-10-15T22:08:47.962Z"
+          "created_at": "2026-10-15T23:43:12.527Z"
         }
       ]
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/b",
       "artifact_key": "brief",
       "schema": "brief_body",
       "is_reviewable": true,
@@ -1727,11 +1678,11 @@
       "status": "approved",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/briefs/b:brief:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/briefs/b",
+          "id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
           "artifact_key": "brief",
-          "attempt_id": "8eb25d6cca66ef0fb0b35ac79bd3f6b2",
+          "attempt_id": "3ef2d8b55f70a0d48dcd54468c283103",
           "body": {
             "goal": "Build it.",
             "title": "Cohort b",
@@ -1750,71 +1701,36 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:47.816Z",
+          "created_at": "2026-10-15T23:43:12.455Z",
           "number": 1
         }
       ],
       "decisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/briefs/b:d1",
+          "id": "run-cf40de5f78dccdcd/briefs/b:d1",
           "review": "brief_review",
           "decision": "accept",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/briefs/b:brief:1",
+          "target_revision_id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
           "payload": {},
-          "created_at": "2026-10-15T22:08:47.866Z"
+          "created_at": "2026-10-15T23:43:12.583Z"
         }
       ]
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
       "artifact_key": "assessment",
       "schema": "assessment_body",
       "is_reviewable": true,
       "is_editable": true,
-      "status": "approved",
-      "revisions": [
-        {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:assessment:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-          "artifact_key": "assessment",
-          "attempt_id": "de5ccca467ece00981a865f6fe03e3cc",
-          "body": {
-            "verdict": "pass",
-            "findings": [
-              {
-                "status": "met",
-                "evidence": "tests",
-                "criterion": "it works",
-                "description": null
-              }
-            ],
-            "test_evidence": null,
-            "recommended_next_actions": []
-          },
-          "predecessor_id": null,
-          "subject_id": "run-a67b2bcf52a6edc6/implementation/a:build_result:1",
-          "created_at": "2026-10-15T22:08:48.493Z",
-          "number": 1
-        }
-      ],
-      "decisions": [
-        {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:d2",
-          "review": "assessment_review",
-          "decision": "accept",
-          "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/implementation/a:assessment:1",
-          "payload": {},
-          "created_at": "2026-10-15T22:08:48.764Z"
-        }
-      ]
+      "status": "draft",
+      "revisions": [],
+      "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
       "artifact_key": "brief",
       "schema": "brief_body",
       "is_reviewable": true,
@@ -1822,11 +1738,11 @@
       "status": "approved",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:brief:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "brief",
-          "attempt_id": "5cc2d201bbec5233859aa03b73649e0f",
+          "attempt_id": "c8d82121304da9338a3f7e8545ee0489",
           "body": {
             "goal": "Build it.",
             "title": "Cohort a",
@@ -1843,25 +1759,25 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:48.081Z",
+          "created_at": "2026-10-15T23:43:12.710Z",
           "number": 1
         }
       ],
       "decisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:d1",
+          "id": "run-cf40de5f78dccdcd/implementation/a:d1",
           "review": "admission",
           "decision": "admit",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/implementation/a:brief:1",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
           "payload": {},
-          "created_at": "2026-10-15T22:08:48.151Z"
+          "created_at": "2026-10-15T23:43:12.776Z"
         }
       ]
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
       "artifact_key": "build_result",
       "schema": "build_body",
       "is_reviewable": true,
@@ -1869,11 +1785,11 @@
       "status": "draft",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:build_result:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "build_result",
-          "attempt_id": "418348f8cf6e75c368c1d1ed0fb5d391",
+          "attempt_id": "4220c08feca065465a442e38db6c1b99",
           "body": {
             "tests": {
               "failed": 0,
@@ -1892,27 +1808,27 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:48.253Z",
+          "created_at": "2026-10-15T23:43:12.892Z",
           "number": 1
         }
       ],
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
       "artifact_key": "pr",
       "schema": "pr_body",
-      "is_reviewable": false,
+      "is_reviewable": true,
       "is_editable": true,
       "status": "draft",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:pr:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "pr",
-          "attempt_id": "418348f8cf6e75c368c1d1ed0fb5d391",
+          "attempt_id": "4220c08feca065465a442e38db6c1b99",
           "body": {
             "branch": "cohort-a",
             "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
@@ -1921,27 +1837,27 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:48.281Z",
+          "created_at": "2026-10-15T23:43:12.921Z",
           "number": 1
         }
       ],
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
       "artifact_key": "pr_state",
       "schema": "pr_status",
-      "is_reviewable": true,
+      "is_reviewable": false,
       "is_editable": false,
       "status": "draft",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
+          "id": "run-cf40de5f78dccdcd/implementation/a:pr_state:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
           "artifact_key": "pr_state",
-          "attempt_id": "3aa76caa21bc911be7248523120c5c29",
+          "attempt_id": "5ab451cad7845af7be5cf316cb86c8d3",
           "body": {
             "url": "https://github.com/oakridge-e2e/app/pull/1",
             "state": "open",
@@ -1951,33 +1867,15 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:48.399Z",
+          "created_at": "2026-10-15T23:43:13.068Z",
           "number": 1
-        },
-        {
-          "id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:2",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/implementation/a",
-          "artifact_key": "pr_state",
-          "attempt_id": "3aa76caa21bc911be7248523120c5c29",
-          "body": {
-            "url": "https://github.com/oakridge-e2e/app/pull/1",
-            "state": "merged",
-            "number": 1,
-            "head_sha": "abc123",
-            "merged_at": "2026-10-12T00:00:00Z"
-          },
-          "predecessor_id": "run-a67b2bcf52a6edc6/implementation/a:pr_state:1",
-          "subject_id": null,
-          "created_at": "2026-10-15T22:08:49.535Z",
-          "number": 2
         }
       ],
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
       "artifact_key": "assessment",
       "schema": "assessment_body",
       "is_reviewable": true,
@@ -1987,8 +1885,8 @@
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
       "artifact_key": "brief",
       "schema": "brief_body",
       "is_reviewable": true,
@@ -1998,8 +1896,8 @@
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
       "artifact_key": "build_result",
       "schema": "build_body",
       "is_reviewable": true,
@@ -2009,30 +1907,30 @@
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
       "artifact_key": "pr",
       "schema": "pr_body",
-      "is_reviewable": false,
+      "is_reviewable": true,
       "is_editable": true,
       "status": "draft",
       "revisions": [],
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
       "artifact_key": "pr_state",
       "schema": "pr_status",
-      "is_reviewable": true,
+      "is_reviewable": false,
       "is_editable": false,
       "status": "draft",
       "revisions": [],
       "decisions": []
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/planning",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/planning",
       "artifact_key": "plan",
       "schema": "plan_body",
       "is_reviewable": true,
@@ -2040,11 +1938,11 @@
       "status": "approved",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/planning:plan:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/planning",
+          "id": "run-cf40de5f78dccdcd/planning:plan:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
           "artifact_key": "plan",
-          "attempt_id": "e49fea7663ed6d4cdabba0be8002bde3",
+          "attempt_id": "ae9a06d5b09c208114b170a3a9c22de1",
           "body": {
             "risks": [],
             "scope": {
@@ -2094,25 +1992,25 @@
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:47.621Z",
+          "created_at": "2026-10-15T23:43:12.225Z",
           "number": 1
         }
       ],
       "decisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/planning:d1",
+          "id": "run-cf40de5f78dccdcd/planning:d1",
           "review": "plan_review",
           "decision": "accept",
           "effect": "approve",
-          "target_revision_id": "run-a67b2bcf52a6edc6/planning:plan:1",
+          "target_revision_id": "run-cf40de5f78dccdcd/planning:plan:1",
           "payload": {},
-          "created_at": "2026-10-15T22:08:47.662Z"
+          "created_at": "2026-10-15T23:43:12.269Z"
         }
       ]
     },
     {
-      "run_id": "run-a67b2bcf52a6edc6",
-      "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/prepare/app",
       "artifact_key": "workspace",
       "schema": "workspace",
       "is_reviewable": false,
@@ -2120,19 +2018,19 @@
       "status": "draft",
       "revisions": [
         {
-          "id": "run-a67b2bcf52a6edc6/prepare/app:workspace:1",
-          "run_id": "run-a67b2bcf52a6edc6",
-          "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+          "id": "run-cf40de5f78dccdcd/prepare/app:workspace:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
           "artifact_key": "workspace",
-          "attempt_id": "74c7da83254febc0f647392c6d0b3d7a",
+          "attempt_id": "0d53d7e555236020d0b2dda3f3c386f6",
           "body": {
-            "head": "3971460ce26f5a4e49cd34ca5c2111416b6f1d3f",
-            "repository_path": "/tmp/oakridge-development-repo-ZItmhD",
+            "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
             "push_remote_owner": "oakridge-e2e"
           },
           "predecessor_id": null,
           "subject_id": null,
-          "created_at": "2026-10-15T22:08:47.223Z",
+          "created_at": "2026-10-15T23:43:11.900Z",
           "number": 1
         }
       ],
@@ -2141,14 +2039,14 @@
   ],
   "event": {
     "kind": "revision_published",
-    "run_id": "run-a67b2bcf52a6edc6",
-    "unit_id": "run-a67b2bcf52a6edc6/prepare/app",
+    "run_id": "run-cf40de5f78dccdcd",
+    "unit_id": "run-cf40de5f78dccdcd/prepare/app",
     "awaiting": null,
-    "event_id": "619c952e-4a76-4041-b053-b5b29ce74cbe",
+    "event_id": "148dc1d3-b195-4173-bda1-99e27f772fc6",
     "unit_key": "prepare",
     "run_status": "active",
     "is_terminal": true,
-    "occurred_at": "2026-10-15T22:08:47.224Z",
+    "occurred_at": "2026-10-15T23:43:11.900Z",
     "replay": true
   }
 }
