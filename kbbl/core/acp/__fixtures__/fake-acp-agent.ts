@@ -140,6 +140,9 @@ const app = agent({ name: `fake-acp-${behavior}` })
     },
   }))
   .onRequest("session/new", (ctx) => {
+    if (behavior === "new_session_error") {
+      throw new Error("Claude Code process exited with code 1");
+    }
     const sessionId = `fake-${randomUUID()}`;
     if (behavior !== "persist_on_prompt") appendFileSync(transcriptPath(sessionId), "");
     configState.set(sessionId, new Map());
