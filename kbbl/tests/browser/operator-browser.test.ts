@@ -1,53 +1,86 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
-import { Hono } from "hono";
-import { installDefinitionApi } from "../../../oakridge-dbos/src/http/app";
-import type { DecideRequest } from "../../../oakridge-dbos/src/http/ingress";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf } from "../../../oakridge-dbos/tests/authority-fixture";
 
 async function browserScript(): Promise<string> {
-  const built = await Bun.build({ entrypoints: [resolve(import.meta.dir, "operator-browser-entry.tsx")], target: "browser",
-    plugins: [{ name: "single-react", setup(build) {
-      build.onResolve({ filter: /^(react|react-dom|@tanstack\/react-query)(\/|$)/ }, (args) =>
-        ({ path: Bun.resolveSync(args.path, resolve(import.meta.dir, "../..")) }));
-    } }],
-  });
-  if (!built.success) throw new AggregateError(built.logs, "Browser fixture build failed");
-  return built.outputs[0]!.text();
+  const directory = mkdtempSync(join(tmpdir(), "oakridge-v1-browser-"));
+  const output = join(directory, "entry.js");
+  try {
+    const result = Bun.spawnSync({ cmd: [process.execPath, "build", resolve(import.meta.dir, "operator-browser-entry.tsx"),
+      "--target=browser", `--outfile=${output}`], cwd: resolve(import.meta.dir, "../../.."),
+      stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) throw new Error(`Browser fixture build failed: ${result.stderr.toString()}`);
+    return readFileSync(output, "utf8");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 }
+
+const pageHtml = '<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>';
+const json = (body: unknown): Response => Response.json(body);
 
 let browser: Browser;
 let script: string;
 beforeAll(async () => {
   script = await browserScript();
-  // CI installs the Chromium version paired with Playwright; use that browser.
-  // Cold startup has its own budget so each scenario keeps its 30-second limit.
   browser = await chromium.launch({ args: ["--no-sandbox"] });
 }, 60_000);
 afterAll(async () => { await browser?.close(); });
 
-// Real Chromium, the production React surface, and the authority's own HTTP
-// API over a real core and a scratch Postgres database.
-test("browser submits a decision on its target revision and recovers a lost receipt after reload", async () => {
-  const authority = await openAuthority();
-  const { bundle_id } = await pinSample(authority);
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
-  const unit = unitOf(run_id, "document");
-  const writer = await actionOf(authority, run_id, "writer");
-  const submit = submitter(authority);
-  await submit({ run_id, event: { kind: "worker_started", action: writer, kbbl_session_id: "sid-writer" }, writer: executor(writer) });
-  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "first" }, by: writer }, writer: executor(writer) });
-  const api = new Hono();
-  installDefinitionApi(api, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => true });
+// The restored v1 forms call the legacy API surface. These browser fixtures
+// exercise the UI contract while the later data-layer cohort ports those calls.
+test("browser starts a v1 workflow run from the restored launch form", async () => {
+  const requests: unknown[] = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    if (url.pathname === "/oakridge/config") return json({ available: true, core_url: "http://127.0.0.1:8790" });
+    if (url.pathname === "/config") return json({ defaultWorkdir: "/repo", defaultRuntimeId: "claude-code",
+      runtimes: [{ id: "claude-code", label: "Claude Code", models: [{ value: "opus", label: "Opus" }], efforts: [], supportsCompaction: true }] });
+    if (url.pathname === "/oakridge/api/projects") return json([]);
+    if (url.pathname === "/oakridge/api/workflow_defs") return json([{ id: "def-1", name: "development", version: 1 }]);
+    if (url.pathname === "/oakridge/api/workflow_runs" && request.method === "POST") {
+      requests.push(await request.json());
+      return json({ id: "run-1" });
+    }
+    return new Response(pageHtml, { headers: { "content-type": "text/html" } });
+  } });
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    page.setDefaultTimeout(10_000);
+    const pageErrors: Error[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error));
+    await page.goto(`${server.url.href}?launch`);
+    await page.getByTestId("or-new-run-form").waitFor();
+    await page.getByRole("option", { name: "development v1" }).waitFor({ state: "attached" });
+    await page.getByLabel("Epic title").fill("Ship the v1 UI");
+    await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
+    await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
+    await page.getByLabel("Repository 1 path").fill("/repo");
+    await page.getByLabel("Brief notes", { exact: true }).fill("Restore the operator UI");
+    await page.getByRole("button", { name: "Start Run" }).click();
+    await page.waitForURL("**#run/run-1");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ workflow_def_id: "def-1" });
+    expect(pageErrors).toEqual([]);
+  } finally { await context.close(); server.stop(true); }
+}, 30_000);
+
+test("browser renders a v1 run workspace from its run, gate, and session reads", async () => {
+  const requestedPaths: string[] = [];
+  const run = { id: "run-1", title: "Ship the v1 UI", repository_keys: ["oakridge"],
+    workflow_name: "development", status: "running", is_stuck: false, parked_count: 0,
+    updated_at: "2026-10-09T00:00:00Z", stages: [] };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
     if (url.pathname.startsWith("/oakridge/api/")) {
-      url.pathname = url.pathname.slice("/oakridge/api".length);
-      return api.fetch(new Request(url, request));
+      requestedPaths.push(url.pathname);
+      if (url.pathname === "/oakridge/api/runs/run-1") return json(run);
+      return json([]);
     }
-    return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
+    return new Response(pageHtml, { headers: { "content-type": "text/html" } });
   } });
   const context = await browser.newContext();
   try {
@@ -55,81 +88,12 @@ test("browser submits a decision on its target revision and recovers a lost rece
     page.setDefaultTimeout(10_000);
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
-    const requests: DecideRequest[] = [];
-    const receipts: unknown[] = [];
-    await page.route("**/reviews/editor/decide", async (route) => {
-      requests.push(route.request().postDataJSON() as DecideRequest);
-      const response = await route.fetch();
-      receipts.push(await response.json());
-      if (requests.length === 1) await route.abort("failed");
-      else await route.fulfill({ response });
-    });
-    await page.goto(`${server.url.href}?run=${encodeURIComponent(run_id)}&unit=${encodeURIComponent(unit)}`);
-    const change = page.getByTestId("operator-command-form").filter({ has: page.getByRole("button", { name: "Submit Request changes", exact: true }) });
-    await change.waitFor();
-    await change.getByRole("textbox").fill("Change draft");
-    await change.getByRole("button", { name: "Submit Request changes", exact: true }).click();
-    await change.getByRole("alert").filter({ hasText: "Delivery is uncertain." }).waitFor();
-    expect(requests[0]).toMatchObject({ decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "Change draft" } });
-    await page.reload();
-    await page.getByText("Receipt recovered for request_changes.", { exact: true }).waitFor();
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toEqual(requests[0]);
-    expect(receipts[1]).toEqual(receipts[0]);
-    const events = await authority.db.selectFrom("authority.event").select("payload").where("run_id", "=", run_id).execute();
-    expect(events.filter((event) => event.payload.kind === "operator_decided")).toHaveLength(1);
-    expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("oakridge:operator:pending:")))).toEqual([]);
-    expect(pageErrors).toEqual([]);
-  } finally { await context.close(); server.stop(true); await authority.close(); }
-}, 30_000);
-
-test("browser recovers a committed launch after losing its response and reloading", async () => {
-  const requests: Array<{ readonly request_id: string; readonly digest: string; readonly input: unknown }> = [];
-  let launches = 0;
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
-    if (url.pathname === "/oakridge/api/api/definitions") return Response.json({ items: [{ bundle_id: "bundle-1", digest: "sha-1", archived_at: null,
-      bundle: { key: "demo", root: "$root", schemas: [], units: [{ key: "$root", stage: null, label: "Demo", input_schema: "{request: text}", artifacts: [] }] } }],
-      next_cursor: null });
-    if (url.pathname === "/oakridge/api/api/runs") {
-      const input = await request.json() as typeof requests[number];
-      if (!requests.some((previous) => previous.request_id === input.request_id)) launches++;
-      requests.push(input);
-      return Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 201 });
-    }
-    return new Response('<!doctype html><div id="app"></div><script type="module" src="/entry.js"></script>', { headers: { "content-type": "text/html" } });
-  } });
-  const context = await browser.newContext();
-  try {
-    const page = await context.newPage();
-    page.setDefaultTimeout(10_000);
-    const pageErrors: Error[] = [];
-    page.on("pageerror", (error) => pageErrors.push(error));
-    await page.route("**/oakridge/api/api/runs", async (route) => {
-      const response = await route.fetch();
-      expect(response.status()).toBe(201);
-      if (requests.length === 1) await route.abort("failed");
-      else await route.fulfill({ response });
-    });
-    await page.goto(`${server.url.href}?launch`);
-    await page.getByRole("option", { name: "demo · sha-1" }).waitFor({ state: "attached" });
-    await page.getByLabel("Root input JSON").fill('{"request":"hello"}');
-    await page.getByRole("button", { name: "Launch", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "Launch delivery is uncertain." }).waitFor();
-    expect(launches).toBe(1);
-    expect(await page.getByLabel("Root input JSON").isDisabled()).toBe(true);
-    await page.reload();
-    const retry = page.getByRole("button", { name: "Retry launch", exact: true });
-    await retry.waitFor();
-    expect(JSON.parse(await page.getByLabel("Root input JSON").inputValue())).toEqual({ request: "hello" });
-    expect(await page.getByLabel("Definition digest").isDisabled()).toBe(true);
-    await retry.click();
-    await page.waitForURL("**#run/run-1");
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toEqual(requests[0]);
-    expect(launches).toBe(1);
-    expect(await page.evaluate(() => localStorage.getItem("oakridge:operator:pending-launch"))).toBeNull();
+    await page.goto(`${server.url.href}?run=run-1`);
+    await page.getByTestId("or-run-identity-title").getByText("Ship the v1 UI").waitFor();
+    await page.getByTestId("or-run-overview").waitFor();
+    expect(requestedPaths).toContain("/oakridge/api/runs/run-1");
+    expect(requestedPaths).toContain("/oakridge/api/runs/run-1/gates");
+    expect(requestedPaths).toContain("/oakridge/api/runs/run-1/sessions");
     expect(pageErrors).toEqual([]);
   } finally { await context.close(); server.stop(true); }
 }, 30_000);

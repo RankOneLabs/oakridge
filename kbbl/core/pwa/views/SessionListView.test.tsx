@@ -4,12 +4,11 @@ import { describe, expect, test, vi } from "vitest";
 
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
-import type { OperatorRunView } from "../oakridge/operator-contracts";
-import { makeRunUnitSummary, makeRunView } from "../oakridge/__fixtures__/read-models";
+import type { RunDetail, RunSummary } from "../oakridge/types";
 import { SessionListView } from "./SessionListView";
 
 const runtimes: RuntimeDescriptor[] = [
-  { id: "claude-code", label: "Claude Code", models: [], efforts: [] },
+  { id: "claude-code", label: "Claude Code", models: [], efforts: [], supportsCompaction: true },
 ];
 
 function workflow(overrides: Partial<PwaSessionWorkflowIdentity> = {}): PwaSessionWorkflowIdentity {
@@ -22,6 +21,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     name: "hand-started-session",
     agentProfile: "claude-code",
     status: "idle",
+    source: "acp",
     lastActivityTs: "2026-01-01T00:00:00.000Z",
     createdAt: "2026-01-01T00:00:00.000Z",
     artifactId: null,
@@ -39,10 +39,18 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
   };
 }
 
-const runSummary: OperatorRunView = makeRunView({ definition_digest: "sha-1", created_at: "2026-10-09T00:00:00.000Z",
-  units: [makeRunUnitSummary({ unit_id: "stage-plan", unit_key: "planning", label: "Plan the work", stage: "planning" })] });
+const runSummary: RunSummary = {
+  id: "run-1", title: "Run one", repository_keys: ["oakridge"], workflow_name: "development",
+  status: "running", current_stage: "Plan", stage_total: 1, stage_complete: 0,
+  parked_count: 0, updated_at: "2026-10-09T00:00:00.000Z", is_stuck: false, is_failed: false,
+};
 
-const runDetail: OperatorRunView = runSummary;
+const runDetail: RunDetail = {
+  id: "run-1", title: "Run one", repository_keys: ["oakridge"], workflow_name: "development",
+  status: "running", stages: [{ stage_instance_id: "stage-plan", name: "Plan the work", type: "scalar",
+    status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null }],
+  parked_count: 0, updated_at: "2026-10-09T00:00:00.000Z", is_stuck: false,
+};
 
 function renderList(
   sessions: Map<string, SessionSnapshot>,
@@ -52,8 +60,8 @@ function renderList(
     defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
   });
   if (seedRunData) {
-    client.setQueryData(["operator", "runs"], [runSummary]);
-    client.setQueryData(["operator", "run", "run-1"], runDetail);
+    client.setQueryData(["oakridge", "runs", "all"], [runSummary]);
+    client.setQueryData(["oakridge", "run", "run-1"], runDetail);
   }
   return render(
     <QueryClientProvider client={client}>
@@ -117,10 +125,10 @@ describe("SessionListView grouping", () => {
   test("groups a run's sessions by unit under the unit's label and renders a trailing unattached section", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/oakridge/api/api/runs") {
-        return new Response(JSON.stringify({ items: [runSummary], next_cursor: null }), { status: 200 });
+      if (url === "/oakridge/api/runs?filter=all") {
+        return new Response(JSON.stringify([runSummary]), { status: 200 });
       }
-      if (url === "/oakridge/api/api/runs/run-1") {
+      if (url === "/oakridge/api/runs/run-1") {
         return new Response(JSON.stringify(runDetail), { status: 200 });
       }
       return new Response(null, { status: 404 });
@@ -139,7 +147,7 @@ describe("SessionListView grouping", () => {
       ]), false);
 
       const run = screen.getByTestId("session-run-run-1");
-      expect(await within(run).findByText("run-1")).toBeTruthy();
+      expect(await within(run).findByText("Run one")).toBeTruthy();
       expect(await within(run).findByText("Plan the work")).toBeTruthy();
       expect(within(run).getByText("run-1/cohort/one")).toBeTruthy();
       expect(within(run).getByText("builder")).toBeTruthy();
@@ -149,8 +157,8 @@ describe("SessionListView grouping", () => {
       expect(screen.getByTestId("unattached-sessions")).toBeTruthy();
       expect(container.querySelectorAll(".session-cohort-group")).toHaveLength(3);
       expect(screen.queryByText("No sessions yet.")).toBeNull();
-      await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/api/runs", expect.objectContaining({ method: "GET" })));
-      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/api/runs/run-1", expect.objectContaining({ method: "GET" }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all"));
+      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs/run-1");
     } finally {
       fetchSpy.mockRestore();
     }

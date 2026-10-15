@@ -5,6 +5,7 @@ import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
 import { requestDigest } from "../src/storage/commit";
+import { selectOperatorFrame } from "../src/projections/operator-event";
 import { listRuns } from "../src/storage/read-store";
 import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
@@ -190,6 +191,23 @@ test("C4: a decision on a non-latest revision is refused at commit", async () =>
     predecessor: `${unit}:draft:1`, by: action }, writer: executor(action) });
   const stale = await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "approve", target: `${unit}:draft:1`, payload: {} } });
   expect(stale.ok && stale.value.kind).toBe("rejected");
+});
+
+test("a decision against an inconsistent stage still records a commit fault and invalidates the run", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  await authority.db.updateTable("authority.unit").set({ stage: "absent" })
+    .where("run_id", "=", run_id).where("id", "=", unit).execute();
+  const result = await submitter(authority)({ run_id, event: { kind: "operator_decided", unit, review: "editor",
+    decision: "approve", target: "missing", payload: {} } });
+  const fault = await authority.db.selectFrom("authority.operator_event").select(["id", "commit_txid", "payload"])
+    .where("run_id", "=", run_id).where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault"))
+    .executeTakeFirstOrThrow();
+  expect({ failed: !result.ok, notice: fault.payload.kind === "commit_fault" ? fault.payload.data.detail : null,
+    frame: selectOperatorFrame({ ...fault, commit_txid: String(fault.commit_txid) }) }).toEqual({
+    failed: true, notice: expect.stringContaining("checked stage absent"),
+    frame: { event: "invalidate", data: { kind: "invalidate", target: "run", run_id } },
+  });
 });
 
 test("C4: a retry of a worker whose latest attempt did not fail is refused at commit", async () => {

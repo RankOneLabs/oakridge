@@ -1,45 +1,47 @@
 import { describe, expect, it } from "vitest";
 
-import { selectFieldItems, selectFieldText, selectBodyText } from "../artifact-types";
-import {
-  makeBuildBriefFixture, makeBuildResultFixture, makeArtifact, makeUnitView, makeUnitWithArtifact,
-} from "../__fixtures__/read-models";
-import { selectRunArtifacts } from "./run-overview";
+import type { StageUnit } from "../types";
+import { selectCohortBrief } from "./stage-unit-params";
+import buildParams from "./__fixtures__/run-fd23c8b3-build-params.json";
+import assessorParams from "./__fixtures__/run-fd23c8b3-assessor-params.json";
 
-const brief = makeBuildBriefFixture({
-  title: "End-to-end, browser, offline and packaging acceptance",
-  repository_key: "assay",
-  goal: "Close out the required cases in the browser and CLI.",
-  files_in_scope: ["tests/test_review_acceptance.py"],
-  depends_on: ["review-cli", "frontend-bundle"],
-});
+// Fixtures copied from a live GET /runs/:id payload (run
+// fd23c8b3-e896-4928-8114-db3b8a490eaa), not written from the
+// StageUnitParams type — that's exactly how the params type this
+// replaces went wrong unnoticed: it compiled cleanly and rendered
+// blank against every real build unit.
 
-describe("build brief among a unit's artifacts", () => {
-  it("exposes the populated brief from its latest revision", () => {
-    const artifact = selectRunArtifacts([makeUnitWithArtifact({ body: brief.body, artifact_key: "brief" })])[0];
-    expect(artifact && selectFieldText(artifact.revision.body, "title"))
-      .toBe("End-to-end, browser, offline and packaging acceptance");
-    expect(artifact && selectFieldText(artifact.revision.body, "repository_key")).toBe("assay");
-    expect(artifact && selectFieldText(artifact.revision.body, "goal")).toContain("Close out the required cases");
-    expect(artifact && selectFieldItems(artifact.revision.body, "files_in_scope").map(selectBodyText))
-      .toContain("tests/test_review_acceptance.py");
-    expect(artifact && selectFieldItems(artifact.revision.body, "depends_on").map(selectBodyText))
-      .toEqual(["review-cli", "frontend-bundle"]);
+function makeUnit(params: StageUnit["params"]): StageUnit {
+  return {
+    unit_id: "acceptance-and-browser",
+    repository_key: null,
+    params,
+    sid: null,
+    worktree: null,
+    status: "complete",
+    gate: null,
+  };
+}
+
+describe("selectCohortBrief", () => {
+  it("returns a populated BuildBrief for a real build unit fixture", () => {
+    const brief = selectCohortBrief(makeUnit(buildParams as StageUnit["params"]));
+    expect(brief?.title).toBe("End-to-end, browser, offline and packaging acceptance");
+    expect(brief?.repository_key).toBe("assay");
+    expect(brief?.goal).toContain("Close out the required cases");
+    expect(brief?.files_in_scope).toContain("tests/test_review_acceptance.py");
+    expect(brief?.depends_on).toEqual(["review-cli", "frontend-bundle"]);
   });
 
-  it("finds no brief for a unit with no artifact", () => {
-    expect(selectRunArtifacts([makeUnitView({ artifacts: [] })]).find((artifact) => artifact.artifact.artifact_key === "brief"))
-      .toBeUndefined();
+  it("returns null for a scalar unit whose params is {}", () => {
+    expect(selectCohortBrief(makeUnit({}))).toBeNull();
   });
 
-  it("does not mistake a build result for a brief", () => {
-    const result = makeBuildResultFixture();
-    expect(selectRunArtifacts([makeUnitWithArtifact({ body: result.body, artifact_key: "build", schema: "build_body" })]).find((artifact) => artifact.artifact.schema === "brief_body"))
-      .toBeUndefined();
+  it("returns null for an assessor unit whose artifact is a dev.build_result body", () => {
+    expect(selectCohortBrief(makeUnit(assessorParams as StageUnit["params"]))).toBeNull();
   });
 
-  it("finds no brief when the revision is absent", () => {
-    const unit = makeUnitView({ artifacts: [makeArtifact({ artifact_key: "brief", latest_revision: null, revision_count: 0 })] });
-    expect(selectRunArtifacts([unit]).find((artifact) => artifact.artifact.artifact_key === "brief")).toBeUndefined();
+  it("returns null when params is absent entirely", () => {
+    expect(selectCohortBrief(makeUnit(null))).toBeNull();
   });
 });

@@ -1,60 +1,37 @@
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { OperatorAttemptStatusKind, OperatorInboxItem } from "../operator-contracts";
-import type { UnitBadgeStatus } from "./run-overview";
+import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
 
-/**
- * What a status badge describes. Each operator status is a closed union mapped
- * exhaustively; only an artifact body's value is an open string, because its
- * vocabulary is whatever enum the pinned definition declares.
- */
-export type StatusSubject =
-  | { readonly kind: "unit"; readonly status: UnitBadgeStatus }
-  /** `settled` is the inbox's own state for an item the operator already answered. */
-  | { readonly kind: "inbox_item"; readonly status: OperatorInboxItem["kind"] | "settled" }
-  | { readonly kind: "attempt"; readonly status: OperatorAttemptStatusKind }
-  | { readonly kind: "artifact_value"; readonly status: string };
+const RUN_TONE = {
+  pending: "muted", running: "info", parked: "warning", failed: "danger",
+  complete: "success", cancelled: "muted",
+} satisfies Record<RunStatus, ChipTone>;
 
-const selectUnitTone = (status: UnitBadgeStatus): ChipTone => {
-  switch (status) {
-    case "complete": return "success";
-    case "cancelled": return "muted";
-    case "attention": return "warning";
-    case "running": return "info";
-  }
+const STAGE_TONE = {
+  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+} satisfies Record<StageStatus, ChipTone>;
+
+const UNIT_TONE = {
+  pending: "muted", running: "info", parked: "warning", failed: "danger", complete: "success",
+} satisfies Record<StageUnitStatus, ChipTone>;
+
+const DISPLAY_TONE = { ...RUN_TONE, stuck: "warning" } satisfies Record<RunDisplayStatus, ChipTone>;
+const ARTIFACT_TONE = { draft: "warning", approved: "success", rejected: "danger" } satisfies Record<ArtifactRevisionStatus, ChipTone>;
+const SEVERITY_TONE = { blocking: "danger", warning: "warning", info: "info" } satisfies Record<FindingSeverity, ChipTone>;
+const REQUIREMENT_TONE = { implementable: "success", blocked: "danger", ambiguous: "warning" } satisfies Record<RequirementStatus, ChipTone>;
+const CRITERION_TONE = { met: "success", partial: "warning", not_met: "danger" } satisfies Record<CriterionStatus, ChipTone>;
+const VERDICT_TONE = { pass: "success", pass_with_notes: "warning", fail: "danger" } satisfies Record<AssessmentVerdict, ChipTone>;
+// `draft` and `approved` share a key with ArtifactRevisionStatus, so they must keep the same tone.
+const PR_REVIEW_TONE = {
+  draft: "warning", ready: "info", changes_requested: "warning", approved: "success", merged: "success", closed: "muted",
+} satisfies Record<PrReviewStatus, ChipTone>;
+
+export type StatusToneSource = RunDisplayStatus | StageStatus | StageUnitStatus | ArtifactRevisionStatus | FindingSeverity | RequirementStatus | CriterionStatus | AssessmentVerdict | PrReviewStatus;
+
+const STATUS_TONE: Record<StatusToneSource, ChipTone> = {
+  ...STAGE_TONE, ...UNIT_TONE, ...DISPLAY_TONE, ...ARTIFACT_TONE, ...SEVERITY_TONE, ...REQUIREMENT_TONE, ...CRITERION_TONE, ...VERDICT_TONE, ...PR_REVIEW_TONE,
 };
 
-const selectInboxItemTone = (status: OperatorInboxItem["kind"] | "settled"): ChipTone => {
-  switch (status) {
-    case "decision": return "warning";
-    case "waiting": return "warning";
-    case "stalled": return "danger";
-    case "settled": return "muted";
-  }
-};
-
-const selectAttemptTone = (status: OperatorAttemptStatusKind): ChipTone => {
-  switch (status) {
-    case "pending": return "muted";
-    case "running": return "info";
-    case "succeeded": return "success";
-    case "failed": return "danger";
-  }
-};
-
-/** The development definition's body enums (verdict, severity, requirement and review status). */
-const ARTIFACT_VALUE_TONES: ReadonlyMap<string, ChipTone> = new Map<string, ChipTone>([
-  ["pass", "success"], ["met", "success"], ["implementable", "success"], ["approved", "success"], ["merged", "success"],
-  ["fail", "danger"], ["not_met", "danger"], ["blocked", "danger"], ["blocking", "danger"],
-  ["pass_with_notes", "warning"], ["partial", "warning"], ["ambiguous", "warning"], ["changes_requested", "warning"],
-  ["draft", "warning"], ["warning", "warning"],
-  ["ready", "info"], ["info", "info"],
-]);
-
-export function selectStatusTone(subject: StatusSubject): ChipTone {
-  switch (subject.kind) {
-    case "unit": return selectUnitTone(subject.status);
-    case "inbox_item": return selectInboxItemTone(subject.status);
-    case "attempt": return selectAttemptTone(subject.status);
-    case "artifact_value": return ARTIFACT_VALUE_TONES.get(subject.status) ?? "muted";
-  }
+// Artifact viewers cast JSON strings to these unions, so an unknown value can still arrive.
+export function selectStatusTone(status: StatusToneSource): ChipTone {
+  return STATUS_TONE[status] ?? "muted";
 }

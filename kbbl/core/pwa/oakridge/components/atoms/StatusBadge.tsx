@@ -1,7 +1,11 @@
 import { Chip } from "../../../components/atoms/Chip";
-import { selectStatusTone, type StatusSubject } from "../../lib/status-tone";
+import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
 
-interface Props { readonly subject: StatusSubject; readonly label?: string; readonly testId?: string }
-export function StatusBadge({ subject, label, testId }: Props) {
-  return <Chip tone={selectStatusTone(subject)} testId={testId}>{label ?? subject.status}</Chip>;
+interface StatusBadgeProps {
+  status: StatusToneSource;
+  testId?: string;
+}
+
+export function StatusBadge({ status, testId }: StatusBadgeProps) {
+  return <Chip tone={selectStatusTone(status)} testId={testId}>{status}</Chip>;
 }

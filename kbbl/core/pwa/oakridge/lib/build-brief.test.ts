@@ -1,18 +1,32 @@
 import { describe, expect, test } from "vitest";
-import { makeBuildBriefFixture } from "../__fixtures__/read-models";
-import { selectFieldItems, selectFieldText } from "../artifact-types";
+import { isBuildBrief } from "./build-brief";
 
-describe("checked build brief projection", () => {
-  test("reads the registered brief's visible identity and goal", () => {
-    const { body } = makeBuildBriefFixture();
-    expect([selectFieldText(body, "cohort_id"), selectFieldText(body, "title"),
-      selectFieldText(body, "goal")]).toEqual(["brief-ui", "Build brief review UI", "Make the brief reviewable."]);
+const validBrief = {
+  cohort_id: "brief-ui",
+  repository_key: "oakridge",
+  title: "Build brief review UI",
+  depends_on: [],
+  goal: "Make the brief reviewable.",
+  files_in_scope: ["kbbl/core/pwa/oakridge"],
+  decisions_made: [{ decision: "Reuse v1", rationale: "It is proven." }],
+  approaches_rejected: [{ approach: "Duplicate UI", reason: "It would drift." }],
+  acceptance_criteria: ["Operator can approve the artifact."],
+  next_action: "Open the brief artifact.",
+};
+
+describe("isBuildBrief", () => {
+  test("accepts the registered artifact body", () => {
+    expect(isBuildBrief(validBrief)).toBe(true);
   });
 
-  test("reads a decision and its rationale through the pinned record schema", () => {
-    const { body } = makeBuildBriefFixture();
-    const decision = selectFieldItems(body, "decisions_made")[0];
-    expect(decision && [selectFieldText(decision, "decision"), selectFieldText(decision, "rationale")])
-      .toEqual(["Reuse v1", "It is proven."]);
+  test("rejects an incomplete decision", () => {
+    expect(isBuildBrief({
+      ...validBrief,
+      decisions_made: [{ decision: "Missing rationale" }],
+    })).toBe(false);
+  });
+
+  test.each(["cohort_id", "repository_key"] as const)("rejects an empty %s", (field) => {
+    expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);
   });
 });

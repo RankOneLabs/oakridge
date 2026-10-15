@@ -47,6 +47,7 @@ function fallbackClaudeDescriptor(): RuntimeDescriptor {
     // backend rejects for CC. Leave empty until /config supplies the real
     // per-runtime effort set; the picker simply doesn't render meanwhile.
     efforts: [],
+    supportsCompaction: true,
   };
 }
 
@@ -74,6 +75,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       label?: unknown;
       models?: unknown;
       efforts?: unknown;
+      supportsCompaction?: unknown;
     };
     if (!isRuntimeId(runtime.id)) return [];
     return [{
@@ -81,6 +83,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       label: typeof runtime.label === "string" ? runtime.label : runtime.id,
       models: coerceRuntimeModels(runtime.models),
       efforts: coerceRuntimeModels(runtime.efforts),
+      supportsCompaction: runtime.supportsCompaction === true,
     }];
   });
   if (runtimes.length === 0) return [fallbackClaudeDescriptor()];

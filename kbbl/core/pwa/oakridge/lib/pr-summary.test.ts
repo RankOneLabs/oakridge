@@ -1,31 +1,43 @@
-import { afterEach, describe, expect, test } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import { createElement } from "react";
-import { makePrSummaryFixture } from "../__fixtures__/read-models";
-import { selectFieldText, selectHttpUrl } from "../artifact-types";
-import { PrSummaryViewer } from "../components/molecules/PrSummaryViewer";
+import { describe, expect, test } from "vitest";
+import { isWebUrl, parsePrSummary, selectPullRequestLabel } from "./pr-summary";
 
-afterEach(cleanup);
+const body = {
+  pr_url: "https://github.com/RankOneLabs/assay/pull/50",
+  branch: "cohort/run/cm-api",
+  summary: "Adds analyze().",
+  base_branch: "epic/metrics-update",
+  repository_key: "assay",
+};
 
-describe("pull request summary", () => {
+describe("parsePrSummary", () => {
+  test("reads the base branch the build stage publishes", () => {
+    const parsed = parsePrSummary(body);
+    expect(parsed.ok && parsed.value.base_branch).toBe("epic/metrics-update");
+  });
+
   test("reads a missing review status as null", () => {
-    const { body } = makePrSummaryFixture();
-    expect(selectFieldText(body, "review_status")).toBeNull();
+    const parsed = parsePrSummary(body);
+    expect(parsed.ok && parsed.value.review_status).toBeNull();
   });
 
-  test("renders a GitHub pull request as a safe link", () => {
-    const { body } = makePrSummaryFixture();
-    render(createElement(PrSummaryViewer, { body }));
-    expect(screen.getByRole("link", { name: "Open pull request" }).getAttribute("href"))
-      .toBe("https://github.com/RankOneLabs/assay/pull/50");
+  test("names a missing required field", () => {
+    const parsed = parsePrSummary({ ...body, branch: undefined });
+    expect(parsed.ok ? null : parsed.error.field).toBe("branch");
+  });
+});
+
+describe("selectPullRequestLabel", () => {
+  test("shortens a GitHub pull request URL", () => {
+    expect(selectPullRequestLabel(body.pr_url)).toBe("RankOneLabs/assay #50");
   });
 
-  test("leaves other URLs out of GitHub-specific presentation", () => {
-    expect(selectHttpUrl("https://gitlab.com/a/b/-/merge_requests/1"))
-      .toBe("https://gitlab.com/a/b/-/merge_requests/1");
+  test("leaves other URLs alone", () => {
+    expect(selectPullRequestLabel("https://gitlab.com/a/b/-/merge_requests/1")).toBeNull();
   });
+});
 
+describe("isWebUrl", () => {
   test("refuses a javascript: URL", () => {
-    expect(selectHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(isWebUrl("javascript:alert(1)")).toBe(false);
   });
 });
