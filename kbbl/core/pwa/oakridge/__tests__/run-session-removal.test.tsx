@@ -45,11 +45,17 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const renderRun = () => render(
-  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+const renderRun = () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(["oakridge", "run", run.id], run);
+  client.setQueryData(["oakridge", "run", run.id, "sessions"], attempts);
+  client.setQueryData(["oakridge", "run", run.id, "gates"], []);
+  return render(
+  <QueryClientProvider client={client}>
     <RunDetailView runId={run.id} routePane={null} onBack={() => {}} />
   </QueryClientProvider>,
-);
+  );
+};
 const visibleSessions = () => screen.queryAllByTestId("or-sidebar-session")
   .map((row) => row.getAttribute("data-session-id"));
 

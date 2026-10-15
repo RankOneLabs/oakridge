@@ -129,11 +129,13 @@ workers:
 reviews:
   pr_closed:
     of: build_result
-    by: engine
+    by: operator
     when: closed_pr
+    prompt: development/pr-closed.md
+    inputs: { pr: latest(pr), pr_state: latest(pr_state) }
     decisions:
       replace_pr: { effect: request_changes, label: Replace the closed PR,
-                    feedback: "The pull request was closed without being merged. Open a new pull request for this build and publish the build result and the PR summary again." }
+                    fields: { feedback: "What must change in the replacement pull request?" } }
 
 run:
   pools: { writers: 4, builders: 4 }
@@ -336,7 +338,15 @@ stages:
                                fields: { feedback: "What must the builder change?" } }
       # D5: a closed, unmerged PR counts as changes requested on the build.
       pr_closed: { template: pr_closed }
-    done_when: approved(assessment) and published(build_result) and pr_published and merged_pr
+      merge_confirmation:
+        of: pr_state
+        by: operator
+        when: merged_pr
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { effect: approve, label: Confirm merged }
+    done_when: approved(assessment) and published(build_result) and pr_published and approved(pr_state)
     outcome:
       cohort_id: brief_value.cohort_id
       repository_key: input.brief.repository_key
@@ -372,13 +382,17 @@ stages:
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       pr_closed:
         template: pr_closed
-        overrides:
-          of: pr
-          decisions:
-            replace_pr:
-              feedback: "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again."
+        overrides: { of: pr }
+      merge_confirmation:
+        of: pr_state
+        by: operator
+        when: published(pr_state) and latest(pr_state).state == "merged"
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { effect: approve, label: Confirm merged }
     # Done when its PR merges; under allow_close_without_merge, also when it closes unmerged.
-    done_when: approved(pr) and final_state
+    done_when: approved(pr) and (approved(pr_state) or (input.final_merge_policy == "allow_close_without_merge" and final_state))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url

@@ -24,19 +24,18 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   submitted by the frozen form.** It has one feedback textarea. The adapter
   refuses these decision shapes rather than dropping required data. The current
   development `request_changes` decisions use a single `feedback` field.
-- **The checked-in `replace_pr` decision has no operator feedback field.** The
-  frozen form opens its textarea because the decision's effect is
-  `request_changes`, but the current v2 bundle declares an empty payload and
-  a fixed feedback string. The collected text can be submitted once the
-  backend contract exposes a single `feedback` field; until then, the adapter
-  cannot deliver it without the core rejecting the payload.
-- **A live adapter fixture and shadow-install check remain pending.** The
-  v2 `/api/runs` route at `127.0.0.1:8790` was unavailable during this cohort build,
-  and the checked-in development bundle had not yet added the planned
-  `confirm_merged` decisions. `v2-adapter-sample.json` is explicitly synthetic;
-  run `oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts <run-id>` after the
-  backend contract lands, then review the run list and detail against that run
-  on the shadow install. The capture script writes `v2-run.json`.
+- **The default install at `127.0.0.1:8790` still lacks v2 `/api/runs`.** The
+  isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
+  committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders a
+  seeded run list and detail in a browser check; operator confirmation of that
+  checkpoint is pending. The default install needs its separate database cutover
+  before this PWA branch can run against it.
+- **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
+  A composite v2 ID resolves on a cold load, and the client can find a bare v2
+  revision ID by searching run and unit views. An arbitrary retired v1 UUID
+  has no corresponding key in the v2 read contract and returns a clear
+  not-found error. An opaque gate ID similarly resolves only when its supplied
+  revision and action identify one current v2 review decision.
 - **Several frozen v1 controls have no v2 command.** V2 has no run deletion,
   thread ping/resolution, or review-item update endpoint, and the v1 workflow
   graph cannot be compiled as a v2 definition. These client methods now fail
@@ -51,12 +50,6 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   `GET /events` and per-unit history instead. Opening run activity in the
   frozen workspace requests the retired route. This lies outside the client,
   hooks and adapters files this cohort may change.
-- **The broad PWA suite still uses v1 API mock responses in frozen tests.**
-  Running `bun run --cwd kbbl test:pwa` after the client cutover reports 90
-  failures across nine files (498 tests pass). The failures are concentrated in
-  frozen run, artifact, gate, inbox and workflow component tests whose mocks
-  answer retired v1 endpoints or opaque IDs. Those tests need fixture updates
-  in a cohort allowed to edit the frozen files.
 
 ## Resolved investigation: group-unit operator decision (review-loop bundle)
 

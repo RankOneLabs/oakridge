@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import sample from "./__fixtures__/v2-adapter-sample.json";
+import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
+import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import { createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
+import type { OperatorUnitView } from "./operator-contracts";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
 const runId = sample.run.run_id;
-const cohort = sample.units[1];
+const cohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
+if (!cohort) throw new Error("captured fixture lacks an assessment review");
+const changeDecision = cohort.decisions.find((decision) => decision.key === "request_build_changes");
+const acceptDecision = cohort.decisions.find((decision) => decision.key === "accept");
+const changeTarget = changeDecision?.submit.kind === "review" ? changeDecision.submit.target_revision_id : null;
+const acceptTarget = acceptDecision?.submit.kind === "review" ? acceptDecision.submit.target_revision_id : null;
+if (!changeTarget || !acceptTarget) throw new Error("captured fixture lacks assessment decisions");
 const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 const calls = (respond: (path: string, init?: RequestInit) => unknown) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
   const body = respond(String(input), init);
@@ -15,7 +24,7 @@ const calls = (respond: (path: string, init?: RequestInit) => unknown) => vi.spy
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 const createRunRequest = (): CreateRunRequest => ({
-  workflow_def_id: "development-v2", project_id: null,
+  workflow_def_id: sample.run.definition_bundle_id, project_id: null,
   context: { brief_notes: "Build it", repositories: [{ key: "api" as RepositoryKey, path: "/repo", integration_branch: "main" }],
     worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code",
     planner_model: "sonnet", planner_effort: null, worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null },
@@ -33,22 +42,40 @@ describe("v2 Oakridge client", () => {
   });
 
   it("launches with the definition digest and all six stage roles, then reads back", async () => {
-    const fetch = calls((path) => path.includes("/api/definitions") ? { items: [{ bundle_id: "development-v2", digest: "sha256:development" }], next_cursor: null }
+    const fetch = calls((path) => path.includes("/api/definitions") ? { items: [{ bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest }], next_cursor: null }
       : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-2" }
       : path.includes("/units") ? sample.units : sample.run);
     const result = await createRun(createRunRequest(), "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
     expect([result.id, body.request_id, body.digest, Object.keys(body.config.sessions).sort()]).toEqual([
-      runId, "launch-1", "sha256:development", ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
+      runId, "launch-1", sample.run.definition_digest, ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
     ]);
   });
 
   it("opens an artifact through its self-describing id with no snapshot read", async () => {
-    const fetch = calls((path) => { expect(path).toContain(`/api/runs/${runId}/units/${cohort.unit_id}/artifacts/build_result`); return sample.artifact; });
-    const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id, name: "build_result:revision-build" });
+    const fetch = calls((path) => { expect(path).toContain(`/api/runs/${runId}/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`); return sample.artifact; });
+    const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id, name: `build_result:${changeTarget}` });
     expect((await fetchArtifact(id)).component_id).toBe("dev-build-result-viewer");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves an opaque revision id by a one-time run and unit search", async () => {
+    const fetch = calls((path) => path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
+      : path.endsWith("/units") ? sample.units : sample.artifact);
+    expect((await fetchArtifact(changeTarget)).component_id).toBe("dev-build-result-viewer");
+    expect(fetch.mock.calls.some(([path]) => String(path).includes(`/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`))).toBe(true);
+  });
+
+  it("resolves an opaque gate id from the revision and action before deciding", async () => {
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-opaque" }
+      : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
+      : path.endsWith("/units") ? sample.units : cohort);
+    await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget, gate_step: "artifact_approval",
+      action: "request_revision", operator_comment: "", feedback: "Improve it" });
+    const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
+    expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(cohort.unit_id)}/reviews/assessment_review/decide`);
+    expect(JSON.parse(String(posted?.[1]?.body)).target).toBe(changeTarget);
   });
 
   it("sends collected feedback to the decision's declared field and target revision", async () => {
@@ -58,7 +85,7 @@ describe("v2 Oakridge client", () => {
       action: "request_revision", operator_comment: "", feedback: "Fix the API" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
-      target: "revision-build", payload: { feedback: "Fix the API" } });
+      target: changeTarget, payload: { feedback: "Fix the API" } });
   });
 
   it("submits an accept-effect decision without feedback", async () => {
@@ -83,15 +110,19 @@ describe("v2 Oakridge client", () => {
       target: "revision-pr", payload: { feedback: "Open a replacement" } });
   });
 
-  it.each([sample.units[1], sample.units[2]])("confirms merged for unit $unit_key at its named revision", async (unit) => {
-    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-6" } : unit);
-    const gateId = compositeId({ kind: "gate", runId, unitId: unit.unit_id, name: "merge_confirmation" });
+  it.each([cohortMerge, integrationMerge])("confirms merged for unit at its named revision", async (fixture) => {
+    const unit = (fixture.units as unknown as OperatorUnitView[]).find((candidate) => candidate.decisions.some((decision) => decision.key === "confirm_merged"));
+    if (!unit) throw new Error("captured fixture lacks confirm_merged");
+    const mergeDecision = unit.decisions.find((decision) => decision.key === "confirm_merged");
+    if (!mergeDecision || mergeDecision.submit.kind !== "review") throw new Error("captured fixture lacks merge decision target");
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: fixture.run.run_id, event_id: "event-6" } : unit);
+    const gateId = compositeId({ kind: "gate", runId: fixture.run.run_id, unitId: unit.unit_id, name: "merge_confirmation" });
     await resumeGate(gateId, { idempotency_key: "merge-1", artifact_revision_id: "stale", gate_step: "merge_confirmation",
       action: "confirm_merged", operator_comment: "", feedback: "" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     const body = JSON.parse(String(posted?.[1]?.body));
-    expect([String(posted?.[0]).includes(`/units/${unit.unit_id}/reviews/merge_confirmation/decide`), body.target])
-      .toEqual([true, unit.stage === "cohort" ? "revision-pr" : "revision-integration-pr"]);
+    expect([String(posted?.[0]).includes(`/units/${encodeURIComponent(unit.unit_id)}/reviews/merge_confirmation/decide`), body.target])
+      .toEqual([true, mergeDecision.submit.target_revision_id]);
   });
 
   it("uses a batched inbox and one cached units read per run, then refreshes only that run", async () => {

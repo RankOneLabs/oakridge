@@ -46,9 +46,16 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" };
   });
+  const seenReviews = new Set<string>();
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
+    if (item.kind === "waiting" && item.reason.includes("review") && unit.decisions.some((decision) => decision.submit.kind === "review")) return [];
+    if (item.kind === "decision" && item.submit.kind === "review") {
+      const reviewKey = `${item.unit_id}:${item.submit.review}`;
+      if (seenReviews.has(reviewKey)) return [];
+      seenReviews.add(reviewKey);
+    }
     const kind = classify(item, unit);
     const name = unit.collection_key ?? unit.unit_key;
     const review = item.kind === "decision" && item.submit.kind === "review" ? item.submit.review : null;

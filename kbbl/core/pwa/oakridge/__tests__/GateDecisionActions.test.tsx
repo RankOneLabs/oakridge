@@ -3,6 +3,9 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GateDecisionActions } from "../components/organisms/GateDecisionActions";
+import { invalidateCachedRunUnits } from "../client";
+import sample from "../__fixtures__/v2-adapter-sample.json";
+import type { OperatorUnitView } from "../operator-contracts";
 import type { ParkedGate, RepositoryKey, RunState } from "../types";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
@@ -32,44 +35,60 @@ function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), a
   );
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
+if (!capturedCohort) throw new Error("captured fixture lacks an assessment review");
+const unitFor = (unitId: string, revision: string) => ({ ...capturedCohort, run_id: "run-1", unit_id: unitId,
+  decisions: capturedCohort.decisions.flatMap((decision) => {
+    if (decision.submit.kind !== "review" || decision.submit.review !== "assessment_review") return [];
+    return [{ ...decision, key: decision.key === "accept" ? "approve" : decision.key,
+      submit: { ...decision.submit, decision: decision.submit.decision === "accept" ? "approve" : decision.submit.decision, target_revision_id: revision } }];
+  }) });
+function mockV2(units: readonly ReturnType<typeof unitFor>[], post: (init?: RequestInit) => Promise<Response>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") return post(init);
+    if (path.includes("/api/runs?")) return json({ items: [{ ...sample.run, run_id: "run-1" }], next_cursor: null });
+    if (path.endsWith("/units")) return json(units);
+    const unit = units.find((candidate) => path.endsWith(`/units/${candidate.unit_id}`));
+    if (unit) return json(unit);
+    throw new Error(`unexpected v2 request ${path}`);
+  });
+}
 
 describe("GateDecisionActions", () => {
   it("submits the latest edited artifact revision", async () => {
-    let requestBody: { artifact_revision_id: string } | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      requestBody = JSON.parse(String(init?.body)) as { artifact_revision_id: string };
-      return new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+    let requestBody: { target: string } | undefined;
+    mockV2([unitFor("unit-a", "revision-edited")], async (init) => {
+      requestBody = JSON.parse(String(init?.body)) as { target: string };
+      return json({ kind: "committed", run_id: "run-1", event_id: "decided" });
     });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     render(wrapper(client, gate("gate-a", "revision-root"), vi.fn(), "revision-edited"));
 
     fireEvent.click(screen.getByTestId("or-decision-approve"));
-    await waitFor(() => expect(requestBody?.artifact_revision_id).toBe("revision-edited"));
+    await waitFor(() => expect(requestBody?.target).toBe("revision-edited"));
   });
 
   it("resets decision state on a gate switch and ignores the previous gate response", async () => {
     let resolveRequest: ((response: Response) => void) | undefined;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
+    const fetchMock = mockV2([unitFor("unit-a", "revision-a"), unitFor("unit-b", "revision-b")],
+      () => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const onComplete = vi.fn();
     const view = render(wrapper(client, gate("gate-a", "revision-a"), onComplete));
 
     fireEvent.click(screen.getByTestId("or-decision-approve"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
     const staleResponseResolver = resolveRequest;
     if (!staleResponseResolver) throw new Error("Expected an in-flight request for gate-a");
     view.rerender(wrapper(client, gate("gate-b", "revision-b"), onComplete));
     await waitFor(() => expect(screen.getByTestId("or-decision-approve")).toBeTruthy());
 
     await act(async () => {
-      staleResponseResolver(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }));
+      staleResponseResolver(json({ kind: "committed", run_id: "run-1", event_id: "decided" }));
     });
 
     expect(onComplete).not.toHaveBeenCalled();
@@ -78,13 +97,10 @@ describe("GateDecisionActions", () => {
   });
 
   it("uses a new idempotency key when feedback changes", async () => {
-    const requests: Array<{ feedback: string; idempotency_key: string }> = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body)) as { feedback: string; idempotency_key: string });
-      return new Response(JSON.stringify({ detail: "try again" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+    const requests: Array<{ payload: { feedback: string }; request_id: string }> = [];
+    mockV2([unitFor("unit-a", "revision-a")], async (init) => {
+      requests.push(JSON.parse(String(init?.body)) as { payload: { feedback: string }; request_id: string });
+      return json({ detail: "try again" }, 500);
     });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     render(wrapper(client, gate("gate-a", "revision-a")));
@@ -98,8 +114,8 @@ describe("GateDecisionActions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(requests).toHaveLength(2));
 
-    expect(requests.map((request) => request.feedback)).toEqual(["First explanation", "Better explanation"]);
-    expect(requests[0].idempotency_key).not.toBe(requests[1].idempotency_key);
+    expect(requests.map((request) => request.payload.feedback)).toEqual(["First explanation", "Better explanation"]);
+    expect(requests[0].request_id).not.toBe(requests[1].request_id);
   });
 
   it("renders a stranded gate as visible, but with every decision disabled and no feedback textarea reachable", async () => {

@@ -41,7 +41,7 @@ import type {
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { classifyDevelopmentInbox } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
@@ -52,6 +52,35 @@ const OPERATOR = "/api";
 const unitCache = new Map<string, Promise<readonly OperatorUnitView[]>>();
 const runPath = (runId: string): string => `${OPERATOR}/runs/${encodeURIComponent(runId)}`;
 const unitPath = (runId: string, unitId: string): string => `${runPath(runId)}/units/${encodeURIComponent(unitId)}`;
+async function resolveArtifactId(id: string): Promise<CompositeId> {
+  const parsed = parseCompositeId(id, "artifact");
+  if (parsed.ok) return parsed.value;
+  const matches: CompositeId[] = [];
+  for (const run of await readRunPage()) for (const unit of await readUnits(run.run_id)) {
+    for (const artifact of unit.artifacts) if (artifact.latest_revision?.id === id) {
+      matches.push({ kind: "artifact", runId: run.run_id, unitId: unit.unit_id, name: `${artifact.artifact_key}:${id}` });
+    }
+  }
+  if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque artifact revision ${matches.length === 0 ? "not found" : "is ambiguous"}`);
+  return matches[0];
+}
+async function resolveGateId(id: string, request: GateResumeRequest): Promise<CompositeId> {
+  const parsed = parseCompositeId(id, "gate");
+  if (parsed.ok) return parsed.value;
+  const revision = parseCompositeId(request.artifact_revision_id, "artifact");
+  const target = revision.ok ? revision.value.name.slice(revision.value.name.indexOf(":") + 1) : request.artifact_revision_id;
+  const matches: CompositeId[] = [];
+  for (const run of await readRunPage()) for (const unit of await readUnits(run.run_id)) {
+    const reviews = new Set(unit.decisions.flatMap((decision) => decision.submit.kind === "review"
+      && decision.submit.target_revision_id === target ? [decision.submit.review] : []));
+    for (const review of reviews) if (unit.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.review === review && decisionAction(decision) === request.action)) {
+      matches.push({ kind: "gate", runId: run.run_id, unitId: unit.unit_id, name: review });
+    }
+  }
+  if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque gate ${matches.length === 0 ? "not found" : "is ambiguous"}`);
+  return matches[0];
+}
 const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
   const cached = unitCache.get(runId);
   if (cached) return cached;
@@ -236,13 +265,13 @@ export async function admitStageUnit(stageId: string, unitId: string, idempotenc
 }
 
 export async function fetchArtifact(id: string): Promise<ArtifactDetail> {
-  const parsed = unwrapAdapter(id, parseCompositeId(id, "artifact"));
+  const parsed = await resolveArtifactId(id);
   const path = `${unitPath(parsed.runId, parsed.unitId)}/artifacts/${encodeURIComponent(artifactKeyFromComposite(parsed.name))}`;
   return unwrapAdapter(path, revisionToArtifact(unwrapAdapter(path, parseArtifactDetail(await oakridgeGet<unknown>(path)))));
 }
 
 export async function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
-  const gate = unwrapAdapter(gateId, parseCompositeId(gateId, "gate"));
+  const gate = await resolveGateId(gateId, req);
   const path = unitPath(gate.runId, gate.unitId);
   const unit = unwrapAdapter(path, parseUnitView(await oakridgeGet<unknown>(path)));
   const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === gate.name && decisionAction(candidate) === req.action);
@@ -391,7 +420,7 @@ export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
 interface RevisionLocation { readonly runId: string; readonly unitId: string; readonly artifactKey: string; readonly revisionId: string; readonly detail: OperatorArtifactDetail }
 const threadLocation = new Map<string, { readonly runId: string; readonly unitId: string }>();
 async function revisionLocation(artifactId: string): Promise<RevisionLocation> {
-  const parsed = unwrapAdapter(artifactId, parseCompositeId(artifactId, "artifact"));
+  const parsed = await resolveArtifactId(artifactId);
   const artifactKey = artifactKeyFromComposite(parsed.name);
   const path = `${unitPath(parsed.runId, parsed.unitId)}/artifacts/${encodeURIComponent(artifactKey)}`;
   const detail = unwrapAdapter(path, parseArtifactDetail(await oakridgeGet<unknown>(path)));

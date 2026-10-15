@@ -169,11 +169,22 @@ const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
 const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", plan_review: "accept", brief_review: "accept",
-  admission: "admit", assessment_review: "accept", integration_review: "accept" };
+  admission: "admit", assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
+
+const capturedAdapterFixtures = new Set<string>();
+async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
+  if (process.env.OAKRIDGE_CAPTURE_ADAPTER_FIXTURE !== "1" || capturedAdapterFixtures.has(name)) return;
+  const capture = Bun.spawn(["bun", resolve(root, "oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts"), run_id, name], {
+    env: { ...process.env, OAKRIDGE_CAPTURE_URL: base_url }, stdout: "pipe", stderr: "pipe",
+  });
+  const [status, stderr] = await Promise.all([capture.exited, new Response(capture.stderr).text()]);
+  if (status !== 0) throw new Error(`adapter fixture capture failed: ${stderr}`);
+  capturedAdapterFixtures.add(name);
+}
 
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
 async function operate(run_id: string, decided: Set<string>, admitted: string[]): Promise<void> {
-  const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "review_prompts", "collection_key"]).where("run_id", "=", run_id).execute())
+  const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage", "review_prompts", "collection_key"]).where("run_id", "=", run_id).execute())
     .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
   for (const unit of units) {
     for (const [review, awaiting] of Object.entries(unit.review_prompts)) {
@@ -181,6 +192,9 @@ async function operate(run_id: string, decided: Set<string>, admitted: string[])
       if (decided.has(key)) continue;
       const decision = DECISIONS[review];
       if (!decision) throw new Error(`no decision for review ${review}`);
+      if (review === "assessment_review") await captureAdapterFixture(run_id, "v2-adapter-sample");
+      if (review === "merge_confirmation" && unit.stage === "cohort") await captureAdapterFixture(run_id, "v2-cohort-merge");
+      if (review === "merge_confirmation" && unit.stage === "integration") await captureAdapterFixture(run_id, "v2-integration-merge");
       const response = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit.id)}/reviews/${review}/decide`,
         { request_id: crypto.randomUUID(), decision, target: awaiting.target, payload: {} });
       if (response.status !== 201) throw new Error(`${review} on ${unit.id} refused: ${await response.text()}`);
