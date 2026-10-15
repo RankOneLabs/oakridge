@@ -42,7 +42,7 @@ import type {
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
 import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
-import { classifyDevelopmentInbox } from "./adapters/inbox";
+import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
 import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitView, parseUnitViews } from "./adapters/parse";
@@ -249,8 +249,7 @@ export async function refreshReviewInboxRun(runId: string, current: ReviewInbox)
   const path = `${runPath(runId)}/inbox`;
   const page = await oakridgeGet<{ readonly items: OperatorRunInboxBatch["items"][number]["items"] }>(path);
   const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, await readUnits(runId)));
-  return { cohorts: [...current.cohorts.filter((cohort) => cohort.run_id !== runId), ...slice.cohorts],
-    items: [...current.items.filter((item) => item.run_id !== runId), ...slice.items] };
+  return replaceDevelopmentInboxRun(current, runId, slice);
 }
 
 export async function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {

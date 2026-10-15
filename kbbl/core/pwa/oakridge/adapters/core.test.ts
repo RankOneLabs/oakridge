@@ -4,7 +4,7 @@ import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import type { OperatorArtifactDetail, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, unitToStages } from "./core";
-import { classifyDevelopmentInbox } from "./inbox";
+import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 
 const run = sample.run as unknown as OperatorRunView;
@@ -59,6 +59,18 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
+  });
+  it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
+    const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
+    if (!first.ok) throw new Error(first.error.detail);
+    const secondRun = "run-another";
+    const second = { cohorts: first.value.cohorts.map((cohort) => ({ ...cohort, run_id: secondRun })),
+      items: first.value.items.map((item) => ({ ...item, run_id: secondRun })) };
+    const latest = replaceDevelopmentInboxRun(first.value, secondRun, second);
+    const changedFirst = { cohorts: first.value.cohorts, items: [] };
+    const combined = replaceDevelopmentInboxRun(latest, run.run_id, changedFirst);
+    expect([combined.items.some((item) => item.run_id === run.run_id), combined.items.some((item) => item.run_id === secondRun)])
+      .toEqual([false, true]);
   });
   it.each([cohortMerge, integrationMerge])("captures confirm_merged on the unit's current revision", (fixture) => {
     const unit = fixture.units.find((candidate) => candidate.decisions.some((decision) => decision.key === "confirm_merged"));

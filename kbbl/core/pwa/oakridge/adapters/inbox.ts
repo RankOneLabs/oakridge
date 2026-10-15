@@ -73,3 +73,11 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   });
   return ok({ cohorts, items });
 }
+
+/** Apply a run's refreshed slice to the latest inbox, not to a snapshot captured before another run refreshed. */
+export function replaceDevelopmentInboxRun(current: ReviewInbox, runId: string, refresh: ReviewInbox): ReviewInbox {
+  return {
+    cohorts: [...current.cohorts.filter((cohort) => cohort.run_id !== runId), ...refresh.cohorts.filter((cohort) => cohort.run_id === runId)],
+    items: [...current.items.filter((item) => item.run_id !== runId), ...refresh.items.filter((item) => item.run_id === runId)],
+  };
+}
