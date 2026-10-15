@@ -9,7 +9,8 @@ export interface CollaborationApiDependencies { readonly db: Database }
 
 const object = (value: unknown): value is { readonly [key: string]: unknown } =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 300;
+const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
+const bounded = (value: unknown): value is string => nonempty(value) && value.length <= 300;
 function param(c: Context, key: string): string {
   const value = c.req.param(key);
   if (!value) throw new Error(`missing route parameter ${key}`);
@@ -33,7 +34,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
   createThread: async (c: Context) => {
     const raw = await requestBody(c.req.raw);
     if (raw instanceof MalformedRequestError) return errorResponse(raw);
-    if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title) || !(raw.anchor === null || typeof raw.anchor === "string"))
+    if (!object(raw) || !bounded(raw.request_key) || !nonempty(raw.title) || !(raw.anchor === null || typeof raw.anchor === "string"))
       return errorResponse(new InvalidPayloadError("request_key, title and anchor are required"));
     const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), revision_id = param(c, "revision_id");
     return written(c, await createCollaborationThread(deps.db, { id: `thread:${collaborationRecordId(revision_id, raw.request_key)}`,
@@ -42,7 +43,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
   addMessage: async (c: Context) => {
     const raw = await requestBody(c.req.raw);
     if (raw instanceof MalformedRequestError) return errorResponse(raw);
-    if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.text)) return errorResponse(new InvalidPayloadError("request_key and text are required"));
+    if (!object(raw) || !bounded(raw.request_key) || !nonempty(raw.text)) return errorResponse(new InvalidPayloadError("request_key and text are required"));
     const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), thread_id = param(c, "thread_id");
     // The author is whoever's credential passed control auth, as for every operator event; the body has no say in it.
     const author = operatorWriterFromCredential(c.req.raw).subject;
@@ -52,7 +53,7 @@ export function collaborationHandlers(deps: CollaborationApiDependencies) {
   addReviewItem: async (c: Context) => {
     const raw = await requestBody(c.req.raw);
     if (raw instanceof MalformedRequestError) return errorResponse(raw);
-    if (!object(raw) || !nonempty(raw.request_key) || !nonempty(raw.title) || typeof raw.detail !== "string" || !nonempty(raw.status))
+    if (!object(raw) || !bounded(raw.request_key) || !bounded(raw.title) || typeof raw.detail !== "string" || !bounded(raw.status))
       return errorResponse(new InvalidPayloadError("request_key, title, detail and status are required"));
     const run_id = param(c, "run_id"), unit_id = param(c, "unit_id"), thread_id = param(c, "thread_id");
     return written(c, await addReviewItem(deps.db, { id: `review:${collaborationRecordId(thread_id, raw.request_key)}`,

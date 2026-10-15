@@ -334,9 +334,17 @@ stages:
           overrides:
             request_changes: { on: build_result, label: Request build changes,
                                fields: { feedback: "What must the builder change?" } }
+      merge_confirmation:
+        of: pr
+        by: operator
+        when: pr_published and not merged_pr and not approved(pr)
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { effect: approve, label: Confirm merged }
       # D5: a closed, unmerged PR counts as changes requested on the build.
       pr_closed: { template: pr_closed }
-    done_when: approved(assessment) and published(build_result) and pr_published and merged_pr
+    done_when: approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))
     outcome:
       cohort_id: brief_value.cohort_id
       repository_key: input.brief.repository_key
@@ -370,6 +378,14 @@ stages:
         prompt: development/integration-review.md
         inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
+      merge_confirmation:
+        of: pr
+        by: operator
+        when: pr_published and not final_state and not closed_pr and not approved(pr_state)
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { on: pr_state, effect: approve, label: Confirm merged }
       pr_closed:
         template: pr_closed
         overrides:
@@ -377,9 +393,10 @@ stages:
           decisions:
             replace_pr:
               feedback: "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again."
-    # Done when its PR merges; under allow_close_without_merge, also when it closes unmerged.
-    done_when: approved(pr) and final_state
+    # Done when its PR merges or the operator confirms a merged observed state;
+    # under allow_close_without_merge, an observed unmerged close also suffices.
+    done_when: approved(pr) and (final_state or approved(pr_state))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url
-      is_merged: latest(pr_state).state == "merged"
+      is_merged: latest(pr_state).state == "merged" or approved(pr_state)

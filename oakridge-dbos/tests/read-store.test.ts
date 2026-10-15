@@ -199,14 +199,14 @@ test("a page of runs reads in one batch, each run holding only its own rows", as
     .toEqual({ order: true, first_retries: 1, second_retries: 0, foreign: 0 });
 });
 
-test("run lists and the inbox read no revision body, decision, unit input or launch input, and no latest events without a stall", async () => {
+test("run lists and the inbox read launch input and latest events without loading revision bodies or unit inputs", async () => {
   const { run_id } = await reviewedRun();
   const listed = (await listRuns(authority.db, { after: null, limit: 100, is_archived: false })).items.find((item) => item.run.id === run_id);
   const live = (await listLiveRuns(authority.db, { after: null, limit: 100 })).items.find((item) => item.run.id === run_id);
   const read = (item: typeof listed) => item && { revisions: item.revisions.length, has_body: item.revisions.some((revision) => "body" in revision),
     has_decisions: "decisions" in item, has_unit_input: item.units.some((unit) => "input" in unit), has_launch_input: "input" in item.run,
     latest_events: item.latest_events.length };
-  const expected = { revisions: 1, has_body: false, has_decisions: false, has_unit_input: false, has_launch_input: false, latest_events: 0 };
+  const expected = { revisions: 1, has_body: false, has_decisions: false, has_unit_input: false, has_launch_input: true, latest_events: 2 };
   expect({ listed: read(listed), live: read(live) }).toEqual({ listed: expected, live: expected });
 });
 

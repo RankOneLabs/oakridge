@@ -4,7 +4,7 @@ import type { ActionId, DecisionId, DefinitionBundleId, EventId, IngressId, Inte
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
-import type { SessionHold } from "../projections/session-hold";
+import type { SessionHold, SessionRunLocation } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
@@ -18,7 +18,7 @@ type Row<Table extends keyof DB> = Selectable<DB[Table]>;
 const runRecord = (row: Row<"authority.run">): RunRecord => ({ ...row, id: row.id as RunId,
   definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
-const summaryRun = (row: Omit<Row<"authority.run">, "input" | "config">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
+const summaryRun = (row: Omit<Row<"authority.run">, "config">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
   definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
 const unitRecord = (row: Row<"authority.unit">): UnitRecord => ({ ...row, id: row.id as UnitId,
@@ -63,16 +63,16 @@ export interface StallRefusal { readonly unit_id: UnitId | null; readonly ingres
 export interface RecordedFault { readonly notice: CommitFaultNotice; readonly recorded_at: Date }
 /** The latest event committed on one unit of a run; `unit_id` null for the events that address the run (launch, cancel). */
 export interface LatestUnitEvent { readonly unit_id: string | null; readonly event_id: string; readonly created_at: Date }
-/** A run as lists read it: everything but its launch input and config. */
-export type RunSummaryRecord = Omit<RunRecord, "input" | "config">;
+/** A run as lists read it: launch input and identity, without config. */
+export type RunSummaryRecord = Omit<RunRecord, "config">;
 /** A unit as lists read it: everything but its resolved input. */
 export type UnitSummaryRecord = Omit<UnitRecord, "input">;
 /** A revision as lists read it: where it is and when, never its body. */
 export type RevisionRef = Pick<ArtifactRevisionRecord, "id" | "run_id" | "unit_id" | "artifact" | "seq" | "created_at">;
 /**
  * One launched run as the run list, the run view and the inbox read it: what
- * RunView and attention derive from, and no revision body, decision, unit
- * input or launch input. A page of runs costs what its summaries need.
+ * RunView and attention derive from, without revision bodies, decisions or
+ * resolved unit inputs. A page of runs costs what its summaries need.
  */
 export interface RunSummaryRead {
   readonly run: RunSummaryRecord;
@@ -85,7 +85,7 @@ export interface RunSummaryRead {
   readonly stalls: readonly StallRefusal[];
   /** Faulted commits recorded against the run, in the order they faulted. */
   readonly faults: readonly RecordedFault[];
-  /** Read only for a run with a stall or a fault: they are what it is compared against. */
+  /** Latest event on each unit and at run level, for recency and stall/fault checks. */
   readonly latest_events: readonly LatestUnitEvent[];
 }
 /**
@@ -101,7 +101,7 @@ export interface RunRead extends RunSummaryRead {
 }
 
 const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id",
-  "run.created_at", "run.archived_at"] as const;
+  "run.created_at", "run.archived_at", "run.input"] as const;
 const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
 const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
@@ -130,10 +130,8 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
     trx.selectFrom("authority.operator_event").select(["run_id", "payload", "created_at"]).where("run_id", "=", ids).where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault"))
       .orderBy("created_at").orderBy("id").execute(),
   ]);
-  // A stall or fault stands only while nothing has committed after it: only a run with one needs its latest events.
-  const contested = [...new Set([...stalls, ...faults].flatMap((row) => row.run_id === null ? [] : [row.run_id]))];
-  const latest_events = contested.length === 0 ? [] : await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
-    .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", anyOf(contested))
+  const latest_events = await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
+    .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
     .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute();
   return run_ids.flatMap((run_id) => {
     const found = runs.find((run) => run.id === run_id);
@@ -340,6 +338,13 @@ export async function readSessionHold(db: Kysely<DB>, session_id: string): Promi
     .where("kbbl_session_id", "=", session_id).where((eb) => eb(eb.ref("status", "->>").key("kind"), "=", "running"))
     .orderBy("created_at", "desc").executeTakeFirst();
   return running ? { session_id, run_id: running.run_id as RunId, unit_id: running.unit_id as UnitId, worker: running.worker, action_id: running.action_id } : null;
+}
+
+/** A session's latest attempt location, including ended attempts, for navigation. */
+export async function readSessionRunLocation(db: Kysely<DB>, session_id: string): Promise<SessionRunLocation | null> {
+  const attempt = await db.selectFrom("authority.attempt").select(["run_id", "unit_id"])
+    .where("kbbl_session_id", "=", session_id).orderBy("created_at", "desc").orderBy("action_id", "desc").executeTakeFirst();
+  return attempt ? { run_id: attempt.run_id as RunId, unit_id: attempt.unit_id as UnitId } : null;
 }
 
 /** Events newest first: a run's, or one unit's. A launch or cancel names no unit, so it is in the run's history only. */
