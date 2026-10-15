@@ -1,12 +1,18 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Cause, Workflow, WorkerResult } from "../src/core-client/core-types";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { RunId } from "../src/domain/primitives";
 import { observePullRequest } from "../src/operations/pull-request-observe";
+import { decodePullRequestObserveInput } from "../src/operations/pull-request-observe";
+import type { OperationRunner } from "../src/operations/runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
+import { createProductionComposition } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
+import { intentWorkflowId, runWorkflowId, wakeRun } from "../src/workflows/topology";
 import { launch, openAuthority, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { eventually } from "./stub-kbbl";
 
 /**
  * Periodic workers through commit and Postgres (validation spec §3.2, D-V1):
@@ -186,4 +192,132 @@ test("an unchanged pull request observation publishes no new revision and its at
   const attempts = await attemptsOf(run_id, "pr_watch");
   expect({ revisions: (await revisionsOf(run_id, "pr_state")).length, attempts: attempts.map((attempt) => attempt.status.kind) })
     .toEqual({ revisions: 1, attempts: ["succeeded", "succeeded"] });
+});
+
+test("a transient pr_watch outage backs off and observes a merge, while a terminal failure settles", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const calls: number[] = [];
+  const operation_runner: OperationRunner = { async run(call) {
+    const input = decodePullRequestObserveInput(call.inputs);
+    if (call.operation !== "pull_request.observe" || !input) throw new Error("unexpected operation call");
+    if (input.query.head_branch === "terminal") return { kind: "failed", code: "pull_request_mismatch", detail: "repository deleted" };
+    calls.push(Date.now());
+    if (calls.length <= 3) return { kind: "unavailable", detail: "forge unavailable" };
+    return { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+      head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
+  } };
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1", operation_runner,
+    timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, wake_timeout_seconds: 5, carrier_max_iterations: 8 } });
+  try {
+    const start = async (head_branch: string): Promise<RunId> => {
+      const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: { ...QUERY, head_branch } } }) });
+      if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+      return (await response.json() as { run_id: RunId }).run_id;
+    };
+    const transient = await start("transient");
+    await eventually("merged pull request observation", async () =>
+      (await live.db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", transient)
+        .where("artifact", "=", "pr_state").executeTakeFirst())?.body ?? null);
+    const first_attempt = await eventually("merged watch attempt ended", async () => {
+      const row = await live.db.selectFrom("authority.attempt").select("status").where("run_id", "=", transient)
+        .where("worker", "=", "pr_watch").where("seq", "=", 1).executeTakeFirst();
+      return row?.status.kind === "succeeded" ? row : null;
+    });
+    const transient_intent = await live.db.selectFrom("authority.effect_intent").select("status")
+      .where("run_id", "=", transient).executeTakeFirstOrThrow();
+    expect({ first_attempt: first_attempt.status.kind, alive: transient_intent.status,
+      retried: calls.length >= 4 })
+      .toEqual({ first_attempt: "succeeded", alive: "acknowledged", retried: true });
+    expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(40);
+
+    const terminal = await start("terminal");
+    await eventually("terminal watch settlement", async () => {
+      const intent = await live.db.selectFrom("authority.effect_intent").select("status").where("run_id", "=", terminal).executeTakeFirst();
+      return intent?.status === "failed" ? true : null;
+    });
+    const terminal_attempts = await live.db.selectFrom("authority.attempt").select("status")
+      .where("run_id", "=", terminal).where("worker", "=", "pr_watch").execute();
+    expect(terminal_attempts.map((attempt) => attempt.status.kind)).toEqual(["failed"]);
+  } finally { await composition.close(); await live.close(); }
+});
+
+test("a watch rolls over during repeated unavailable operations and resumes its running attempt", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  let calls = 0;
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+    operation_runner: { async run() {
+      calls++;
+      return calls <= 5 ? { kind: "unavailable", detail: "forge unavailable" } :
+        { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+          head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
+    } },
+    timing: { retry_initial_seconds: 0.02, retry_cap_seconds: 0.02, carrier_max_iterations: 2 } });
+  try {
+    const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+    if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+    const { run_id } = await response.json() as { run_id: RunId };
+    const intent = await eventually("watch intent", async () => await live.db.selectFrom("authority.effect_intent")
+      .select(["id", "status"]).where("run_id", "=", run_id).executeTakeFirst() ?? null);
+    await eventually("merged watch attempt after rollover", async () => {
+      const attempt = await live.db.selectFrom("authority.attempt").select(["seq", "status"])
+        .where("run_id", "=", run_id).where("worker", "=", "pr_watch").where("seq", "=", 1).executeTakeFirst();
+      return attempt?.status.kind === "succeeded" ? true : null;
+    }, 10_000);
+    const carriers = await DBOS.listWorkflows({ workflowName: "oakridgeEffectWorkflow", workflow_id_prefix: intentWorkflowId(intent.id) });
+    expect({ retried: calls >= 6, rolled_over: carriers.length >= 3,
+      first: carriers.find((carrier) => carrier.workflowID === intentWorkflowId(intent.id))?.status,
+      intent: (await live.db.selectFrom("authority.effect_intent").select("status").where("id", "=", intent.id).executeTakeFirstOrThrow()).status })
+      .toEqual({ retried: true, rolled_over: true, first: "SUCCESS", intent: "acknowledged" });
+    const first_steps = await DBOS.listWorkflowSteps(intentWorkflowId(intent.id)) ?? [];
+    expect(first_steps.filter((step) => step.name === "oakridgeRunOperation")).toHaveLength(2);
+  } finally { await composition.close(); await live.close(); }
+}, 90_000);
+
+test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  let release_operation = (): void => undefined;
+  const operation_released = new Promise<void>((resolve) => { release_operation = resolve; });
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
+    operation_runner: { async run() { await operation_released; return { kind: "failed", code: "pull_request_mismatch", detail: "terminal" }; } },
+    timing: { wake_timeout_seconds: 20 } });
+  const real_start = DBOS.startWorkflow.bind(DBOS);
+  let release_dispatch = (): void => undefined;
+  const dispatch_released = new Promise<void>((resolve) => { release_dispatch = resolve; });
+  let signal_dispatch = (): void => undefined;
+  const dispatch_entered = new Promise<void>((resolve) => { signal_dispatch = resolve; });
+  let held = false;
+  const start = spyOn(DBOS, "startWorkflow").mockImplementation(((workflow: unknown, options: { workflowID?: string }) => {
+    const launch = real_start(workflow as never, options as never);
+    if (!held && options.workflowID?.includes("@")) {
+      held = true;
+      return async (...args: unknown[]) => {
+        signal_dispatch();
+        await dispatch_released;
+        return (launch as (...args: unknown[]) => Promise<unknown>)(...args);
+      };
+    }
+    return launch;
+  }) as never);
+  try {
+    const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+    if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+    const { run_id } = await response.json() as { run_id: RunId };
+    await dispatch_entered;
+    const before = await DBOS.listWorkflowSteps(runWorkflowId(run_id)) ?? [];
+    expect(before.filter((step) => step.name === "oakridgeAdvanceRun")).toHaveLength(1);
+    await wakeRun(run_id);
+    const released_at = Date.now();
+    release_dispatch();
+    await eventually("run advance after queued wake", async () => {
+      const steps = await DBOS.listWorkflowSteps(runWorkflowId(run_id)) ?? [];
+      return steps.filter((step) => step.name === "oakridgeAdvanceRun").length >= 2 ? true : null;
+    }, 5_000);
+    expect(Date.now() - released_at).toBeLessThan(5_000);
+  } finally { release_dispatch(); release_operation(); start.mockRestore(); await composition.close(); await live.close(); }
 });

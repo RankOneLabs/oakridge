@@ -49,7 +49,7 @@ export interface WorkflowTiming {
   readonly observe_interval_seconds: number;
   /** Consecutive transiently_unavailable observations before the attempt fails. */
   readonly max_observe_unavailable_attempts: number;
-  /** Bound on how long a lost wake can delay a run's recheck. */
+  /** Bound on a run's periodic recheck when wake delivery fails. */
   readonly wake_timeout_seconds: number;
   /**
    * Optional wall-clock DBOS timeout for an effect, including observation. Null
@@ -432,16 +432,26 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
   return status;
 }
 
-/** One run of a code operation, transient failures retried within the start budget: the attempt's result and output. */
+/** One code operation: one-shot retries use the start budget; a watch retries across carrier generations. */
 type OperationResult = Exclude<OperationOutcome, { readonly kind: "unavailable" }>;
-async function runOperation(intent: CarriedIntent): Promise<OperationResult> {
+type OperationRun = OperationResult | { readonly kind: "interrupted"; readonly status: EffectStatus | null };
+async function runOperation(intent: CarriedIntent, is_watch: boolean): Promise<OperationRun> {
   const timing = current().timing;
   for (let attempt = 1; ; attempt++) {
     const outcome = await operationStep(intent.instruction);
     if (outcome.kind !== "unavailable") return outcome;
-    if (attempt >= intent.instruction.max_start_attempts) return { kind: "failed", code: PROVIDER_ERROR_CODES.operation_unavailable,
+    if (!is_watch && attempt >= intent.instruction.max_start_attempts) return { kind: "failed", code: PROVIDER_ERROR_CODES.operation_unavailable,
       detail: `operation unavailable after ${attempt} tries: ${outcome.detail}` };
     await DBOS.sleepSeconds(backoff(attempt - 1, timing));
+    if (is_watch) {
+      const reloaded = await loadIntentStep(intent.id);
+      if (reloaded.kind !== "carried" || reloaded.intent.status !== "acknowledged")
+        return { kind: "interrupted", status: reloaded.kind === "carried" ? reloaded.intent.status : null };
+      // This attempt stays running through outages, so the outer watch-run bound cannot fire.
+      // Its successor resumes the same attempt from the authority row.
+      if (attempt >= timing.carrier_max_iterations && await rollOver("start", intent.id))
+        return { kind: "interrupted", status: reloaded.intent.status };
+    }
   }
 }
 
@@ -481,7 +491,8 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
       return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
     }
     if (status === "pending") status = await markAcknowledgedStep(intent.id);
-    const outcome = await runOperation(intent);
+    const outcome = await runOperation(intent, interval !== null);
+    if (outcome.kind === "interrupted") return outcome.status;
     let result: WorkerResult = outcome.kind === "succeeded" ? { kind: "succeeded" } : { kind: "failed", code: outcome.code, detail: outcome.detail };
     if (outcome.kind === "succeeded") {
       const location = { run_id: intent.run_id, unit_id: intent.instruction.action.unit, artifact: worker.artifact };
@@ -695,6 +706,7 @@ export const runWorkflow = DBOS.registerWorkflow(async (run_id: string): Promise
       throw failure;
     }
     if (advance.is_terminal && advance.pending_starts.length === 0 && advance.pending_stops.length === 0) return;
+    // DBOS persists sends until consumed, including those sent during the dispatch above.
     try { await DBOS.recv(RUN_WAKE_TOPIC, { timeoutSeconds: timing.wake_timeout_seconds }); }
     catch (error) {
       if (isWorkflowCancellation(error)) throw error;
@@ -729,7 +741,7 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
   await DBOS.startWorkflow(runWorkflow, { workflowID: existing ? successor : id })(run_id);
 }
 
-/** A wake is a hint, never a fact: the run re-reads the authority on receipt. */
+/** A wake is a hint, never a fact: DBOS queues it durably and the run re-reads authority on receipt. */
 export async function wakeRun(run_id: string): Promise<void> {
   try {
     await ensureRunWorkflow(run_id);
