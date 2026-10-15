@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { makeSpecAnalysisFixture } from "../__fixtures__/read-models";
-import { selectFieldText } from "../artifact-types";
-import { selectSpecAnalysisView } from "./spec-analysis";
+import { isSpecAnalysis, selectSpecAnalysisView, type SpecAnalysis } from "./spec-analysis";
 
-const analysis = makeSpecAnalysisFixture({
+const analysis: SpecAnalysis = {
+  summary: "The brief is mostly implementable.",
+  source_spec_refs: ["Brief §2"],
   findings: [
     { id: "f1", description: "Info note", severity: "info" },
     { id: "f2", description: "Schema conflict", severity: "blocking" },
@@ -14,34 +14,60 @@ const analysis = makeSpecAnalysisFixture({
     { id: "r2", description: "Needs upstream API", status: "blocked" },
     { id: "r3", description: "Unclear retention", status: "ambiguous" },
   ],
+  risks: [{ description: "Migration locks the table", mitigation: "Backfill in batches" }],
+};
+
+describe("isSpecAnalysis", () => {
+  test("accepts the registered artifact body", () => {
+    expect(isSpecAnalysis(analysis)).toBe(true);
+  });
+
+  test("accepts empty arrays", () => {
+    expect(isSpecAnalysis({ ...analysis, findings: [], requirements: [], risks: [], source_spec_refs: [] })).toBe(true);
+  });
+
+  test("rejects a risk without a mitigation", () => {
+    expect(isSpecAnalysis({ ...analysis, risks: [{ description: "No plan" }] })).toBe(false);
+  });
+
+  test("rejects a finding severity outside the contract", () => {
+    expect(isSpecAnalysis({ ...analysis, findings: [{ id: "f1", description: "x", severity: "critical" }] })).toBe(false);
+  });
+
+  test("rejects a requirement status outside the contract", () => {
+    expect(isSpecAnalysis({ ...analysis, requirements: [{ id: "r1", description: "x", status: "done" }] })).toBe(false);
+  });
+
+  test("rejects a missing source_spec_refs", () => {
+    const { source_spec_refs: _, ...rest } = analysis;
+    expect(isSpecAnalysis(rest)).toBe(false);
+  });
 });
 
 describe("selectSpecAnalysisView", () => {
+  const view = selectSpecAnalysisView(analysis);
+
   test("pulls blocking findings and blocked requirements into blockers", () => {
-    const view = selectSpecAnalysisView(analysis.body);
-    expect(view.blockers.map((blocker) => selectFieldText(blocker.value, "id"))).toEqual(["f2", "r2"]);
+    expect(view.blockers.map((blocker) => blocker.kind === "finding" ? blocker.finding.id : blocker.requirement.id)).toEqual(["f2", "r2"]);
   });
 
   test("lists remaining findings once, warnings before info", () => {
-    const view = selectSpecAnalysisView(analysis.body);
-    expect(view.findings.map((finding) => selectFieldText(finding, "id"))).toEqual(["f3", "f1"]);
+    expect(view.findings.map((finding) => finding.id)).toEqual(["f3", "f1"]);
   });
 
   test("lists remaining requirements once, ambiguous before implementable", () => {
-    const view = selectSpecAnalysisView(analysis.body);
-    expect(view.requirements.map((requirement) => selectFieldText(requirement, "id"))).toEqual(["r3", "r1"]);
+    expect(view.requirements.map((requirement) => requirement.id)).toEqual(["r3", "r1"]);
   });
 
   test("tallies every item including blockers, most urgent first", () => {
-    const view = selectSpecAnalysisView(analysis.body);
-    expect(view.status_counts).toEqual([
+    expect(view.tally.status_counts).toEqual([
       { status: "blocking", count: 1 }, { status: "warning", count: 1 }, { status: "info", count: 1 },
       { status: "blocked", count: 1 }, { status: "ambiguous", count: 1 }, { status: "implementable", count: 1 },
     ]);
   });
 
   test("omits statuses with no items from the tally", () => {
-    const onlyInfo = makeSpecAnalysisFixture({ findings: [{ id: "f1", description: "Info note", severity: "info" }], requirements: [] });
-    expect(selectSpecAnalysisView(onlyInfo.body).status_counts).toEqual([{ status: "info", count: 1 }]);
+    const onlyInfo = selectSpecAnalysisView({ ...analysis, findings: [analysis.findings[0]], requirements: [] });
+    expect(onlyInfo.tally.status_counts).toEqual([{ status: "info", count: 1 }]);
   });
 });

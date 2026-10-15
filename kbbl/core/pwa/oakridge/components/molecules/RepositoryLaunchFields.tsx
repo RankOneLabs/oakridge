@@ -1,11 +1,39 @@
-import type { ProjectFormValues } from "../../lib/project-draft";
+import type { Dispatch, SetStateAction } from "react";
 
-interface Props { readonly values: ProjectFormValues; readonly onChange: (next: ProjectFormValues) => void; readonly disabled: boolean }
-export function RepositoryLaunchFields({ values, onChange, disabled }: Props) {
-  return <fieldset className="or-repository-launch"><legend>Repository</legend>
-    <label>Directory<input value={values.repo_dir} required disabled={disabled} onChange={(event) => onChange({ ...values, repo_dir: event.target.value })} /></label>
-    <label>GitHub owner<input value={values.owner} disabled={disabled} onChange={(event) => onChange({ ...values, owner: event.target.value })} /></label>
-    <label>GitHub repository<input value={values.repository} disabled={disabled} onChange={(event) => onChange({ ...values, repository: event.target.value })} /></label>
-    <label>Integration branch<input value={values.integration_branch} disabled={disabled} onChange={(event) => onChange({ ...values, integration_branch: event.target.value })} /></label>
-  </fieldset>;
+import type { RepositoryInputDraft } from "../../types";
+import { Button } from "../../../components/atoms/Button";
+
+interface RepositoryLaunchFieldsProps {
+  repositories: RepositoryInputDraft[];
+  setRepositories: Dispatch<SetStateAction<RepositoryInputDraft[]>>;
+  disabled: boolean;
+}
+
+const inputClass = "or-form-input";
+
+export function RepositoryLaunchFields({ repositories, setRepositories, disabled }: RepositoryLaunchFieldsProps) {
+  const update = (index: number, patch: Partial<RepositoryInputDraft>) => {
+    setRepositories((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  };
+
+  return (
+    <fieldset className="or-repository-launch">
+      <legend className="or-repository-launch__legend">
+        <span className="or-repository-launch__heading">
+          <span>Repositories</span>
+        <Button variant="secondary" disabled={disabled} onClick={() => setRepositories((current) => [...current, { key: "", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }])}>+ Repository</Button>
+        </span>
+      </legend>
+      {repositories.map((repository, index) => (
+        <div className="or-repository-fields" key={index}>
+          <input type="text" className={inputClass} value={repository.key} onChange={(event) => update(index, { key: event.target.value })} disabled={disabled} placeholder="Key (api)" aria-label={`Repository ${index + 1} key`} required />
+          <input type="text" className={inputClass} value={repository.forge_owner} onChange={(event) => update(index, { forge_owner: event.target.value })} disabled={disabled} placeholder="GitHub owner" aria-label={`Repository ${index + 1} GitHub owner`} required />
+          <input type="text" className={inputClass} value={repository.forge_name} onChange={(event) => update(index, { forge_name: event.target.value })} disabled={disabled} placeholder="GitHub repository" aria-label={`Repository ${index + 1} GitHub name`} required />
+          <input type="text" className={inputClass} value={repository.integration_branch} onChange={(event) => update(index, { integration_branch: event.target.value })} disabled={disabled} placeholder="Integration branch (main)" aria-label={`Repository ${index + 1} integration branch`} required />
+          <input type="text" className={inputClass} value={repository.path} onChange={(event) => update(index, { path: event.target.value })} disabled={disabled} placeholder="/absolute/path/to/repo" aria-label={`Repository ${index + 1} path`} required />
+          <Button variant="secondary" className="w-full md:w-auto" disabled={disabled || repositories.length === 1} onClick={() => setRepositories((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove repository ${index + 1}`}>Remove</Button>
+        </div>
+      ))}
+    </fieldset>
+  );
 }

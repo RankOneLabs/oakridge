@@ -1,37 +1,40 @@
 import { describe, expect, test } from "vitest";
-import { makePlanGraphFixture } from "../__fixtures__/read-models";
-import { selectPlanGraph } from "./plan-graph";
+import type { CohortId } from "../types";
+import type { PlanCohort } from "./plan";
+import { PLAN_GRAPH_NODE, selectPlanGraphLayout } from "./plan-graph";
 
-const fixture = makePlanGraphFixture([
-  { id: "ui", title: "UI", depends_on: ["core", "api"] },
-  { id: "core", title: "Core", depends_on: [] },
-  { id: "api", title: "API", depends_on: ["core"] },
-], ["core", "api", "ui"]);
-const layout = selectPlanGraph(fixture.body);
+const cohort = (id: string, depends_on: string[] = []): PlanCohort => ({
+  id: id as CohortId,
+  repository_key: null,
+  title: id,
+  scope: "",
+  depends_on: depends_on as CohortId[],
+  description: null,
+  files_in_scope: [],
+  decisions: [],
+  acceptance_criteria: [],
+});
 
-describe("selectPlanGraph", () => {
+describe("selectPlanGraphLayout", () => {
+  const layout = selectPlanGraphLayout([cohort("core"), cohort("api", ["core"]), cohort("ui", ["core", "api"])]);
+
   test("draws one edge per dependency", () => {
     expect(layout.edges.map((edge) => `${edge.from}->${edge.to}`)).toEqual(["core->api", "core->ui", "api->ui"]);
   });
 
-  test("places a dependent after the cohorts it depends on", () => {
-    const left = (id: string) => layout.nodes.find((node) => node.id === id)?.x ?? Number.NaN;
-    expect(left("core") < left("api") && left("api") < left("ui")).toBe(true);
+  test("places a dependent below what it depends on", () => {
+    const top = (id: string) => layout.nodes.find((node) => node.cohort.id === id)?.y ?? Number.NaN;
+    expect(top("core") < top("api") && top("api") < top("ui")).toBe(true);
   });
 
   test("sizes the canvas to hold every node", () => {
     const isInside = layout.nodes.every((node) => node.x >= 0 && node.y >= 0
-      && node.x + 180 <= layout.width && node.y + 70 <= layout.height);
+      && node.x + PLAN_GRAPH_NODE.width <= layout.width && node.y + PLAN_GRAPH_NODE.height <= layout.height);
     expect(isInside).toBe(true);
   });
 
   test("ignores a dependency on a cohort the plan does not contain", () => {
-    const orphan = makePlanGraphFixture([{ id: "api", title: "API", depends_on: ["missing"] }]);
-    const graph = selectPlanGraph(orphan.body);
-    expect([graph.nodes.length, graph.edges.length]).toEqual([1, 0]);
-  });
-
-  test("uses pinned dependency order rather than source list order", () => {
-    expect(layout.nodes.map((node) => node.id)).toEqual(["core", "api", "ui"]);
+    const orphan = selectPlanGraphLayout([cohort("api", ["missing"])]);
+    expect([orphan.nodes.length, orphan.edges.length]).toEqual([1, 0]);
   });
 });

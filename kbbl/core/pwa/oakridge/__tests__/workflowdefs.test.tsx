@@ -1,125 +1,226 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
-import { fetchOperatorDefinitionDetail, fetchOperatorDefinitions } from "../client";
-import { makeDefinitionDetail, makeDefinitionSummary, makeWorkflowSource } from "../__fixtures__/read-models";
 import { WorkflowDefListView } from "../views/WorkflowDefListView";
+import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
-import { OperatorDefinitionEditorView } from "../views/OperatorDefinitionEditorView";
+import type { WorkflowDefFull } from "../types";
 
-vi.mock("../client", () => ({ fetchOperatorDefinitions: vi.fn(), fetchOperatorDefinitionDetail: vi.fn(),
-  compileOperatorDefinition: vi.fn(), pinOperatorDefinition: vi.fn(), setOperatorDefinitionArchived: vi.fn() }));
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
 
-function show(ui: ReactElement) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 }
 
-const list = (onNew = vi.fn(), onSelect = vi.fn(), onClone = vi.fn()) =>
-  show(<WorkflowDefListView onBack={() => undefined} onNew={onNew} onSelect={onSelect} onClone={onClone} />);
-const editor = (cloneFromId: string | null = null) =>
-  show(<OperatorDefinitionEditorView cloneFromId={cloneFromId} onBack={() => undefined} onPinned={() => undefined} />);
+function wrap(ui: ReactElement) {
+  const client = makeClient();
+  return { client, ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>) };
+}
 
-beforeEach(() => {
-  vi.mocked(fetchOperatorDefinitions).mockResolvedValue([]);
-  vi.mocked(fetchOperatorDefinitionDetail).mockResolvedValue(makeDefinitionDetail());
-});
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
-describe("pinned definition catalog", () => {
-  it("shows loading while definitions are pending", () => {
-    vi.mocked(fetchOperatorDefinitions).mockImplementation(() => new Promise(() => undefined));
-    list();
-    expect(screen.getByRole("status").textContent).toContain("Loading definitions");
+afterEach(() => vi.restoreAllMocks());
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Fixtures
+// ──────────────────────────────────────────────────────────────────────────────
+
+const DEF_FIXTURE: WorkflowDefFull = {
+  id: "def-1",
+  name: "v2_dev_flow",
+  version: 3,
+  graph: { stages: {}, edges: [] },
+  created_at: "2026-07-01T00:00:00Z",
+};
+
+const DEF_WITH_STAGES: WorkflowDefFull = {
+  id: "def-2",
+  name: "v2_staged",
+  version: 1,
+  graph: {
+    stages: {
+      build: {
+        stage_type: "delegated_session",
+        config: {
+          runtime: "claude-code",
+          prompt_template_path: "build.md",
+          slot_bindings: {},
+          workdir: { from: "context", path: "/workdir" },
+          session_name: "build-session",
+          model: null,
+          effort: null,
+          worktree: null,
+          pre_authorized_tools: [],
+          yolo: false,
+          fan_out: null,
+          gate_output: null,
+        },
+        inputs: [{ name: "plan", artifact_type: "spec_v2" }],
+        outputs: [{ name: "result", artifact_type: "build_output" }],
+      },
+    },
+    edges: [],
+  },
+  created_at: "2026-07-01T01:00:00Z",
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowDefListView
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("WorkflowDefListView", () => {
+  it("shows loading state while defs are pending", () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    expect(screen.getByTestId("or-def-list-loading")).toBeTruthy();
   });
 
-  it("renders a row for each pinned definition", async () => {
-    vi.mocked(fetchOperatorDefinitions).mockResolvedValue([
-      makeDefinitionSummary(), makeDefinitionSummary({ bundle_id: "bundle-2", digest: "digest-2" }),
-    ]);
-    list();
-    expect((await screen.findAllByRole("button", { name: "development" })).length).toBe(2);
+  it("renders a row for each def", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE, DEF_WITH_STAGES]));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    const rows = await screen.findAllByTestId("or-def-row");
+    expect(rows).toHaveLength(2);
   });
 
-  it("shows the empty catalog", async () => {
-    list();
-    expect(await screen.findByText("No pinned definitions.")).toBeTruthy();
+  it("shows empty state when no defs exist", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    expect(await screen.findByTestId("or-def-list-empty")).toBeTruthy();
   });
 
-  it("shows a failed catalog read", async () => {
-    vi.mocked(fetchOperatorDefinitions).mockRejectedValue(new Error("server down"));
-    list();
-    expect((await screen.findByRole("alert")).textContent).toContain("server down");
+  it("shows error state when fetch fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "server down" }, 500));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    expect(await screen.findByTestId("or-def-list-error")).toBeTruthy();
   });
 
-  it("opens the editor for a new definition", async () => {
+  it("calls onNew when New Definition button is clicked", async () => {
     const onNew = vi.fn();
-    list(onNew);
-    await screen.findByText("No pinned definitions.");
-    fireEvent.click(screen.getByRole("button", { name: "New definition" }));
-    expect(onNew).toHaveBeenCalledOnce();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
+    wrap(<WorkflowDefListView onNew={onNew} onSelect={() => {}} onClone={() => {}} />);
+    await screen.findByTestId("or-def-list-empty");
+    fireEvent.click(screen.getByTestId("or-def-new-btn"));
+    expect(onNew).toHaveBeenCalled();
   });
 
-  it("passes the pinned bundle ID when cloning", async () => {
+  it("calls onClone with the def when clone button is clicked", async () => {
     const onClone = vi.fn();
-    vi.mocked(fetchOperatorDefinitions).mockResolvedValue([makeDefinitionSummary()]);
-    list(vi.fn(), vi.fn(), onClone);
-    fireEvent.click(await screen.findByRole("button", { name: "Clone" }));
-    expect(onClone).toHaveBeenCalledWith("bundle-1");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={onClone} />);
+    const cloneBtn = await screen.findByTestId("or-def-clone-btn");
+    fireEvent.click(cloneBtn);
+    expect(onClone).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
   });
 
-  it("opens a pinned definition by bundle ID", async () => {
+  it("opens a definition when its name is clicked", async () => {
     const onSelect = vi.fn();
-    vi.mocked(fetchOperatorDefinitions).mockResolvedValue([makeDefinitionSummary()]);
-    list(vi.fn(), onSelect);
-    fireEvent.click(await screen.findByRole("button", { name: "development" }));
-    expect(onSelect).toHaveBeenCalledWith("bundle-1");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={onSelect} onClone={() => {}} />);
+    fireEvent.click(await screen.findByTestId("or-def-view-btn"));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
   });
 });
 
-describe("pinned definition detail", () => {
-  it("shows the definition's unit labels", async () => {
-    vi.mocked(fetchOperatorDefinitions).mockImplementation(async () => [makeDefinitionSummary()]);
-    show(<WorkflowDefDetailView definitionId="bundle-1" onBack={() => undefined} onClone={() => undefined} />);
-    const detail = await screen.findByTestId("or-def-detail");
-    expect(detail.textContent).toContain("Development");
-    expect(detail.querySelectorAll("li").length).toBeGreaterThan(0);
+describe("WorkflowDefDetailView", () => {
+  it("shows stages, slots, connections, and expandable configuration", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(DEF_WITH_STAGES));
+    wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />);
+
+    expect(await screen.findByTestId("or-def-detail")).toBeTruthy();
+    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(1);
+    expect(screen.getByText("plan")).toBeTruthy();
+    expect(screen.getByText("result")).toBeTruthy();
+    expect(screen.getByText("No connections.")).toBeTruthy();
+    expect(screen.getByText("Stage configuration")).toBeTruthy();
   });
 });
 
-describe("pinned definition editor", () => {
-  it("renders an empty workflow editor for a new definition", () => {
-    editor();
-    expect(screen.getByTestId("or-def-editor")).toBeTruthy();
-    expect(screen.getByLabelText<HTMLTextAreaElement>("Workflow JSON").value).toBe("");
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowDefEditor
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("WorkflowDefEditor", () => {
+  function makeEditorFetch(opts: { def?: WorkflowDefFull; defError?: boolean } = {}) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/artifact_types")) return json([{ id: "spec_v2" }, { id: "build_output" }]);
+      if (url.includes("/config")) return json({ available: true });
+      if (url.includes("/workflow_defs/")) {
+        if (opts.defError) return json({ error: "not found" }, 404);
+        if (opts.def) return json(opts.def);
+        return json({ error: "not found" }, 404);
+      }
+      return json([]);
+    });
+  }
+
+  it("renders the editor for a new def when cloneFromId is null", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
   });
 
-  it("shows loading while the clone source is pending", () => {
-    vi.mocked(fetchOperatorDefinitionDetail).mockImplementation(() => new Promise(() => undefined));
-    editor("bundle-1");
-    expect(screen.getByRole("status").textContent).toContain("Loading definition");
+  it("shows loading state while the clone source is fetching", () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+    wrap(<WorkflowDefEditorView cloneFromId="def-1" onBack={() => {}} onCreated={() => {}} />);
+    expect(screen.getByTestId("or-def-editor-loading")).toBeTruthy();
   });
 
-  it("reports a failed clone-source read", async () => {
-    vi.mocked(fetchOperatorDefinitionDetail).mockRejectedValue(new Error("not found"));
-    editor("missing");
-    expect((await screen.findByRole("alert")).textContent).toContain("not found");
+  it("shows error state when clone source fetch fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ defError: true }));
+    wrap(<WorkflowDefEditorView cloneFromId="missing" onBack={() => {}} onCreated={() => {}} />);
+    expect(await screen.findByTestId("or-def-editor-load-error")).toBeTruthy();
   });
 
-  it("offers compilation of the workflow", () => {
-    editor();
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Compile definition" }).disabled).toBe(false);
+  it("submit is disabled when no stages are defined", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    await screen.findByTestId("or-def-editor");
+    fireEvent.change(screen.getByTestId("or-def-name"), { target: { value: "my_flow" } });
+    const btn = screen.getByTestId("or-def-submit") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
   });
 
-  it("requires a workflow before compiling", () => {
-    editor();
-    expect(screen.getByLabelText<HTMLTextAreaElement>("Workflow JSON").checkValidity()).toBe(false);
+  it("shows validation error when name is empty", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    await screen.findByTestId("or-def-editor");
+    // Name starts empty — validation errors panel should be present immediately
+    expect(screen.getByTestId("or-def-validation-errors")).toBeTruthy();
   });
 
-  it("clones the pinned workflow under a new name", async () => {
-    vi.mocked(fetchOperatorDefinitionDetail).mockResolvedValue(makeDefinitionDetail({ workflow: makeWorkflowSource({ workflow: "v2_staged" }) }));
-    editor("bundle-1");
-    expect((await screen.findByDisplayValue(/"workflow": "v2_staged_copy"/))).toBeTruthy();
+  it("populates form from clone source and bumps version", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def: DEF_WITH_STAGES }));
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    // editor appears (not loading state) once data loads
+    expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
+    // version field should show original + 1
+    const versionInput = screen.getByTestId("or-def-version") as HTMLInputElement;
+    expect(parseInt(versionInput.value, 10)).toBe(DEF_WITH_STAGES.version + 1);
+    // name field should be pre-filled
+    const nameInput = screen.getByTestId("or-def-name") as HTMLInputElement;
+    expect(nameInput.value).toBe(DEF_WITH_STAGES.name);
+  });
+
+  it("keeps a slot binding row mounted while its name is edited", async () => {
+    const build = DEF_WITH_STAGES.graph.stages.build;
+    const def: WorkflowDefFull = {
+      ...DEF_WITH_STAGES,
+      graph: { ...DEF_WITH_STAGES.graph, stages: { build: { ...build, config: { ...build.config, slot_bindings: { SPEC: { from: "literal", value: "x" } } } } } },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def }));
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    const keyInput = await screen.findByLabelText("Slot binding key");
+    fireEvent.change(keyInput, { target: { value: "SPECS" } });
+    expect(screen.getByLabelText("Slot binding key")).toBe(keyInput);
   });
 });

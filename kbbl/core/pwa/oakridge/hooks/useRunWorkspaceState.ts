@@ -1,0 +1,188 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import type { RunDetail } from "../types";
+import type { RunSessionsRead } from "../lib/run-sessions";
+import {
+  closePane,
+  collapseToSingle,
+  moveToOtherSlot,
+  openInPane,
+  type RoutePaneTarget,
+  type RunWorkspacePane,
+  type RunWorkspaceSlot,
+  type RunWorkspaceState,
+} from "../lib/run-workspace";
+import {
+  indexRunEntities,
+  resolveWorkspaceState,
+  validateWorkspacePanes,
+} from "../lib/run-workspace-restore";
+import {
+  pruneStoredRunWorkspace,
+  readStoredRunWorkspace,
+  writeStoredRunWorkspace,
+} from "../lib/run-workspace-storage";
+
+export interface RunWorkspaceStateInput {
+  readonly runId: string;
+  readonly routePane: RoutePaneTarget | null;
+  /** Undefined until `GET /runs/:id` resolves; restore waits for it. */
+  readonly run: RunDetail | undefined;
+  /**
+   * What `GET /runs/:id/sessions` knows. Restore waits while it is `pending`
+   * but not while it is `unavailable`: a read that failed is never going to
+   * answer on its own, and holding the workspace on "Loading run…" until it
+   * does would make a session outage cost the operator the whole run view.
+   * `unavailable` opens the arrangement and declines to validate against a
+   * list nobody has — then validates once, late, if a retry supplies one.
+   */
+  readonly sessions: RunSessionsRead;
+  /**
+   * Sids kbbl's inbox has reported gone. Oakridge keeps listing the work
+   * order behind a purged session, so nothing in the run's own reads says the
+   * transcript is gone — this is the signal that a pane holding one is stale.
+   */
+  readonly purgedSessionIds: ReadonlySet<string>;
+}
+
+export interface RunWorkspaceStateHandle {
+  /** Null until the stored arrangement has been restored and validated. */
+  readonly state: RunWorkspaceState | null;
+  readonly openPane: (pane: RunWorkspacePane, slot: RunWorkspaceSlot) => void;
+  readonly closeSlot: (slot: RunWorkspaceSlot) => void;
+  readonly moveSlot: (slot: RunWorkspaceSlot) => void;
+  readonly collapse: () => void;
+}
+
+/** A stable identity for the route's pane, so effects fire on a real change. */
+const routePaneKeyOf = (pane: RoutePaneTarget | null): string => {
+  if (pane === null) return "";
+  return pane.kind === "session" ? `session:${pane.session_id}` : `artifact:${pane.artifact_id}`;
+};
+
+/**
+ * Owns the run's pane arrangement: restore on mount, apply later route changes,
+ * persist every change.
+ *
+ * Restore waits for both reads to settle because validating a pane against
+ * half-loaded data would drop panes that are perfectly valid. Settled is not
+ * the same as successful: a read that failed lets restore proceed, and says so,
+ * so validation can decline to judge what it cannot see. The caller is expected
+ * to mount this keyed by run id, so moving between runs starts a fresh restore
+ * rather than carrying one run's arrangement into another.
+ */
+export function useRunWorkspaceState({
+  runId,
+  routePane,
+  run,
+  sessions,
+  purgedSessionIds,
+}: RunWorkspaceStateInput): RunWorkspaceStateHandle {
+  const [state, setState] = useState<RunWorkspaceState | null>(null);
+  const routePaneKey = routePaneKeyOf(routePane);
+  // What the route last contributed. Restoring and re-applying are one concern
+  // seen twice: without this, every unrelated re-render would re-assert the
+  // route pane and undo whatever the operator just opened.
+  const appliedRouteKey = useRef<string | null>(null);
+  // Whether the arrangement has yet been judged against an attempt list that
+  // actually landed. Restore runs on an `unavailable` read rather than hanging
+  // the view, and deliberately keeps every session pane — so until a read
+  // succeeds, nothing has checked whether those panes name anything real.
+  const hasValidatedKnownSessions = useRef(false);
+
+  useEffect(() => {
+    if (state !== null || run === undefined || sessions.kind === "pending") return;
+    const resolution = resolveWorkspaceState({
+      routePane,
+      storedState: readStoredRunWorkspace(runId),
+      run,
+      sessions,
+      purgedSessionIds,
+    });
+    if (resolution.should_prune_stored) pruneStoredRunWorkspace(runId);
+    appliedRouteKey.current = routePaneKey;
+    hasValidatedKnownSessions.current = sessions.kind === "loaded";
+    setState(resolution.state);
+  }, [state, run, sessions, purgedSessionIds, routePane, routePaneKey, runId]);
+
+  // A session purged while a pane holds it is the restore-time staleness rule
+  // arriving late, so it goes through the same transform rather than a second
+  // one. Guarded on `dropped_a_pane` so an unchanged arrangement never restates
+  // itself — this runs on every inbox frame that removes anything, for any run.
+  //
+  // A read that recovers is the same rule arriving late for the same reason: a
+  // restore that ran blind kept every session pane, and the first list to land
+  // is the first thing able to disprove one. Without this the restore effect
+  // cannot revisit it — `state` is set, so it returns immediately — and a pane
+  // naming a session the run does not have would sit in storage indefinitely.
+  // Once a list has been seen, the purge guard is what keeps this off the inbox's
+  // hot path again.
+  useEffect(() => {
+    if (state === null || run === undefined || sessions.kind === "pending") return;
+    const isFirstKnownSessionList = sessions.kind === "loaded" && !hasValidatedKnownSessions.current;
+    if (purgedSessionIds.size === 0 && !isFirstKnownSessionList) return;
+    if (sessions.kind === "loaded") hasValidatedKnownSessions.current = true;
+    const validated = validateWorkspacePanes(
+      state,
+      indexRunEntities({ run, sessions, purgedSessionIds }),
+    );
+    if (!validated.dropped_a_pane) return;
+    pruneStoredRunWorkspace(runId);
+    setState(validated.state);
+  }, [state, run, sessions, purgedSessionIds, runId]);
+
+  /**
+   * Whether an open may proceed — asked of a session the inbox has reported
+   * purged, and nothing else.
+   *
+   * Deliberately narrower than the restore-time rule. Restore validates a
+   * stored pane against everything the run lists because the store is untrusted
+   * input that can be arbitrarily old; an open happening now is the operator
+   * (or a route) naming something, and the run's own reads lag what exists —
+   * resuming an ended session opens a sid that `GET /runs/:id/sessions` has not
+   * listed yet. So the only thing refused here is a target already known to be
+   * gone, which the validation effect above would otherwise drop a frame after
+   * the pane mounted.
+   */
+  const canOpen = useCallback(
+    (pane: RunWorkspacePane): boolean =>
+      pane.kind !== "session" || !purgedSessionIds.has(pane.session_id),
+    [purgedSessionIds],
+  );
+
+  useEffect(() => {
+    if (state === null || appliedRouteKey.current === routePaneKey) return;
+    appliedRouteKey.current = routePaneKey;
+    // A deep link to a purged session leaves the operator's arrangement alone
+    // rather than replacing it with a pane that cannot survive the next frame.
+    if (routePane === null || !canOpen(routePane)) return;
+    setState((current) => (current === null ? current : openInPane(current, "primary", routePane)));
+  }, [state, routePane, routePaneKey, canOpen]);
+
+  useEffect(() => {
+    if (state === null) return;
+    writeStoredRunWorkspace(runId, state);
+  }, [runId, state]);
+
+  const openPane = useCallback(
+    (pane: RunWorkspacePane, slot: RunWorkspaceSlot) => {
+      if (!canOpen(pane)) return;
+      setState((current) => (current === null ? current : openInPane(current, slot, pane)));
+    },
+    [canOpen],
+  );
+
+  const closeSlot = useCallback((slot: RunWorkspaceSlot) => {
+    setState((current) => (current === null ? current : closePane(current, slot)));
+  }, []);
+
+  const moveSlot = useCallback((slot: RunWorkspaceSlot) => {
+    setState((current) => (current === null ? current : moveToOtherSlot(current, slot)));
+  }, []);
+
+  const collapse = useCallback(() => {
+    setState((current) => (current === null ? current : collapseToSingle(current)));
+  }, []);
+
+  return { state, openPane, closeSlot, moveSlot, collapse };
+}

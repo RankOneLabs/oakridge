@@ -1,88 +1,108 @@
-import { afterEach, expect, test, vi } from "vitest";
-import { fetchOakridgeConfig, fetchOperatorRuns, fetchOperatorRunInboxes, fetchOperatorDefinitions, fetchOperatorUnit,
-  launchOperatorRun, submitOperatorDecision } from "./client";
-import { makeIngressCommitted, makeDecisionSubmission, makeDefinitionSummary, makeAttemptView,
-  makeOakridgeConfig, makeRunView, makeUnitView, makeLaunchRequest } from "./__fixtures__/read-models";
-import { DEFAULT_FALLBACK_REFRESH_MS } from "./lib/oakridge-config";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-afterEach(() => { vi.unstubAllGlobals(); });
+import { confirmFinalPullRequest, createRun, fetchRun, fetchRunSessions, fetchSessionRun, parseOakridgeRunEventFrame } from "./client";
+import { parseRepositoryKey } from "./repository-inputs";
+import type { CreateRunRequest, RepositoryKey } from "./types";
 
-test("run and definition consumers follow every cursor page", async () => {
-  const fetch = vi.fn(async (url: string) => {
-    const second = url.includes("cursor=");
-    return Response.json(url.includes("definitions")
-      ? { items: [makeDefinitionSummary({ bundle_id: second ? "bundle-2" : "bundle-1" })], next_cursor: second ? null : "next" }
-      : { items: [makeRunView({ run_id: second ? "run-2" : "run-1" })], next_cursor: second ? null : "next" });
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+const createRunRequest = (): CreateRunRequest => ({
+  workflow_def_id: "definition-1",
+  project_id: null,
+  context: {
+    brief_notes: "Build it", repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
+    base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
+    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
+  },
+  epic_profile: {
+    title: "Build it", slug: "build-it", final_merge_policy: "guarded",
+    repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", integration_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
+  },
+});
+
+describe("Oakridge response parsing", () => {
+  it("rejects a gate event that omits its required slot continuation", () => {
+    expect(parseOakridgeRunEventFrame(JSON.stringify({
+      sequence: "7", operation: "gate_decided", occurred_at: "2026-09-26T12:00:00.000Z", replayed: false,
+      payload: { run_id: "run", run_unit_id: "run-unit", stage_instance_id: "stage", stage_key: "build", unit_id: "unit",
+        work_order_id: null, wait_id: "wait", output_name: "build_result", collection_key: null, artifact_revision_id: "artifact",
+        attention: "required", continuation: null, detail: {} },
+    }))).toBeNull();
   });
-  vi.stubGlobal("fetch", fetch);
-  expect((await fetchOperatorRuns()).map((item) => item.run_id)).toEqual(["run-1", "run-2"]);
-  expect((await fetchOperatorDefinitions()).map((item) => item.bundle_id)).toEqual(["bundle-1", "bundle-2"]);
-  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-    "/oakridge/api/api/runs", "/oakridge/api/api/runs?cursor=next",
-    "/oakridge/api/api/definitions", "/oakridge/api/api/definitions?cursor=next",
-  ]);
-});
 
-test("run attention reads 120 listed runs in two bounded requests", async () => {
-  const fetch = vi.fn(async (url: string) => Response.json({ items: new URL(url, "http://localhost").searchParams.get("ids")
-    ?.split(",").map((run_id) => ({ run_id, items: [] })) ?? [] }));
-  vi.stubGlobal("fetch", fetch);
-  const ids = Array.from({ length: 120 }, (_, index) => `run-${index}`);
-  const batch = await fetchOperatorRunInboxes(ids);
-  expect({ sizes: fetch.mock.calls.map(([url]) => new URL(url, "http://localhost").searchParams.get("ids")?.split(",").length),
-    run_ids: batch.items.map((item) => item.run_id) }).toEqual({ sizes: [100, 20], run_ids: ids });
-});
+  it("sends the caller-owned run idempotency key", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ id: "run-1" }));
+    await createRun(createRunRequest(), "launch-1");
+    expect(fetch).toHaveBeenCalledWith("/oakridge/api/workflow_runs", expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": "launch-1" }) }));
+  });
 
-test("the served fallback refresh interval survives into the config the PWA uses", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(makeOakridgeConfig())));
-  expect((await fetchOakridgeConfig()).fallback_refresh_ms).toBe(5_000);
-});
+  it("reports contextual parse failures instead of leaking transform exceptions", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+      id: "run-1",
+      workflow_name: "legacy",
+      status: "running",
+      stages: [{
+        stage_instance_id: "stage-1",
+        name: "build",
+        type: "delegated_session",
+        status: "pending",
+        artifacts: [],
+        delegated_kbbl_sid: null,
+        worktree: null,
+        units: [{ unit_id: "api", repository_key: "  ", sid: null, worktree: null, status: "pending", gate: null }],
+      }],
+      parked_count: 0,
+      updated_at: "2026-08-08T00:00:00Z",
+      is_stuck: false,
+    }));
 
-test("an authority that states no interval leaves the bundle's default in place", async () => {
-  const { fallback_refresh_ms: _interval, ...served } = makeOakridgeConfig();
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(served)));
-  expect((await fetchOakridgeConfig()).fallback_refresh_ms).toBe(DEFAULT_FALLBACK_REFRESH_MS);
-});
+    await expect(fetchRun("run-1")).rejects.toThrow("oakridge /runs/run-1: parse repository key");
+  });
 
-test("an unreachable config endpoint reports the surface unavailable with a usable interval", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "down" }, { status: 503 })));
-  expect(await fetchOakridgeConfig()).toEqual({ available: false, fallback_refresh_ms: DEFAULT_FALLBACK_REFRESH_MS });
-});
+  it("parses a run's session attempts through the field guards", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([{
+      work_order_id: "work-1", session_id: "sid-1", stage_instance_id: "stage-1", stage_key: "build",
+      unit_id: "api", reason: "operator_retry", work_order_state: "started", created_at: "2026-09-01T00:00:00Z",
+      completed_at: null, executor_health_kind: null, cleanup_state: "not_needed",
+    }]));
 
-test("each decision goes to the route its submit names, carrying its request id", async () => {
-  const fetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(makeIngressCommitted()));
-  vi.stubGlobal("fetch", fetch);
-  await submitOperatorDecision(makeDecisionSubmission({ unit_id: "run-1/cohort", request_id: "review-1", payload: { feedback: "more" } }));
-  await submitOperatorDecision(makeDecisionSubmission({ request_id: "retry-1", target_revision_id: null, submit: { kind: "retry", worker: "builder" } }));
-  await submitOperatorDecision(makeDecisionSubmission({ request_id: "cancel-1", target_revision_id: null, submit: { kind: "cancel" } }));
-  expect(fetch.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
-    ["/oakridge/api/api/runs/run-1/units/run-1%2Fcohort/reviews/analysis_review/decide",
-      { request_id: "review-1", decision: "approve", target: "revision-1", payload: { feedback: "more" } }],
-    ["/oakridge/api/api/runs/run-1/units/unit-1/workers/builder/retry", { request_id: "retry-1" }],
-    ["/oakridge/api/api/runs/run-1/cancel", { request_id: "cancel-1" }],
-  ]);
-});
+    await expect(fetchRunSessions("run-1")).resolves.toEqual([expect.objectContaining({ session_id: "sid-1", reason: "operator_retry" })]);
+  });
 
-test("resubmitting a request id reuses the in-flight delivery", async () => {
-  const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
-  vi.stubGlobal("fetch", fetch);
-  const input = makeDecisionSubmission({ request_id: "shared-id" });
-  await Promise.all([submitOperatorDecision(input), submitOperatorDecision(input)]);
-  expect(fetch).toHaveBeenCalledTimes(1);
-});
+  /** An attempt label this build does not know must name the field, not render blank. */
+  it("rejects an unknown work order reason at the API boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([{
+      work_order_id: "work-1", session_id: "sid-1", stage_instance_id: "stage-1", stage_key: "build",
+      unit_id: "api", reason: "surprise", work_order_state: "started", created_at: "2026-09-01T00:00:00Z",
+      completed_at: null, executor_health_kind: null, cleanup_state: "not_needed",
+    }]));
 
-test("sends the caller-owned launch idempotency key in the launch request", async () => {
-  const fetch = vi.fn(async () => Response.json(makeIngressCommitted()));
-  vi.stubGlobal("fetch", fetch);
-  await launchOperatorRun(makeLaunchRequest({ request_id: "launch-1" }));
-  expect(fetch).toHaveBeenCalledWith("/oakridge/api/api/runs", expect.objectContaining({
-    method: "POST", body: expect.stringContaining('"request_id":"launch-1"'),
-  }));
-});
+    await expect(fetchRunSessions("run-1")).rejects.toThrow("entry contained an unknown work order reason");
+  });
 
-test("reads a unit's attempts", async () => {
-  const unit = makeUnitView({ attempts: [makeAttemptView({ worker: "builder", number: 2 })] });
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(unit)));
-  const result = await fetchOperatorUnit("run-1", "unit-1");
-  expect(result.attempts[0]).toMatchObject({ worker: "builder", number: 2 });
+  /** 404 is the route's answer for "this session has no run" — a value, not a failure. */
+  it("reads a session that belongs to no run as null", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "session belongs to no run" }), { status: 404 }));
+    await expect(fetchSessionRun("sid-unknown")).resolves.toBeNull();
+  });
+
+  it("resolves a session to its run", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+      run_id: "run-1", stage_instance_id: "stage-1", stage_key: "build", unit_id: "api", work_order_id: "work-1",
+    }));
+    await expect(fetchSessionRun("sid-1")).resolves.toEqual(expect.objectContaining({ run_id: "run-1", unit_id: "api" }));
+  });
+
+  it("rejects unknown final reconciliation outcomes at the API boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ outcome: "surprise", profile: {} }));
+    const repositoryKey = parseRepositoryKey("oakridge");
+    if (!repositoryKey) throw new Error("test repository key should be valid");
+
+    await expect(confirmFinalPullRequest("run-1", repositoryKey, { idempotency_key: "confirm-1" }))
+      .rejects.toThrow("response contained an unknown outcome");
+  });
 });

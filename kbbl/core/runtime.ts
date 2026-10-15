@@ -1,6 +1,12 @@
-// Runtime identity + launch/config surface (§12, §20.2): which runtime ids
-// exist, their descriptors (label/models/efforts), and default-model lookup.
-// Sessions themselves run through the ACP substrate (core/acp/*).
+// Runtime identity + launch/config surface (§12, §20.2).
+//
+// The provider-adapter contract (AgentRuntime, RuntimeRegistry,
+// classifyEvent, the RuntimeEvent union, the conformance harness) is gone
+// with the legacy per-session state machine — the ACP substrate
+// (core/acp/*) replaced it, and no adapter ever implemented this contract
+// against ACP. What survives here is the small vocabulary the launch and
+// config surfaces still use directly: which runtime ids exist, their
+// descriptors (label/models/efforts), and default-model lookup.
 
 export type RuntimeId = "claude-code" | "codex";
 
@@ -39,6 +45,7 @@ export interface RuntimeDescriptor {
    * advertises its own set rather than sharing a global enum.
    */
   efforts: readonly { value: string; label: string }[];
+  supportsCompaction: boolean;
 }
 
 export interface RuntimeOption {
@@ -47,7 +54,8 @@ export interface RuntimeOption {
 }
 
 /**
- * Built-in choices the new-session launcher offers before a session exists. Once a session has started,
+ * Built-in choices used by the single-session launcher and Oakridge v2's
+ * planner/worker pickers before a session exists. Once a session has started,
  * the agent's ACP config options are authoritative and may be more specific to
  * the operator's account or configuration.
  *
@@ -63,7 +71,8 @@ export interface RuntimeOption {
  * The agent advertises the two interchangeably depending on whether the 1M
  * context entitlement is live, so the resolver treats a context hint as
  * droppable and matches either way; asking without one just means kbbl is
- * not the thing requesting the bigger window.
+ * not the thing requesting the bigger window. Stored selections still
+ * carrying `opus[1m]` from before keep resolving — no migration needed.
  *
  * Both lists are pinned to the agent versions in kbbl/package.json and
  * guarded two ways: `runtime-vocabulary.test.ts` checks every entry resolves
@@ -117,6 +126,17 @@ export const RUNTIME_EFFORTS: Readonly<Record<RuntimeId, readonly RuntimeOption[
   ],
 };
 
+export type RuntimeModelSelection = {
+  runtime: RuntimeId;
+  model: string;
+  /**
+   * Reasoning/effort level for this role's sessions. Omitted / null means "no
+   * override — use the runtime default", mirroring standalone sessions. Model
+   * defaults are pinned per runtime; effort has no convention worth forcing.
+   */
+  effort?: string | null;
+};
+
 const DEFAULT_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
   "claude-code": "opus",
   codex: "gpt-5.6-sol",
@@ -124,4 +144,61 @@ const DEFAULT_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
 
 export function defaultModelForRuntime(runtimeId: RuntimeId): string {
   return DEFAULT_MODEL_BY_RUNTIME[runtimeId];
+}
+
+export function defaultPlannerModelForRuntime(runtimeId: RuntimeId): string {
+  return defaultModelForRuntime(runtimeId);
+}
+
+export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
+  return defaultModelForRuntime(runtimeId);
+}
+
+/**
+ * Whether a stored selection still names options the pinned agent advertises.
+ *
+ * A role selection is persisted as free text (`epics.planner_model` and
+ * friends) and forwarded to ACP verbatim, so an agent bump that renames or
+ * drops an id leaves rows that provision straight into
+ * `requested_model_unsupported`. The picker lists are the vocabulary the
+ * agent accepts, so a selection outside them is one no dispatch can honour.
+ *
+ * Context hints are compared the way `resolveRequestedOption` compares them —
+ * ignored — so a row still holding `opus[1m]` counts as current. It is: the
+ * resolver will land it on whichever opus the agent is advertising.
+ */
+export function isCurrentRuntimeSelection(
+  selection: RuntimeModelSelection,
+): boolean {
+  const selectedModel = withoutContextHint(selection.model.trim().toLowerCase());
+  const offersModel = RUNTIME_MODELS[selection.runtime].some(
+    (option) => withoutContextHint(option.value.toLowerCase()) === selectedModel,
+  );
+  const effort = selection.effort;
+  const offersEffort =
+    effort === undefined ||
+    effort === null ||
+    RUNTIME_EFFORTS[selection.runtime].some((option) => option.value === effort);
+  return offersModel && offersEffort;
+}
+
+/** Minimal shape `isAllowedModelForRuntime` needs from a runtime descriptor
+ * lookup — narrower than the old AgentRuntime contract, since it needs
+ * nothing beyond the descriptor and an optional adapter-native validator. */
+export interface RuntimeDescriptorLookup {
+  descriptor: RuntimeDescriptor;
+  isAllowedModel?(model: string): boolean;
+}
+
+export function isAllowedModelForRuntime(
+  runtime: RuntimeDescriptorLookup | undefined,
+  model: string,
+): boolean {
+  const trimmedModel = model.trim();
+  if (runtime?.isAllowedModel) return runtime.isAllowedModel(trimmedModel);
+  const declaredModels = runtime?.descriptor.models ?? [];
+  if (declaredModels.length > 0) {
+    return declaredModels.some((m) => m.value === trimmedModel);
+  }
+  return trimmedModel.length > 0;
 }

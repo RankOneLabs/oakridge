@@ -1,7 +1,12 @@
-import { queryKeys } from "../queryKeys";
 import { useQuery } from "@tanstack/react-query";
-import { fetchOperatorInbox } from "../client";
+
+import { fetchReviewInbox } from "../client";
 
 export function useReviewInbox(isEnabled = true) {
-  return useQuery({ queryKey: queryKeys.inbox, queryFn: fetchOperatorInbox, enabled: isEnabled });
+  return useQuery({
+    queryKey: ["oakridge", "review-inbox"],
+    queryFn: fetchReviewInbox,
+    refetchInterval: 10_000,
+    enabled: isEnabled,
+  });
 }
