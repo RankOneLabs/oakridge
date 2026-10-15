@@ -12,6 +12,11 @@ Each repository is prepared at the path in its workspace:
 
 {{workspaces}}
 
+Each workspace's `head` is the commit the work builds on: the tip of its
+repository's build base branch on origin. Your working directory is a checkout
+that may be on another branch, so read code at `head` (`git show <head>:<path>`,
+`git grep <pattern> <head>`, `git ls-tree -r <head>`), not from the working tree.
+
 ## Finding severity and requirement status
 
 Assign severity by the consequence for delivering the specification, not by how

@@ -65,13 +65,16 @@ test("I4: a run survives a killed server, with no session started twice", async 
   try {
     await git(repo, "init", "-q", "-b", "main");
     await git(repo, "-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-    await git(repo, "remote", "add", "origin", "git@github.com:oakridge-e2e/restart.git");
+    await git(repo, "init", "-q", "--bare", "-b", "main", "origin.git");
+    await git(repo, "remote", "add", "origin", resolve(repo, "origin.git"));
+    await git(repo, "remote", "set-url", "--push", "origin", "git@github.com:oakridge-e2e/restart.git");
+    await git(repo, "push", "-q", resolve(repo, "origin.git"), "main");
     server = await startServer();
     const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const { digest } = await (await fetch(`${base_url()}/api/definitions`, json(sampleWorkflow("fan-out")))).json() as { readonly digest: string };
     const items = ["a", "b", "c", "d"].map((key) => ({ key, text: key, after: [] }));
     const launched = await fetch(`${base_url()}/api/runs`, json({ request_id: crypto.randomUUID(), digest,
-      input: { repository: { repository_path: repo, expected_head: null }, items } }));
+      input: { repository: { repository_path: repo, base_branch: "main", expected_head: null }, items } }));
     const { run_id } = await launched.json() as { readonly run_id: string };
     await eventually("two item sessions working", async () => started.size === 2, 60_000);
 

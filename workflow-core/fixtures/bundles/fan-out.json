@@ -3,6 +3,7 @@
   "input": {
     "repository": {
       "repository_path": "repo_path",
+      "base_branch": "text",
       "expected_head": "optional(text)"
     },
     "items": "list({ key: ident, text: text, after: list(ident) })"
@@ -52,6 +53,7 @@
       "input": {
         "repository": {
           "repository_path": "repo_path",
+          "base_branch": "text",
           "expected_head": "optional(text)"
         }
       },
@@ -70,6 +72,7 @@
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.repository_path",
+            "base_branch": "input.repository.base_branch",
             "expected_head": "input.repository.expected_head"
           },
           "creates": [

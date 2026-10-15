@@ -3,6 +3,7 @@
     "key": "repository.prepare",
     "input_schema": {
       "repository_path": "repo_path",
+      "base_branch": "text",
       "expected_head": "optional(text)"
     },
     "output_schema": {
@@ -12,7 +13,8 @@
     },
     "error_codes": [
       "worktree_unrecoverable",
-      "head_changed"
+      "head_changed",
+      "base_branch_missing"
     ]
   },
   {
