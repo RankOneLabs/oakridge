@@ -205,7 +205,7 @@ export class AcpClient {
       return acpError(
         code,
         operation,
-        `agent error ${error.code}: ${error.message}`,
+        `agent error ${error.code}: ${error.message}${error.data == null ? "" : `; data: ${JSON.stringify(error.data)}`}`,
         this.sid,
       );
     }
