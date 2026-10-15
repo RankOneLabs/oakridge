@@ -46,8 +46,6 @@ fn snapshot() -> StepSnapshot {
         run: RunState {
             id: "run".into(),
             root: UnitId::from("run"),
-            status: UnitStatus::NotStarted,
-            input: None,
         },
         units: vec![],
         attempts: vec![],
@@ -86,7 +84,7 @@ fn a_key_read_through_a_nested_path_materializes_every_member() {
         .snapshot
         .units
         .iter()
-        .filter(|unit| unit.stage.is_some())
+        .filter(|unit| unit.kind.stage().is_some())
         .map(|unit| unit.id.0.clone())
         .collect();
     assert_eq!(keys, vec!["run/work/a", "run/work/b"]);
@@ -98,7 +96,8 @@ fn a_key_read_through_a_nested_path_materializes_every_member() {
         .find(|unit| unit.id.0 == "run/work/b")
         .unwrap();
     assert_eq!(b.after, vec![UnitId::from("run/work/a")]);
-    assert!(matches!(b.status, UnitStatus::Blocked { .. }));
+    assert!(matches!(b.status, UnitStatus::NotStarted));
+    assert!(result.blocked.iter().any(|blocked| blocked.unit == b.id));
 }
 
 #[test]
@@ -119,7 +118,7 @@ fn a_member_input_is_evaluated_against_its_own_each() {
         .iter()
         .find(|unit| unit.id.0 == "run/work/only")
         .unwrap();
-    assert_eq!(unit.input, json!({"text": "text for only"}));
+    assert_eq!(unit.input, Some(json!({"text": "text for only"})));
 }
 
 /// `ident` would refuse these at ingress; a `text` key reaches the member
@@ -179,7 +178,13 @@ fn a_cycle_among_members_is_rejected() {
 fn a_collection_over_an_empty_list_completes_at_launch() {
     let result = launch(json!([])).unwrap();
     assert_eq!(
-        result.snapshot.run.status,
+        result
+            .snapshot
+            .units
+            .iter()
+            .find(|unit| unit.id == result.snapshot.run.root)
+            .unwrap()
+            .status,
         UnitStatus::Done {
             outcome: json!({"results": []})
         }

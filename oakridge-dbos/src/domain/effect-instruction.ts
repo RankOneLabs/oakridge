@@ -129,12 +129,12 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   let worker: WorkerInstruction;
   if (declared.kind === "agent") {
     const path = declared.prompts[action.mode.kind];
-    if (path === undefined) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
+    if (path == null) return failure(resolved.action_id, `agent ${action.worker} has no ${action.mode.kind} prompt`);
     const prompt = pin(path);
     if (!prompt.ok) return prompt;
     const session = declared.session ?? "resume";
     const handoff_path = session === "fresh" ? declared.prompts[HANDOFF_PROMPT] : undefined;
-    const handoff = handoff_path === undefined ? null : pin(handoff_path);
+    const handoff = handoff_path == null ? null : pin(handoff_path);
     if (handoff && !handoff.ok) return handoff;
     const creates: CreatedArtifact[] = [];
     for (const key of declared.creates) {

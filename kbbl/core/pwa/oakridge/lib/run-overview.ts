@@ -60,7 +60,6 @@ export function selectUnitStatusLabel(status: OperatorUnitStatus): string {
   switch (status.kind) {
     case "not_started": return "Not started";
     case "active": return "Active";
-    case "blocked": return status.reason.kind === "capacity" ? `Waiting for capacity in ${status.reason.pool}` : "Waiting on other units";
     case "done": return "Done";
     case "cancelled": return "Cancelled";
   }

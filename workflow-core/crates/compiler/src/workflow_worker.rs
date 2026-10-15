@@ -148,7 +148,7 @@ impl StageCheck<'_> {
                         || self.stage.reviews.values().any(|review| {
                             review.decisions.values().any(|decision| {
                                 decision.on.as_ref().unwrap_or(&review.of) == artifact
-                                    && decision.effect == DecisionEffect::RequestChanges
+                                    && decision.effect == DeclaredDecisionEffect::RequestChanges
                             })
                         })
                 });
@@ -168,7 +168,7 @@ impl StageCheck<'_> {
                         format!("agent {key} has a handoff prompt but its session is not fresh"),
                     );
                 }
-                for (mode, file) in modes {
+                for (mode, file) in modes.iter() {
                     let engine_inputs = if mode == HANDOFF_PROMPT {
                         HANDOFF_ENGINE_INPUTS
                     } else {

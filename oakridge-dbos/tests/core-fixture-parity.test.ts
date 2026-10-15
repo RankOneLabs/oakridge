@@ -34,7 +34,7 @@ test("step evaluates a workflow compiled by the same WASM instance", async () =>
     expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled" } });
     if (!compiled.ok || compiled.value.kind !== "compiled") return;
     const snapshot: StepSnapshot = {
-      run: { id: "run", root: "run", status: { kind: "not_started" }, input: null },
+      run: { id: "run", root: "run" },
       units: [], attempts: [], revisions: [], decisions: [], retry_events: [],
     };
     const stepped = await started.value.request("step", {
@@ -42,9 +42,11 @@ test("step evaluates a workflow compiled by the same WASM instance", async () =>
       snapshot,
       incoming: { event: { kind: "launched", input: {} }, writer: { kind: "engine" }, ingress_id: "launch-1" },
     });
-    expect(stepped).toMatchObject({ ok: true, value: { kind: "stepped", value: {
-      snapshot: { run: { id: "run", status: { kind: "active" }, input: {} } },
-    } } });
+    expect(stepped.ok && stepped.value.kind).toBe("stepped");
+    if (stepped.ok && stepped.value.kind === "stepped") {
+      expect(stepped.value.value.snapshot.units.find((unit) => unit.id === "run"))
+        .toMatchObject({ status: { kind: "active" }, input: {} });
+    }
   } finally { started.value.close(); }
 });
 

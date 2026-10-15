@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import type { Event, Incoming, StepSnapshot, StepResult, Writer, Workflow } from "../core-client/core-types";
+import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -319,8 +319,8 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
 
 /**
  * What writeDelta does not write must not change: it writes new rows, unit
- * status, a unit's input when it first resolves, and an attempt's status,
- * end and session. Anything else step changes would be silently lost, so it
+ * status, a unit's input when it first resolves, and an attempt's status
+ * and session. Anything else step changes would be silently lost, so it
  * is named here and the commit faults instead. Null when nothing is lost.
  */
 export function selectDeltaViolation(before: StepSnapshot, after: StepSnapshot): string | null {
@@ -383,26 +383,38 @@ function selectDeltaPlan(before: StepSnapshot, after: StepSnapshot): DeltaPlan {
 
 /** Apply only planned delta writes. */
 async function writeDelta(trx: DatabaseTransaction, run_id: string, plan: DeltaPlan): Promise<void> {
-  await trx.updateTable("authority.run").set({ root_unit_id: plan.run.root, input: jsonText(plan.run.input ?? null),
-    status: jsonText(plan.run.status) }).where("id", "=", run_id).execute();
+  const root = plan.created_units.find((unit) => unit.id === plan.run.root);
+  await trx.updateTable("authority.run").set({ root_unit_id: plan.run.root,
+    ...(root ? { input: root.input === null ? null : jsonText(root.input) } : {}) }).where("id", "=", run_id).execute();
   for (const unit of plan.created_units) await trx.insertInto("authority.unit").values({ id: unit.id, run_id, parent_id: unit.parent ?? null,
-    declaration: unit.declaration, stage: unit.stage ?? null, pool: unit.pool ?? null, input: jsonText(unit.input), status: jsonText(unit.status) }).execute();
+    declaration: unit.declaration, stage: unit.kind.kind === "stage" ? unit.kind.stage : null,
+    collection_key: unit.collection_key ?? null, pool: unit.pool ?? null,
+    input: unit.input === null ? null : jsonText(unit.input), status: jsonText(unit.status) }).execute();
   for (const unit of plan.created_units) for (const depends_on_id of unit.after)
     await trx.insertInto("authority.unit_dependency").values({ run_id, unit_id: unit.id, depends_on_id }).execute();
-  for (const unit of plan.changed_units) await trx.updateTable("authority.unit").set({ status: jsonText(unit.status), input: jsonText(unit.input) })
+  for (const unit of plan.changed_units) await trx.updateTable("authority.unit").set({ status: jsonText(unit.status),
+    input: unit.input === null ? null : jsonText(unit.input) })
     .where("run_id", "=", run_id).where("id", "=", unit.id).execute();
   for (const attempt of plan.created_attempts) await trx.insertInto("authority.attempt").values({ action_id: attempt.action_id, seq: attempt.seq, run_id,
       unit_id: attempt.unit, worker: attempt.worker, mode: jsonText(attempt.mode), cause: jsonText(attempt.cause),
-      status: jsonText(attempt.status), ended_at: attempt.ended_at, kbbl_session_id: attempt.kbbl_session_id ?? null }).execute();
+      status: jsonText(attempt.status), kbbl_session_id: attempt.kbbl_session_id ?? null }).execute();
   for (const attempt of plan.changed_attempts) await trx.updateTable("authority.attempt")
-      .set({ status: jsonText(attempt.status), ended_at: attempt.ended_at, kbbl_session_id: attempt.kbbl_session_id ?? null })
+      .set({ status: jsonText(attempt.status), kbbl_session_id: attempt.kbbl_session_id ?? null })
       .where("action_id", "=", attempt.action_id).where("seq", "=", attempt.seq).execute();
   for (const revision of plan.created_revisions)
-    await trx.insertInto("authority.artifact_revision").values({ id: revision.id, run_id, unit_id: revision.unit, artifact: revision.artifact,
+    await trx.insertInto("authority.artifact_revision").values({ id: revision.id, run_id, unit_id: revision.unit, artifact: revision.artifact, seq: revision.seq,
       body: jsonText(revision.body), by_id: revision.by, predecessor_id: revision.predecessor ?? null, subject: revision.subject ?? null }).execute();
-  for (const decision of plan.created_decisions)
-    await trx.insertInto("authority.review_decision").values({ id: decision.id, run_id, unit_id: decision.unit, review: decision.review,
-      decision: decision.decision, effect: decision.effect, target_revision_id: decision.target, payload: jsonText(decision.payload) }).execute();
+  for (const decision of plan.created_decisions) {
+    const is_validation = decision.kind === "validation";
+    const effect = is_validation ? "request_changes" : decision.effect.kind;
+    const payload = is_validation ? { feedback: decision.messages.join("; ") } : decision.payload;
+    await trx.insertInto("authority.review_decision").values({ id: decision.id, run_id, unit_id: decision.unit,
+      review: is_validation ? VALIDATION_REVIEW : decision.review,
+      decision: is_validation ? "request_changes" : decision.decision, effect,
+      target_revision_id: decision.target, payload: jsonText(payload),
+      validation_artifact: is_validation ? decision.artifact : null,
+      validation_messages: is_validation ? decision.messages : null }).execute();
+  }
 }
 
 interface CommitReadInput {
@@ -417,7 +429,7 @@ interface CommitReadInput {
 /** Everything planning needs from storage, read under the run lock before any writes. */
 export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly intent_actions: readonly string[];
-  readonly review_rows: readonly { readonly id: string; readonly review_prompts: ReviewPrompts }[];
+  readonly review_rows: readonly { readonly id: string; readonly review_prompts: ReviewPrompts; readonly blocked_reason: BlockedReason | null }[];
   readonly prompt_texts: ReadonlyMap<string, string>;
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
@@ -425,18 +437,18 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
   const { request, step, source, prompts } = input;
   const unit_ids = step.snapshot.units.map((unit) => unit.id);
-  const stage_units = step.snapshot.units.filter((unit) => unit.stage !== null && unit.stage !== undefined).map((unit) => unit.id);
   const wanted = selectWanted(step);
   const paths = step.reviews.flatMap((review) => {
-    const stage = step.snapshot.units.find((unit) => unit.id === review.unit)?.stage;
+    const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
+    const stage = kind?.kind === "stage" ? kind.stage : null;
     const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
     return path ? [path] : [];
   });
   const [intent_rows, review_rows, logged_rows, prompt_texts] = await Promise.all([
     unit_ids.length ? trx.selectFrom("authority.effect_intent").select("action_id").where("run_id", "=", request.run_id)
       .where("unit_id", "=", anyOf(unit_ids)).execute() : Promise.resolve([]),
-    stage_units.length ? trx.selectFrom("authority.unit").select(["id", "review_prompts"]).where("run_id", "=", request.run_id)
-      .where("id", "=", anyOf(stage_units)).execute() : Promise.resolve([]),
+    unit_ids.length ? trx.selectFrom("authority.unit").select(["id", "review_prompts", "blocked_reason"]).where("run_id", "=", request.run_id)
+      .where("id", "=", anyOf(unit_ids)).execute() : Promise.resolve([]),
     wanted.length ? trx.selectFrom("authority.wanted_log as wanted").innerJoin("authority.event as event", (join) =>
       join.onRef("event.run_id", "=", "wanted.run_id").onRef("event.id", "=", "wanted.event_id"))
       .distinctOn("wanted.unit_id").select(["wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", request.run_id)
@@ -452,6 +464,7 @@ async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInp
 interface PlannedIntent { readonly unit_id: string; readonly action_id: ActionId; readonly seq: number;
   readonly instruction: import("../domain/effect-instruction").EffectInstruction }
 interface ReviewUpdate { readonly unit_id: string; readonly prompts: ReviewPrompts }
+interface BlockedUpdate { readonly unit_id: string; readonly reason: BlockedReason | null }
 export interface CommitPlan {
   readonly run_id: RunId;
   readonly request: CommitRequest;
@@ -463,6 +476,7 @@ export interface CommitPlan {
   readonly replaced_actions: readonly ActionId[];
   readonly inactive_units: readonly string[];
   readonly review_updates: readonly ReviewUpdate[];
+  readonly blocked_updates: readonly BlockedUpdate[];
   readonly changed_wanted: readonly WantedForUnit[];
   readonly run_event_fields: RunEventFields;
 }
@@ -490,8 +504,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     const { action_id, attempt_seq, action, resolved } = worker;
     if (known.has(action_id)) continue;
     const unit = step.snapshot.units.find((candidate) => candidate.id === worker.unit);
-    if (!unit?.stage) return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
-    const instruction = selectEffectInstruction({ run_id, workflow: source, prompts, stage: unit.stage, config,
+    if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
+    const instruction = selectEffectInstruction({ run_id, workflow: source, prompts, stage: unit.kind.stage, config,
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
     intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: instruction.value });
@@ -501,7 +515,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   }
   const rendered = new Map<string, { [review: string]: ReviewPrompt }>();
   for (const review of step.reviews) {
-    const stage = step.snapshot.units.find((unit) => unit.id === review.unit)?.stage;
+    const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
+    const stage = kind?.kind === "stage" ? kind.stage : null;
     const path = stage ? source.stages[stage]?.reviews?.[review.review]?.prompt : null;
     const digest = path ? prompts[path] : undefined;
     const text = digest === undefined ? undefined : existing.prompt_texts.get(digest);
@@ -512,6 +527,12 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     rendered.set(review.unit, unit);
   }
   const review_updates: ReviewUpdate[] = [];
+  const old_blocked = new Map(existing.review_rows.map((row) => [row.id, row.blocked_reason]));
+  const emitted_blocked = new Map(step.blocked.map(({ unit, reason }) => [unit, reason]));
+  const blocked_updates: BlockedUpdate[] = step.snapshot.units.flatMap((unit) => {
+    const reason = emitted_blocked.get(unit.id) ?? null;
+    return canonical(old_blocked.get(unit.id) ?? null) === canonical(reason) ? [] : [{ unit_id: unit.id, reason }];
+  });
   const newly_awaiting = new Map<string, readonly string[]>();
   for (const row of existing.review_rows) {
     const next: ReviewPrompts = rendered.get(row.id) ?? {};
@@ -523,14 +544,15 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   const addressed = step.snapshot.units.find((unit) => unit.id === (existing.unit_id ?? step.snapshot.run.root));
   if (!addressed) return violation(run_id, `event ${event_id} addresses no unit of the run`);
   const run_event_fields = selectRunEventFields({ event_id, run_id, kind: request.event.kind,
-    run_status: step.snapshot.run.status,
+    run_status: step.snapshot.units.find((unit) => unit.id === step.snapshot.run.root)?.status ?? { kind: "not_started" },
     tree: selectUnitTree(step.snapshot.units.map((unit) => ({ id: unit.id, parent_id: unit.parent ?? null, declaration: unit.declaration })), source),
-    unit: { id: addressed.id as UnitId, parent_id: addressed.parent ?? null, declaration: addressed.declaration, stage: addressed.stage ?? null,
+    unit: { id: addressed.id as UnitId, parent_id: addressed.parent ?? null, declaration: addressed.declaration,
+      stage: addressed.kind.kind === "stage" ? addressed.kind.stage : null, collection_key: addressed.collection_key ?? null,
       status: addressed.status }, newly_awaiting: newly_awaiting.get(addressed.id) ?? [] });
   return { ok: true, value: { run_id, request, unit_id: existing.unit_id, event_id,
     delta: selectDeltaPlan(before, step.snapshot), publication_secret, intents, replaced_actions,
     inactive_units: step.snapshot.units.filter((unit) => isTerminalStatus(unit.status)).map((unit) => unit.id),
-    review_updates, changed_wanted: selectChangedWanted(selectWanted(step), existing.logged_wanted), run_event_fields } };
+    review_updates, blocked_updates, changed_wanted: selectChangedWanted(selectWanted(step), existing.logged_wanted), run_event_fields } };
 }
 
 /** Write the already selected plan. No storage read or domain decision belongs here. */
@@ -552,6 +574,9 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
     .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
     .where("run_id", "=", run_id).where("unit_id", "=", anyOf(plan.inactive_units)).where("status", "in", START_OWED_STATUSES).execute();
   for (const update of plan.review_updates) await trx.updateTable("authority.unit").set({ review_prompts: jsonText(update.prompts) })
+    .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();
+  for (const update of plan.blocked_updates) await trx.updateTable("authority.unit")
+    .set({ blocked_reason: update.reason === null ? null : jsonText(update.reason) })
     .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();
   if (plan.changed_wanted.length) await trx.insertInto("authority.wanted_log").values(plan.changed_wanted.map(({ unit_id, actions }) =>
     ({ id: crypto.randomUUID(), run_id, unit_id, event_id: plan.event_id, actions: jsonText(actions) }))).execute();

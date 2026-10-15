@@ -527,6 +527,20 @@ mod type_tests {
     }
 }
 
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn misspelled_revise_prompt_is_a_load_error() {
+        let source = include_str!("../../../fixtures/bundles/review-loop.json");
+        let mut config: Value = serde_json::from_str(source).unwrap();
+        config["stages"]["document"]["workers"]["writer"]["prompts"] =
+            serde_json::json!({"initial": "write.md", "revsie": "revise.md"});
+        assert!(serde_json::from_value::<Workflow>(config).is_err());
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
@@ -592,7 +606,7 @@ pub struct ValidationCheck {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Worker {
     Agent {
-        prompts: BTreeMap<String, String>,
+        prompts: Prompts,
         inputs: BTreeMap<String, String>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
@@ -610,6 +624,40 @@ pub enum Worker {
         every: Option<String>,
         when: Option<String>,
     },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Prompts {
+    pub initial: Option<String>,
+    pub revise: Option<String>,
+    pub review: Option<String>,
+    pub handoff: Option<String>,
+}
+
+impl Prompts {
+    pub fn get(&self, mode: &str) -> Option<&String> {
+        match mode {
+            "initial" => self.initial.as_ref(),
+            "revise" => self.revise.as_ref(),
+            "review" => self.review.as_ref(),
+            "handoff" => self.handoff.as_ref(),
+            _ => None,
+        }
+    }
+    pub fn contains_key(&self, mode: &str) -> bool {
+        self.get(mode).is_some()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &String)> {
+        [
+            ("initial", self.initial.as_ref()),
+            ("revise", self.revise.as_ref()),
+            ("review", self.review.as_ref()),
+            ("handoff", self.handoff.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(mode, path)| path.map(|path| (mode, path)))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -651,7 +699,7 @@ pub enum ReviewBy {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDecision {
-    pub effect: DecisionEffect,
+    pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub label: String,
     pub payload: Option<TypeExpression>,
@@ -663,7 +711,7 @@ pub struct ReviewDecision {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum DecisionEffect {
+pub enum DeclaredDecisionEffect {
     Approve,
     RequestChanges,
 }

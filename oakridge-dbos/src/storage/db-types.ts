@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "request_changes";
@@ -27,6 +27,7 @@ export interface AuthorityArtifactRevision {
   id: string;
   predecessor_id: string | null;
   run_id: string;
+  seq: number;
   subject: string | null;
   unit_id: string;
 }
@@ -38,7 +39,6 @@ export interface AuthorityAttempt {
    */
   cause: JsonColumn<Cause>;
   created_at: Generated<Timestamp>;
-  ended_at: number | null;
   kbbl_session_id: string | null;
   /**
    * @type {Mode}
@@ -188,6 +188,8 @@ export interface AuthorityReviewDecision {
   run_id: string;
   target_revision_id: string;
   unit_id: string;
+  validation_artifact: string | null;
+  validation_messages: string[] | null;
 }
 
 export interface AuthorityReviewItem {
@@ -218,19 +220,20 @@ export interface AuthorityRun {
   input: NullableJsonColumn<RuntimeValue>;
   project_id: string | null;
   root_unit_id: string | null;
-  /**
-   * @type {UnitStatus}
-   */
-  status: Generated<JsonColumn<UnitStatus>>;
 }
 
 export interface AuthorityUnit {
+  /**
+   * @type {BlockedReason}
+   */
+  blocked_reason: NullableJsonColumn<BlockedReason>;
+  collection_key: string | null;
   declaration: string;
   id: string;
   /**
    * @type {RuntimeValue}
    */
-  input: JsonColumn<RuntimeValue>;
+  input: NullableJsonColumn<RuntimeValue>;
   parent_id: string | null;
   pool: string | null;
   /**

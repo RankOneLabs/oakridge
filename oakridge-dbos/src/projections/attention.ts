@@ -1,6 +1,6 @@
 import type { BlockedReason, Event, ResolvedDecision } from "../core-client/core-types";
 import type { RetryRequest, RunSummaryRead } from "../storage/read-store";
-import { isTerminalStatus } from "../domain/unit-status";
+import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { AttemptRecord, UnitRecord } from "../storage/schema-records";
 import { selectUnitLabel, selectUnitTree } from "./unit-label";
 
@@ -78,7 +78,7 @@ function hasUnspentRetry(worker: WorkerOnUnit, sources: Pick<StallSources, "atte
 }
 
 interface StallSources {
-  readonly units: readonly Pick<UnitRecord, "id" | "status">[];
+  readonly units: readonly Pick<UnitRecord, "id" | "status" | "blocked_reason">[];
   readonly attempts: readonly AttemptRecord[];
   readonly retries: readonly RetryRequest[];
 }
@@ -87,7 +87,7 @@ interface StallSources {
  * active, its latest attempt failed, and no retry is pending for it.
  */
 export function selectStalledWorkers(sources: StallSources): readonly StalledWorker[] {
-  const active = new Set(sources.units.filter((unit) => unit.status.kind === "active").map((unit) => unit.id));
+  const active = new Set(sources.units.filter((unit) => unit.status.kind === "active" && unit.blocked_reason === null).map((unit) => unit.id));
   return [...selectLatestAttempts(sources.attempts).values()].flatMap((attempt) => {
     if (attempt.status.kind !== "failed" || !active.has(attempt.unit_id)) return [];
     if (hasUnspentRetry(attempt, sources)) return [];
@@ -112,7 +112,7 @@ type RunStallSources = Pick<RunSummaryRead, "run" | "units" | "stalls" | "faults
  * reason keeps only its latest occurrence, in that occurrence's place.
  */
 export function selectRunStalls(read: RunStallSources): readonly RunStall[] {
-  if (isTerminalStatus(read.run.status)) return [];
+  if (isTerminalStatus(selectRootStatus(read.run, read.units))) return [];
   const root = read.run.root_unit_id ?? read.run.id;
   const shownOn = (unit_id: string | null): string => unit_id !== null && read.units.some((unit) => unit.id === unit_id) ? unit_id : root;
   const stalls = read.stalls.filter((refusal) => latestEventOn(read, refusal.unit_id) === refusal.stall.after_event)
@@ -148,7 +148,7 @@ export function selectRunAttention(read: RunSummaryRead): readonly UnitAttention
     awaiting: Object.entries(unit.review_prompts).sort(([left], [right]) => left.localeCompare(right))
       .map(([review, awaiting]) => ({ unit_id: unit.id, review, target: awaiting.target, decisions: awaiting.decisions, prompt: awaiting.prompt })),
     stalled: stalled.filter((worker) => worker.unit_id === unit.id),
-    blocked: unit.status.kind === "blocked" ? unit.status.reason : null }));
+    blocked: unit.blocked_reason }));
 }
 
 /** A blocked unit's reason, naming the units it waits on by their labels. */

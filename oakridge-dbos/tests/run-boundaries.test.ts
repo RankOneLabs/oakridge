@@ -17,6 +17,7 @@ const parse = (file: string): ts.SourceFile => ts.createSourceFile(file, readFil
 
 /** What run code may import, as values, from the core client: the client itself, compile, the wanted-action reader, and where the WASM is. */
 const CORE_CLIENT_VALUES = new Set(["CoreClient", "compileWorkflow", "selectWanted", "CORE_WASM_PATH"]);
+const GENERATED_CORE_CONSTANTS = new Set(["ROOT_DECLARATION", "VALIDATION_REVIEW"]);
 interface CoreImport { readonly file: string; readonly module: string; readonly name: string; readonly is_type: boolean }
 function coreImports(file: string): readonly CoreImport[] {
   const imports: CoreImport[] = [];
@@ -40,6 +41,7 @@ function k2Violations(imports: readonly CoreImport[]): readonly string[] {
     if (entry.module.includes("workflow-core")) return [`${where} (reaches into the core's sources)`];
     if (entry.is_type) return [];
     if (entry.module.endsWith("core-client/client") && CORE_CLIENT_VALUES.has(entry.name)) return [];
+    if (entry.module.endsWith("core-client/core-types") && GENERATED_CORE_CONSTANTS.has(entry.name)) return [];
     return [`${where} (a value outside the compile/step API)`];
   });
 }
@@ -67,7 +69,7 @@ test("K2: a value import from the generated types, or a reach into the core's so
 
 function promptPaths(workflow: Workflow): readonly string[] {
   return Object.values(workflow.stages).flatMap((stage) => [
-    ...Object.values(stage.workers).flatMap((worker) => worker.kind === "agent" ? Object.values(worker.prompts) : []),
+    ...Object.values(stage.workers).flatMap((worker) => worker.kind === "agent" ? Object.values(worker.prompts).filter((path): path is string => path != null) : []),
     ...Object.values(stage.reviews ?? {}).flatMap((review) => review.prompt ? [review.prompt] : []),
   ]);
 }

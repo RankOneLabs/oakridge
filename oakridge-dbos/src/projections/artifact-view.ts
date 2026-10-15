@@ -1,4 +1,4 @@
-import type { DecisionEffect } from "../core-client/core-types";
+import type { DeclaredDecisionEffect } from "../core-client/core-types";
 import type { RunId, UnitId } from "../domain/primitives";
 import type { RunRead } from "../storage/read-store";
 import { isEditable, isReviewable, selectArtifactSchema, selectRevisionViews, type ArtifactRevisionView, type BodyValue } from "./unit-view";
@@ -11,7 +11,7 @@ export interface RevisionDecision {
   readonly id: string;
   readonly review: string;
   readonly decision: string;
-  readonly effect: DecisionEffect;
+  readonly effect: DeclaredDecisionEffect;
   readonly target_revision_id: string;
   readonly payload: BodyValue;
   readonly created_at: Date;

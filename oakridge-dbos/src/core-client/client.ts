@@ -105,6 +105,6 @@ export async function compileWorkflow(core: CoreClient, input: CompileInput): Pr
 /** Each active stage's wanted workers, including an empty set when none are wanted. */
 export interface WantedForUnit { readonly unit_id: string; readonly actions: readonly WantedWorker[] }
 export function selectWanted(step: StepResult): readonly WantedForUnit[] {
-  return step.snapshot.units.filter((unit) => unit.stage !== null && unit.status.kind === "active")
+  return step.snapshot.units.filter((unit) => unit.kind.kind === "stage" && unit.status.kind === "active")
     .map((unit) => ({ unit_id: unit.id, actions: step.wanted.filter((wanted) => wanted.unit === unit.id) }));
 }

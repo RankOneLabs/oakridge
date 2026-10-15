@@ -308,7 +308,7 @@ fn check_engine_review(
         .feedback
         .as_deref()
         .is_some_and(|text| !text.trim().is_empty());
-    if decision.effect != DecisionEffect::RequestChanges
+    if decision.effect != DeclaredDecisionEffect::RequestChanges
         || !has_feedback
         || decision.payload.is_some()
         || !decision.fields.is_empty()

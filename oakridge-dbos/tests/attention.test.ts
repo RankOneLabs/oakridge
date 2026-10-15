@@ -6,11 +6,11 @@ import type { AttemptRecord, RunRecord, UnitRecord } from "../src/storage/schema
 import type { IngressId, UnitId } from "../src/domain/primitives";
 const ingress = (value: string) => value as IngressId;
 
-const unit = { id: "run/analysis", status: { kind: "active" } } as Pick<UnitRecord, "id" | "status">;
+const unit = { id: "run/analysis", status: { kind: "active" }, blocked_reason: null } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
 const attempt = (fields: Partial<AttemptRecord>): AttemptRecord => ({ action_id: "a1", seq: 1, run_id: "run", unit_id: "run/analysis", worker: "writer",
-  mode: { kind: "initial" }, cause: { kind: "missing" }, status: { kind: "pending" }, ended_at: null, kbbl_session_id: null,
+  mode: { kind: "initial" }, cause: { kind: "missing" }, status: { kind: "pending" }, kbbl_session_id: null,
   publication_secret_hash: null, created_at: new Date(0), ...fields } as AttemptRecord);
-const failed = attempt({ status: { kind: "failed", code: "worker_exit", detail: "session stopped" }, ended_at: 1 });
+const failed = attempt({ status: { kind: "failed", code: "worker_exit", detail: "session stopped" } });
 
 test("an active unit's worker whose latest attempt failed, with no retry pending, is stalled", () => {
   expect(selectStalledWorkers({ units: [unit], attempts: [failed], retries: [] })).toEqual([
@@ -18,8 +18,13 @@ test("an active unit's worker whose latest attempt failed, with no retry pending
   ]);
 });
 
+test("a blocked unit is not counted as an active stalled worker", () => {
+  const blocked = { ...unit, blocked_reason: { kind: "waiting_on", units: ["run/first"] } } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
+  expect(selectStalledWorkers({ units: [blocked], attempts: [failed], retries: [] })).toEqual([]);
+});
+
 test("a pending retry clears the stall for its worker", () => {
-  const retry = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" } });
+  const retry = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1", mode: { kind: "initial" } } });
   expect(selectStalledWorkers({ units: [unit], attempts: [failed, retry], retries: [{ unit_id: unit.id, worker: "writer", retry_id: ingress("e1") }] })).toEqual([]);
 });
 
@@ -28,20 +33,20 @@ test("a retry requested but not yet opened clears the stall for its worker", () 
 });
 
 test("a failed attempt on a unit that is no longer active is not a stall", () => {
-  const done = { ...unit, status: { kind: "done", outcome: {} } } as Pick<UnitRecord, "id" | "status">;
+  const done = { ...unit, status: { kind: "done", outcome: {} } } as Pick<UnitRecord, "id" | "status" | "blocked_reason">;
   expect(selectStalledWorkers({ units: [done], attempts: [failed], retries: [] })).toEqual([]);
 });
 
 test("a later attempt failing after a retry that succeeded stalls the worker again: the retry is spent", () => {
-  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" }, status: { kind: "succeeded" }, ended_at: 2 });
+  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1", mode: { kind: "initial" } }, status: { kind: "succeeded" } });
   const revised = attempt({ action_id: "a3" as AttemptRecord["action_id"], mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" },
-    status: { kind: "failed", code: "worker_exit", detail: "revise stopped" }, ended_at: 3 });
+    status: { kind: "failed", code: "worker_exit", detail: "revise stopped" } });
   expect(selectStalledWorkers({ units: [unit], attempts: [failed, retried, revised], retries: [{ unit_id: unit.id, worker: "writer", retry_id: ingress("e1") }] })
     .map((stalled) => [stalled.action_id, stalled.detail])).toEqual([["a3", "revise stopped"]]);
 });
 
 test("the worker's last opened attempt is its current one", () => {
-  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1" }, status: { kind: "succeeded" } });
+  const retried = attempt({ action_id: "a2" as AttemptRecord["action_id"], cause: { kind: "retry", event: "e1", mode: { kind: "initial" } }, status: { kind: "succeeded" } });
   const revised = attempt({ action_id: "a3" as AttemptRecord["action_id"], cause: { kind: "changes_requested", decision: "d1" } });
   expect(selectAttemptViews([failed, retried, revised]).map((view) => view.is_current)).toEqual([false, false, true]);
 });
@@ -49,8 +54,8 @@ test("the worker's last opened attempt is its current one", () => {
 // ------------------------------------------------------------ run stalls -----
 
 const stallSources = (fields: Partial<Parameters<typeof selectRunStalls>[0]> = {}): Parameters<typeof selectRunStalls>[0] => ({
-  run: { id: "run", root_unit_id: "run", status: { kind: "active" } } as RunRecord,
-  units: [{ id: "run" }, { id: "run/plan" }, { id: "run/work" }] as UnitRecord[],
+  run: { id: "run", root_unit_id: "run" } as unknown as RunRecord,
+  units: [{ id: "run", status: { kind: "active" } }, { id: "run/plan" }, { id: "run/work" }] as UnitRecord[],
   stalls: [{ unit_id: "run/plan" as UnitId, ingress_id: ingress("i1"), reason: "run stalled at run/work: duplicate key",
     stall: { unit_id: "run/work", event: { kind: "cancel_requested" }, after_event: "e1", refused_at: "2026-10-13T00:00:00.000Z" } }],
   faults: [],
@@ -73,8 +78,8 @@ test("an event committed on another unit leaves the stall standing", () => {
 });
 
 test("a finished run has no stall", () => {
-  const run = { id: "run", root_unit_id: "run", status: { kind: "cancelled" } } as RunRecord;
-  expect(selectRunStalls(stallSources({ run }))).toEqual([]);
+  const units = [{ id: "run", status: { kind: "cancelled" } }] as unknown as UnitRecord[];
+  expect(selectRunStalls(stallSources({ units }))).toEqual([]);
 });
 
 const refusedAt = (minute: number) => `2026-10-13T00:0${minute}:00.000Z`;

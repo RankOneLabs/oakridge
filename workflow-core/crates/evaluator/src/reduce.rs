@@ -32,22 +32,21 @@ fn reduce_event(
     }
     match &incoming.event {
         Event::Launched { input } => {
-            if state.run.input.is_some() {
+            if state.units.iter().any(|unit| unit.id == state.run.root) {
                 return Ok(deltas);
             }
             context.check_value(input)?;
             if !check_type(&program.input, input) {
                 return Err(rejected("launch input fails schema"));
             }
-            record!(Delta::RunInput(input.clone()));
-            record!(Delta::RunStatus(UnitStatus::Active));
             record!(Delta::PushUnit(UnitState {
                 id: state.run.root.clone(),
                 parent: None,
-                declaration: SymbolKey::from("$root"),
-                stage: None,
+                declaration: SymbolKey::from(ROOT_DECLARATION),
+                kind: UnitKind::Group,
+                collection_key: None,
                 status: UnitStatus::Active,
-                input: input.clone(),
+                input: Some(input.clone()),
                 after: vec![],
                 pool: None,
             }));
@@ -90,7 +89,6 @@ fn reduce_event(
                         seq: old.seq + 1,
                         status: AttemptStatus::Running,
                         kbbl_session_id: kbbl_session_id.clone(),
-                        ended_at: None,
                         ..old
                     }));
                 }
@@ -140,11 +138,7 @@ fn reduce_event(
             };
             record!(Delta::ReplaceAttempt {
                 index,
-                attempt: AttemptState {
-                    status,
-                    ended_at: Some(attempt.seq as i64),
-                    ..attempt
-                },
+                attempt: AttemptState { status, ..attempt },
             });
         }
         Event::RevisionPublished {
@@ -262,7 +256,6 @@ fn reduce_event(
                             code: "validation_failed".into(),
                             detail: messages.join("; "),
                         },
-                        ended_at: Some(attempt.seq as i64),
                         ..attempt
                     },
                 });
@@ -273,6 +266,14 @@ fn reduce_event(
                 id: id.clone(),
                 unit: unit.clone(),
                 artifact: artifact.clone(),
+                seq: state
+                    .revisions
+                    .iter()
+                    .filter(|revision| revision.unit == *unit && revision.artifact == *artifact)
+                    .map(|revision| revision.seq)
+                    .max()
+                    .unwrap_or(0)
+                    + 1,
                 body: body.clone(),
                 predecessor: predecessor.clone(),
                 subject: subject.clone(),
@@ -280,14 +281,12 @@ fn reduce_event(
             }));
             if !messages.is_empty() && !is_code {
                 let decision = decision_id(&state, unit);
-                record!(Delta::PushDecision(DecisionState {
+                record!(Delta::PushDecision(DecisionState::Validation {
                     id: decision,
                     unit: unit.clone(),
-                    review: SymbolKey::from("engine:validator"),
-                    decision: SymbolKey::from("request_changes"),
-                    effect: DecisionEffect::RequestChanges,
+                    artifact: artifact.clone(),
                     target: id,
-                    payload: serde_json::json!({"feedback": messages.join("; ")}),
+                    messages,
                 }));
             }
         }
@@ -336,11 +335,10 @@ fn reduce_event(
                 return Err(rejected("review is not open"));
             }
             if state.decisions.iter().any(|d| {
-                d.unit == *unit
-                    && d.review == *review
-                    && d.decision == *decision
-                    && d.target == *target
-                    && d.payload == *payload
+                matches!(d, DecisionState::Review { unit: existing_unit, review: existing_review,
+                    decision: existing_decision, target: existing_target, payload: existing_payload, .. }
+                    if existing_unit == unit && existing_review == review && existing_decision == decision
+                        && existing_target == target && existing_payload == payload)
             }) {
                 return Ok(deltas);
             }
@@ -357,7 +355,7 @@ fn reduce_event(
                     return Err(rejected("decision payload fails schema"));
                 }
             }
-            if decision_definition.effect == DecisionEffect::RequestChanges
+            if decision_definition.effect == DeclaredDecisionEffect::RequestChanges
                 && payload
                     .get("feedback")
                     .and_then(Value::as_str)
@@ -366,12 +364,22 @@ fn reduce_event(
                 return Err(rejected("request_changes requires feedback"));
             }
             let id = decision_id(&state, unit);
-            record!(Delta::PushDecision(DecisionState {
+            let effect = match decision_definition.effect {
+                DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
+                DeclaredDecisionEffect::RequestChanges => DecisionEffect::RequestChanges {
+                    feedback: payload
+                        .get("feedback")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                },
+            };
+            record!(Delta::PushDecision(DecisionState::Review {
                 id,
                 unit: unit.clone(),
                 review: review.clone(),
                 decision: decision.clone(),
-                effect: decision_definition.effect.clone(),
+                effect,
                 target: target.clone(),
                 payload: payload.clone(),
             }));
@@ -380,8 +388,10 @@ fn reduce_event(
             // Only a replay of a retry already registered is a no-op: the
             // run layer stores every accepted retry request as a retry, so
             // a distinct request either registers one or is rejected.
-            if state.retry_events.iter().any(|(u, w, id)| {
-                u == unit && w == worker && incoming.ingress_id.as_deref() == Some(&id.0)
+            if state.retry_events.iter().any(|retry| {
+                &retry.unit == unit
+                    && &retry.worker == worker
+                    && incoming.ingress_id.as_deref() == Some(&retry.event.0)
             }) {
                 return Ok(deltas);
             }
@@ -415,9 +425,14 @@ fn reduce_event(
         }
         Event::CancelRequested => {
             // A finished run stays finished; a cancelled one is cancelled once.
-            match state.run.status {
-                UnitStatus::Done { .. } => return Err(rejected("run is done")),
-                UnitStatus::Cancelled => return Ok(deltas),
+            match state
+                .units
+                .iter()
+                .find(|unit| unit.id == state.run.root)
+                .map(|unit| &unit.status)
+            {
+                Some(UnitStatus::Done { .. }) => return Err(rejected("run is done")),
+                Some(UnitStatus::Cancelled) => return Ok(deltas),
                 _ => {}
             }
             for index in 0..state.units.len() {
@@ -429,7 +444,6 @@ fn reduce_event(
                     });
                 }
             }
-            record!(Delta::RunStatus(UnitStatus::Cancelled));
         }
     }
     Ok(deltas)

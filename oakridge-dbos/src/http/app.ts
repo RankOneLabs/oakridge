@@ -45,7 +45,7 @@ function isWorkflowOutline(value: unknown): value is Workflow {
   return isObject(value) && typeof value.workflow === "string" && isObject(value.run) && isObject(value.stages)
     && Object.values(value.stages).every((stage) => isObject(stage) && isObject(stage.workers)
       && Object.values(stage.workers).every((worker) => isObject(worker)
-        && (worker.kind !== "agent" || isObject(worker.prompts) && Object.values(worker.prompts).every(isPromptPath)))
+        && (worker.kind !== "agent" || isObject(worker.prompts) && Object.values(worker.prompts).every(isOptionalPromptPath)))
       && (stage.reviews === undefined || isObject(stage.reviews)
         && Object.values(stage.reviews).every((review) => isObject(review) && isOptionalPromptPath(review.prompt))));
 }

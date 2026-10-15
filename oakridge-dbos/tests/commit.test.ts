@@ -35,8 +35,10 @@ test("a launch commits the run, its units, the event with its writer, the receip
     intents(run_id),
     authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id).execute(),
   ]);
+  const root = await authority.db.selectFrom("authority.unit").select("status")
+    .where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow();
   const instruction = decodeEffectInstruction(intent_rows[0]?.payload);
-  expect({ root: run.root_unit_id, status: run.status.kind, writers: events.map((event) => event.writer.kind),
+  expect({ root: run.root_unit_id, status: root.status.kind, writers: events.map((event) => event.writer.kind),
     receipts: receipts.map((receipt) => receipt.result.kind), intents: intent_rows.length,
     inputs: instruction.ok ? instruction.value.inputs : null, worker: instruction.ok ? instruction.value.worker.kind : null,
     operator_events: operator_events.length, wakes }).toEqual({ root: run_id, status: "active", writers: ["operator", "executor"],
@@ -208,7 +210,7 @@ test("cancel requests the stop of every live intent of the run", async () => {
   const run_id = await launched();
   await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
   const [rows, run] = await Promise.all([intents(run_id),
-    authority.db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow()]);
+    authority.db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow()]);
   expect({ statuses: rows.map((row) => row.status), run: run.status.kind }).toEqual({ statuses: ["stop_requested"], run: "cancelled" });
 });
 
@@ -242,7 +244,8 @@ const PERIODIC: Workflow = {
 };
 test("a periodic worker keeps one intent across its attempts, which carries the schedule", async () => {
   const { bundle_id: periodic } = await pinWorkflow(authority, PERIODIC);
-  const { run_id } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  const { run_id, result } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  if (!result.ok || result.value.kind !== "committed") throw new Error(JSON.stringify(result));
   const [first] = await intents(run_id);
   if (!first) throw new Error("launch wrote no intent");
   const submit = submitter(authority);

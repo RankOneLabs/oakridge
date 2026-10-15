@@ -30,7 +30,7 @@ const attemptRecord = (row: Row<"authority.attempt">): AttemptRecord => ({ ...ro
 const revisionRecord = (row: Row<"authority.artifact_revision">): ArtifactRevisionRecord => ({ ...row, id: row.id as RevisionId,
   run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, by_id: row.by_id as ActionId | null,
   predecessor_id: row.predecessor_id as RevisionId | null, subject: row.subject as RevisionId | null });
-const revisionRef = (row: Pick<Row<"authority.artifact_revision">, "id" | "run_id" | "unit_id" | "artifact" | "created_at">): RevisionRef =>
+const revisionRef = (row: Pick<Row<"authority.artifact_revision">, "id" | "run_id" | "unit_id" | "artifact" | "seq" | "created_at">): RevisionRef =>
   ({ ...row, id: row.id as RevisionId, run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId });
 const decisionRecord = (row: Row<"authority.review_decision">): ReviewDecisionRecord => ({ ...row, id: row.id as DecisionId,
   run_id: row.run_id as RunId, unit_id: row.unit_id as UnitId, target_revision_id: row.target_revision_id as RevisionId });
@@ -68,7 +68,7 @@ export type RunSummaryRecord = Omit<RunRecord, "input" | "config">;
 /** A unit as lists read it: everything but its resolved input. */
 export type UnitSummaryRecord = Omit<UnitRecord, "input">;
 /** A revision as lists read it: where it is and when, never its body. */
-export type RevisionRef = Pick<ArtifactRevisionRecord, "id" | "run_id" | "unit_id" | "artifact" | "created_at">;
+export type RevisionRef = Pick<ArtifactRevisionRecord, "id" | "run_id" | "unit_id" | "artifact" | "seq" | "created_at">;
 /**
  * One launched run as the run list, the run view and the inbox read it: what
  * RunView and attention derive from, and no revision body, decision, unit
@@ -100,10 +100,10 @@ export interface RunRead extends RunSummaryRead {
   readonly decisions: readonly ReviewDecisionRecord[];
 }
 
-const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id", "run.status",
+const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id",
   "run.created_at", "run.archived_at"] as const;
-const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "pool", "status", "review_prompts"] as const;
-const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "created_at"] as const;
+const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
+const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
 const of = <Row extends { readonly run_id: string }>(rows: readonly Row[], run_id: string): Row[] => rows.filter((row) => row.run_id === run_id);
 
 /**
@@ -216,10 +216,12 @@ export interface LiveRunPage { readonly items: readonly RunSummaryRead[]; readon
 /** Launched runs that are neither finished nor archived, by id: what the inbox derives its items from. */
 export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise<LiveRunPage> {
   return consistent(db, async (trx) => {
-    let page = trx.selectFrom("authority.run").select("id").where("root_unit_id", "is not", null).where("archived_at", "is", null)
-      .where((eb) => eb(eb.ref("status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES));
-    if (query.after !== null) page = page.where("id", ">", query.after);
-    const rows = await page.orderBy("id").limit(query.limit + 1).execute();
+    let page = trx.selectFrom("authority.run as run").innerJoin("authority.unit as root", (join) =>
+      join.onRef("root.run_id", "=", "run.id").onRef("root.id", "=", "run.root_unit_id"))
+      .select("run.id").where("run.archived_at", "is", null)
+      .where((eb) => eb(eb.ref("root.status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES));
+    if (query.after !== null) page = page.where("run.id", ">", query.after);
+    const rows = await page.orderBy("run.id").limit(query.limit + 1).execute();
     const selected = rows.slice(0, query.limit);
     const items = await runSummaryReads(trx, selected.map((row) => row.id));
     return { items, next: rows.length > query.limit ? selected.at(-1)?.id ?? null : null };
@@ -228,17 +230,21 @@ export async function listLiveRuns(db: Kysely<DB>, query: LiveRunQuery): Promise
 
 export interface RunStanding { readonly status: UnitStatus; readonly is_launched: boolean }
 export async function readRunStanding(db: Reader, run_id: string): Promise<RunStanding | null> {
-  const run = await db.selectFrom("authority.run").select(["status", "root_unit_id"]).where("id", "=", run_id).executeTakeFirst();
-  return run ? { status: run.status, is_launched: run.root_unit_id !== null } : null;
+  const run = await db.selectFrom("authority.run as run").leftJoin("authority.unit as root", (join) =>
+    join.onRef("root.run_id", "=", "run.id").onRef("root.id", "=", "run.root_unit_id"))
+    .select(["run.root_unit_id", "root.status as root_status"]).where("run.id", "=", run_id).executeTakeFirst();
+  return run ? { status: run.root_status ?? { kind: "not_started" }, is_launched: run.root_unit_id !== null } : null;
 }
 
 /** Runs the executor must carry: launched and not terminal, or still owed an unsettled intent. One run when named. */
 export async function listRunsNeedingWork(db: Reader, filter: { readonly run_id?: string } = {}): Promise<readonly RunId[]> {
-  let runs = db.selectFrom("authority.run as run").select("run.id").where("run.root_unit_id", "is not", null);
+  let runs = db.selectFrom("authority.run as run").innerJoin("authority.unit as root", (join) =>
+    join.onRef("root.run_id", "=", "run.id").onRef("root.id", "=", "run.root_unit_id"))
+    .select("run.id");
   if (filter.run_id !== undefined) runs = runs.where("run.id", "=", filter.run_id);
   const rows = await runs
     .where((eb) => eb.or([
-      eb(eb.ref("run.status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES),
+      eb(eb.ref("root.status", "->>").key("kind"), "not in", TERMINAL_UNIT_STATUSES),
       eb.exists(eb.selectFrom("authority.effect_intent as intent").select("intent.id").whereRef("intent.run_id", "=", "run.id")
         .where("intent.status", "in", OWED_STATUSES)),
     ])).orderBy("run.id").execute();
@@ -285,7 +291,7 @@ export async function readSessionHistory(db: Kysely<DB>, query: SessionHistoryQu
         .orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
       query.artifacts.length === 0 ? [] : trx.selectFrom("authority.artifact_revision").selectAll().distinctOn("artifact")
         .where("run_id", "=", query.run_id).where("unit_id", "=", query.unit_id).where("artifact", "=", anyOf(query.artifacts))
-        .where("created_at", "<=", opened_at).orderBy("artifact").orderBy("created_at", "desc").orderBy("id", "desc").execute(),
+        .where("created_at", "<=", opened_at).orderBy("artifact").orderBy("seq", "desc").execute(),
     ]);
     return { earlier_attempts: earlier_attempts.map(attemptRecord), latest: latest.map(revisionRecord) };
   });
@@ -295,7 +301,7 @@ export async function readSessionHistory(db: Kysely<DB>, query: SessionHistoryQu
 export async function readLatestRevisionId(db: Reader, input: UnitLocation & { readonly artifact: string }): Promise<string | null> {
   const latest = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", input.run_id)
     .where("unit_id", "=", input.unit_id).where("artifact", "=", input.artifact)
-    .orderBy("created_at", "desc").orderBy("id", "desc").executeTakeFirst();
+    .orderBy("seq", "desc").executeTakeFirst();
   return latest?.id ?? null;
 }
 

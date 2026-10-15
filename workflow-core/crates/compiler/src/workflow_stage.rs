@@ -151,7 +151,7 @@ pub(super) fn compile_stage(
                     format!("decision target {target} absent"),
                 ),
                 Some(owner)
-                    if decision.effect == DecisionEffect::RequestChanges
+                    if decision.effect == DeclaredDecisionEffect::RequestChanges
                         && !matches!(
                             stage.workers.get(owner),
                             Some(Worker::Agent { reviews: None, .. })
