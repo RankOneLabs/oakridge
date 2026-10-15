@@ -381,7 +381,7 @@ stages:
       merge_confirmation:
         of: pr
         by: operator
-        when: pr_published and not final_state and not approved(pr_state)
+        when: pr_published and not final_state and not closed_pr and not approved(pr_state)
         prompt: development/merge-confirmation.md
         inputs: { pr: latest(pr), pr_state: latest(pr_state) }
         decisions:
