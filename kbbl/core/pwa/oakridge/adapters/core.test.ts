@@ -33,6 +33,15 @@ describe("v2 development adapters", () => {
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
     expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_revision");
   });
+  it("keeps an input-revision review target so the frozen decision button can submit", () => {
+    const accept = cohort.decisions.find((decision) => decision.key === "accept");
+    if (!accept || accept.submit.kind !== "review") throw new Error("captured fixture lacks an accept review");
+    const target = `${cohort.unit_id}:input:1`;
+    const inputReview: OperatorUnitView = { ...cohort, artifacts: [], decisions: [{ ...accept,
+      submit: { ...accept.submit, review: "admission", target_revision_id: target } }] };
+    const gates = reviewToGates(inputReview);
+    expect(gates.ok && gates.value[0]?.artifact_revision_id).toBe(target);
+  });
   it("keeps gate and artifact ids resolvable after a cold load", () => {
     const id = compositeId({ kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" });
     expect(parseCompositeId(id, "artifact")).toEqual({ ok: true, value: { kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" } });

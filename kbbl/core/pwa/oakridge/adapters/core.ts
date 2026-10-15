@@ -113,7 +113,9 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id, name: review });
     return { id, gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
       gate_step: review, run_id: unit.run_id, stage_name: unit.stage ?? unit.label, unit_id: unit.collection_key ?? unit.unit_key,
-      artifact_revision_id: artifact && target.kind === "review" ? artifactRevisionId(artifact, target.target_revision_id) : null,
+      artifact_revision_id: target.kind === "review"
+        ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
+        : null,
       worktree: null, resume_actions: [...new Set(decisions.map(decisionAction))],
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));
