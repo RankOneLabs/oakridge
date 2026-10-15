@@ -443,6 +443,9 @@ pub struct SchemaKey(pub String);
 
 pub type TypeExpression = Type;
 
+/// How deeply an authored type may nest.
+const MAX_TYPE_NESTING: usize = 64;
+
 impl Type {
     /// Compatibility constructor for programmatic operation contracts.
     #[allow(non_snake_case)]
@@ -456,6 +459,15 @@ impl Type {
     }
 
     pub fn parse(text: &str) -> Result<Self, String> {
+        Self::parse_nested(text, 0)
+    }
+
+    /// `parse` recurses once per nested type, so `depth` bounds its stack.
+    fn parse_nested(text: &str, depth: usize) -> Result<Self, String> {
+        if depth >= MAX_TYPE_NESTING {
+            return Err(format!("type nests deeper than {MAX_TYPE_NESTING} levels"));
+        }
+        let parse = |inner: &str| Self::parse_nested(inner, depth + 1);
         let text = text.trim();
         if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             let mut fields = BTreeMap::new();
@@ -468,7 +480,7 @@ impl Type {
                     if key.is_empty() || value.trim().is_empty() {
                         return Err(format!("malformed record field {field}"));
                     }
-                    if fields.insert(key.to_owned(), Self::parse(value)?).is_some() {
+                    if fields.insert(key.to_owned(), parse(value)?).is_some() {
                         return Err(format!("duplicate record field {key}"));
                     }
                 }
@@ -482,12 +494,12 @@ impl Type {
         };
         if let Some(inner) = nested("list") {
             return Ok(Self::List {
-                item: Box::new(Self::parse(inner)?),
+                item: Box::new(parse(inner)?),
             });
         }
         if let Some(inner) = nested("optional") {
             return Ok(Self::Optional {
-                value: Box::new(Self::parse(inner)?),
+                value: Box::new(parse(inner)?),
             });
         }
         if let Some(inner) = nested("enum") {
@@ -658,6 +670,24 @@ mod type_tests {
             serde_json::to_value(ty).unwrap(),
             serde_json::json!({"kind":"list","item":{"kind":"optional","value":{"kind":"text"}}})
         );
+    }
+
+    #[test]
+    fn deep_nesting_is_a_parse_error_not_a_stack_overflow() {
+        let text = format!("{}text{}", "list(".repeat(5_000), ")".repeat(5_000));
+        assert!(Type::parse(&text)
+            .unwrap_err()
+            .contains("nests deeper than"));
+        let text = format!("{}text{}", "{a: ".repeat(5_000), "}".repeat(5_000));
+        assert!(Type::parse(&text)
+            .unwrap_err()
+            .contains("nests deeper than"));
+    }
+
+    #[test]
+    fn nesting_within_the_bound_parses() {
+        let text = format!("{}text{}", "list(".repeat(60), ")".repeat(60));
+        assert!(Type::parse(&text).is_ok());
     }
 }
 

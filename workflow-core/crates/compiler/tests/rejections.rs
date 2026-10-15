@@ -203,6 +203,31 @@ fn a_schema_cannot_shadow_a_primitive_type() {
     }
 }
 
+#[test]
+fn a_schema_that_expands_exponentially_is_rejected() {
+    // Each alias names the next twice: 2^40 types once expanded.
+    let error = fan_out_compile_error(|value| {
+        for level in 0..40 {
+            let next = format!("k{}", level + 1);
+            value["schemas"][format!("k{level}")] = serde_json::json!({ "x": next, "y": next });
+        }
+        value["schemas"]["k40"] = "text".into();
+    });
+    assert!(error.detail.contains("expands to more than"), "{error:?}");
+    assert_eq!(&*error.path, "schemas.k0");
+}
+
+#[test]
+fn a_long_alias_chain_is_rejected() {
+    let error = fan_out_compile_error(|value| {
+        for level in 0..5_000 {
+            value["schemas"][format!("k{level}")] = format!("list(k{})", level + 1).into();
+        }
+        value["schemas"]["k5000"] = "text".into();
+    });
+    assert!(error.detail.contains("nests deeper than"), "{error:?}");
+}
+
 /// A `work` input that reads `prepare`'s outcome inside a list function.
 const NESTED_OUTCOME_READ: &str = "filter(input.items, item.key != prepare.outcome.workspace.head)";
 

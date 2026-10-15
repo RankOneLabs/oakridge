@@ -126,11 +126,15 @@ fn tokenize(source: &str, path: &str) -> Result<Vec<Token>, CompileError> {
     }
     Ok(tokens)
 }
+/// How deeply one expression may nest. The parser recurses once per level, so
+/// this bounds its stack; let expansion bounds the expanded tree on its own.
+const MAX_EXPRESSION_NESTING: usize = 64;
 struct Parser<'a> {
     tokens: Vec<Token>,
     cursor: usize,
     source: &'a str,
     path: &'a str,
+    depth: usize,
 }
 impl Parser<'_> {
     fn peek(&self) -> Option<&TokenKind> {
@@ -177,6 +181,17 @@ impl Parser<'_> {
         }
     }
     fn expression(&mut self, min_binding: u8) -> Result<StageExpr, CompileError> {
+        if self.depth >= MAX_EXPRESSION_NESTING {
+            return Err(self.error(format!(
+                "expression nests deeper than {MAX_EXPRESSION_NESTING} levels"
+            )));
+        }
+        self.depth += 1;
+        let expression = self.nested_expression(min_binding);
+        self.depth -= 1;
+        expression
+    }
+    fn nested_expression(&mut self, min_binding: u8) -> Result<StageExpr, CompileError> {
         let start = self
             .tokens
             .get(self.cursor)
@@ -476,6 +491,7 @@ pub(crate) fn parse_expression(text: &str, path: &str) -> Result<StageExpr, Comp
         cursor: 0,
         source: text,
         path,
+        depth: 0,
     };
     let expression = parser.expression(0)?;
     if parser.peek().is_some() {
@@ -490,6 +506,7 @@ pub(crate) fn parse_repository<'a>(text: &'a str, path: &str) -> Result<&'a str,
         cursor: 0,
         source: text,
         path,
+        depth: 0,
     };
     if parser.name()? != "repository" {
         return Err(parser.error("workspace must be repository(<expr>)"));

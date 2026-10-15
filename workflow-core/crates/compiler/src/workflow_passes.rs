@@ -118,6 +118,94 @@ pub(super) fn parse(source: &Workflow) -> Result<ParsedWorkflow, Vec<CompileErro
         Err(errors)
     }
 }
+/// The most type nodes one schema may expand to, and how deeply. Aliases may
+/// share a referent, so an expansion can grow exponentially in the number of
+/// aliases, and every later pass walks expanded schemas.
+const MAX_SCHEMA_NODES: usize = 4_096;
+const MAX_SCHEMA_DEPTH: usize = 128;
+#[derive(Clone, Copy)]
+struct Expansion {
+    nodes: usize,
+    depth: usize,
+}
+/// Measures an expansion without building it, each alias once. A recursive
+/// alias measures as empty here; alias validation reports it.
+fn measure(
+    ty: &Type,
+    aliases: &BTreeMap<String, Type>,
+    measured: &mut BTreeMap<String, Option<Expansion>>,
+    depth: usize,
+) -> Result<Expansion, String> {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "schema nests deeper than {MAX_SCHEMA_DEPTH} levels"
+        ));
+    }
+    let nested = |inner: Expansion| Expansion {
+        nodes: inner.nodes.saturating_add(1),
+        depth: inner.depth + 1,
+    };
+    let expansion = match ty {
+        Type::Named { schema } => {
+            match measured.get(&schema.0) {
+                Some(Some(expansion)) => return Ok(*expansion),
+                Some(None) => return Ok(Expansion { nodes: 0, depth: 0 }),
+                None => {}
+            }
+            let Some(value) = aliases.get(&schema.0) else {
+                return Ok(Expansion { nodes: 1, depth: 1 });
+            };
+            measured.insert(schema.0.clone(), None);
+            let expansion = measure(value, aliases, measured, depth + 1)?;
+            measured.insert(schema.0.clone(), Some(expansion));
+            expansion
+        }
+        Type::List { item } => nested(measure(item, aliases, measured, depth + 1)?),
+        Type::Optional { value } => nested(measure(value, aliases, measured, depth + 1)?),
+        Type::Record { fields } => {
+            let mut total = Expansion { nodes: 1, depth: 1 };
+            for value in fields.values() {
+                let field = measure(value, aliases, measured, depth + 1)?;
+                total.nodes = total.nodes.saturating_add(field.nodes);
+                total.depth = total.depth.max(field.depth + 1);
+            }
+            total
+        }
+        _ => Expansion { nodes: 1, depth: 1 },
+    };
+    if expansion.nodes > MAX_SCHEMA_NODES {
+        return Err(format!(
+            "schema expands to more than {MAX_SCHEMA_NODES} types"
+        ));
+    }
+    if expansion.depth > MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "schema nests deeper than {MAX_SCHEMA_DEPTH} levels"
+        ));
+    }
+    Ok(expansion)
+}
+fn check_schema_sizes(aliases: &BTreeMap<String, Type>) -> Result<(), Vec<CompileError>> {
+    let mut measured = BTreeMap::new();
+    let errors: Vec<_> = aliases
+        .iter()
+        .filter_map(|(key, ty)| {
+            measure(ty, aliases, &mut measured, 0).err().map(|detail| {
+                CompileError::new(
+                    CheckKind::Schema,
+                    format!("schemas.{key}"),
+                    source_span(&ty.to_string()),
+                    detail,
+                )
+            })
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
 fn resolve_one(
     ty: &Type,
     aliases: &BTreeMap<String, Type>,
@@ -194,6 +282,7 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
     let mut source = parsed.source;
     let original = source.clone();
     let aliases = source.schemas.clone();
+    check_schema_sizes(&aliases)?;
     let outcomes = outcomes::infer_outcomes(&source, &aliases)?;
     let mut errors = Vec::new();
     for (key, ty) in &mut source.schemas {

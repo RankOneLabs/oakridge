@@ -25,6 +25,18 @@ export function applyMigrations(db: Database, migrationsDir: string): { applied:
   const seen = new Set(
     db.query<{ name: string }, []>("SELECT name FROM _migrations").all().map((r) => r.name),
   );
+  // A recorded migration with no file means this database was built by a
+  // different migration history (the ledger was rebaselined since). Applying
+  // the current files over it would fail midway or skip a changed schema.
+  const known = new Set(files);
+  const foreign = [...seen].filter((name) => !known.has(name)).sort();
+  if (foreign.length > 0) {
+    const location = db.filename && db.filename !== ":memory:" ? db.filename : "this database";
+    throw new Error(
+      `${location} records migrations kbbl no longer has (${foreign.join(", ")}): it predates the current schema baseline. ` +
+        "Move it aside and restart kbbl to create a fresh one.",
+    );
+  }
 
   const applied: string[] = [];
 

@@ -111,6 +111,17 @@ describe("applyMigrations", () => {
 
     expect(applied).toEqual(["002_second.sql"]);
   });
+
+  test("refuses a database built by a different migration history", () => {
+    writeFileSync(join(migrationsDir, "001_first.sql"), "CREATE TABLE foo (id INTEGER PRIMARY KEY);");
+    db.exec("CREATE TABLE _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
+    db.exec("INSERT INTO _migrations VALUES ('001_projects.sql', '2026-01-01T00:00:00.000Z')");
+
+    expect(() => applyMigrations(db, migrationsDir)).toThrow(/001_projects\.sql.*Move it aside/);
+
+    const table = db.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE name = 'foo'").get();
+    expect(table).toBeNull();
+  });
 });
 
 describe("the baseline schema", () => {
