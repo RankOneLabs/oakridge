@@ -269,6 +269,26 @@ describe("derived fields", () => {
         stalled: [["decision", "retry:writer", null], ["stalled", "writer failed: it broke"]] });
   });
 
+  test("GET inbox retains dependency and pool-capacity waits from the committed step", async () => {
+    const run_id = await launched(fan_out, { repository: { repository_path: "/tmp/repo", expected_head: null },
+      items: [{ key: "a", text: "A", after: [] }, { key: "b", text: "B", after: [] },
+        { key: "c", text: "C", after: [] }, { key: "d", text: "D", after: ["a"] }] });
+    const git = await actionOf(authority, run_id, "git");
+    await submitter(authority)({ run_id, event: { kind: "revision_published", unit: unitOf(run_id, "prepare"), artifact: "workspace",
+      body: { repository_path: "/tmp/repo", push_remote_owner: "owner", head: "abc" }, by: git }, writer: executor(git) });
+    const inbox = await get<InboxPage>(`/api/runs/${segment(run_id)}/inbox`);
+    const waits = inbox.items.filter((item) => item.kind === "waiting").map((item) => [item.unit_id, item.reason]);
+    const stored = await authority.db.selectFrom("authority.unit").select(["id", "status", "blocked_reason"])
+      .where("run_id", "=", run_id).where("id", "in", [`${run_id}/work/c`, `${run_id}/work/d`]).orderBy("id").execute();
+    expect(waits).toEqual([
+      [`${run_id}/work/c`, "waiting for capacity in slots"],
+      [`${run_id}/work/d`, "waiting on Item"],
+    ]);
+    expect(stored.map((unit) => [unit.status.kind, unit.blocked_reason?.kind])).toEqual([
+      ["not_started", "capacity"], ["not_started", "waiting_on"],
+    ]);
+  });
+
   test("the inbox leaves out finished and archived runs and pages by run", async () => {
     const done = await drafted();
     await decide(done.run_id, done.unit, "approve", `${done.unit}:draft:1`, {});

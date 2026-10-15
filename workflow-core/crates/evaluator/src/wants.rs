@@ -151,7 +151,7 @@ pub fn stage_actions(
                         (
                             Mode::Revise,
                             Cause::ChangesRequested {
-                                decision: decision.id.clone(),
+                                decision: decision.id().clone(),
                             },
                         )
                     })
@@ -183,7 +183,10 @@ pub fn stage_actions(
         };
         if let Some((mode, cause)) = candidate {
             let cause = match readiness {
-                Readiness::RetryAuthorized { event } => Cause::Retry { event },
+                Readiness::RetryAuthorized { event } => Cause::Retry {
+                    event,
+                    mode: mode.clone(),
+                },
                 Readiness::Ready => cause,
                 Readiness::Blocked => unreachable!("blocked workers were skipped"),
             };
@@ -252,7 +255,8 @@ pub(super) fn is_decided_by(
     target: &RevisionId,
 ) -> bool {
     state.decisions.iter().any(|decision| {
-        decision.unit == *unit && decision.review == *review && decision.target == *target
+        matches!(decision, DecisionState::Review { unit: decided_unit, review: decided_review, target: decided_target, .. }
+            if decided_unit == unit && decided_review == review && decided_target == target)
     })
 }
 pub(super) fn open_decisions(
@@ -304,7 +308,7 @@ pub(super) fn resolve_run_worker(
     };
     let (previous, feedback) = match action.mode {
         Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
-            Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload.clone())),
+            Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload())),
             None => (None, None),
         },
         _ => (None, None),
@@ -338,7 +342,15 @@ pub(super) struct RunWorkerAction<'a> {
 /// `Debug` output, which a refactor could change.
 #[doc(hidden)]
 pub fn action_id(unit: &UnitId, worker: &WorkerKey, mode: &Mode, cause: &Cause) -> ActionKey {
-    ActionKey(json_digest(&serde_json::json!([unit, worker, mode, cause])))
+    let mut cause_wire = serde_json::to_value(cause).expect("cause serializes");
+    // The retry mode is already the third hash component. Preserve action
+    // identity while making the cause self-contained in stored state.
+    if let Some(fields) = cause_wire.as_object_mut() {
+        fields.remove("mode");
+    }
+    ActionKey(json_digest(&serde_json::json!([
+        unit, worker, mode, cause_wire
+    ])))
 }
 pub(super) struct StageWants {
     pub(super) workers: Vec<workflow_model::protocol::WantedWorker>,
@@ -385,7 +397,6 @@ pub(super) fn stage_wants(
                 cause: cause.clone(),
                 status: AttemptStatus::Pending,
                 kbbl_session_id: None,
-                ended_at: None,
             }));
         }
         let attempt_seq = existing.map_or(1, |attempt| attempt.seq);

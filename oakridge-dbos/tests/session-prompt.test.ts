@@ -5,7 +5,7 @@ import { renderSessionPreamble, renderSessionTask, renderTemplate, selectSession
 import { sampleWorkflow } from "./authority-fixture";
 
 const unit = "run-1/document";
-const r1: RevisionState = { id: `${unit}:draft:1`, unit, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
+const r1: RevisionState = { id: `${unit}:draft:1`, unit, seq: 1, artifact: "draft", body: { title: "T", body: "long" }, by: "a1" };
 const revise: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: `${unit}:d1` } };
 function writerInstruction(input: { readonly action: RunWorkerAction; readonly fresh?: boolean }): EffectInstruction {
   const workflow = sampleWorkflow("review-loop");

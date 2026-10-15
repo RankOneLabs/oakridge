@@ -5,6 +5,7 @@ use workflow_model::protocol::{
     Request, Response, DECODER_MAX_JSON_DEPTH, DECODER_MAX_SCHEMA_HOPS, MAX_DEPTH_CEILING,
     PROTOCOL_VERSION,
 };
+use workflow_model::{ROOT_DECLARATION, VALIDATION_REVIEW};
 
 /// The decoder source with its depth guards filled in from the protocol constants.
 fn schema_decoder() -> String {
@@ -174,7 +175,7 @@ pub fn generate() -> String {
         }
     }
     let mut output = format!("// Generated from workflow-model::protocol. Run scripts/generate-core-contracts.sh.\nexport const CORE_PROTOCOL_SCHEMA = {} as const;\n", schemas);
-    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\n"));
+    output.push_str(&format!("export const CORE_PROTOCOL_VERSION = {PROTOCOL_VERSION};\nexport const CORE_MAX_DEPTH = {MAX_DEPTH_CEILING};\nexport const ROOT_DECLARATION = {ROOT_DECLARATION:?};\nexport const VALIDATION_REVIEW = {VALIDATION_REVIEW:?};\n"));
     for (name, schema) in definitions {
         output.push_str(&format!(
             "export type {name} = {};\n",

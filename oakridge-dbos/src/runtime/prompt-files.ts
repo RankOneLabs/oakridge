@@ -8,7 +8,8 @@ import type { PromptContent } from "../storage/registry-store";
 /** Every prompt path a workflow names: each agent worker's modes and each review's prompt. */
 export function selectPromptPaths(workflow: Workflow): readonly string[] {
   const paths = Object.values(workflow.stages).flatMap((stage) => [
-    ...Object.values(stage.workers).flatMap((worker) => worker.kind === "agent" ? Object.values(worker.prompts) : []),
+    ...Object.values(stage.workers).flatMap((worker) => worker.kind === "agent"
+      ? Object.values(worker.prompts).filter((path): path is string => path != null) : []),
     ...Object.values(stage.reviews ?? {}).flatMap((review) => review.prompt ? [review.prompt] : []),
   ]);
   return [...new Set(paths)].sort();

@@ -81,7 +81,7 @@ pub struct CheckedArtifactValidation {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedDecision {
-    pub effect: DecisionEffect,
+    pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub payload: Option<CheckedType>,
 }
@@ -90,7 +90,7 @@ pub struct CheckedDecision {
 #[serde(deny_unknown_fields)]
 pub struct CheckedEngineDecision {
     pub key: SymbolKey,
-    pub effect: DecisionEffect,
+    pub effect: DeclaredDecisionEffect,
     pub on: Option<SymbolKey>,
     pub feedback: String,
 }

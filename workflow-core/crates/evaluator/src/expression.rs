@@ -48,13 +48,16 @@ pub(super) fn eval_expression_inner(
         state: &StepSnapshot,
         unit: &UnitState,
         artifact: &SymbolKey,
-        effect: DecisionEffect,
+        is_request_changes: bool,
     ) -> Value {
         Value::Bool(latest(state, &unit.id, artifact).is_some_and(|revision| {
             state.decisions.iter().any(|decision| {
-                decision.unit == unit.id
-                    && decision.target == revision.id
-                    && decision.effect == effect
+                decision.unit() == &unit.id
+                    && decision.target() == &revision.id
+                    && decision.effect().is_some_and(|effect| {
+                        matches!(effect, DecisionEffect::RequestChanges { .. })
+                            == is_request_changes
+                    })
             })
         }))
     }
@@ -231,7 +234,13 @@ pub(super) fn eval_expression_inner(
                 }
             };
             match root {
-                ReferenceRoot::UnitInput => read(&unit.input),
+                ReferenceRoot::UnitInput => match &unit.input {
+                    Some(input) => read(input),
+                    // A launched root always has resolved input. JSON null becomes
+                    // None when Option<Value> is deserialized from a snapshot.
+                    None if unit.id == state.run.root => read(&Value::Null),
+                    None => None,
+                },
                 ReferenceRoot::EachMember => read(resolved!(bindings.each)),
                 ReferenceRoot::Item => read(resolved!(bindings.item)),
                 ReferenceRoot::ValidationBody { artifact } => {
@@ -244,15 +253,10 @@ pub(super) fn eval_expression_inner(
                 ReferenceRoot::Published { artifact } => {
                     Some(Value::Bool(latest(state, &unit.id, artifact).is_some()))
                 }
-                ReferenceRoot::Approved { artifact } => {
-                    Some(decided(state, unit, artifact, DecisionEffect::Approve))
+                ReferenceRoot::Approved { artifact } => Some(decided(state, unit, artifact, false)),
+                ReferenceRoot::ChangesRequested { artifact } => {
+                    Some(decided(state, unit, artifact, true))
                 }
-                ReferenceRoot::ChangesRequested { artifact } => Some(decided(
-                    state,
-                    unit,
-                    artifact,
-                    DecisionEffect::RequestChanges,
-                )),
                 ReferenceRoot::MemberOutcomes { unit: collection } => {
                     let mut values = Vec::new();
                     let mut children: Vec<_> = state

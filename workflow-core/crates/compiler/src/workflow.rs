@@ -227,7 +227,7 @@ fn check_engine_review(key: &str, review: &Review, has_when: bool) -> Result<(),
         .feedback
         .as_deref()
         .is_some_and(|text| !text.trim().is_empty());
-    if decision.effect != DecisionEffect::RequestChanges
+    if decision.effect != DeclaredDecisionEffect::RequestChanges
         || !has_feedback
         || decision.payload.is_some()
         || !decision.fields.is_empty()
@@ -382,7 +382,7 @@ fn compile_stage(
                             })
                             .any(|(target, decision)| {
                                 target == artifact
-                                    && decision.effect == DecisionEffect::RequestChanges
+                                    && decision.effect == DeclaredDecisionEffect::RequestChanges
                             })
                 });
                 if needs_revise && !modes.contains_key("revise") {
@@ -398,7 +398,7 @@ fn compile_stage(
                         ),
                     ));
                 }
-                for (mode, path) in modes {
+                for (mode, path) in modes.iter() {
                     let engine_inputs = if mode == HANDOFF_PROMPT {
                         HANDOFF_ENGINE_INPUTS
                     } else {
@@ -568,7 +568,7 @@ fn compile_stage(
             };
             // Only a request for changes needs a worker that can revise; an
             // approval may be of any artifact (a reviewer's, a code worker's).
-            if decision.effect == DecisionEffect::RequestChanges
+            if decision.effect == DeclaredDecisionEffect::RequestChanges
                 && !matches!(stage.workers[owner], Worker::Agent { reviews: None, .. })
             {
                 return Err(reject(

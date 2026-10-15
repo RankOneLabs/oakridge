@@ -4,9 +4,9 @@ import { scopeIngressId, selectCommitPlan, selectDeltaViolation } from "../src/s
 import type { IngressId, RunId } from "../src/domain/primitives";
 
 type Unit = StepSnapshot["units"][number];
-const unit: Unit = { id: "run/document", parent: "run", declaration: "document", stage: "document", pool: null, input: null,
-  status: { kind: "blocked", reason: { kind: "waiting_on", units: ["run/first"] } }, after: ["run/first"] };
-const snapshot = (units: StepSnapshot["units"]): StepSnapshot => ({ run: { id: "run", root: "run", input: null, status: { kind: "active" } },
+const unit: Unit = { id: "run/document", parent: "run", declaration: "document", kind: { kind: "stage", stage: "document" }, collection_key: null, pool: null, input: null,
+  status: { kind: "not_started" }, after: ["run/first"] };
+const snapshot = (units: StepSnapshot["units"]): StepSnapshot => ({ run: { id: "run", root: "run" },
   units, attempts: [], revisions: [], decisions: [], retry_events: [] });
 
 test("a unit resolving its input as it starts is a delta commit writes", () => {
@@ -39,7 +39,7 @@ test("each writer's ingress ids live in their own namespace", () => {
 
 test("the pure plan rejects a publication secret on an event that cannot carry one", () => {
   const before = snapshot([unit]);
-  const plan = selectCommitPlan(before, { snapshot: before, wanted: [], reviews: [] }, {
+  const plan = selectCommitPlan(before, { snapshot: before, wanted: [], reviews: [], blocked: [] }, {
     request: { run_id: "run" as RunId, ingress_id: null, event: { kind: "cancel_requested" }, writer: { kind: "engine" },
       publication_secret_hash: "hash" },
     digest: "digest", unit_id: null, source: { workflow: "test", input: "text", run: { units: {}, outcome: {} }, stages: {} },

@@ -1,6 +1,6 @@
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
 import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
-import { isTerminalStatus } from "../domain/unit-status";
+import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RunRead, RunSummaryRead } from "../storage/read-store";
 import type { EventRecord } from "../storage/schema-records";
 import { selectRunAttention, type RunStall, type UnitAttention } from "./attention";
@@ -34,7 +34,7 @@ export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
-    created_at: read.run.created_at, archived_at: read.run.archived_at, status: read.run.status,
+    created_at: read.run.created_at, archived_at: read.run.archived_at, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),
       stage: unit.stage, status: unit.status, is_terminal: isTerminalStatus(unit.status),
       asks: selectAvailableDecisions(read, unit, attentionOf(attention, unit.id)).filter(isAsk).map((decision) => decision.key) })) };
@@ -79,7 +79,7 @@ export function selectRunInspect(read: RunRead, events: readonly EventRecord[]):
   const views = read.units.map((unit) => selectUnitView(read, unit, attentionOf(attention, unit.id)));
   const decisionsOf = (unit_id: string, submits: (submit: DecisionSubmit) => boolean): readonly DecisionDefinition[] =>
     views.find((view) => view.unit_id === unit_id)?.decisions.filter((decision) => submits(decision.submit)) ?? [];
-  return { run_id: read.run.id, status: read.run.status,
+  return { run_id: read.run.id, status: selectRootStatus(read.run, read.units),
     units: views.map((view) => ({ id: view.unit_id, unit_key: view.unit_key, label: view.label, stage: view.stage, status: view.status })),
     attention: attention.flatMap((unit): InspectAttention[] => [
       ...unit.run_stalls.map((stall): InspectAttention => ({ kind: "stalled_run", unit_id: stall.unit_id, stall: stall.kind, reason: stall.reason,

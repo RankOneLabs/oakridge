@@ -21,7 +21,7 @@ async function launched(): Promise<RunId> {
 }
 const counts = async (run_id: string) => {
   const [run, events, units, receipts] = await Promise.all([
-    authority.db.selectFrom("authority.run").select(["status", "root_unit_id"]).where("id", "=", run_id).executeTakeFirst(),
+    authority.db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirst(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.ingress_receipt").select("id").where("run_id", "=", run_id).execute(),
@@ -69,7 +69,7 @@ test("a fault mid-write rolls back the event, writer, delta and receipt together
   const result = await commitEvent({ db: authority.db, core: faulty, wake: () => undefined }, { run_id, ingress_id,
     event: { kind: "cancel_requested" }, writer: { kind: "operator", subject: "credential:test" } });
   const [after, events, receipt] = await Promise.all([
-    authority.db.selectFrom("authority.run").select("status").where("id", "=", run_id).executeTakeFirstOrThrow(),
+    authority.db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow(),
     authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute(),
     authority.db.selectFrom("authority.ingress_receipt").select("id").where("ingress_id", "=", `operator:${ingress_id}`).execute(),
   ]);

@@ -41,7 +41,7 @@ test("a step snapshot carries retry events for the units it holds", async () => 
   await submit({ run_id, event: { kind: "worker_ended", action, result: { kind: "failed", code: "boom", detail: "failed" } }, writer: executor(action) });
   await submit({ run_id, event: { kind: "retry_requested", unit: unitOf(run_id, "document"), worker: "writer" } });
   const snapshot = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "document"));
-  expect(snapshot?.retry_events.map(([unit, worker]) => [unit, worker])).toEqual([[unitOf(run_id, "document"), "writer"]]);
+  expect(snapshot?.retry_events.map(({ unit, worker }) => [unit, worker])).toEqual([[unitOf(run_id, "document"), "writer"]]);
 });
 
 test("a run reads with its units and pinned definition; listings page newest first and split archived runs", async () => {

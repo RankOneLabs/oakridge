@@ -15,7 +15,7 @@ export type JsonText<Value> = string & { readonly __json: Value };
 export type JsonColumn<Value> = ColumnType<Value, JsonText<Value>, JsonText<Value>>;
 export type NullableJsonColumn<Value> = ColumnType<Value | null, JsonText<Value> | null, JsonText<Value> | null>;
 
-export type { AttemptStatus, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
+export type { AttemptStatus, BlockedReason, Cause, CompiledWorkflow, Mode, UnitStatus, Writer } from "../core-client/core-types";
 export type { EffectInstruction } from "../domain/effect-instruction";
 export type { RunConfig } from "../domain/run-config";
 export type { OperatorEventPayload } from "../projections/operator-event";

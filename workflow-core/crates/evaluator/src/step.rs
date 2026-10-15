@@ -16,11 +16,10 @@ pub fn step_with_limits(
     limits: &ResourceLimits,
 ) -> Result<StepResult, StepError> {
     let mut context = EvaluationContext::new(limits);
-    if let Some(input) = &snapshot.run.input {
-        context.check_value(input)?;
-    }
     for unit in &snapshot.units {
-        context.check_value(&unit.input)?;
+        if let Some(input) = &unit.input {
+            context.check_value(input)?;
+        }
         if let UnitStatus::Done { outcome } = &unit.status {
             context.check_value(outcome)?;
         }
@@ -29,7 +28,7 @@ pub fn step_with_limits(
         context.check_value(&revision.body)?;
     }
     for decision in &snapshot.decisions {
-        context.check_value(&decision.payload)?;
+        context.check_value(&decision.payload())?;
     }
     let mut state = snapshot.clone();
     let deltas = reduce(
@@ -64,19 +63,15 @@ pub(super) fn advance_reduced(
     mut state: StepSnapshot,
     context: &mut EvaluationContext<'_>,
 ) -> Result<StepResult, StepError> {
-    if !matches!(state.run.status, UnitStatus::Cancelled) {
+    if !state
+        .units
+        .iter()
+        .any(|unit| unit.id == state.run.root && matches!(unit.status, UnitStatus::Cancelled))
+    {
         let mut active_scan = ActiveScan::All;
         while let Some(deltas) = next_move(program, &state, context, active_scan)? {
             active_scan = active_scan_after_move(&state, &deltas);
             apply_all(&mut state, context, deltas);
-        }
-        if let Some(status) = state
-            .units
-            .iter()
-            .find(|u| u.id == state.run.root)
-            .map(|root| root.status.clone())
-        {
-            apply(&mut state, context, Delta::RunStatus(status));
         }
     }
     let mut wanted = Vec::new();
@@ -85,7 +80,7 @@ pub(super) fn advance_reduced(
     let active: Vec<_> = state
         .units
         .iter()
-        .filter(|u| u.stage.is_some() && matches!(u.status, UnitStatus::Active))
+        .filter(|u| u.kind.stage().is_some() && matches!(u.status, UnitStatus::Active))
         .cloned()
         .collect();
     for unit in active {
@@ -95,9 +90,11 @@ pub(super) fn advance_reduced(
         pending.extend(wants.pending);
     }
     apply_all(&mut state, context, pending);
+    let blocked = blocked_units(program, &state)?;
     Ok(StepResult {
         snapshot: state,
         wanted,
         reviews,
+        blocked,
     })
 }

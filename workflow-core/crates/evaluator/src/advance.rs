@@ -87,16 +87,22 @@ pub(super) fn materialize_group(
             };
             let declared_input = &unit.input;
             let input = if unit.collection.is_some() {
-                eval_fields(declared_input, &parent, &state, Some(each), context)?
-                    .ok_or_else(|| rejected("collection input unresolved"))?
+                Some(
+                    eval_fields(declared_input, &parent, &state, Some(each), context)?
+                        .ok_or_else(|| rejected("collection input unresolved"))?,
+                )
             } else {
-                Value::Null
+                None
             };
             let delta = Delta::PushUnit(UnitState {
                 id: UnitId(format!("{group_id}/{member}")),
                 parent: Some(group_id.clone()),
                 declaration: SymbolKey::from(key.as_str()),
-                stage: unit.stage.clone(),
+                kind: match &unit.stage {
+                    Some(stage) => UnitKind::Stage(stage.clone()),
+                    None => UnitKind::Group,
+                },
+                collection_key: collection.as_ref().map(|_| member.clone()),
                 status: UnitStatus::NotStarted,
                 input,
                 after: dependencies
@@ -206,12 +212,18 @@ pub(super) fn engine_decision(
         {
             continue;
         }
-        return Ok(Some(DecisionState {
+        let effect = match decision.effect {
+            DeclaredDecisionEffect::Approve => DecisionEffect::Approve,
+            DeclaredDecisionEffect::RequestChanges => DecisionEffect::RequestChanges {
+                feedback: decision.feedback.clone(),
+            },
+        };
+        return Ok(Some(DecisionState::Review {
             id: decision_id(state, &unit.id),
             unit: unit.id.clone(),
             review: key.clone(),
             decision: decision.key.clone(),
-            effect: decision.effect.clone(),
+            effect,
             target: target.id.clone(),
             payload: serde_json::json!({ "feedback": decision.feedback }),
         }));
@@ -225,7 +237,6 @@ pub(super) fn engine_decision(
 pub(super) enum ActiveScan {
     All,
     Unit(usize),
-    Skip,
 }
 
 pub(super) fn active_scan_after_move(state: &StepSnapshot, deltas: &[Delta]) -> ActiveScan {
@@ -235,24 +246,12 @@ pub(super) fn active_scan_after_move(state: &StepSnapshot, deltas: &[Delta]) -> 
             status: UnitStatus::Active,
         } = delta
         {
-            if state.units[*index].stage.is_some() {
+            if state.units[*index].kind.stage().is_some() {
                 return ActiveScan::Unit(*index);
             }
         }
     }
-    if deltas.iter().all(|delta| {
-        matches!(
-            delta,
-            Delta::UnitStatus {
-                status: UnitStatus::Blocked { .. },
-                ..
-            }
-        )
-    }) {
-        ActiveScan::Skip
-    } else {
-        ActiveScan::All
-    }
+    ActiveScan::All
 }
 
 /// Return one observable move. The caller applies it and repeats until there is
@@ -267,7 +266,6 @@ pub(super) fn next_move(
         if !match active_scan {
             ActiveScan::All => true,
             ActiveScan::Unit(only) => index == only,
-            ActiveScan::Skip => false,
         } {
             continue;
         }
@@ -275,7 +273,7 @@ pub(super) fn next_move(
             continue;
         }
         let move_for_unit = (|| -> Result<Option<Vec<Delta>>, StepError> {
-            if unit.stage.is_some() {
+            if unit.kind.stage().is_some() {
                 let definition = checked_stage(program, unit)?;
                 let unobserved = unobserved_watch_artifacts(program, state, unit, context)?;
                 let reads_unobserved = reads_any(&definition.done_when.expression, &unobserved)
@@ -334,12 +332,7 @@ pub(super) fn next_move(
         .units
         .iter()
         .enumerate()
-        .filter(|(_, unit)| {
-            matches!(
-                unit.status,
-                UnitStatus::NotStarted | UnitStatus::Blocked { .. }
-            )
-        })
+        .filter(|(_, unit)| matches!(unit.status, UnitStatus::NotStarted))
         .collect();
     candidates.sort_by_key(|(_, unit)| unit.id.clone());
     for (index, unit) in candidates {
@@ -355,12 +348,7 @@ pub(super) fn next_move(
                 .cloned()
                 .collect();
             if !waiting.is_empty() {
-                let status = UnitStatus::Blocked {
-                    reason: BlockedReason::WaitingOn { units: waiting },
-                };
-                return Ok(
-                    (unit.status != status).then_some(vec![Delta::UnitStatus { index, status }])
-                );
+                return Ok(None);
             }
             if let Some(pool) = &unit.pool {
                 let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
@@ -383,15 +371,11 @@ pub(super) fn next_move(
                     })
                     .count();
                 if held >= capacity {
-                    let status = UnitStatus::Blocked {
-                        reason: BlockedReason::Capacity { pool: pool.clone() },
-                    };
-                    return Ok((unit.status != status)
-                        .then_some(vec![Delta::UnitStatus { index, status }]));
+                    return Ok(None);
                 }
             }
             let mut deltas = Vec::new();
-            if unit.input.is_null() {
+            if unit.input.is_none() {
                 let parent = state
                     .units
                     .iter()
@@ -407,7 +391,7 @@ pub(super) fn next_move(
                 index,
                 status: UnitStatus::Active,
             });
-            if unit.stage.is_none() {
+            if unit.kind.stage().is_none() {
                 let mut state_after = state.clone();
                 apply_all(&mut state_after, context, deltas.clone());
                 deltas.extend(start_group(program, &state_after, &unit.id, context)?);
@@ -420,4 +404,61 @@ pub(super) fn next_move(
         }
     }
     Ok(None)
+}
+
+/// Blocked-ness is a per-step read; it is never a stored unit status.
+pub(super) fn blocked_units(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+) -> Result<Vec<UnitBlock>, StepError> {
+    state
+        .units
+        .iter()
+        .filter(|unit| matches!(unit.status, UnitStatus::NotStarted))
+        .map(|unit| {
+            let waiting: Vec<_> = unit
+                .after
+                .iter()
+                .filter(|dep| {
+                    !state.units.iter().any(|candidate| {
+                        candidate.id == **dep && matches!(candidate.status, UnitStatus::Done { .. })
+                    })
+                })
+                .cloned()
+                .collect();
+            if !waiting.is_empty() {
+                return Ok(Some(UnitBlock {
+                    unit: unit.id.clone(),
+                    reason: BlockedReason::WaitingOn { units: waiting },
+                }));
+            }
+            let Some(pool) = &unit.pool else {
+                return Ok(None);
+            };
+            let parent_id = unit.parent.as_ref().ok_or_else(|| invalid("pooled root"))?;
+            let parent = state
+                .units
+                .iter()
+                .find(|candidate| candidate.id == *parent_id)
+                .ok_or_else(|| invalid("pool owner absent"))?;
+            let capacity = *group_for(program, state, parent)?
+                .pools
+                .get(&pool.0)
+                .ok_or_else(|| invalid("pool absent"))? as usize;
+            let held = state
+                .units
+                .iter()
+                .filter(|candidate| {
+                    candidate.parent.as_ref() == Some(parent_id)
+                        && candidate.pool.as_ref() == Some(pool)
+                        && matches!(candidate.status, UnitStatus::Active)
+                })
+                .count();
+            Ok((held >= capacity).then(|| UnitBlock {
+                unit: unit.id.clone(),
+                reason: BlockedReason::Capacity { pool: pool.clone() },
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|blocks| blocks.into_iter().flatten().collect())
 }
