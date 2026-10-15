@@ -4,8 +4,8 @@ mod expressions;
 mod workflow;
 pub use workflow::{
     compile_workflow, compile_workflow_detailed, compile_workflow_with_limits,
-    compile_workflow_with_limits_detailed, decode_workflow, decode_workflow_value_detailed,
-    CheckKind, CompileError,
+    compile_workflow_with_limits_and_resolved_detailed, compile_workflow_with_limits_detailed,
+    decode_workflow, decode_workflow_value_detailed, CheckKind, CompileError,
 };
 use workflow_model::*;
 

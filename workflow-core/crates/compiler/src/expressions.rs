@@ -113,6 +113,23 @@ pub(crate) use guaranteed_artifacts as proven_artifacts;
 use lower::resolve;
 pub(crate) use parse::parse_expression;
 pub(crate) use parse::parse_repository;
+#[cfg(test)]
+mod parser_regressions {
+    use super::*;
+
+    #[test]
+    fn identifier_arguments_accept_expression_keywords() {
+        let published = parse_expression("published(item)", "test").unwrap();
+        assert!(matches!(published, StageExpr::Published(name) if name == "item"));
+        let lookup = parse_expression("lookup(input.items, input, 1)", "test").unwrap();
+        assert!(matches!(lookup, StageExpr::Lookup { field, .. } if field == "input"));
+        let graph = parse_expression("valid_graph(input.items, each, not)", "test").unwrap();
+        assert!(
+            matches!(graph, StageExpr::ValidGraph { key_field, dependencies_field, .. }
+            if key_field == "each" && dependencies_field == "not")
+        );
+    }
+}
 pub(crate) fn guaranteed_artifacts(expression: &StageExpr) -> BTreeSet<String> {
     match expression {
         StageExpr::Spanned(inner, _) => guaranteed_artifacts(inner),

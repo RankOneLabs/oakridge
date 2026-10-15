@@ -1,6 +1,9 @@
 use super::*;
-use crate::expressions::{infer, parse_expression, parse_repository, proven_artifacts};
+use crate::expressions::{parse_expression, parse_repository};
 use workflow_model::SourceSpan;
+
+#[path = "workflow_outcomes.rs"]
+mod outcomes;
 
 pub use workflow_model::{CheckKind, CompileError};
 pub(super) struct ParsedWorkflow {
@@ -75,7 +78,7 @@ pub(super) fn parse(source: &Workflow) -> Result<ParsedWorkflow, Vec<CompileErro
                     workspace,
                     ..
                 } => {
-                    if let Some(text) = workspace.as_deref().filter(|text| *text != "none") {
+                    if let Some(text) = workspace.as_deref().filter(|text| text.trim() != "none") {
                         if let Err(error) = parse_repository(text, &format!("{path}.workspace")) {
                             let mut diagnostic = error;
                             diagnostic.check = CheckKind::Workspace;
@@ -184,38 +187,7 @@ pub(super) fn resolve(parsed: ParsedWorkflow) -> Result<ResolvedWorkflow, Vec<Co
     let mut source = parsed.source;
     let original = source.clone();
     let aliases = source.schemas.clone();
-    let mut outcomes = BTreeMap::new();
-    for (key, stage) in &source.stages {
-        let empty = BTreeMap::new();
-        let guaranteed = stage
-            .done_when
-            .as_deref()
-            .and_then(|text| parse_expression(text, &format!("stages.{key}.done_when")).ok())
-            .map(|expr| proven_artifacts(&expr))
-            .unwrap_or_default();
-        let scope = Scope {
-            input: &stage.input,
-            artifacts: &stage.artifacts,
-            outcomes: &empty,
-            each: None,
-            item: None,
-            aliases: &aliases,
-            body: None,
-            guaranteed,
-            collections: BTreeSet::new(),
-            diagnostic_path: String::new(),
-            diagnostic_span: SourceSpan::default(),
-        };
-        let fields = stage
-            .outcome
-            .iter()
-            .filter_map(|(field, text)| {
-                let expr = parse_expression(text, &format!("stages.{key}.outcome.{field}")).ok()?;
-                Some((field.clone(), infer(&expr, &scope).ok()?))
-            })
-            .collect();
-        outcomes.insert(key.clone(), Type::Record { fields });
-    }
+    let outcomes = outcomes::infer_outcomes(&source, &aliases)?;
     let mut errors = Vec::new();
     for (key, ty) in &mut source.schemas {
         if matches!(
@@ -325,7 +297,7 @@ pub(super) fn check(
         root,
     })
 }
-pub(super) fn lower(parts: CheckedParts) -> Result<CheckedWorkflow, Vec<CompileError>> {
+pub(super) fn lower(parts: CheckedParts) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
     let mut encoded = Vec::new();
     let mut serializer = serde_json::Serializer::new(&mut encoded);
     serde_path_to_error::serialize(&parts.original, &mut serializer).map_err(|error| {
@@ -347,10 +319,12 @@ pub(super) fn lower(parts: CheckedParts) -> Result<CheckedWorkflow, Vec<CompileE
             error.inner().to_string(),
         )]
     })?;
-    Ok(CheckedWorkflow {
+    let resolved = parts.source.clone();
+    let program = CheckedWorkflow {
         digest: BundleDigest(format!("{:x}", Sha256::digest(encoded))),
         input: parts.source.input,
         stages: parts.stages,
         root: parts.root,
-    })
+    };
+    Ok((program, resolved))
 }

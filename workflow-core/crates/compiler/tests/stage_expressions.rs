@@ -166,6 +166,35 @@ fn not_accepts_parenthesized_operand() {
 }
 
 #[test]
+fn signed_integer_literals_keep_their_range_and_type() {
+    for expression in ["len(input.topic) > -1", "len(input.topic) >= +1"] {
+        let compiled = compile(&review_loop(&[(
+            "/stages/document/artifacts/draft/validate/0/check",
+            json!(expression),
+        )]));
+        assert!(compiled.is_ok(), "{expression}: {compiled:?}");
+    }
+}
+
+#[test]
+fn not_binds_after_a_comparison() {
+    let compiled = compile(&review_loop(&[(
+        "/stages/document/artifacts/draft/validate/0/check",
+        json!("not len(input.topic) == 0"),
+    )]));
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn whitespace_around_none_workspace_is_accepted() {
+    let compiled = compile(&review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!(" none "),
+    )]));
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
 fn nested_call_inside_comparison_is_typed() {
     let program = compile(&review_loop(&[(
         "/stages/document/artifacts/draft/validate/0/check",
@@ -233,4 +262,17 @@ fn workspace_type_error_span_uses_the_full_workspace_source() {
     let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
     assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
     assert_eq!(errors[0].span, SourceSpan { start: 11, end: 24 });
+}
+
+#[test]
+fn workspace_expression_span_includes_leading_whitespace() {
+    use workflow_compiler::compile_workflow_detailed;
+    let value = review_loop(&[(
+        "/stages/document/workers/writer/workspace",
+        json!("  repository(input.missing)"),
+    )]);
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let errors = compile_workflow_detailed(&source, &[], &prompts()).unwrap_err();
+    assert_eq!(errors[0].path.0, "stages.document.workers.writer.workspace");
+    assert_eq!(errors[0].span, SourceSpan { start: 13, end: 26 });
 }

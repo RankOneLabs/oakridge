@@ -58,7 +58,13 @@ fn tokenize(source: &str, path: &str) -> Result<Vec<Token>, CompileError> {
                 )
             })?;
             TokenKind::Text(literal)
-        } else if ch.is_ascii_digit() {
+        } else if ch.is_ascii_digit()
+            || (matches!(ch, '+' | '-')
+                && source
+                    .as_bytes()
+                    .get(offset + 1)
+                    .is_some_and(u8::is_ascii_digit))
+        {
             offset += 1;
             while offset < source.len() && source.as_bytes()[offset].is_ascii_digit() {
                 offset += 1;
@@ -179,7 +185,7 @@ impl Parser<'_> {
             Some(Token {
                 kind: TokenKind::Word(word),
                 ..
-            }) if word == "not" => StageExpr::Not(Box::new(self.expression(5)?)),
+            }) if word == "not" => StageExpr::Not(Box::new(self.expression(3)?)),
             Some(Token {
                 kind: TokenKind::Word(word),
                 ..
@@ -347,22 +353,36 @@ impl Parser<'_> {
         if !path.is_empty() {
             return Err(self.error("call target must be a name"));
         }
-        let mut args = Vec::new();
-        if !self.consume(')') {
-            loop {
-                args.push(self.expression(0)?);
-                if self.consume(')') {
-                    break;
-                }
-                self.expect(',')?;
-            }
-        }
         let count = match head.as_str() {
             "len" | "published" | "approved" | "changes_requested" | "latest" => 1,
             "every" | "any" | "filter" | "map" | "contains" => 2,
             "lookup" | "valid_graph" => 3,
             _ => return Err(self.error(format!("unknown function {head}"))),
         };
+        let mut args = Vec::new();
+        if !self.consume(')') {
+            loop {
+                let is_name = match head.as_str() {
+                    "published" | "approved" | "changes_requested" | "latest" => args.is_empty(),
+                    "lookup" | "valid_graph" => {
+                        args.len() == 1 || (head == "valid_graph" && args.len() == 2)
+                    }
+                    _ => false,
+                };
+                args.push(if is_name {
+                    StageExpr::Name {
+                        head: self.name()?,
+                        path: Vec::new(),
+                    }
+                } else {
+                    self.expression(0)?
+                });
+                if self.consume(')') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+        }
         if args.len() != count {
             return Err(self.error(format!("{head} takes {count} arguments")));
         }

@@ -1,7 +1,8 @@
 use workflow_evaluator::host::{core_alloc, core_dealloc, core_process, core_response_len};
 use workflow_model::protocol::{
-    Response, ResponseResult, TransportError, TransportErrorKind, PROTOCOL_VERSION,
+    Output, Response, ResponseResult, TransportError, TransportErrorKind, PROTOCOL_VERSION,
 };
+use workflow_model::Type;
 
 fn request(bytes: &[u8]) -> Response {
     let pointer = core_alloc(bytes.len());
@@ -101,4 +102,42 @@ fn source_decode_error_uses_the_compile_error_response() {
     };
     assert_eq!(errors[0].path.0, "schemas.pr_status.number");
     assert_eq!((errors[0].span.start, errors[0].span.end), (0, 12));
+}
+
+#[test]
+fn compile_response_exposes_resolved_types_with_the_source_digest() {
+    let mut workflow: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    workflow["schemas"]["future"] = "outcome_of(document)".into();
+    let prompts: std::collections::BTreeMap<String, String> = [
+        ("review-loop/write.md", "{{topic}}"),
+        ("review-loop/revise.md", "{{topic}} {{feedback}}"),
+        ("review-loop/critique.md", "{{subject}}"),
+        ("review-loop/editor.md", "{{draft}} {{critique}}"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), value.to_owned()))
+    .collect();
+    let source =
+        workflow_compiler::decode_workflow(&serde_json::to_vec(&workflow).unwrap()).unwrap();
+    let expected_digest = workflow_compiler::compile_workflow_detailed(&source, &[], &prompts)
+        .unwrap()
+        .digest;
+    let response = request(
+        &serde_json::to_vec(&serde_json::json!({
+            "version": PROTOCOL_VERSION,
+            "request_id": "resolved-workflow",
+            "operation": "compile",
+            "input": { "workflow": workflow, "prompts": prompts, "operations": [] },
+        }))
+        .unwrap(),
+    );
+    let ResponseResult::Ok(Output::Compiled(compiled)) = response.result else {
+        panic!("expected compiled response: {:?}", response.result)
+    };
+    assert_eq!(compiled.digest, expected_digest);
+    assert!(matches!(
+        compiled.workflow.schemas["future"],
+        Type::Record { .. }
+    ));
 }

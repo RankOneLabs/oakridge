@@ -139,10 +139,10 @@ fn workspace_expression(
     scope: &Scope<'_>,
     path: &str,
 ) -> Result<Option<CheckedStageExpression>, CompileError> {
-    let Some(text) = source.map(str::trim) else {
+    let Some(text) = source else {
         return Ok(None);
     };
-    if text == "none" {
+    if text.trim() == "none" {
         return Ok(None);
     }
     match parse_repository(text, path) {
@@ -392,6 +392,15 @@ pub fn compile_workflow_with_limits_detailed(
     prompts: &BTreeMap<String, String>,
     limits: &ResourceLimits,
 ) -> Result<CheckedWorkflow, Vec<CompileError>> {
+    compile_workflow_with_limits_and_resolved_detailed(source, operations, prompts, limits)
+        .map(|(program, _)| program)
+}
+pub fn compile_workflow_with_limits_and_resolved_detailed(
+    source: &Workflow,
+    operations: &[CodeOperation],
+    prompts: &BTreeMap<String, String>,
+    limits: &ResourceLimits,
+) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
     let parsed = passes::parse(source)?;
     let resolved = passes::resolve(parsed)?;
     let checked = passes::check(resolved, operations, prompts, limits)?;
