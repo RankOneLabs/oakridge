@@ -169,7 +169,9 @@ async function readLatestEventId(trx: DatabaseTransaction, run_id: string, unit_
 /** Deadlock and serialization failures are retryable outcomes, not faults. */
 function concurrencyConflict(error: unknown): string | null {
   if (!error || typeof error !== "object" || !("code" in error)) return null;
-  return error.code === "40P01" || error.code === "40001" ? `database concurrency conflict (${error.code}); retry the event` : null;
+  if (error.code === "40P01") return "database deadlock detected (40P01); retry the event";
+  if (error.code === "40001") return "database serialization failure (40001); retry the event";
+  return null;
 }
 
 /**

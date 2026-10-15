@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { sql } from "kysely";
 import { CoreClient } from "../src/core-client/client";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
-import { requestDigest } from "../src/storage/commit";
+import { commitEvent, requestDigest } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
 import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
@@ -23,6 +23,23 @@ async function launched(request_id = crypto.randomUUID()): Promise<RunId> {
   return run_id;
 }
 const intents = (run_id: RunId) => authority.db.selectFrom("authority.effect_intent").selectAll().where("run_id", "=", run_id).orderBy("updated_at").execute();
+
+test("deadlock and serialization conflicts report distinct retryable reasons", async () => {
+  const reasons: string[] = [];
+  for (const code of ["40P01", "40001"]) {
+    const start = spyOn(authority.db, "startTransaction").mockImplementation(() => ({
+      execute: async () => { throw Object.assign(new Error("transaction conflict"), { code }); },
+    }) as never);
+    try {
+      const result = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, {
+        run_id: "missing" as RunId, ingress_id: null, writer: OPERATOR, event: { kind: "launched", input: {} },
+      });
+      if (!result.ok || result.value.kind !== "conflict") throw new Error(`expected retryable conflict: ${JSON.stringify(result)}`);
+      reasons.push(result.value.detail);
+    } finally { start.mockRestore(); }
+  }
+  expect(reasons).toEqual(["database deadlock detected (40P01); retry the event", "database serialization failure (40001); retry the event"]);
+});
 
 test("a launch commits the run, its units, the event with its writer, the receipt and a decodable instruction", async () => {
   const wakes: RunId[] = [];

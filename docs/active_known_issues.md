@@ -29,12 +29,3 @@ failed, so it never observes the merge. Expected: an unavailable operation
 ends that attempt but keeps the watch alive, retries with backoff and observes
 the merge; a terminal operation failure or a stop still settles the watch.
 
-## Deadlock classified as serialization failure (oakridge-dbos, current authority)
-
-Reproduction: make `commit_event`'s database transaction fail with SQLSTATE
-`40P01`, then with `40001`, and inspect the conflict detail returned to the
-caller.
-
-Observed: both return the same generic `database concurrency conflict` reason.
-Expected: both remain retryable conflicts, with a distinct recorded reason
-that names deadlock detection or serialization failure respectively.
