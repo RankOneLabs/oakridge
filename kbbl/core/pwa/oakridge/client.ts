@@ -365,8 +365,12 @@ export async function createRun(body: CreateRunRequest, idempotencyKey: string):
   return runSummary(unwrapAdapter(runPath(runId), runSnapshot(run, await readUnits(runId))), run);
 }
 
-export function cancelRun(runId: string): Promise<unknown> {
-  return oakridgePost<OperatorIngressResponse>(`${runPath(runId)}/cancel`, { request_id: crypto.randomUUID() });
+export async function cancelRun(runId: string): Promise<unknown> {
+  const path = `${runPath(runId)}/cancel`;
+  const response = await oakridgePost<OperatorIngressResponse>(path, { request_id: crypto.randomUUID() });
+  committed(response, path);
+  invalidateCachedRunUnits(runId);
+  return response;
 }
 
 export function archiveRun(runId: string): Promise<unknown> {

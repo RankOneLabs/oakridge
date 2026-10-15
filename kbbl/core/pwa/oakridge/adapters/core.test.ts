@@ -17,6 +17,10 @@ describe("v2 development adapters", () => {
     const detail = runSnapshot(run, units);
     expect(detail.ok && [detail.value.status, runSummary(detail.value, run).status]).toEqual(["parked", "parked"]);
   });
+  it("shows a cancelled run even when a child unit still carries an old failure", () => {
+    const detail = runSnapshot({ ...run, status: { kind: "cancelled" } }, units);
+    expect(detail.ok && detail.value.status).toBe("cancelled");
+  });
   it("rejects malformed unit data at the API boundary", () => {
     expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], submit: { kind: "review" } }] }]).ok).toBe(false);
   });

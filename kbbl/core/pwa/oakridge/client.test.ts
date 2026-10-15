@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import sample from "./__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
-import { createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
+import { cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorUnitView } from "./operator-contracts";
 import type { CreateRunRequest, RepositoryKey } from "./types";
@@ -39,6 +39,25 @@ describe("v2 Oakridge client", () => {
     const list = await fetchRuns();
     const detail = await fetchRun(runId);
     expect([list[0].status, detail.status]).toEqual(["parked", "parked"]);
+  });
+
+  it("refreshes cached units after cancelling a parked run", async () => {
+    let isCancelled = false;
+    let unitReads = 0;
+    calls((path) => {
+      if (path.endsWith("/cancel")) {
+        isCancelled = true;
+        return { kind: "committed", run_id: runId, event_id: "event-cancel" };
+      }
+      if (path.endsWith("/units")) {
+        unitReads += 1;
+        return isCancelled ? sample.units.map((unit) => ({ ...unit, status: { kind: "cancelled" }, attention: null, decisions: [] })) : sample.units;
+      }
+      return isCancelled ? { ...sample.run, status: { kind: "cancelled" } } : sample.run;
+    });
+    await fetchRun(runId);
+    await cancelRun(runId);
+    expect([(await fetchRun(runId)).status, unitReads]).toEqual(["cancelled", 2]);
   });
 
   it("launches with the definition digest and all six stage roles, then reads back", async () => {

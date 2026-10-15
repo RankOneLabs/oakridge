@@ -152,7 +152,8 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (!grouped.ok) return grouped;
   const unitStatuses = units.map((unit) => deriveStatus({ status: unit.status, attention: unit.attention, attempts: unit.attempts }).run);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [] }).run;
-  const status: RunStatus = unitStatuses.includes("failed") ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
+  const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
+    : unitStatuses.includes("failed") ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
