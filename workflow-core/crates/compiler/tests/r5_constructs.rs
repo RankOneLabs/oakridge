@@ -126,6 +126,25 @@ fn stage_let_bindings_expand_in_guards_inputs_and_outcomes() {
 }
 
 #[test]
+fn repeated_let_bindings_stop_before_exponential_expansion() {
+    let mut value = fixture(&[]);
+    let mut bindings = serde_json::Map::new();
+    bindings.insert("a0".into(), json!("true"));
+    for index in 1..20 {
+        bindings.insert(
+            format!("a{index}"),
+            json!(format!("a{} and a{}", index - 1, index - 1)),
+        );
+    }
+    value["stages"]["cohort"]["let"] = Value::Object(bindings);
+    value["stages"]["cohort"]["done_when"] = json!("a19");
+    let error = compile(&value).unwrap_err();
+    assert!(error
+        .detail
+        .contains("let expansion exceeds depth or node budget"));
+}
+
+#[test]
 fn worker_templates_and_decision_sets_expand_typed_overrides() {
     let mut value = fixture(&[]);
     let worker = value["stages"]["cohort"]["workers"]["pr_watch"].take();

@@ -217,7 +217,33 @@ pub(crate) fn expand_lets(
     definitions: &BTreeMap<String, String>,
     visiting: &mut BTreeSet<String>,
 ) -> Result<StageExpr, CompileError> {
-    let expand = |value, visiting: &mut BTreeSet<String>| expand_lets(value, definitions, visiting);
+    let mut remaining_nodes = 16_384;
+    expand_lets_bounded(expression, definitions, visiting, &mut remaining_nodes, 0)
+}
+
+fn expand_lets_bounded(
+    expression: StageExpr,
+    definitions: &BTreeMap<String, String>,
+    visiting: &mut BTreeSet<String>,
+    remaining_nodes: &mut usize,
+    depth: usize,
+) -> Result<StageExpr, CompileError> {
+    if depth >= 128 || *remaining_nodes == 0 {
+        let location = visiting.iter().next_back().map_or_else(
+            || "stages.let".to_owned(),
+            |name| format!("stages.let.{name}"),
+        );
+        return Err(CompileError::new(
+            CheckKind::ExpressionType,
+            location,
+            SourceSpan::default(),
+            "let expansion exceeds depth or node budget",
+        ));
+    }
+    *remaining_nodes -= 1;
+    let mut expand = |value, visiting: &mut BTreeSet<String>| {
+        expand_lets_bounded(value, definitions, visiting, remaining_nodes, depth + 1)
+    };
     Ok(match expression {
         StageExpr::Name { head, path } if definitions.contains_key(&head) => {
             let source = &definitions[&head];
