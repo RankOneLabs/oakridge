@@ -149,6 +149,9 @@ mod parser_regressions {
             format!("{}true{}", "(".repeat(5_000), ")".repeat(5_000)),
             format!("{}true", "not ".repeat(5_000)),
             format!("{}1{}", "len(".repeat(5_000), ")".repeat(5_000)),
+            // Flat chains nest on the left without the parser recursing.
+            format!("{}true", "true and ".repeat(100_000)),
+            format!("{}true", "true == ".repeat(100_000)),
         ] {
             let error = parse_expression(&text, "test").unwrap_err();
             assert!(error.detail.contains("nests deeper than"), "{error:?}");
