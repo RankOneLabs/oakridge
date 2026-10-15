@@ -3,10 +3,14 @@ import type { Cause, Workflow, WorkerResult } from "../src/core-client/core-type
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { RunId } from "../src/domain/primitives";
 import { observePullRequest } from "../src/operations/pull-request-observe";
+import { decodePullRequestObserveInput } from "../src/operations/pull-request-observe";
+import type { OperationRunner } from "../src/operations/runner";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
+import { createProductionComposition } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
 import { launch, openAuthority, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { eventually } from "./stub-kbbl";
 
 /**
  * Periodic workers through commit and Postgres (validation spec §3.2, D-V1):
@@ -187,3 +191,53 @@ test("an unchanged pull request observation publishes no new revision and its at
   expect({ revisions: (await revisionsOf(run_id, "pr_state")).length, attempts: attempts.map((attempt) => attempt.status.kind) })
     .toEqual({ revisions: 1, attempts: ["succeeded", "succeeded"] });
 });
+
+test("a transient pr_watch outage backs off and observes a merge, while a terminal failure settles", async () => {
+  const live = await openAuthority();
+  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const calls: number[] = [];
+  const operation_runner: OperationRunner = { async run(call) {
+    const input = decodePullRequestObserveInput(call.inputs);
+    if (call.operation !== "pull_request.observe" || !input) throw new Error("unexpected operation call");
+    if (input.query.head_branch === "terminal") return { kind: "failed", code: "pull_request_mismatch", detail: "repository deleted" };
+    calls.push(Date.now());
+    if (calls.length <= 3) return { kind: "unavailable", detail: "forge unavailable" };
+    return { kind: "succeeded", body: { state: "merged", number: 7, url: QUERY.pr_url,
+      head_sha: "abc123", merged_at: "2026-10-15T12:00:00Z" } };
+  } };
+  const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1", operation_runner,
+    timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, wake_timeout_seconds: 5, carrier_max_iterations: 8 } });
+  try {
+    const start = async (head_branch: string): Promise<RunId> => {
+      const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: { ...QUERY, head_branch } } }) });
+      if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
+      return (await response.json() as { run_id: RunId }).run_id;
+    };
+    const transient = await start("transient");
+    await eventually("merged pull request observation", async () =>
+      (await live.db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", transient)
+        .where("artifact", "=", "pr_state").executeTakeFirst())?.body ?? null);
+    const first_attempt = await eventually("merged watch attempt ended", async () => {
+      const row = await live.db.selectFrom("authority.attempt").select("status").where("run_id", "=", transient)
+        .where("worker", "=", "pr_watch").where("seq", "=", 1).executeTakeFirst();
+      return row?.status.kind === "succeeded" ? row : null;
+    });
+    const transient_intent = await live.db.selectFrom("authority.effect_intent").select("status")
+      .where("run_id", "=", transient).executeTakeFirstOrThrow();
+    expect({ first_attempt: first_attempt.status.kind, alive: transient_intent.status,
+      retried: calls.length >= 4 })
+      .toEqual({ first_attempt: "succeeded", alive: "acknowledged", retried: true });
+    expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(40);
+
+    const terminal = await start("terminal");
+    await eventually("terminal watch settlement", async () => {
+      const intent = await live.db.selectFrom("authority.effect_intent").select("status").where("run_id", "=", terminal).executeTakeFirst();
+      return intent?.status === "failed" ? true : null;
+    });
+    const terminal_attempts = await live.db.selectFrom("authority.attempt").select("status")
+      .where("run_id", "=", terminal).where("worker", "=", "pr_watch").execute();
+    expect(terminal_attempts.map((attempt) => attempt.status.kind)).toEqual(["failed"]);
+  } finally { await composition.close(); await live.close(); }
+});
+

@@ -18,14 +18,3 @@ and advances before the timeout. The suspected lost wake could not be
 reproduced at this timing. Expected: a wake during dispatch remains pending
 and the run advances promptly after dispatch, without waiting for the timeout.
 
-## pr_watch ends on a transient forge outage (oakridge-dbos, current authority)
-
-Reproduction: run `pull_request.observe` as a periodic code worker and make
-the forge unavailable through its start-attempt retry budget. Restore the
-forge with the pull request merged.
-
-Observed: `carryCode` records a failed attempt and settles the watch as
-failed, so it never observes the merge. Expected: an unavailable operation
-ends that attempt but keeps the watch alive, retries with backoff and observes
-the merge; a terminal operation failure or a stop still settles the watch.
-

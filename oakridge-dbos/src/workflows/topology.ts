@@ -434,14 +434,20 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
 
 /** One run of a code operation, transient failures retried within the start budget: the attempt's result and output. */
 type OperationResult = Exclude<OperationOutcome, { readonly kind: "unavailable" }>;
-async function runOperation(intent: CarriedIntent): Promise<OperationResult> {
+type OperationRun = OperationResult | { readonly kind: "interrupted"; readonly status: EffectStatus | null };
+async function runOperation(intent: CarriedIntent, is_watch: boolean): Promise<OperationRun> {
   const timing = current().timing;
   for (let attempt = 1; ; attempt++) {
     const outcome = await operationStep(intent.instruction);
     if (outcome.kind !== "unavailable") return outcome;
-    if (attempt >= intent.instruction.max_start_attempts) return { kind: "failed", code: PROVIDER_ERROR_CODES.operation_unavailable,
+    if (!is_watch && attempt >= intent.instruction.max_start_attempts) return { kind: "failed", code: PROVIDER_ERROR_CODES.operation_unavailable,
       detail: `operation unavailable after ${attempt} tries: ${outcome.detail}` };
     await DBOS.sleepSeconds(backoff(attempt - 1, timing));
+    if (is_watch) {
+      const reloaded = await loadIntentStep(intent.id);
+      if (reloaded.kind !== "carried" || reloaded.intent.status !== "acknowledged")
+        return { kind: "interrupted", status: reloaded.kind === "carried" ? reloaded.intent.status : null };
+    }
   }
 }
 
@@ -481,7 +487,8 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
       return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
     }
     if (status === "pending") status = await markAcknowledgedStep(intent.id);
-    const outcome = await runOperation(intent);
+    const outcome = await runOperation(intent, interval !== null);
+    if (outcome.kind === "interrupted") return outcome.status;
     let result: WorkerResult = outcome.kind === "succeeded" ? { kind: "succeeded" } : { kind: "failed", code: outcome.code, detail: outcome.detail };
     if (outcome.kind === "succeeded") {
       const location = { run_id: intent.run_id, unit_id: intent.instruction.action.unit, artifact: worker.artifact };
