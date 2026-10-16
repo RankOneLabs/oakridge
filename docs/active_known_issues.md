@@ -36,10 +36,12 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders the
   live Shelly run `run-072ecbd42a8f7169` against a pinned checkout of
-  `cirsteve/shelly`. Analysis and Planning are approved; two Briefs are
-  approved, and the revised `theme-foundation` Brief awaits operator review.
-  The approved briefs depend on `theme-foundation` and on each other, so no
-  Cohort builder is eligible yet. The older seed `run-9e88f4b61c072a35`
+  `cirsteve/shelly`. Analysis, Planning and all three Briefs are approved.
+  This run was launched with `admission: true`, so its `theme-foundation`
+  Cohort awaits the separate Admit build review before its builder can start;
+  the other cohorts depend on it and on each other. New launches from the v1
+  form use `admission: false`, so accepting the Briefs is enough to start the
+  first eligible builder. The older seed `run-9e88f4b61c072a35`
   remains unsuitable for full-flow assessment because it has no repository.
   The default install needs its database cutover before this PWA branch can
   run against it.
