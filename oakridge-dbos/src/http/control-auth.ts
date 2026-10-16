@@ -114,13 +114,14 @@ export function isValidControlRequest(request: Pick<Request, "method" | "headers
  * Whether a request on the publish route carries the operator's credential
  * rather than a session secret (part 1 §12, D2: the operator edits an
  * artifact). With a token, the control credential decides. Without one the
- * control plane is loopback-open, as for every operator route, and a request
- * that presents no secret is the operator's; a secret that resolves to no
- * session is refused, never taken for the operator.
+ * control plane is loopback-open, so an operator edit must explicitly identify
+ * itself. Otherwise an agent that loses its session secret could retry without
+ * Authorization and silently publish an operator revision that cannot satisfy
+ * its running attempt. A secret that resolves to no session is always refused.
  */
 export const operatorCredentialCheck = (token: string | null, policy?: BrowserWritePolicy) =>
   (request: Request): boolean => token === null
-    ? request.headers.get("authorization") === null
+    ? request.headers.get("authorization") === null && request.headers.get("x-oakridge-publisher") === "operator"
     : isValidControlRequest(request, token, policy);
 
 /** Fail closed: a request no route in the table classifies is refused, even where a handler is registered. */

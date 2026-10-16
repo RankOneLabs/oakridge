@@ -199,7 +199,7 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
 async function oakridgePutBody<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Oakridge-Publisher": "operator" },
     body: JSON.stringify(body),
   });
   if (!res.ok) {

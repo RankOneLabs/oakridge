@@ -3,7 +3,7 @@ import sample from "./__fixtures__/v2-adapter-sample.json";
 import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
-import { cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
+import { cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorUnitView } from "./operator-contracts";
 import type { CreateRunRequest, RepositoryKey } from "./types";
@@ -114,6 +114,16 @@ describe("v2 Oakridge client", () => {
     const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id, name: `build_result:${changeTarget}` });
     expect((await fetchArtifact(id)).component_id).toBe("dev-build-result-viewer");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("identifies a browser artifact edit as an operator publication", async () => {
+    const fetch = calls((_path, init) => init?.method === "PUT"
+      ? { kind: "committed", run_id: runId, event_id: "event-edit" } : sample.artifact);
+    const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id,
+      name: `build_result:${sample.artifact.revisions[0].id}` });
+    await postAtomEdit(id, { anchor: "/summary", prev_value: "Built a.", new_value: "Built b.", author: "operator" });
+    const put = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect((put?.[1]?.headers as Record<string, string>)["X-Oakridge-Publisher"]).toBe("operator");
   });
 
   it("resolves an opaque revision id by a one-time run and unit search", async () => {
