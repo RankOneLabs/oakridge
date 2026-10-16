@@ -3,8 +3,9 @@ import type { WorkerRuntime } from "../core-client/core-types";
 /** The runtime, model and effort an agent session starts with. */
 export interface SessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }
 /**
- * What the operator chose at launch for the run's agent sessions, by stage.
- * A stage without an entry starts its sessions with its workers' declared runtime.
+ * What the operator chose at launch for the run's agent sessions, by stage
+ * or by a more specific `stage.worker` key. A worker without either entry
+ * starts with its declared runtime.
  */
 export interface RunConfig { readonly sessions: { readonly [stage: string]: SessionSettings } }
 
@@ -35,4 +36,18 @@ export function selectSessionSettings(config: RunConfig | null, stage: string, d
   const chosen = config !== null && Object.hasOwn(config.sessions, stage) ? config.sessions[stage] : undefined;
   if (chosen) return chosen;
   return declared ? { harness: declared.harness, model: declared.model, effort: null } : null;
+}
+
+export interface SessionSettingsTarget { readonly workflow: string; readonly stage: string; readonly worker: string }
+
+/** A worker override wins over its stage. Older development launches chose a
+ * planner for `planning` and a builder for `cohort`, without an assessor entry;
+ * preserve their planner choice for cohort assessments still ahead of them. */
+export function selectWorkerSessionSettings(config: RunConfig | null, target: SessionSettingsTarget,
+  declared: WorkerRuntime | null): SessionSettings | null {
+  const workerKey = `${target.stage}.${target.worker}`;
+  if (config !== null && Object.hasOwn(config.sessions, workerKey)) return config.sessions[workerKey];
+  if (target.workflow === "development" && target.stage === "cohort" && target.worker === "assessor"
+    && config !== null && Object.hasOwn(config.sessions, "planning")) return config.sessions.planning;
+  return selectSessionSettings(config, target.stage, declared);
 }

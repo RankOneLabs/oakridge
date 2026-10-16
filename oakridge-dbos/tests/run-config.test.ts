@@ -1,8 +1,28 @@
 import { expect, test } from "bun:test";
-import { parseRunConfig, selectSessionSettings } from "../src/domain/run-config";
+import { parseRunConfig, selectSessionSettings, selectWorkerSessionSettings } from "../src/domain/run-config";
 import { parseLaunchRequest } from "../src/http/ingress";
 
 const planner = { harness: "claude-code", model: "opus", effort: "high" };
+const builder = { harness: "codex", model: "gpt-6-sol", effort: "high" };
+
+test("a development assessor uses its worker choice while the builder keeps the cohort choice", () => {
+  const config = { sessions: { cohort: builder, "cohort.assessor": planner } };
+  expect([selectWorkerSessionSettings(config, { workflow: "development", stage: "cohort", worker: "builder" }, null),
+    selectWorkerSessionSettings(config, { workflow: "development", stage: "cohort", worker: "assessor" }, null)])
+    .toEqual([builder, planner]);
+});
+
+test("a cohort assessor in an existing development run inherits its planner choice", () => {
+  const config = { sessions: { cohort: builder, planning: planner } };
+  expect(selectWorkerSessionSettings(config, { workflow: "development", stage: "cohort", worker: "assessor" }, null))
+    .toEqual(planner);
+});
+
+test("the development assessor fallback does not change another workflow's cohort worker", () => {
+  const config = { sessions: { cohort: builder, planning: planner } };
+  expect(selectWorkerSessionSettings(config, { workflow: "other", stage: "cohort", worker: "assessor" }, null))
+    .toEqual(builder);
+});
 
 test("a run's settings for a stage win over the worker's declared runtime", () => {
   expect(selectSessionSettings({ sessions: { planning: planner } }, "planning", { harness: "codex", model: "gpt-5.5" })).toEqual(planner);

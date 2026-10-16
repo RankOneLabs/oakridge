@@ -24,6 +24,22 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
 });
 
+test("a development cohort pins planner settings for its assessor and worker settings for its builder", () => {
+  const base = sampleWorkflow("review-loop");
+  const document = base.stages.document;
+  if (!document || !document.workers.writer) throw new Error("sample writer is missing");
+  const workflow = { ...base, workflow: "development", stages: { cohort: { ...document,
+    workers: { assessor: document.workers.writer, builder: document.workers.writer } } } };
+  const config = { sessions: { planning: { harness: "claude-code", model: "opus", effort: "high" },
+    cohort: { harness: "codex", model: "gpt-6-sol", effort: "high" } } };
+  const settingsFor = (worker: string) => {
+    const selected = select({ workflow, config, stage: "cohort", action: { ...action,
+      unit: "run-1/implementation/theme", worker } });
+    return selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.settings : null;
+  };
+  expect([settingsFor("assessor"), settingsFor("builder")]).toEqual([config.sessions.planning, config.sessions.cohort]);
+});
+
 test("a fresh worker pins its handoff template; a resume worker never does", () => {
   const workflow = sampleWorkflow("review-loop");
   const writer = workflow.stages.document!.workers.writer!;

@@ -101,11 +101,17 @@ describe("v2 Oakridge client", () => {
     const fetch = calls((path) => path.includes("/api/definitions") ? { items: [{ bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest }], next_cursor: null }
       : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-2" }
       : path.includes("/units") ? sample.units : sample.run);
-    const result = await createRun(createRunRequest(), "launch-1");
+    const request = createRunRequest();
+    const result = await createRun({ ...request, context: { ...request.context,
+      worker_runtime: "codex", worker_model: "gpt-6-sol" } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort()]).toEqual([
-      runId, "launch-1", sample.run.definition_digest, false, ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
+    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort(),
+      body.config.sessions["cohort.assessor"], body.config.sessions.cohort]).toEqual([
+      runId, "launch-1", sample.run.definition_digest, false,
+      ["analysis", "brief", "cohort", "cohort.assessor", "integration", "planning", "prepare"],
+      { harness: "claude-code", model: "sonnet", effort: null },
+      { harness: "codex", model: "gpt-6-sol", effort: null },
     ]);
   });
 
