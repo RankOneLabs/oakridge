@@ -288,13 +288,14 @@ stages:
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
       closed_pr: published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-      merged_pr: published(pr_state) and latest(pr_state).state == "merged"
+      merged_pr: published(observed_state) and latest(observed_state).state == "merged"
     artifacts:
       brief: { schema: brief_body }
       build_result: { schema: build_body }
       pr: { schema: pr_body }
       assessment: { schema: assessment_body }
       pr_state: { schema: pr_status }
+      observed_state: { schema: pr_status }
     workers:
       # The accepted brief, published into the cohort so the operator can admit it (D7).
       publish_brief:
@@ -317,6 +318,15 @@ stages:
         reviews: build_result
         creates: [assessment]
       pr_watch: { template: pr_watch }
+      # Keep the optional PR observation separate from the manual completion
+      # path, so an unavailable watcher cannot veto confirm_merged.
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: published(pr_state)
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
     reviews:
       admission:
         of: brief
@@ -366,6 +376,8 @@ stages:
     artifacts:
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
+      manual_merge_target: { schema: pr_body }
+      observed_state: { schema: pr_status }
     workers:
       integrator:
         kind: agent
@@ -374,6 +386,22 @@ stages:
         workspace: repository(input.workspace)
         creates: [pr]
       pr_watch: { template: pr_watch }
+      # Independent evidence paths preserve the manual v1 merge fallback when
+      # no PR reader is configured. Periodic copies follow revised inputs.
+      prepare_manual_merge:
+        kind: code
+        operation: value.publish
+        when: pr_published
+        inputs: { value: latest(pr) }
+        every: 2m
+        creates: [manual_merge_target]
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: published(pr_state)
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
     reviews:
       integration_review:
         of: pr
@@ -382,20 +410,20 @@ stages:
         inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       merge_confirmation:
-        of: pr
+        of: manual_merge_target
         by: operator
-        when: pr_published and not final_state and not closed_pr and not approved(pr_state)
+        when: published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)
         prompt: development/merge-confirmation.md
         inputs: { pr: latest(pr), pr_state: latest(pr_state) }
         decisions:
-          confirm_merged: { on: pr_state, effect: approve, label: Confirm merged }
+          confirm_merged: { effect: approve, label: Confirm merged }
       pr_closed:
         template: pr_closed
         overrides: { of: pr }
-    # Done when its PR merges or the operator confirms a merged observed state;
-    # under allow_close_without_merge, an observed unmerged close also suffices.
-    done_when: approved(pr) and (final_state or approved(pr_state))
+    # The independent evidence paths avoid reading an unobserved PR watch in the
+    # manual path; under allow_close_without_merge, an observed close suffices.
+    done_when: approved(pr) and (approved(manual_merge_target) or (published(observed_state) and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url
-      is_merged: latest(pr_state).state == "merged" or approved(pr_state)
+      is_merged: approved(manual_merge_target) or (published(observed_state) and latest(observed_state).state == "merged")

@@ -30,6 +30,14 @@ describe("v2 development adapters", () => {
     const stages = unitToStages(units);
     expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);
   });
+  it("keeps internal PR observations out of the frozen artifact list", () => {
+    const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
+    if (!pr) throw new Error("captured fixture lacks a PR artifact");
+    const withObservation: OperatorUnitView = { ...cohort, artifacts: [...cohort.artifacts,
+      { ...pr, artifact_key: "observed_state", schema: "pr_status" }] };
+    const stages = unitToStages([withObservation]);
+    expect(stages.ok && stages.value[0]?.artifacts.some((artifact) => artifact.type_id === "pr_status")).toBe(false);
+  });
   it("shows builder and assessor as separate cohort sessions, each on its first attempt", () => {
     const sessions = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
       attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt }));
@@ -106,7 +114,10 @@ describe("v2 development adapters", () => {
     const mergeUnit = mergeUnits.find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
       && decision.submit.decision === "confirm_merged"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const observedState = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
+    if (!observedState) throw new Error("captured fixture lacks a PR state artifact");
     const stalled: OperatorUnitView = { ...mergeUnit,
+      artifacts: [...mergeUnit.artifacts, { ...observedState, artifact_key: "observed_state" }],
       attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
@@ -114,6 +125,15 @@ describe("v2 development adapters", () => {
     const detail = runSnapshot(mergeRun, mergeUnits.map((unit) => unit.unit_id === mergeUnit.unit_id ? stalled : unit));
     expect(detail.ok && [detail.value.stages.find((stage) => stage.name === "cohort")?.status,
       detail.value.status, runSummary(detail.value, mergeRun).status]).toEqual(["parked", "parked", "parked"]);
+  });
+  it("keeps a cohort on the old pinned definition failed when its watcher blocks completion", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.decision === "confirm_merged"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: missing URL" },
+      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
+        ? { ...attempt, status: "failed", failure: { code: "invalid_instruction", detail: "missing URL" } }
+        : attempt) }).run).toBe("failed");
   });
   it("keeps a PR mismatch visible as a failed cohort even with merge confirmation", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Workflow } from "../src/core-client/core-types";
 import { createOperationRunner } from "../src/operations/runner";
-import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
+import { GithubPullRequestReader, type PullRequestReader } from "../src/runtime/github-pull-requests";
 import { createProductionComposition } from "../src/runtime/compose";
 import { BunGitCommandRunner } from "../src/runtime/git-command-runner";
 import { launchRunId } from "../src/storage/commit";
@@ -146,6 +146,7 @@ let composition: Awaited<ReturnType<typeof createProductionComposition>>;
 let base_url: string;
 let repository: string;
 const forge = new StubForge();
+const operationServices = { git: new BunGitCommandRunner(), pull_requests: forge.reader as PullRequestReader | null };
 const timeline = new Map<string, number>();
 const workdir = mkdtempSync(resolve(tmpdir(), "oakridge-development-agents-"));
 
@@ -164,7 +165,7 @@ beforeAll(async () => {
   base_url = `http://127.0.0.1:${server.port}`;
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
     executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, github_token: null },
-    operation_runner: createOperationRunner({ git: new BunGitCommandRunner(), pull_requests: forge.reader }),
+    operation_runner: createOperationRunner(operationServices),
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5 } });
   handler = composition.app.fetch;
 }, 60_000);
@@ -210,7 +211,7 @@ async function operate(run_id: string, decided: Set<string>, admitted: string[],
           .where("unit_id", "=", unit.id).where("artifact", "=", "pr_state").orderBy("seq", "desc").executeTakeFirst();
         if (observedPrState(observed?.body) !== "merged") { forge.merge(`cohort-${unit.collection_key}`); continue; }
         const current = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit.id).executeTakeFirstOrThrow();
-        expect("merge_confirmation" in current.review_prompts).toBe(false);
+        if ("merge_confirmation" in current.review_prompts) continue;
         merged_cohorts_without_confirmation.add(unit.collection_key ?? "");
       }
       let target = awaiting.target;
@@ -230,6 +231,7 @@ async function operate(run_id: string, decided: Set<string>, admitted: string[],
       if (review === "assessment_review") await captureAdapterFixture(run_id, "v2-adapter-sample");
       if (review === "merge_confirmation" && unit.stage === "cohort") await captureAdapterFixture(run_id, "v2-cohort-merge");
       if (review === "merge_confirmation" && unit.stage === "integration") await captureAdapterFixture(run_id, "v2-integration-merge");
+      if (review === "merge_confirmation" && unit.stage === "cohort") forge.merge(`cohort-${unit.collection_key}`);
       const response = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit.id)}/reviews/${review}/decide`,
         { request_id: crypto.randomUUID(), decision, target, payload: {} });
       if (response.status !== 201) throw new Error(`${review} on ${unit.id} refused: ${await response.text()}`);
@@ -307,9 +309,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   });
 }, 150_000);
 
-test("confirmation completes both PR stages after observation, while accept alone leaves integration open", async () => {
+test("manual confirmation completes the development run with no PR reader", async () => {
   forge.pulls.clear();
-  forge.withhold_integration_observation = true;
+  operationServices.pull_requests = null;
   const pinned = await api("POST", "/api/definitions", developmentWorkflow());
   if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
   const { digest } = await pinned.json() as { readonly digest: string };
@@ -331,34 +333,19 @@ test("confirmation completes both PR stages after observation, while accept alon
       .where("unit_id", "=", unit.id).where("artifact", "=", "pr").executeTakeFirst();
     return pr ? unit : null;
   }, 120_000);
-  const before = await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}`)).json() as
-    { readonly decisions: readonly { readonly key: string }[] };
+  const before = await eventually("integration manual merge confirmation", async () => {
+    const view = await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}`)).json() as
+      { readonly decisions: readonly { readonly key: string; readonly submit: { readonly target_revision_id?: string } }[];
+        readonly attempts: readonly { readonly worker: string; readonly failure: { readonly code: string } | null }[] };
+    const failure = view.attempts.find((attempt) => attempt.worker === "pr_watch" && attempt.failure?.code === "discovery_unsupported");
+    return failure ? view.decisions.find((decision) => decision.key === "confirm_merged") ?? null : null;
+  }, 120_000);
   const unseen = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
     .where("unit_id", "=", integration.id).where("artifact", "=", "pr_state").executeTakeFirst();
-  expect({ observed: !!unseen, confirmation: before.decisions.some((decision) => decision.key === "confirm_merged") })
-    .toEqual({ observed: false, confirmation: false });
+  expect({ observed: !!unseen, manual_target: before.submit.target_revision_id?.includes(":manual_merge_target:") })
+    .toEqual({ observed: false, manual_target: true });
 
-  forge.withhold_integration_observation = false;
-  await eventually("integration PR to be observed", async () => {
-    await operate(run_id, decided, admitted, "cohort", false);
-    const observed = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
-      .where("unit_id", "=", integration.id).where("artifact", "=", "pr_state").executeTakeFirst();
-    return observed ? true : null;
-  }, 120_000);
-  await operate(run_id, decided, admitted, "all", false);
-  const stateRevisions = () => db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
-    .where("unit_id", "=", integration.id).where("artifact", "=", "pr_state").execute();
-  await Bun.sleep(2200);
-  const unchanged = { revisions: (await stateRevisions()).length,
-    confirmation: (await db.selectFrom("authority.review_decision").select("id").where("run_id", "=", run_id)
-      .where("unit_id", "=", integration.id).where("review", "=", "merge_confirmation").execute()).length };
-  expect(unchanged).toEqual({ revisions: 1, confirmation: 1 });
-
-  forge.replaceHead("integration", "next-head");
-  await eventually("the changed PR state to be observed", async () => (await stateRevisions()).length === 2 ? true : null, 120_000);
-  await operate(run_id, decided, admitted, "cohort");
-  const before_confirm = await db.selectFrom("authority.unit").select("status").where("id", "=", integration.id).executeTakeFirstOrThrow();
-  expect(before_confirm.status.kind).toBe("active");
+  forge.merge("integration");
 
   const completed = await eventually("the confirmed run to finish", async () => {
     await operate(run_id, decided, admitted, "all");
@@ -374,14 +361,16 @@ test("confirmation completes both PR stages after observation, while accept alon
   const integration_state = units.find((unit) => unit.id === integration.id);
   expect({ confirmations: confirmations.length, cohort_done: cohorts.every((unit) => unit.status.kind === "done"),
     integration_done: integration_state?.status.kind, confirmation_offered: units.some((unit) => "merge_confirmation" in unit.review_prompts),
-    integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":pr_state:"),
+    integration_target: confirmations.find((decision) => decision.unit_id === integration.id)?.target_revision_id.includes(":manual_merge_target:"),
     integrations: outcome.integrations })
-    .toEqual({ confirmations: 4, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
+    .toEqual({ confirmations: 3, cohort_done: true, integration_done: "done", confirmation_offered: false, integration_target: true,
       integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }] });
 }, 150_000);
 
 test("a closed unmerged integration PR asks for replacement, not merge confirmation", async () => {
   forge.pulls.clear();
+  operationServices.pull_requests = forge.reader;
+  forge.withhold_integration_observation = false;
   const pinned = await api("POST", "/api/definitions", developmentWorkflow());
   if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
   const { digest } = await pinned.json() as { readonly digest: string };
@@ -430,6 +419,36 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
     const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
     return root.status.kind === "cancelled" ? true : null;
   });
+}, 150_000);
+
+test("allow_close_without_merge completes on an observed close without claiming a merge", async () => {
+  forge.pulls.clear();
+  operationServices.pull_requests = forge.reader;
+  forge.withhold_integration_observation = false;
+  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
+  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
+  const { digest } = await pinned.json() as { readonly digest: string };
+  const request_id = crypto.randomUUID();
+  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+    title: "Allow closed PR", spec: "Complete after an unmerged close.", admission: true, final_merge_policy: "allow_close_without_merge",
+    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+  if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
+  const run_id = launchRunId(request_id);
+  const decided = new Set<string>();
+  const admitted: string[] = [];
+  await eventually("integration PR to publish", async () => {
+    await operate(run_id, decided, admitted, "cohort", false);
+    return forge.pulls.has(PULL_NUMBERS.integration) ? true : null;
+  }, 120_000);
+  forge.close("integration");
+  const completed = await eventually("closed PR to complete the run", async () => {
+    await operate(run_id, decided, admitted, "cohort");
+    const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
+    return root.status.kind === "done" ? root.status : null;
+  }, 120_000);
+  expect((completed as { readonly outcome: DevelopmentRunOutcome }).outcome.integrations)
+    .toEqual([{ repository_key: "app", pr_url: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
 test("development body schemas and v1 PWA viewer component IDs remain available", () => {

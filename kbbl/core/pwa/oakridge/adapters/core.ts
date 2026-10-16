@@ -72,15 +72,17 @@ export const revisionToArtifact = (artifact: OperatorArtifactDetail): AdapterRes
 };
 
 export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];
-  readonly decisions: readonly OperatorDecisionDefinition[]; readonly hasRunStall?: boolean }
+  readonly decisions: readonly OperatorDecisionDefinition[]; readonly hasRunStall?: boolean; readonly hasManualMergeFallback?: boolean }
 export const statusInputOf = (unit: OperatorUnitView): StatusInput =>
-  ({ status: unit.status, attention: unit.attention, attempts: unit.attempts, decisions: unit.decisions });
+  ({ status: unit.status, attention: unit.attention, attempts: unit.attempts, decisions: unit.decisions,
+    hasManualMergeFallback: unit.artifacts.some((artifact) => artifact.artifact_key === "observed_state") });
 /** A wait the operator can clear: the unit offers a review decision, rather than waiting on an upstream dependency. */
 const awaitsOperator = (decisions: readonly OperatorDecisionDefinition[]): boolean =>
   decisions.some((decision) => decision.submit.kind === "review");
 /** An unavailable PR watcher must not hide a manual merge confirmation that can finish the cohort. */
 const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean => {
-  if (input.attention?.kind !== "stalled" || !input.attention.detail.startsWith("pr_watch failed:")) return false;
+  if (!input.hasManualMergeFallback || input.attention?.kind !== "stalled"
+    || !input.attention.detail.startsWith("pr_watch failed:")) return false;
   const failures = input.attempts.filter((attempt) => attempt.is_current && attempt.failure);
   return failures.length > 0 && failures.every((attempt) => attempt.worker === "pr_watch"
     && (attempt.failure?.code === "invalid_instruction" || attempt.failure?.code === "discovery_unsupported"))
@@ -199,7 +201,8 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
         gate: reviewGateId(unit), ...(admission ?? {}) };
     });
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
-      status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision).map((artifact) => ({
+      status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision
+        && Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema)).map((artifact) => ({
         id: artifactId(artifact), type_id: artifactType(artifact.schema).id, version: artifact.revision_count,
         label: unit.collection_key ?? unit.unit_key, created_at: artifact.latest_revision!.created_at }))),
       delegated_kbbl_sid: members.flatMap((unit) => unit.attempts.map((attempt) => attempt.kbbl_session_id)).find((sid) => sid) ?? null,

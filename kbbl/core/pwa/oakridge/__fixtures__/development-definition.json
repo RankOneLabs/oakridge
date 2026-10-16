@@ -1222,6 +1222,10 @@
           "schema": "build_body"
         },
         {
+          "key": "observed_state",
+          "schema": "pr_status"
+        },
+        {
           "key": "pr",
           "schema": "pr_body"
         },
@@ -1237,6 +1241,14 @@
       "label": "Integration",
       "input_schema": "{cohorts: list(completed_cohort), final_merge_policy: final_merge_policy, repository: repository, workspace: workspace}",
       "artifacts": [
+        {
+          "key": "manual_merge_target",
+          "schema": "pr_body"
+        },
+        {
+          "key": "observed_state",
+          "schema": "pr_status"
+        },
         {
           "key": "pr",
           "schema": "pr_body"

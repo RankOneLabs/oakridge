@@ -503,7 +503,7 @@
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
         "closed_pr": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
-        "merged_pr": "published(pr_state) and latest(pr_state).state == \"merged\""
+        "merged_pr": "published(observed_state) and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "brief": {
@@ -519,6 +519,9 @@
           "schema": "assessment_body"
         },
         "pr_state": {
+          "schema": "pr_status"
+        },
+        "observed_state": {
           "schema": "pr_status"
         }
       },
@@ -567,6 +570,18 @@
         },
         "pr_watch": {
           "template": "pr_watch"
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "published(pr_state)",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "creates": [
+            "observed_state"
+          ]
         }
       },
       "reviews": {
@@ -660,6 +675,12 @@
         },
         "pr_state": {
           "schema": "pr_status"
+        },
+        "manual_merge_target": {
+          "schema": "pr_body"
+        },
+        "observed_state": {
+          "schema": "pr_status"
         }
       },
       "workers": {
@@ -680,6 +701,30 @@
         },
         "pr_watch": {
           "template": "pr_watch"
+        },
+        "prepare_manual_merge": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_published",
+          "inputs": {
+            "value": "latest(pr)"
+          },
+          "every": "2m",
+          "creates": [
+            "manual_merge_target"
+          ]
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "published(pr_state)",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "creates": [
+            "observed_state"
+          ]
         }
       },
       "reviews": {
@@ -705,9 +750,9 @@
           }
         },
         "merge_confirmation": {
-          "of": "pr",
+          "of": "manual_merge_target",
           "by": "operator",
-          "when": "pr_published and not final_state and not closed_pr and not approved(pr_state)",
+          "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
             "pr": "latest(pr)",
@@ -715,7 +760,6 @@
           },
           "decisions": {
             "confirm_merged": {
-              "on": "pr_state",
               "effect": "approve",
               "label": "Confirm merged"
             }
@@ -728,11 +772,11 @@
           }
         }
       },
-      "done_when": "approved(pr) and (final_state or approved(pr_state))",
+      "done_when": "approved(pr) and (approved(manual_merge_target) or (published(observed_state) and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",
-        "is_merged": "latest(pr_state).state == \"merged\" or approved(pr_state)"
+        "is_merged": "approved(manual_merge_target) or (published(observed_state) and latest(observed_state).state == \"merged\")"
       }
     }
   }
