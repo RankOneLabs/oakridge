@@ -24,18 +24,19 @@ function useObservedVersion(queryKey: readonly string[]) {
   return useQuery({ queryKey: [...queryKey], queryFn: async () => backend.version, staleTime: Infinity });
 }
 
-test("a gate decision refreshes the run list, gates, and sessions", async () => {
+test("a gate decision refreshes the run detail, run list, gates, and sessions", async () => {
   const client = new QueryClient();
   const { result } = renderHook(() => ({
+    run: useObservedVersion(["oakridge", "run", "run-1"]),
     runs: useObservedVersion(["oakridge", "runs"]),
     gates: useObservedVersion(["oakridge", "run", "run-1", "gates"]),
     sessions: useObservedVersion(["oakridge", "run", "run-1", "sessions"]),
     action: useResumeGate("gate", "run-1"),
   }), { wrapper: queryWrapper(client) });
-  await waitFor(() => expect([result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([0, 0, 0]));
+  await waitFor(() => expect([result.current.run.data, result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([0, 0, 0, 0]));
   await act(async () => { await result.current.action.mutateAsync({ idempotency_key: "decision-1", artifact_revision_id: "revision",
     gate_step: "review", action: "approve", operator_comment: "", feedback: "" }); });
-  await waitFor(() => expect([result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([1, 1, 1]));
+  await waitFor(() => expect([result.current.run.data, result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([1, 1, 1, 1]));
   client.clear();
 });
 

@@ -49,7 +49,14 @@ import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitView, p
 
 const API = "/oakridge/api";
 const OPERATOR = "/api";
-const unitCache = new Map<string, Promise<readonly OperatorUnitView[]>>();
+interface CachedUnits {
+  readonly promise: Promise<readonly OperatorUnitView[]>;
+  expiresAt: number;
+  isLoading: boolean;
+}
+/** Run surfaces poll every ten seconds; a settled read must expire before their next poll. */
+const UNIT_CACHE_FRESH_MS = 5_000;
+const unitCache = new Map<string, CachedUnits>();
 const runPath = (runId: string): string => `${OPERATOR}/runs/${encodeURIComponent(runId)}`;
 const unitPath = (runId: string, unitId: string): string => `${runPath(runId)}/units/${encodeURIComponent(unitId)}`;
 async function resolveArtifactId(id: string): Promise<CompositeId> {
@@ -83,12 +90,23 @@ async function resolveGateId(id: string, request: GateResumeRequest): Promise<Co
 }
 const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
   const cached = unitCache.get(runId);
-  if (cached) return cached;
+  if (cached && (cached.isLoading || cached.expiresAt > Date.now())) return cached.promise;
   const path = `${runPath(runId)}/units`;
-  const promise = oakridgeGet<unknown>(path).then((value) => unwrapAdapter(path, parseUnitViews(value)))
-    .catch((error) => { unitCache.delete(runId); throw error; });
-  unitCache.set(runId, promise);
-  return promise;
+  const entry: CachedUnits = {
+    expiresAt: 0,
+    isLoading: true,
+    promise: oakridgeGet<unknown>(path).then((value) => {
+      const units = unwrapAdapter(path, parseUnitViews(value));
+      entry.isLoading = false;
+      entry.expiresAt = Date.now() + UNIT_CACHE_FRESH_MS;
+      return units;
+    }).catch((error) => {
+      if (unitCache.get(runId) === entry) unitCache.delete(runId);
+      throw error;
+    }),
+  };
+  unitCache.set(runId, entry);
+  return entry.promise;
 };
 export const invalidateCachedRunUnits = (runId: string | null): void => {
   if (runId) unitCache.delete(runId);

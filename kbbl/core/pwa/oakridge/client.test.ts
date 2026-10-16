@@ -41,6 +41,22 @@ describe("v2 Oakridge client", () => {
     expect([list[0].status, detail.status]).toEqual(["parked", "parked"]);
   });
 
+  it("refreshes a run after its next poll even when an invalidate frame is missed", async () => {
+    let now = 1;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let units: readonly OperatorUnitView[] = sample.units as unknown as OperatorUnitView[];
+    let unitReads = 0;
+    calls((path) => {
+      if (path.endsWith("/units")) { unitReads += 1; return units; }
+      return sample.run;
+    });
+    const before = await fetchRun(runId);
+    units = units.map((unit) => unit.stage === "cohort" ? { ...unit, attention: null, decisions: [] } : unit);
+    now += 10_000;
+    const after = await fetchRun(runId);
+    expect([before.status, after.status, unitReads]).toEqual(["parked", "running", 2]);
+  });
+
   it("refreshes cached units after cancelling a parked run", async () => {
     let isCancelled = false;
     let unitReads = 0;
