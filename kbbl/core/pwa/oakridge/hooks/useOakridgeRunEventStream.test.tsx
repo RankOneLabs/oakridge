@@ -46,3 +46,14 @@ test("invalidation and typed run-event hooks share one EventSource and deliver r
   ]);
   hook.unmount();
 });
+
+test("a run invalidate frame refreshes its sidebar sessions", () => {
+  vi.stubGlobal("EventSource", EventSourceStub);
+  const client = new QueryClient();
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const hook = renderHook(() => useOakridgeInvalidationStream(true), { wrapper });
+  act(() => { EventSourceStub.instances[0]?.emit("invalidate", JSON.stringify({ kind: "invalidate", target: "run", run_id: "run-1" })); });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["oakridge", "run", "run-1", "sessions"] });
+  hook.unmount();
+});

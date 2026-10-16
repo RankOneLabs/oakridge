@@ -19,6 +19,7 @@ export function useOakridgeInvalidationStream(isEnabled: boolean): void {
       if (runId) {
         void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
         void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
+        void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "sessions"] });
         void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });
         const current = client.getQueryData<ReviewInbox>(["oakridge", "review-inbox"]);
         if (current) void refreshReviewInboxRun(runId, current).then((updated) => {

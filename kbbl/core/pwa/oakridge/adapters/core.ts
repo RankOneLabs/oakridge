@@ -119,6 +119,18 @@ export const decisionAction = (decision: OperatorDecisionDefinition): string => 
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
   .filter((decision) => decision.submit.kind === "review")
   .map((decision) => ({ action: decisionAction(decision), decision }));
+/** The frozen sidebar matches gates to sessions by stage and unit label. The
+ * development cohort runs builder and assessor in separate sessions on one
+ * v2 unit, so its reviews must use the session that owns the operator handoff. */
+const developmentReviewSession = (unit: OperatorUnitView, review: string): { readonly stage: string; readonly unit: string } => {
+  if (unit.stage === "cohort" && review === "assessment_review")
+    return { stage: "assessment", unit: unit.collection_key ?? unit.unit_key };
+  if (unit.stage === "cohort" && review === "merge_confirmation")
+    return { stage: "builder", unit: unit.collection_key ?? unit.unit_key };
+  if (unit.stage === "brief" && review === "brief_review")
+    return { stage: "brief", unit: "shared writer" };
+  return { stage: unit.stage ?? unit.label, unit: unit.collection_key ?? unit.unit_key };
+};
 export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[]> {
   const byReview = new Map<string, OperatorDecisionDefinition[]>();
   for (const decision of unit.decisions) {
@@ -126,11 +138,12 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
     byReview.set(decision.submit.review, [...(byReview.get(decision.submit.review) ?? []), decision]);
   }
   return ok([...byReview].map(([review, decisions]) => {
+    const session = developmentReviewSession(unit, review);
     const target = decisions[0].submit;
     const artifact = target.kind === "review" ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target.target_revision_id) : null;
     const id = compositeId({ kind: "gate", runId: unit.run_id, unitId: unit.unit_id, name: review });
     return { id, gate_type: review.includes("merge") ? "merge_confirmation" : artifact ? "artifact_approval" : "gate_decision",
-      gate_step: review, run_id: unit.run_id, stage_name: unit.stage ?? unit.label, unit_id: unit.collection_key ?? unit.unit_key,
+      gate_step: review, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit,
       artifact_revision_id: target.kind === "review"
         ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
         : null,

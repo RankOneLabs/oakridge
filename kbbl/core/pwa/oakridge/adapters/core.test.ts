@@ -8,6 +8,7 @@ import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveS
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
+import { selectRunSidebarSessions } from "../lib/run-overview";
 import { selectCohortArtifactId } from "../lib/cohort-artifact";
 
 const run = sample.run as unknown as OperatorRunView;
@@ -66,6 +67,28 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(cohort);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
     expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_revision");
+  });
+  it("marks the assessor session as needing the operator when its assessment is published", () => {
+    const attempts = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
+      attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt }));
+    const gates = reviewToGates(cohort);
+    if (!gates.ok || attempts.some((attempt) => !attempt.ok)) throw new Error("fixture cohort mapping failed");
+    const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: attempts.flatMap((attempt) => attempt.ok ? [attempt.value] : []) },
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+    expect(rows.filter((row) => row.requires_operator_action).map((row) => row.stage_key)).toEqual(["assessment"]);
+  });
+  it("marks the builder session for a cohort merge confirmation", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
+      decision.submit.kind === "review" && decision.submit.review === "merge_confirmation"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const builder = mergeUnit.attempts.find((attempt) => attempt.worker === "builder");
+    if (!builder) throw new Error("captured fixture lacks a builder session");
+    const mapped = attemptToWorkOrder({ runId: mergeUnit.run_id, stage: "cohort", unit: mergeUnit, attempt: builder });
+    const gates = reviewToGates(mergeUnit);
+    if (!mapped.ok || !gates.ok) throw new Error("fixture merge mapping failed");
+    const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: [mapped.value] },
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+    expect(rows[0]?.requires_operator_action).toBe(true);
   });
   it("keeps an input-revision review target so the frozen decision button can submit", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
