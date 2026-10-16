@@ -3,7 +3,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
-import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
+import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
@@ -34,9 +34,11 @@ describe("v2 development adapters", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
     if (!pr) throw new Error("captured fixture lacks a PR artifact");
     const withObservation: OperatorUnitView = { ...cohort, artifacts: [...cohort.artifacts,
-      { ...pr, artifact_key: "observed_state", schema: "pr_status" }] };
+      { ...pr, artifact_key: "observed_state", schema: "pr_status" },
+      { ...pr, artifact_key: "manual_merge_target" }] };
     const stages = unitToStages([withObservation]);
-    expect(stages.ok && stages.value[0]?.artifacts.some((artifact) => artifact.type_id === "pr_status")).toBe(false);
+    expect(stages.ok && [stages.value[0]?.artifacts.some((artifact) => artifact.type_id === "pr_status"),
+      stages.value[0]?.artifacts.filter((artifact) => artifact.type_id === "dev.pr_summary").length]).toEqual([false, 1]);
   });
   it("shows builder and assessor as separate cohort sessions, each on its first attempt", () => {
     const sessions = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
@@ -168,6 +170,31 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
+  });
+  it("keeps the manual merge action as the only inbox row when the optional PR watcher fails", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.decision === "confirm_merged"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const observation = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
+    const confirm = mergeUnit.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.decision === "confirm_merged");
+    if (!observation || !confirm || confirm.submit.kind !== "review") throw new Error("captured fixture lacks PR evidence");
+    const stalled: OperatorUnitView = { ...mergeUnit,
+      artifacts: [...mergeUnit.artifacts, { ...observation, artifact_key: "observed_state" }],
+      attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
+      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
+        ? { ...attempt, status: "failed", failure: { code: "discovery_unsupported", detail: "no pull request reader is configured" } }
+        : attempt) };
+    const entry: OperatorRunInboxBatchEntry = { run_id: stalled.run_id, items: [
+      { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: confirm.key,
+        label: confirm.label, submit: confirm.submit, prompt: null },
+      { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: "retry:pr_watch",
+        label: "Retry PR watch", submit: { kind: "retry", worker: "pr_watch" }, prompt: null },
+      { kind: "stalled", run_id: stalled.run_id, unit_id: stalled.unit_id,
+        detail: "pr_watch failed: no pull request reader is configured" },
+    ] };
+    const inbox = classifyDevelopmentInbox(entry, [stalled]);
+    expect(inbox.ok && [inbox.value.items.map((item) => item.kind), inbox.value.cohorts[0]?.lifecycle])
+      .toEqual([["merge_confirmation"], "merge_confirmation"]);
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
     const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);

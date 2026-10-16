@@ -1,6 +1,6 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, ok, statusInputOf, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -33,7 +33,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const unitItems = entry.items.filter((item) => item.unit_id === unit.unit_id);
     const name = unit.collection_key ?? unit.unit_key;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage! });
-    const artifact = unit.artifacts.find((candidate) => candidate.latest_revision);
+    const artifact = unit.artifacts.find((candidate) => candidate.latest_revision && isVisibleDevelopmentArtifact(candidate));
     const review = unitItems.find((item) => item.kind === "decision" && item.submit.kind === "review");
     const reviewName = review?.kind === "decision" && review.submit.kind === "review" ? review.submit.review : null;
     const gate = reviewName ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: reviewName }) : null;
@@ -50,6 +50,11 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
+    const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
+      && unit.decisions.some((decision) => decision.submit.kind === "review"
+        && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
+    if (isManualMergeAvailable && (item.kind === "stalled" && item.detail.startsWith("pr_watch failed:")
+      || item.kind === "decision" && item.submit.kind === "retry" && item.submit.worker === "pr_watch")) return [];
     if (item.kind === "waiting" && item.reason.includes("review") && unit.decisions.some((decision) => decision.submit.kind === "review")) return [];
     if (item.kind === "decision" && item.submit.kind === "review") {
       const reviewKey = `${item.unit_id}:${item.submit.review}`;

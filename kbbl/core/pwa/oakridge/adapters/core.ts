@@ -33,6 +33,9 @@ const SCHEMA_TYPES: Readonly<Record<string, string>> = {
   analysis_body: "dev.spec_analysis", plan_body: "dev.plan", brief_body: "dev.build_brief",
   build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
 };
+/** Internal workflow evidence is addressable by a gate, but is not a separate v1 artifact. */
+export const isVisibleDevelopmentArtifact = (artifact: OperatorArtifactView): boolean =>
+  Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema) && artifact.artifact_key !== "manual_merge_target";
 export const artifactType = (schema: string): ArtifactTypeDescriptor => ({
   id: SCHEMA_TYPES[schema] ?? schema, component_id: SCHEMA_COMPONENTS[schema] ?? "",
   capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null,
@@ -202,7 +205,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
     });
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
       status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision
-        && Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema)).map((artifact) => ({
+        && isVisibleDevelopmentArtifact(artifact)).map((artifact) => ({
         id: artifactId(artifact), type_id: artifactType(artifact.schema).id, version: artifact.revision_count,
         label: unit.collection_key ?? unit.unit_key, created_at: artifact.latest_revision!.created_at }))),
       delegated_kbbl_sid: members.flatMap((unit) => unit.attempts.map((attempt) => attempt.kbbl_session_id)).find((sid) => sid) ?? null,
