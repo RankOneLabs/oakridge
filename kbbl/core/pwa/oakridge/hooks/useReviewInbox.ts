@@ -7,6 +7,8 @@ export function useReviewInbox(isEnabled = true) {
     queryKey: ["oakridge", "review-inbox"],
     queryFn: fetchReviewInbox,
     staleTime: 30_000,
+    // Recover reviews missed while the event stream is disconnected.
+    refetchInterval: 60_000,
     enabled: isEnabled,
   });
 }
