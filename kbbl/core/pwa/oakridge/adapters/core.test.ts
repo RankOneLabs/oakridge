@@ -46,8 +46,8 @@ describe("v2 development adapters", () => {
       attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt }));
     if (sessions.some((result) => !result.ok)) throw new Error("fixture cohort session mapping failed");
     const rows = selectRunSessionRows(sessions.flatMap((result) => result.ok ? [result.value] : []));
-    expect(rows.map((row) => [row.attempt.unit_id, row.attempt_number, row.attempt_count])).toEqual([
-      ["a / builder", 1, 1], ["a / assessor", 1, 1],
+    expect(rows.map((row) => [row.attempt.stage_key, row.attempt.unit_id, row.attempt_number, row.attempt_count])).toEqual([
+      ["builder", cohort.collection_key, 1, 1], ["assessment", cohort.collection_key, 1, 1],
     ]);
   });
   it("exposes a pending admission control in the frozen stage row while the run remains parked", () => {

@@ -145,16 +145,17 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   const reason: RunSessionAttempt["reason"] = attempt.cause.kind === "retry" ? "operator_retry" : attempt.cause.kind === "changes_requested" ? "input_revision" : "initial";
   const work_order_state: RunSessionAttempt["work_order_state"] = attempt.status === "pending" ? "available" : attempt.status === "running" ? "started" : "completed";
   // v1 groups sidebar attempts by (stage_instance_id, unit_id). A v2 cohort
-  // runs its builder and assessor on one unit, so include the worker in this
-  // display identity; retries of the same worker still group together.
+  // runs its builder and assessor on one unit, so give each a display-stage
+  // identity; retries of the same worker still group together.
   const unitLabel = unit.collection_key ?? unit.unit_key;
+  const sessionStage = stage === "cohort" && attempt.worker === "builder" ? "builder"
+    : stage === "cohort" && attempt.worker === "assessor" ? "assessment" : stage;
   // The development brief writer shares one kbbl session across cohort brief
   // units. Naming its sidebar row after the latest unit would imply that the
   // session belongs to that one cohort.
-  const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer"
-    : stage === "cohort" ? `${unitLabel} / ${attempt.worker}` : unitLabel;
+  const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer" : unitLabel;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
-    stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: stage }), stage_key: stage,
+    stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: sessionStage }), stage_key: sessionStage,
     unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
