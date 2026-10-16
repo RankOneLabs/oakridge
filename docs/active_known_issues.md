@@ -7,9 +7,9 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 
 ## Frozen v1 operator UI on v2 (v1-data-layer)
 
-- **Browser coverage now seeds the v2 contract, but is narrow.** The three
-  browser cases exercise launch/read-back, run-workspace loading, and responsive
-  pane layout against the captured v2 run fixture. They pass with
+- **Browser coverage now seeds the v2 contract, but is narrow.** The two
+  browser cases exercise launch/read-back and run-workspace loading against
+  the captured v2 run fixture. They pass with
   `cd kbbl && bun run test:browser`.
   They do not yet automate every control in the frozen UI. The isolated shadow
   install rendered the run list and detail; live button checks verified Cancel
