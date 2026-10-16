@@ -57,11 +57,15 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   changes prevent accidental misattribution; they do not isolate the backend
   key from an agent running under the same account. A separate process/account
   boundary is still needed for that isolation.
-- **The shadow backend cannot observe GitHub PR state without credentials.**
-  The current `127.0.0.1:8800` process has no GitHub token; a later
-  `pull_request.observe` step will report `discovery_unsupported`. Provide
-  credentials to the shadow backend before using this run to assess merge
-  confirmation or end-to-end completion.
+- **The shadow backend cannot observe GitHub PR state through the available
+  no-token path.** The current `127.0.0.1:8800` process has no GitHub token;
+  `pull_request.observe` reports `discovery_unsupported` without one. The
+  gated-review `pr_status` tool can read checks and review readiness, but its
+  response has no open/closed/merged state, head or base branch, or head SHA,
+  all of which the watcher validates. The installed `gh` credential is invalid,
+  and the review gate rejects `gh` commands. A read-only gated-review operation
+  returning those fields would let the watcher run without a separate GitHub
+  token; until that exists, retrying the watcher cannot clear this stall.
 - **The development PR artifact can claim a PR exists with an empty URL.** In
   `run-072ecbd42a8f7169`, the builder could not reach gated-review from its
   own session and published `pr_url: ""`. The `pr_body` schema accepted it, so
