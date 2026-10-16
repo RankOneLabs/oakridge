@@ -59,7 +59,7 @@ afterAll(async () => {
   await db.destroy();
   await scratch.drop();
   rmSync(workdir, { recursive: true, force: true });
-});
+}, 30_000);
 
 const api = async (method: string, path: string, body?: unknown): Promise<Response> =>
   fetch(`${base_url}${path}`, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -122,6 +122,8 @@ test("I1: sample A end to end through HTTP; the editor's feedback reaches the wr
     const [drafts, critiques] = await Promise.all([revisions(run_id, "draft"), revisions(run_id, "critique")]);
     return drafts.length === 1 && critiques.some((critique) => critique.subject === drafts[0]!.id) ? drafts : null;
   });
+  await eventually("first writer turn succeeded", async () => (await attempts(run_id, "writer")).some((attempt) => attempt.status.kind === "succeeded"));
+  expect(sessionsOfRun(run_id, "writer")[0]?.status).toBe("live");
   expect((await decide(run_id, unit, "request_changes", r1!.id, { feedback: "shorter" })).status).toBe(201);
   await eventually("the revise to fail", async () => (await attempts(run_id, "writer")).some((attempt) => attempt.status.kind === "failed"));
   expect(await runStatus(run_id)).toBe("active");
@@ -133,6 +135,7 @@ test("I1: sample A end to end through HTTP; the editor's feedback reaches the wr
   });
   expect((await decide(run_id, unit, "approve", r3.id, {})).status).toBe(201);
   await eventually("the run to finish", async () => await runStatus(run_id) === "done");
+  await eventually("approved writer session closed", async () => sessionsOfRun(run_id, "writer")[0]?.status === "ended");
 
   const writer_attempts = await attempts(run_id, "writer");
   const writer_sessions = sessionsOfRun(run_id, "writer");

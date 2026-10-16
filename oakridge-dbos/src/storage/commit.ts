@@ -581,9 +581,30 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
   for (const action_id of plan.replaced_actions) await trx.updateTable("authority.effect_intent")
     .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
     .where("run_id", "=", run_id).where("action_id", "=", action_id).where("status", "in", START_OWED_STATUSES).execute();
-  if (plan.inactive_units.length) await trx.updateTable("authority.effect_intent")
-    .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
-    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(plan.inactive_units)).where("status", "in", START_OWED_STATUSES).execute();
+  if (plan.inactive_units.length) {
+    await trx.updateTable("authority.effect_intent")
+      .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
+      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(plan.inactive_units)).where("status", "in", START_OWED_STATUSES).execute();
+    // A successful turn settles its intent while its resumable kbbl session
+    // stays open for review changes. Once the unit is terminal, that session
+    // must be closed too. Reopen only intents with a recorded session and no
+    // previous stop; the cleanup carrier retries until kbbl acknowledges it.
+    const finished_sessions = await trx.selectFrom("authority.effect_intent as intent")
+      .innerJoin("authority.attempt as attempt", (join) => join
+        .onRef("attempt.run_id", "=", "intent.run_id")
+        .onRef("attempt.action_id", "=", "intent.action_id")
+        .onRef("attempt.seq", "=", "intent.seq"))
+      .select("intent.id")
+      .where("intent.run_id", "=", run_id)
+      .where("intent.unit_id", "=", anyOf(plan.inactive_units))
+      .where("intent.status", "=", "stopped")
+      .where("intent.stop_origin", "is", null)
+      .where("attempt.kbbl_session_id", "is not", null)
+      .execute();
+    if (finished_sessions.length) await trx.updateTable("authority.effect_intent")
+      .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
+      .where("id", "=", anyOf(finished_sessions.map((session) => session.id))).execute();
+  }
   for (const update of plan.review_updates) await trx.updateTable("authority.unit").set({ review_prompts: jsonText(update.prompts) })
     .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();
   for (const update of plan.blocked_updates) await trx.updateTable("authority.unit")
