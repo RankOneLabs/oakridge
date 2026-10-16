@@ -37,7 +37,7 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders the
   live Shelly run `run-072ecbd42a8f7169` against a pinned checkout of
   `cirsteve/shelly`. Analysis, Planning and all three Briefs are approved.
-  The `theme-foundation` builder finished and the assessor is running. Its PR
+  The `theme-foundation` builder and assessor finished. Its PR
   is [#2](https://github.com/cirsteve/shelly/pull/2); the other cohorts depend
   on it and on each other. This run was launched with `admission: true` and
   needed a separate Admit build review. New launches from the v1 form use
@@ -71,6 +71,16 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   corrected the `pr` artifact, but the watcher retains its failed attempt.
   The pinned workflow needs a nonempty-URL guard or validation so an absent PR
   cannot start observation or masquerade as a successful PR publication.
+- **The first shadow Cohort assessment predates PR recovery.** The assessor
+  reviewed the builder's original empty-URL `pr` artifact and published a
+  `fail` verdict because no PR existed then. It also found that dark calendar
+  day numbers are effectively invisible in this intentionally partial Cohort 1
+  state and that the builder did not disclose that seam. PR #2 and the corrected
+  `pr` revision arrived after the assessor started, so its historical verdict
+  remains valid for what it reviewed; an operator must review it with that
+  timing in mind. The current gated-review tool set cannot amend the PR body,
+  which still lacks the brief's required contrast figures and deferred-defect
+  disclosure.
 - **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
   A composite v2 ID resolves on a cold load, and the client can find a bare v2
   revision ID by searching run and unit views. An arbitrary retired v1 UUID
