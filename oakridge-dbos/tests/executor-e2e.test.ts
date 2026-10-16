@@ -243,6 +243,8 @@ test("I2: sample B prepares a temporary repository and runs every item in a work
 
 test("sibling reviewed items publish through one shared session until the final review closes it", async () => {
   const repo = await temporaryRepository();
+  let releaseFirst = () => {};
+  const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
   try {
     const workflow = sampleWorkflow("fan-out");
     const item = workflow.stages.item!;
@@ -257,23 +259,28 @@ test("sibling reviewed items publish through one shared session until the final 
       items: [{ key: "a", text: "alpha", after: [] }, { key: "b", text: "beta", after: [] }] }, async (turn) => {
       const response = await turn.publish("result", `done: ${itemOf(turn)}`);
       if (response.status !== 201) throw new Error(`publish refused: ${await response.text()}`);
+      if (itemOf(turn) === "a") await firstTurn;
       return "succeeded";
     });
     const published = await eventually("both shared items published", async () => {
       const rows = await revisions(run_id, "result");
       return rows.length === 2 ? rows : null;
     });
-    await eventually("both shared turns ended", async () => (await attempts(run_id, "worker")).filter((attempt) => attempt.status.kind === "succeeded").length === 2);
     const session = sessionsOfRun(run_id, "worker")[0];
     expect(sessionsOfRun(run_id, "worker").length).toBe(1);
     const a = published.find((revision) => revision.unit_id.endsWith("/a"))!;
     const b = published.find((revision) => revision.unit_id.endsWith("/b"))!;
     expect((await decide(run_id, a.unit_id, "approve", a.id, {})).status).toBe(201);
+    const active = await db.selectFrom("authority.effect_intent").select("status").where("run_id", "=", run_id)
+      .where("unit_id", "=", a.unit_id).executeTakeFirstOrThrow();
+    expect(active.status).toBe("acknowledged");
     expect(session?.status).toBe("live");
+    releaseFirst();
+    await eventually("both shared turns ended", async () => (await attempts(run_id, "worker")).filter((attempt) => attempt.status.kind === "succeeded").length === 2);
     expect((await decide(run_id, b.unit_id, "approve", b.id, {})).status).toBe(201);
     await eventually("shared session closed", async () => session?.status === "ended");
     expect(await runStatus(run_id)).toBe("done");
-  } finally { repo.remove(); }
+  } finally { releaseFirst(); repo.remove(); }
 }, 90_000);
 
 test("I3: cancelling mid-flight stops every live session and cancels every unit", async () => {
