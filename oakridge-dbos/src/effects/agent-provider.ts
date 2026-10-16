@@ -100,7 +100,15 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
   async function ensure(instruction: EffectInstruction, signal: AbortSignal | undefined) {
     if (!config.kbbl || config.publication_key === null || instruction.worker.kind !== "agent") return null;
     const secret = derivePublicationSecret(config.publication_key, instruction.worker.session_key);
-    const ensured = await config.kbbl.ensure(instruction.worker.session_key, selectSessionStart(instruction, config, secret), signal);
+    const spec = selectSessionStart(instruction, config, secret);
+    let ensured = await config.kbbl.ensure(instruction.worker.session_key, spec, signal);
+    // An already-claimed session keeps its original worktree branch across a code rollout.
+    if (ensured.kind === "permanently_rejected" && ensured.code === "session_key_conflict"
+      && spec.worktree?.branch_name.startsWith("cohort/")) {
+      const legacy = { ...spec, worktree: { ...spec.worktree,
+        branch_name: `oakridge/${shortDigest(instruction.worker.session_key)}` } };
+      ensured = await config.kbbl.ensure(instruction.worker.session_key, legacy, signal);
+    }
     return { ensured, secret };
   }
   /** A session that cannot take input: how it ended, as kbbl reports it. */
