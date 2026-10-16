@@ -37,11 +37,12 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders the
   live Shelly run `run-072ecbd42a8f7169` against a pinned checkout of
   `cirsteve/shelly`. Analysis, Planning and all three Briefs are approved.
-  This run was launched with `admission: true`, so its `theme-foundation`
-  Cohort awaits the separate Admit build review before its builder can start;
-  the other cohorts depend on it and on each other. New launches from the v1
-  form use `admission: false`, so accepting the Briefs is enough to start the
-  first eligible builder. The older seed `run-9e88f4b61c072a35`
+  The `theme-foundation` builder finished and the assessor is running. Its PR
+  is [#2](https://github.com/cirsteve/shelly/pull/2); the other cohorts depend
+  on it and on each other. This run was launched with `admission: true` and
+  needed a separate Admit build review. New launches from the v1 form use
+  `admission: false`, so accepting the Briefs starts the first eligible
+  builder. The older seed `run-9e88f4b61c072a35`
   remains unsuitable for full-flow assessment because it has no repository.
   The default install needs its database cutover before this PWA branch can
   run against it.
@@ -61,6 +62,15 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   `pull_request.observe` step will report `discovery_unsupported`. Provide
   credentials to the shadow backend before using this run to assess merge
   confirmation or end-to-end completion.
+- **The development PR artifact can claim a PR exists with an empty URL.** In
+  `run-072ecbd42a8f7169`, the builder could not reach gated-review from its
+  own session and published `pr_url: ""`. The `pr_body` schema accepted it, so
+  `pr_watch` started and failed `invalid_instruction` because
+  `pull_request.observe` requires a nonempty URL. The branch and PR were later
+  published through the gated-review connection and an operator revision
+  corrected the `pr` artifact, but the watcher retains its failed attempt.
+  The pinned workflow needs a nonempty-URL guard or validation so an absent PR
+  cannot start observation or masquerade as a successful PR publication.
 - **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
   A composite v2 ID resolves on a cold load, and the client can find a bare v2
   revision ID by searching run and unit views. An arbitrary retired v1 UUID
