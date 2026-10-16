@@ -41,7 +41,7 @@ import type {
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
@@ -232,8 +232,8 @@ export async function fetchRunGates(runId: string): Promise<ParkedGate[]> {
 }
 
 export function fetchRunSessions(runId: string): Promise<RunSessionAttempt[]> {
-  return readUnits(runId).then((units) => units.flatMap((unit) => unwrapAdapter(unitPath(runId, unit.unit_id), latestAttemptPerSession(unit.attempts))
-    .map((attempt) => unwrapAdapter(unitPath(runId, unit.unit_id), attemptToWorkOrder({ runId, stage: unit.stage ?? "$root", unit, attempt })))));
+  return readUnits(runId).then((units) => unwrapAdapter(runPath(runId), latestUnitAttemptPerSession(units))
+    .map(({ unit, attempt }) => unwrapAdapter(unitPath(runId, unit.unit_id), attemptToWorkOrder({ runId, stage: unit.stage ?? "$root", unit, attempt }))));
 }
 
 export async function fetchSessionRun(sessionId: string): Promise<SessionRunLocation | null> {

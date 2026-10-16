@@ -4,7 +4,7 @@ import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 
@@ -62,6 +62,14 @@ describe("v2 development adapters", () => {
     const selected = latestAttemptPerSession(planningRevise.attempts as OperatorAttemptView[]);
     expect(selected.ok && selected.value.map((attempt) => [attempt.kbbl_session_id, attempt.mode, attempt.cause.kind]))
       .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "revise", "changes_requested"]]);
+  });
+  it("shows one session when separate brief units share its physical sid", () => {
+    const first = units.find((unit) => unit.stage === "brief" && unit.attempts.length > 0);
+    if (!first) throw new Error("captured fixture lacks a brief attempt");
+    const second: OperatorUnitView = { ...first, unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({
+      ...attempt, id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) };
+    const selected = latestUnitAttemptPerSession([first, second]);
+    expect(selected.ok && selected.value.map(({ unit }) => unit.unit_id)).toEqual([second.unit_id]);
   });
   it("maps a run event kind", () => {
     const event = runEventKind(sample.event as OperatorRunEvent);

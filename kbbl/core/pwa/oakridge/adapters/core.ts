@@ -144,6 +144,18 @@ export function latestAttemptPerSession(attempts: readonly OperatorAttemptView[]
     && lastIndexBySession.get(attempt.kbbl_session_id) === index));
 }
 
+/** A shared v2 session can carry turns from different collection members.
+ * Choose its latest attempt across the whole run before populating the v1 sidebar. */
+export function latestUnitAttemptPerSession(units: readonly OperatorUnitView[]): AdapterResult<readonly { readonly unit: OperatorUnitView;
+  readonly attempt: OperatorAttemptView }[]> {
+  const ordered = units.flatMap((unit) => unit.attempts.map((attempt) => ({ unit, attempt })))
+    .filter(({ attempt }) => attempt.kbbl_session_id !== null)
+    .sort((left, right) => left.attempt.created_at.localeCompare(right.attempt.created_at) || left.attempt.id.localeCompare(right.attempt.id));
+  const latest = new Map<string, { readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }>();
+  ordered.forEach((entry) => { if (entry.attempt.kbbl_session_id) latest.set(entry.attempt.kbbl_session_id, entry); });
+  return ok([...latest.values()]);
+}
+
 export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<StageDetail[]> {
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);

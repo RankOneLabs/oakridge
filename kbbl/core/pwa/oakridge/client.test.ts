@@ -67,6 +67,17 @@ describe("v2 Oakridge client", () => {
       .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "input_revision", "completed"]]);
   });
 
+  it("lists one Brief session when two brief units share its sid", async () => {
+    const first = sample.units.find((unit) => unit.stage === "brief" && unit.attempts.length > 0);
+    if (!first) throw new Error("captured fixture lacks a brief attempt");
+    const second = { ...first, unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({ ...attempt,
+      id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) };
+    calls(() => [first, second]);
+    const sessions = await fetchRunSessions(first.run_id);
+    expect(sessions.map((session) => [session.session_id, session.work_order_id])).toEqual([[first.attempts[0]?.kbbl_session_id,
+      `${first.attempts[0]?.id}-other`]]);
+  });
+
   it("refreshes cached units after cancelling a parked run", async () => {
     let isCancelled = false;
     let unitReads = 0;
