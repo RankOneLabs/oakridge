@@ -3,7 +3,7 @@ import sample from "./__fixtures__/v2-adapter-sample.json";
 import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
-import { admitStageUnit, cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
+import { admitStageUnit, cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorUnitView } from "./operator-contracts";
 import type { CreateRunRequest, RepositoryKey } from "./types";
@@ -206,6 +206,20 @@ describe("v2 Oakridge client", () => {
     const body = JSON.parse(String(posted?.[1]?.body));
     expect([String(posted?.[0]).includes(`/units/${encodeURIComponent(unit.unit_id)}/reviews/merge_confirmation/decide`), body.target])
       .toEqual([true, mergeDecision.submit.target_revision_id]);
+  });
+
+  it("confirms final merge against the independent manual target", async () => {
+    const unit = (integrationMerge.units as unknown as OperatorUnitView[]).find((candidate) => candidate.stage === "integration" && candidate.decisions.some((decision) => decision.key === "confirm_merged"));
+    if (!unit || !unit.collection_key) throw new Error("captured fixture lacks an integration merge decision");
+    const target = `${unit.unit_id}:manual_merge_target:1`;
+    const updated = { ...unit, decisions: unit.decisions.map((decision) => decision.key === "confirm_merged" && decision.submit.kind === "review"
+      ? { ...decision, submit: { ...decision.submit, target_revision_id: target } } : decision) };
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: integrationMerge.run.run_id, event_id: "event-manual-merge" } : [updated]);
+    await confirmFinalPullRequest(integrationMerge.run.run_id, unit.collection_key as RepositoryKey,
+      { idempotency_key: "manual-final-merge" });
+    const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
+    expect([String(posted?.[0]).includes(`/units/${encodeURIComponent(unit.unit_id)}/reviews/merge_confirmation/decide`),
+      JSON.parse(String(posted?.[1]?.body)).target]).toEqual([true, target]);
   });
 
   it("uses a batched inbox and one cached units read per run, then refreshes only that run", async () => {
