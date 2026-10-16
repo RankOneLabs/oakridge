@@ -174,7 +174,7 @@ export interface OperatorIngressRequest { readonly request_id: string }
 
 export interface OperatorLaunchRequest extends OperatorIngressRequest {
   readonly digest: string; readonly input: unknown; readonly project_id?: string | null;
-  /** Session settings by stage; a stage it does not name keeps its workers' declared runtime. */
+  /** Session settings by `stage.worker`, with a stage key accepted for older launches. */
   readonly config?: OperatorRunConfig | null;
 }
 
@@ -343,7 +343,7 @@ export type OperatorStreamFrame =
   | { readonly event: "run_event"; readonly data: OperatorRunEvent }
   | { readonly event: "invalidate"; readonly data: OperatorStreamInvalidation };
 
-export interface OperatorRunConfig { readonly sessions: { readonly [stage: string]: OperatorSessionSettings } }
+export interface OperatorRunConfig { readonly sessions: { readonly [stage_or_worker: string]: OperatorSessionSettings } }
 
 export type OperatorAttemptStatusKind = OperatorAttemptStatus["kind"];
 

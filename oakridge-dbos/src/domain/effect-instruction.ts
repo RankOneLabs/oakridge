@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Action, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
-import { selectSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
+import { selectWorkerSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { ActionId, Result, RunId } from "./primitives";
 
 /** Provider start attempts an instruction may claim until the YAML carries a budget. */
@@ -21,7 +21,7 @@ export type WorkerInstruction =
       readonly shared_session_unit?: string;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
       readonly handoff: PinnedPrompt | null;
-      /** What the session starts with: the run's settings for the stage, else the worker's declared runtime; null for kbbl's default. */
+      /** What the session starts with: the run's worker or stage choice, else its declared runtime; null for kbbl's default. */
       readonly settings: SessionSettings | null; readonly creates: readonly CreatedArtifact[];
       /** Every named schema the created artifacts' schemas still reference (inside `list(...)`, `optional(...)`), transitively. */
       readonly schemas: { readonly [name: string]: TypeExpression } }
@@ -154,7 +154,9 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
-      prompt: prompt.value, handoff: handoff?.value ?? null, settings: selectSessionSettings(source.config, source.stage, declared.runtime ?? null), creates,
+      prompt: prompt.value, handoff: handoff?.value ?? null,
+      settings: selectWorkerSessionSettings(source.config,
+        { stage: source.stage, worker: action.worker }, declared.runtime ?? null), creates,
       schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
   } else {
     const artifact = declared.creates[0];

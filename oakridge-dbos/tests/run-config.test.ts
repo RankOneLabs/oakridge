@@ -1,8 +1,29 @@
 import { expect, test } from "bun:test";
-import { parseRunConfig, selectSessionSettings } from "../src/domain/run-config";
+import { parseRunConfig, selectSessionSettings, selectWorkerSessionSettings } from "../src/domain/run-config";
 import { parseLaunchRequest } from "../src/http/ingress";
 
 const planner = { harness: "claude-code", model: "opus", effort: "high" };
+const builder = { harness: "codex", model: "gpt-6-sol", effort: "high" };
+
+test("worker settings are independent for any workflow with multiple agent workers", () => {
+  const config = { sessions: { "review.drafter": builder, "review.checker": planner } };
+  expect([selectWorkerSessionSettings(config, { stage: "review", worker: "drafter" }, null),
+    selectWorkerSessionSettings(config, { stage: "review", worker: "checker" }, null)])
+    .toEqual([builder, planner]);
+});
+
+test("a cohort assessor uses its worker choice while the builder keeps the stage fallback", () => {
+  const config = { sessions: { cohort: builder, "cohort.assessor": planner } };
+  expect([selectWorkerSessionSettings(config, { stage: "cohort", worker: "builder" }, null),
+    selectWorkerSessionSettings(config, { stage: "cohort", worker: "assessor" }, null)])
+    .toEqual([builder, planner]);
+});
+
+test("an older stage-only choice remains the fallback for every worker", () => {
+  const config = { sessions: { cohort: builder, planning: planner } };
+  expect(selectWorkerSessionSettings(config, { stage: "cohort", worker: "assessor" }, null))
+    .toEqual(builder);
+});
 
 test("a run's settings for a stage win over the worker's declared runtime", () => {
   expect(selectSessionSettings({ sessions: { planning: planner } }, "planning", { harness: "codex", model: "gpt-5.5" })).toEqual(planner);
