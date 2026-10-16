@@ -50,8 +50,9 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
         function paths(argument: ts.Node): void {
           const literal = routeLiteral(argument);
           if (literal !== null) {
-            // kbbl owns configuration and the run-activity compatibility proxy.
-            if (literal === "/oakridge/config" || literal.startsWith("/oakridge/api/run_events?")) return;
+            // kbbl owns configuration, session inventory, and the run-activity compatibility proxy.
+            if (literal === "/oakridge/config" || (literal === "/sessions" && method === "GET")
+              || literal.startsWith("/oakridge/api/run_events?")) return;
             const normalized = literal.replace(/^\/oakridge\/api(?=\/)/, "").split("?")[0];
             if (normalized?.startsWith("/")) routes.push({ method, path: normalized, source: path });
             return;

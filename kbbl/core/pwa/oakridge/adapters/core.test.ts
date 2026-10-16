@@ -3,6 +3,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
+import { withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
@@ -35,9 +36,9 @@ describe("v2 development adapters", () => {
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
     if (!pr) throw new Error("captured fixture lacks a PR artifact");
-    const withObservation: OperatorUnitView = { ...cohort, artifacts: [...cohort.artifacts,
+    const withObservation = withUnitFields(cohort, { artifacts: [...cohort.artifacts,
       { ...pr, artifact_key: "observed_state", schema: "pr_status" },
-      { ...pr, artifact_key: "manual_merge_target" }] };
+      { ...pr, artifact_key: "manual_merge_target" }] });
     const stages = unitToStages([withObservation]);
     expect(stages.ok && [stages.value[0]?.artifacts.some((artifact) => artifact.type_id === "pr_status"),
       stages.value[0]?.artifacts.filter((artifact) => artifact.type_id === "dev.pr_summary").length]).toEqual([false, 1]);
@@ -55,9 +56,9 @@ describe("v2 development adapters", () => {
     const original = cohort.decisions.find((decision) => decision.submit.kind === "review");
     const briefRevision = cohort.artifacts.find((artifact) => artifact.artifact_key === "brief")?.latest_revision;
     if (!original || original.submit.kind !== "review" || !briefRevision) throw new Error("fixture lacks cohort review and brief");
-    const awaiting: OperatorUnitView = { ...cohort, attention: { kind: "waiting", reason: "awaiting admission review" },
+    const awaiting = withUnitFields(cohort, { attention: { kind: "waiting", reason: "awaiting admission review" },
       decisions: [{ ...original, key: "admit", submit: { ...original.submit, review: "admission", decision: "admit",
-        effect: "approve", target_revision_id: briefRevision.id } }] };
+        effect: "approve", target_revision_id: briefRevision.id } }] });
     const stages = unitToStages([awaiting]);
     const unit = stages.ok ? stages.value[0]?.units?.[0] : null;
     expect([stages.ok && stages.value[0]?.status, unit?.status, unit?.admission_required,
@@ -94,8 +95,8 @@ describe("v2 development adapters", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     if (!accept || accept.submit.kind !== "review") throw new Error("captured fixture lacks an accept review");
     const target = `${cohort.unit_id}:input:1`;
-    const inputReview: OperatorUnitView = { ...cohort, artifacts: [], decisions: [{ ...accept,
-      submit: { ...accept.submit, review: "admission", target_revision_id: target } }] };
+    const inputReview = withUnitFields(cohort, { artifacts: [], decisions: [{ ...accept,
+      submit: { ...accept.submit, review: "admission", target_revision_id: target } }] });
     const gates = reviewToGates(inputReview);
     expect(gates.ok && gates.value[0]?.artifact_revision_id).toBe(target);
   });
@@ -137,8 +138,8 @@ describe("v2 development adapters", () => {
   it("shows one session when separate brief units share its physical sid", () => {
     const first = units.find((unit) => unit.stage === "brief" && unit.attempts.length > 0);
     if (!first) throw new Error("captured fixture lacks a brief attempt");
-    const second: OperatorUnitView = { ...first, unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({
-      ...attempt, id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) };
+    const second = withUnitFields(first, { unit_id: `${first.unit_id}-other`, attempts: first.attempts.map((attempt) => ({
+      ...attempt, id: `${attempt.id}-other`, unit_id: `${first.unit_id}-other`, created_at: "9999-01-01T00:00:00Z" })) });
     const selected = latestUnitAttemptPerSession([first, second]);
     expect(selected.ok && selected.value.map(({ unit }) => unit.unit_id)).toEqual([second.unit_id]);
   });
@@ -157,12 +158,12 @@ describe("v2 development adapters", () => {
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
     const observedState = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
     if (!observedState) throw new Error("captured fixture lacks a PR state artifact");
-    const stalled: OperatorUnitView = { ...mergeUnit,
+    const stalled = withUnitFields(mergeUnit, {
       artifacts: [...mergeUnit.artifacts, { ...observedState, artifact_key: "observed_state" }],
       attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
-        : attempt) };
+        : attempt) });
     const detail = runSnapshot(mergeRun, mergeUnits.map((unit) => unit.unit_id === mergeUnit.unit_id ? stalled : unit));
     expect(detail.ok && [detail.value.stages.find((stage) => stage.name === "cohort")?.status,
       detail.value.status, runSummary(detail.value, mergeRun).status]).toEqual(["parked", "parked", "parked"]);
@@ -217,12 +218,12 @@ describe("v2 development adapters", () => {
     const observation = mergeUnit.artifacts.find((artifact) => artifact.artifact_key === "pr_state");
     const confirm = mergeUnit.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.decision === "confirm_merged");
     if (!observation || !confirm || confirm.submit.kind !== "review") throw new Error("captured fixture lacks PR evidence");
-    const stalled: OperatorUnitView = { ...mergeUnit,
+    const stalled = withUnitFields(mergeUnit, {
       artifacts: [...mergeUnit.artifacts, { ...observation, artifact_key: "observed_state" }],
       attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
       attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
         ? { ...attempt, status: "failed", failure: { code: "discovery_unsupported", detail: "no pull request reader is configured" } }
-        : attempt) };
+        : attempt) });
     const entry: OperatorRunInboxBatchEntry = { run_id: stalled.run_id, items: [
       { kind: "decision", run_id: stalled.run_id, unit_id: stalled.unit_id, key: confirm.key,
         label: confirm.label, submit: confirm.submit, prompt: null },
@@ -242,10 +243,10 @@ describe("v2 development adapters", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
       decision.submit.kind === "review" && decision.submit.review === "merge_confirmation"));
     if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
-    const unsafe: OperatorUnitView = { ...mergeUnit, artifacts: mergeUnit.artifacts.map((artifact) =>
+    const unsafe = withUnitFields(mergeUnit, { artifacts: mergeUnit.artifacts.map((artifact) =>
       artifact.artifact_key === "pr" && artifact.latest_revision
         ? { ...artifact, latest_revision: { ...artifact.latest_revision, body: { pr_url: "javascript:alert(1)" } } }
-        : artifact) };
+        : artifact) });
     expect(developmentPullRequestUrl(unsafe)).toBeNull();
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {

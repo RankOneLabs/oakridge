@@ -12,6 +12,7 @@ import type { BuildBrief } from "../lib/build-brief";
 import { compositeId } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client";
 import mergeFixture from "../__fixtures__/v2-integration-merge.json";
+import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorUnitView } from "../operator-contracts";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -48,13 +49,6 @@ function json(body: unknown, status = 200): Response {
 }
 
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); runsSeed = null; runSeed = null; runGatesSeed = []; gatesSeed = null; });
-
-const retryUnit = (unitId: string): OperatorUnitView => ({
-  unit_id: `run-1/unit/${unitId}`, run_id: "run-1", unit_key: unitId, label: unitId,
-  stage: "cohort", collection_key: unitId, input: {}, depends_on: [], status: { kind: "active" }, outcome: null,
-  is_terminal: false, attention: { kind: "stalled", detail: "worker failed" }, attempts: [], artifacts: [],
-  decisions: [{ key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } }],
-});
 
 /**
  * A stage unit's `params` is the minted fan-out item (`{unit_id, artifact}`)
@@ -514,7 +508,7 @@ describe("RunDetail stage list", () => {
     const repositoryKey = "oakridge" as RepositoryKey;
     const capturedIntegration = (mergeFixture.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration" && unit.decisions.some((decision) => decision.key === "confirm_merged"));
     if (!capturedIntegration) throw new Error("captured fixture lacks integration merge review");
-    const integrationUnit: OperatorUnitView = { ...capturedIntegration, run_id: "run-1", collection_key: repositoryKey };
+    const integrationUnit = withUnitFields(capturedIntegration, { run_id: "run-1", collection_key: repositoryKey });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       epic_profile: {
