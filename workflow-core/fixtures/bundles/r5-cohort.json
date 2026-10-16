@@ -79,6 +79,12 @@
           "when": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
           "decisions": { "replace": { "effect": "request_changes", "label": "Replace the PR",
                                       "feedback": "The PR was closed without merging. Open a new one." } }
+        },
+        "pr_closed_operator": {
+          "of": "pr", "by": "operator", "prompt": "review.md", "inputs": {},
+          "when": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
+          "decisions": { "replace_pr": { "effect": "request_changes", "label": "Replace the PR",
+                                          "fields": { "feedback": "What must change?" } } }
         }
       },
       "done_when": "approved(assessment) and published(pr) and published(pr_state) and latest(pr_state).state == \"merged\"",

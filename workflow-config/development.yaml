@@ -287,8 +287,10 @@ stages:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      closed_pr: published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-      merged_pr: published(observed_state) and latest(observed_state).state == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       brief: { schema: brief_body }
       build_result: { schema: build_body }
@@ -323,7 +325,7 @@ stages:
       prepare_observed_state:
         kind: code
         operation: value.publish
-        when: published(pr_state)
+        when: pr_state_current
         inputs: { value: latest(pr_state) }
         every: 2m
         creates: [observed_state]
@@ -371,8 +373,10 @@ stages:
     let:
       pr_published: published(pr)
       watch_base: input.repository.forge.final_base
-      closed_pr: input.final_merge_policy == "require_merge" and published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-      final_state: published(pr_state) and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
+      final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
@@ -398,7 +402,7 @@ stages:
       prepare_observed_state:
         kind: code
         operation: value.publish
-        when: published(pr_state)
+        when: pr_state_current
         inputs: { value: latest(pr_state) }
         every: 2m
         creates: [observed_state]
@@ -422,8 +426,8 @@ stages:
         overrides: { of: pr }
     # The independent evidence paths avoid reading an unobserved PR watch in the
     # manual path; under allow_close_without_merge, an observed close suffices.
-    done_when: approved(pr) and (approved(manual_merge_target) or (published(observed_state) and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
+    done_when: approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url
-      is_merged: approved(manual_merge_target) or (published(observed_state) and latest(observed_state).state == "merged")
+      is_merged: approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == "merged")

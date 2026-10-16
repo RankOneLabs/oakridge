@@ -62,24 +62,31 @@ const PULL_NUMBERS: { readonly [branch: string]: number } = { "cohort-a": 1, "co
  */
 class StubForge {
   readonly pulls = new Map<number, { readonly branch: string; state: "open" | "merged" | "closed_unmerged"; readonly base: string; head_sha: string }>();
+  readonly current_numbers = new Map<string, number>();
+  readonly replace_on_next_open = new Set<string>();
+  readonly withhold_observation = new Set<string>();
   withhold_integration_observation = false;
   open(branch: string, base: string): string {
-    const number = PULL_NUMBERS[branch] ?? 0;
+    const current = this.current_numbers.get(branch);
+    const number = this.replace_on_next_open.delete(branch) ? (PULL_NUMBERS[branch] ?? 0) + 10
+      : current !== undefined && this.pulls.has(current) ? current : PULL_NUMBERS[branch] ?? 0;
+    this.current_numbers.set(branch, number);
     if (!this.pulls.has(number)) this.pulls.set(number, { branch, state: "open", base, head_sha: "abc123" });
     return pullUrl(number);
   }
-  merge(branch: string): void { const pull = this.pulls.get(PULL_NUMBERS[branch] ?? 0); if (pull) pull.state = "merged"; }
-  close(branch: string): void { const pull = this.pulls.get(PULL_NUMBERS[branch] ?? 0); if (pull) pull.state = "closed_unmerged"; }
+  merge(branch: string): void { const pull = this.pulls.get(this.current_numbers.get(branch) ?? 0); if (pull) pull.state = "merged"; }
+  close(branch: string): void { const pull = this.pulls.get(this.current_numbers.get(branch) ?? 0); if (pull) pull.state = "closed_unmerged"; }
   replaceHead(branch: string, head_sha: string): void {
-    const pull = this.pulls.get(PULL_NUMBERS[branch] ?? 0);
+    const pull = this.pulls.get(this.current_numbers.get(branch) ?? 0);
     if (pull) pull.head_sha = head_sha;
   }
   /** `GET /repos/oakridge-e2e/app/pulls/:number`. */
   readonly get = (async (input: string | URL | Request) => {
     const number = Number(new URL(String(input)).pathname.split("/").at(-1));
-    if (number === PULL_NUMBERS.integration && this.withhold_integration_observation)
-      return Response.json({ message: "temporarily unavailable" }, { status: 503 });
     const pull = this.pulls.get(number);
+    if (pull && (pull.branch === "integration" && this.withhold_integration_observation
+      || this.withhold_observation.has(pull.branch)))
+      return Response.json({ message: "temporarily unavailable" }, { status: 503 });
     if (!pull) return Response.json({ message: "Not Found" }, { status: 404 });
     return Response.json({ number, html_url: pullUrl(number),
       state: pull.state === "open" ? "open" : "closed", merged_at: pull.state === "merged" ? "2026-10-12T00:00:00Z" : null,
@@ -199,13 +206,14 @@ async function captureAdapterFixture(run_id: string, name: string): Promise<void
 
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
 async function operate(run_id: string, decided: Set<string>, admitted: string[], confirmation: "none" | "cohort" | "all" = "none",
-  accept_integration = true, merged_cohorts_without_confirmation?: Set<string>): Promise<void> {
+  accept_integration = true, merged_cohorts_without_confirmation?: Set<string>, accept_assessment = true): Promise<void> {
   const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage", "review_prompts", "collection_key"]).where("run_id", "=", run_id).execute())
     .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
   for (const unit of units) {
     for (const [review, awaiting] of Object.entries(unit.review_prompts)) {
       if (review === "merge_confirmation" && (confirmation === "none" || (confirmation === "cohort" && unit.stage === "integration"))) continue;
       if (review === "integration_review" && !accept_integration) continue;
+      if (review === "assessment_review" && !accept_assessment) continue;
       if (review === "assessment_review" && merged_cohorts_without_confirmation) {
         const observed = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
           .where("unit_id", "=", unit.id).where("artifact", "=", "pr_state").orderBy("seq", "desc").executeTakeFirst();
@@ -367,6 +375,63 @@ test("manual confirmation completes the development run with no PR reader", asyn
       integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }] });
 }, 150_000);
 
+test("a replacement cohort PR ignores the previous PR's closed observation", async () => {
+  forge.pulls.clear();
+  operationServices.pull_requests = forge.reader;
+  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
+  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
+  const { digest } = await pinned.json() as { readonly digest: string };
+  const request_id = crypto.randomUUID();
+  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+    title: "Replace cohort PR", spec: "Require the current cohort PR.", admission: true, final_merge_policy: "require_merge",
+    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+  if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
+  const run_id = launchRunId(request_id);
+  const decided = new Set<string>();
+  const admitted: string[] = [];
+  const cohort = await eventually("cohort PR to be observed open", async () => {
+    await operate(run_id, decided, admitted, "none", false, undefined, false);
+    const unit = await db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id)
+      .where("stage", "=", "cohort").where("collection_key", "=", "a").executeTakeFirst();
+    if (!unit) return null;
+    const observed = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
+      .where("unit_id", "=", unit.id).where("artifact", "=", "pr_state").orderBy("seq", "desc").executeTakeFirst();
+    return observedPrState(observed?.body) === "open" ? unit : null;
+  }, 120_000);
+  forge.close("cohort-a");
+  const closed = await eventually("closed cohort PR and copied state", async () => {
+    const revisions = await db.selectFrom("authority.artifact_revision").select(["artifact", "body"])
+      .where("run_id", "=", run_id).where("unit_id", "=", cohort.id)
+      .where("artifact", "in", ["pr_state", "observed_state"]).orderBy("seq", "desc").execute();
+    if (!revisions.some((revision) => revision.artifact === "observed_state" && observedPrState(revision.body) === "closed_unmerged")) return null;
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", cohort.id).executeTakeFirstOrThrow();
+    return unit.review_prompts.pr_closed ?? null;
+  }, 120_000);
+  forge.replace_on_next_open.add("cohort-a");
+  forge.withhold_observation.add("cohort-a");
+  const submitted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(cohort.id)}/reviews/pr_closed/decide`,
+    { request_id: crypto.randomUUID(), decision: "replace_pr", target: closed.target,
+      payload: { feedback: "Open a replacement cohort PR." } });
+  expect(submitted.status).toBe(201);
+  const replacement = await eventually("replacement cohort PR to publish", async () => {
+    const revisions = await db.selectFrom("authority.artifact_revision").select(["artifact", "body"])
+      .where("run_id", "=", run_id).where("unit_id", "=", cohort.id)
+      .where("artifact", "in", ["pr", "pr_state", "observed_state"]).orderBy("seq", "desc").execute();
+    const latest = (artifact: string): unknown => revisions.find((revision) => revision.artifact === artifact)?.body;
+    const pr = latest("pr") as { readonly pr_url?: string } | undefined;
+    if (pr?.pr_url !== pullUrl(11)) return null;
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", cohort.id).executeTakeFirstOrThrow();
+    return { old_state: latest("pr_state"), old_observed: latest("observed_state"),
+      has_closed_review: "pr_closed" in unit.review_prompts };
+  }, 120_000);
+  expect(replacement).toMatchObject({ old_state: { url: pullUrl(1), state: "closed_unmerged" },
+    old_observed: { url: pullUrl(1), state: "closed_unmerged" }, has_closed_review: false });
+  forge.withhold_observation.delete("cohort-a");
+  const cancelled = await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
+  expect(cancelled.status).toBe(201);
+}, 150_000);
+
 test("a closed unmerged integration PR asks for replacement, not merge confirmation", async () => {
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
@@ -397,6 +462,9 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
     const observed = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
       .where("unit_id", "=", integration.id).where("artifact", "=", "pr_state").orderBy("seq", "desc").executeTakeFirst();
     if (observedPrState(observed?.body) !== "closed_unmerged") return null;
+    const copied = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
+      .where("unit_id", "=", integration.id).where("artifact", "=", "observed_state").orderBy("seq", "desc").executeTakeFirst();
+    if (observedPrState(copied?.body) !== "closed_unmerged") return null;
     const unit = await db.selectFrom("authority.unit").select(["status", "review_prompts"]).where("id", "=", integration.id).executeTakeFirstOrThrow();
     const view = await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}`)).json() as
       { readonly decisions: readonly { readonly key: string; readonly fields: readonly { readonly key: string }[];
@@ -409,16 +477,99 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   }, 120_000);
   expect(closed).toMatchObject({ status: "active", confirmation_offered: false,
     feedback_field: ["feedback"], effect: "request_changes" });
+  forge.replace_on_next_open.add("integration");
+  forge.withhold_integration_observation = true;
   const submitted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/pr_closed/decide`,
     { request_id: crypto.randomUUID(), decision: closed.decision, target: closed.target,
       payload: { feedback: "Open a replacement PR for the integration." } });
   expect(submitted.status).toBe(201);
+  const replacement = await eventually("replacement integration PR to publish", async () => {
+    const revisions = await db.selectFrom("authority.artifact_revision").select(["artifact", "body"])
+      .where("run_id", "=", run_id).where("unit_id", "=", integration.id)
+      .where("artifact", "in", ["pr", "pr_state", "observed_state"])
+      .orderBy("seq", "desc").execute();
+    const latest = (artifact: string): unknown => revisions.find((revision) => revision.artifact === artifact)?.body;
+    const pr = latest("pr") as { readonly pr_url?: string } | undefined;
+    if (pr?.pr_url !== pullUrl(13)) return null;
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", integration.id)
+      .executeTakeFirstOrThrow();
+    return { old_state: latest("pr_state"), old_observed: latest("observed_state"),
+      has_closed_review: "pr_closed" in unit.review_prompts };
+  }, 120_000);
+  expect(replacement).toMatchObject({ old_state: { url: pullUrl(3), state: "closed_unmerged" },
+    old_observed: { url: pullUrl(3), state: "closed_unmerged" }, has_closed_review: false });
+  const stale_decision = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/pr_closed/decide`,
+    { request_id: crypto.randomUUID(), decision: closed.decision, target: closed.target,
+      payload: { feedback: "The old PR was closed." } });
+  expect(stale_decision.status).toBe(409);
+  forge.withhold_integration_observation = false;
   const cancelled = await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
   expect(cancelled.status).toBe(201);
   await eventually("replacement test run to cancel", async () => {
     const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
     return root.status.kind === "cancelled" ? true : null;
   });
+}, 150_000);
+
+test("an old integration PR merge cannot complete a replacement PR", async () => {
+  forge.pulls.clear();
+  operationServices.pull_requests = forge.reader;
+  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
+  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
+  const { digest } = await pinned.json() as { readonly digest: string };
+  const request_id = crypto.randomUUID();
+  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+    title: "Replace merged integration PR", spec: "Do not reuse an old merge.", admission: true, final_merge_policy: "require_merge",
+    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+  if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
+  const run_id = launchRunId(request_id);
+  const decided = new Set<string>();
+  const admitted: string[] = [];
+  const integration = await eventually("integration PR to publish", async () => {
+    await operate(run_id, decided, admitted, "cohort", false);
+    const unit = await db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id)
+      .where("stage", "=", "integration").executeTakeFirst();
+    if (!unit) return null;
+    const pr = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
+      .where("unit_id", "=", unit.id).where("artifact", "=", "pr").executeTakeFirst();
+    return pr ? unit : null;
+  }, 120_000);
+  forge.merge("integration");
+  const old_review = await eventually("old integration merge to be copied", async () => {
+    const copied = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
+      .where("unit_id", "=", integration.id).where("artifact", "=", "observed_state").orderBy("seq", "desc").executeTakeFirst();
+    if (observedPrState(copied?.body) !== "merged") return null;
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", integration.id).executeTakeFirstOrThrow();
+    return unit.review_prompts.integration_review ?? null;
+  }, 120_000);
+  forge.replace_on_next_open.add("integration");
+  forge.withhold_integration_observation = true;
+  const requested = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/reviews/integration_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "request_changes", target: old_review.target,
+      payload: { feedback: "Open a new integration PR." } });
+  expect(requested.status).toBe(201);
+  const replacement = await eventually("replacement integration PR to publish", async () => {
+    const pr = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
+      .where("unit_id", "=", integration.id).where("artifact", "=", "pr").orderBy("seq", "desc").executeTakeFirst();
+    return (pr?.body as { readonly pr_url?: string } | undefined)?.pr_url === pullUrl(13) ? true : null;
+  }, 120_000);
+  expect(replacement).toBe(true);
+  await eventually("replacement integration review", async () => {
+    await operate(run_id, decided, admitted, "cohort");
+    const decision = await db.selectFrom("authority.review_decision").select("id").where("run_id", "=", run_id)
+      .where("unit_id", "=", integration.id).where("review", "=", "integration_review")
+      .where("decision", "=", "accept").executeTakeFirst();
+    return decision ? true : null;
+  }, 120_000);
+  const unit = await db.selectFrom("authority.unit").select("status").where("id", "=", integration.id).executeTakeFirstOrThrow();
+  const copied = await db.selectFrom("authority.artifact_revision").select("body").where("run_id", "=", run_id)
+    .where("unit_id", "=", integration.id).where("artifact", "=", "observed_state").orderBy("seq", "desc").executeTakeFirst();
+  expect({ status: unit.status.kind, old_state: copied?.body })
+    .toMatchObject({ status: "active", old_state: { url: pullUrl(3), state: "merged" } });
+  forge.withhold_integration_observation = false;
+  const cancelled = await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
+  expect(cancelled.status).toBe(201);
 }, 150_000);
 
 test("allow_close_without_merge completes on an observed close without claiming a merge", async () => {

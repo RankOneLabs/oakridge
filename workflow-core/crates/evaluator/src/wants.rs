@@ -205,6 +205,33 @@ pub fn stage_actions(
     }
     Ok(wanted)
 }
+/// A review must not open only because a periodic watch still carries evidence
+/// about old inputs. A manual fallback may remain open if its guard still
+/// holds with that stale evidence removed.
+pub(super) fn operator_review_is_open(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    when: Option<&CheckedStageExpression>,
+    context: &mut EvaluationContext<'_>,
+) -> Result<bool, StepError> {
+    if !holds(when, unit, state, context)? {
+        return Ok(false);
+    }
+    let Some(guard) = when else {
+        return Ok(true);
+    };
+    let unobserved = unobserved_watch_artifacts(program, state, unit, context)?;
+    if !reads_any(&guard.expression, &unobserved) {
+        return Ok(true);
+    }
+    let mut without_stale_evidence = state.clone();
+    without_stale_evidence
+        .revisions
+        .retain(|revision| revision.unit != unit.id || !unobserved.contains(&revision.artifact));
+    holds(when, unit, &without_stale_evidence, context)
+}
+
 /// The operator reviews of a stage a decision is legal on now, each with its
 /// inputs evaluated against the stepped state (an unresolved read as null).
 pub(super) fn resolve_reviews(
@@ -225,7 +252,7 @@ pub(super) fn resolve_reviews(
         else {
             continue;
         };
-        if !holds(when.as_ref(), unit, state, context)? {
+        if !operator_review_is_open(program, state, unit, when.as_ref(), context)? {
             continue;
         }
         let Some(target) = latest(state, &unit.id, of) else {

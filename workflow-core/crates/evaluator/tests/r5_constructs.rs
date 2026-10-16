@@ -680,6 +680,48 @@ fn pr_closed_targets(run: &Run) -> Vec<RevisionId> {
         .collect()
 }
 
+fn is_operator_pr_closed_open(run: &Run) -> bool {
+    run.last
+        .as_ref()
+        .unwrap()
+        .reviews
+        .iter()
+        .any(|review| review.unit.0 == COHORT && review.review.0 == "pr_closed_operator")
+}
+
+#[test]
+fn a_closed_pr_operator_review_waits_for_the_replacement_watch() {
+    let mut run = Run::through_build(false);
+    run.observe("closed_unmerged");
+    assert!(is_operator_pr_closed_open(&run));
+    run.start(COHORT, "builder");
+    run.publish(COHORT, "builder", "build", json!({ "summary": "rebuilt" }))
+        .unwrap();
+    run.publish(
+        COHORT,
+        "builder",
+        "pr",
+        json!({ "pr_url": "https://forge/pr/2", "branch": "cohort-a" }),
+    )
+    .unwrap();
+    run.end(COHORT, "builder");
+    assert!(!is_operator_pr_closed_open(&run));
+    assert!(matches!(
+        run.decide(
+            COHORT,
+            "pr_closed_operator",
+            "replace_pr",
+            "pr",
+            json!({ "feedback": "stale close" }),
+        ),
+        Err(StepError::Rejected { reason, .. }) if reason == "review is not open"
+    ));
+    run.observe("open");
+    assert!(!is_operator_pr_closed_open(&run));
+    run.observe("closed_unmerged");
+    assert!(is_operator_pr_closed_open(&run));
+}
+
 #[test]
 fn a_replaced_pr_is_judged_only_once_the_replacing_watch_has_observed_it() {
     let mut run = through_replaced_pr();
