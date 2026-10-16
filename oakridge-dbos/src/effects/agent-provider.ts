@@ -49,6 +49,16 @@ export interface AgentProviderConfig {
 const KBBL_NAME_LIMIT = 80;
 const shortDigest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
+/** Development cohort worktrees expose their cohort identity in the Git branch. */
+export function selectWorkspaceBranch(instruction: EffectInstruction): string {
+  if (instruction.worker.kind !== "agent") throw new Error("a code worker has no session branch");
+  const prefix = `${instruction.run_id}/implementation/`;
+  const cohort = instruction.action.unit.startsWith(prefix) ? instruction.action.unit.slice(prefix.length) : null;
+  if (cohort && /^[A-Za-z0-9_-]+$/.test(cohort))
+    return `cohort/${cohort}/${shortDigest(instruction.worker.session_key).slice(0, 6)}`;
+  return `oakridge/${shortDigest(instruction.worker.session_key)}`;
+}
+
 /**
  * The ensure a session is started with. Everything in it is fixed for the
  * session (unit, worker, created artifacts, workspace, secret), so every
@@ -72,7 +82,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
-    ...(workspace ? { worktree: { branch_name: `oakridge/${shortDigest(worker.session_key)}`, worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
+    ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
     workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
   };
 }
