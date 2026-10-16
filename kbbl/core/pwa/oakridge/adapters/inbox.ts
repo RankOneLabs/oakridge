@@ -1,6 +1,6 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -44,6 +44,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
         admitted: !unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission"),
         eligible: true, blocked_by: [] }, artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
+      pr_url: developmentPullRequestUrl(unit),
       updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" };
   });
   const seenReviews = new Set<string>();
@@ -74,6 +75,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
       title: unit.label, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
+      pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => byId.get(id)?.label ?? id) }];
   });
   return ok({ cohorts, items });

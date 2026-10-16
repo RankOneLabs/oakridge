@@ -4,7 +4,7 @@ import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
@@ -234,6 +234,19 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(entry, [stalled]);
     expect(inbox.ok && [inbox.value.items.map((item) => item.kind), inbox.value.cohorts[0]?.lifecycle])
       .toEqual([["merge_confirmation"], "merge_confirmation"]);
+    expect(inbox.ok && inbox.value.items[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
+    const gates = reviewToGates(stalled);
+    expect(gates.ok && gates.value[0]?.pr_url).toBe("https://github.com/oakridge-e2e/app/pull/1");
+  });
+  it("does not expose an unsafe PR artifact URL as a clickable merge link", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
+      decision.submit.kind === "review" && decision.submit.review === "merge_confirmation"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const unsafe: OperatorUnitView = { ...mergeUnit, artifacts: mergeUnit.artifacts.map((artifact) =>
+      artifact.artifact_key === "pr" && artifact.latest_revision
+        ? { ...artifact, latest_revision: { ...artifact.latest_revision, body: { pr_url: "javascript:alert(1)" } } }
+        : artifact) };
+    expect(developmentPullRequestUrl(unsafe)).toBeNull();
   });
   it("keeps both run slices when invalidate responses complete against an old inbox snapshot", () => {
     const first = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);

@@ -1,5 +1,6 @@
 import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
 import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
+import { isWebUrl } from "../lib/pr-summary";
 
 export type AdapterResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly operation: string; readonly detail: string } };
 export const ok = <T>(value: T): AdapterResult<T> => ({ ok: true, value });
@@ -48,6 +49,13 @@ export const artifactKeyFromComposite = (name: string): string => name.split(":"
 const objectValue = (value: unknown): { readonly [key: string]: unknown } | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as { readonly [key: string]: unknown } : null;
 const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
+/** The unit view includes the latest revision body, so merge links need no
+ * extra artifact request. Only web URLs become clickable in frozen v1 views. */
+export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null => {
+  const body = unit.artifacts.find((artifact) => artifact.artifact_key === "pr")?.latest_revision?.body;
+  const url = textValue(objectValue(body)?.pr_url);
+  return url && isWebUrl(url) ? url : null;
+};
 const repositoryKeyOf = (unit: OperatorUnitView): string | null => {
   const input = objectValue(unit.input);
   return textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
@@ -148,6 +156,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
         ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
         : null,
       worktree: null, resume_actions: [...new Set(decisions.map(decisionAction))],
+      pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));
 }
