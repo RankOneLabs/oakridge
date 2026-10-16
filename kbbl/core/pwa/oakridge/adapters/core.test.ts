@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
-import type { OperatorArtifactDetail, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
+import planningRevise from "../__fixtures__/v2-planning-revise.json";
+import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../operator-contracts";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 
@@ -56,6 +57,11 @@ describe("v2 development adapters", () => {
     if (!builder) throw new Error("captured fixture lacks a builder attempt");
     const attempt = attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt: builder });
     expect(attempt.ok && [attempt.value.reason, attempt.value.work_order_state, attempt.value.completed_at]).toEqual(["initial", "completed", null]);
+  });
+  it("represents a planning revision in its reused kbbl session once", () => {
+    const selected = latestAttemptPerSession(planningRevise.attempts as OperatorAttemptView[]);
+    expect(selected.ok && selected.value.map((attempt) => [attempt.kbbl_session_id, attempt.mode, attempt.cause.kind]))
+      .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "revise", "changes_requested"]]);
   });
   it("maps a run event kind", () => {
     const event = runEventKind(sample.event as OperatorRunEvent);

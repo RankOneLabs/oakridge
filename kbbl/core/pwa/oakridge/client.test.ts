@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import sample from "./__fixtures__/v2-adapter-sample.json";
+import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
-import { cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
+import { cancelRun, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorUnitView } from "./operator-contracts";
 import type { CreateRunRequest, RepositoryKey } from "./types";
@@ -55,6 +56,15 @@ describe("v2 Oakridge client", () => {
     now += 10_000;
     const after = await fetchRun(runId);
     expect([before.status, after.status, unitReads]).toEqual(["parked", "running", 2]);
+  });
+
+  it("lists one Planning session after feedback reuses it for a revision", async () => {
+    const planning = sample.units.find((unit) => unit.stage === "planning");
+    if (!planning) throw new Error("captured fixture lacks planning unit");
+    calls(() => [{ ...planning, run_id: planningRevise.run_id, unit_id: planningRevise.unit_id, attempts: planningRevise.attempts }]);
+    const sessions = await fetchRunSessions(planningRevise.run_id);
+    expect(sessions.map((session) => [session.session_id, session.reason, session.work_order_state]))
+      .toEqual([[planningRevise.attempts[0]?.kbbl_session_id, "input_revision", "completed"]]);
   });
 
   it("refreshes cached units after cancelling a parked run", async () => {

@@ -132,6 +132,18 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
 
+/** v2 may run several attempts in one resumable kbbl session. The v1 sidebar
+ * names sessions, so retain only the latest attempt for each physical sid.
+ * The unit view orders attempts by their creation, oldest first. */
+export function latestAttemptPerSession(attempts: readonly OperatorAttemptView[]): AdapterResult<readonly OperatorAttemptView[]> {
+  const lastIndexBySession = new Map<string, number>();
+  attempts.forEach((attempt, index) => {
+    if (attempt.kbbl_session_id) lastIndexBySession.set(attempt.kbbl_session_id, index);
+  });
+  return ok(attempts.filter((attempt, index) => attempt.kbbl_session_id !== null
+    && lastIndexBySession.get(attempt.kbbl_session_id) === index));
+}
+
 export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<StageDetail[]> {
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);

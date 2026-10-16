@@ -1,5 +1,5 @@
 /** Capture one named, already-launched v2 run for the frozen v1 adapter tests.
- * Usage: bun oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts <run-id> [v2-adapter-sample|v2-cohort-merge|v2-integration-merge]
+ * Usage: bun oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts <run-id> [v2-adapter-sample|v2-cohort-merge|v2-integration-merge|v2-planning-revise]
  * Optional: OAKRIDGE_CAPTURE_URL and OAKRIDGE_CORE_CONTROL_TOKEN.
  */
 import { writeFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import type { OperatorArtifactDetail, OperatorInboxPage, OperatorRunEvent, Opera
 const runId = process.argv[2];
 if (!runId || !/^run-[0-9a-f]{16}$/.test(runId)) throw new Error("pass a named v2 run id (run-<16 hex characters>)");
 const fixtureName = process.argv[3] ?? "v2-adapter-sample";
-if (!["v2-adapter-sample", "v2-cohort-merge", "v2-integration-merge"].includes(fixtureName)) throw new Error("unsupported fixture name");
+if (!["v2-adapter-sample", "v2-cohort-merge", "v2-integration-merge", "v2-planning-revise"].includes(fixtureName)) throw new Error("unsupported fixture name");
 const base = (process.env.OAKRIDGE_CAPTURE_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
 const token = process.env.OAKRIDGE_CORE_CONTROL_TOKEN;
 const get = async <T>(path: string): Promise<T> => {
@@ -54,11 +54,19 @@ const [run, units, inbox] = await Promise.all([
   get<OperatorRunView>(path), get<OperatorUnitView[]>(`${path}/units`), get<OperatorInboxPage>(`${path}/inbox`),
 ]);
 if (run.run_id !== runId || units.some((unit) => unit.run_id !== runId)) throw new Error("response run id mismatch");
+const output = resolve(import.meta.dir, `../../kbbl/core/pwa/oakridge/__fixtures__/${fixtureName}.json`);
+if (fixtureName === "v2-planning-revise") {
+  const planning = units.find((unit) => unit.stage === "planning" && unit.attempts.some((attempt) => attempt.mode === "revise"));
+  if (!planning) throw new Error(`run ${runId} has no planning revision attempt`);
+  writeFileSync(output, `${JSON.stringify({ source: `${path}/units`, captured_at: new Date().toISOString(),
+    run_id: runId, unit_id: planning.unit_id, attempts: planning.attempts }, null, 2)}\n`);
+  console.log(`Captured ${runId}: ${planning.attempts.length} planning attempts`);
+  process.exit(0);
+}
 const artifacts: OperatorArtifactDetail[] = [];
 for (const unit of units) for (const artifact of unit.artifacts) {
   artifacts.push(await get<OperatorArtifactDetail>(`${path}/units/${encodeURIComponent(unit.unit_id)}/artifacts/${encodeURIComponent(artifact.artifact_key)}`));
 }
-const output = resolve(import.meta.dir, `../../kbbl/core/pwa/oakridge/__fixtures__/${fixtureName}.json`);
 const artifact = artifacts.find((candidate) => candidate.schema === "build_body");
 if (!artifact) throw new Error(`run ${runId} has no build result; capture at an assessment review`);
 const event = await captureEvent();
