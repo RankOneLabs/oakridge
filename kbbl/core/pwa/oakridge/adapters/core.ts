@@ -60,7 +60,9 @@ const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
   const path = textValue(workspace?.repository_path), branch = textValue(workspace?.head), base_ref = textValue(forge?.build_base);
   return path && branch && base_ref ? { path, branch, base_ref } : null;
 };
-export const revisionToArtifact = (artifact: OperatorArtifactDetail): AdapterResult<ArtifactDetail> => {
+export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: OperatorUnitView): AdapterResult<ArtifactDetail> => {
+  if (artifact.run_id !== unit.run_id || artifact.unit_id !== unit.unit_id)
+    return fail("revision to artifact", "artifact does not belong to unit");
   const descriptor = artifactType(artifact.schema);
   const revisions: ArtifactRevision[] = artifact.revisions.map((revision) => ({ id: compositeId({ kind: "artifact", runId: artifact.run_id,
     unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revision.id}` }),
@@ -71,7 +73,7 @@ export const revisionToArtifact = (artifact: OperatorArtifactDetail): AdapterRes
     type_id: descriptor.id, component_id: descriptor.component_id,
     capabilities: { ...descriptor.capabilities, reviewable: artifact.is_reviewable, atom_editable: artifact.is_editable },
     anchor_schema: descriptor.anchor_schema,
-    run_id: artifact.run_id, producing_stage: "", revisions });
+    run_id: artifact.run_id, producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
 };
 
 export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];

@@ -285,7 +285,10 @@ export async function admitStageUnit(stageId: string, unitId: string, idempotenc
 export async function fetchArtifact(id: string): Promise<ArtifactDetail> {
   const parsed = await resolveArtifactId(id);
   const path = `${unitPath(parsed.runId, parsed.unitId)}/artifacts/${encodeURIComponent(artifactKeyFromComposite(parsed.name))}`;
-  return unwrapAdapter(path, revisionToArtifact(unwrapAdapter(path, parseArtifactDetail(await oakridgeGet<unknown>(path)))));
+  const [rawArtifact, units] = await Promise.all([oakridgeGet<unknown>(path), readUnits(parsed.runId)]);
+  const unit = units.find((candidate) => candidate.unit_id === parsed.unitId);
+  if (!unit) throw new Error(`oakridge ${path}: artifact unit not found`);
+  return unwrapAdapter(path, revisionToArtifact(unwrapAdapter(path, parseArtifactDetail(rawArtifact)), unit));
 }
 
 export async function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {

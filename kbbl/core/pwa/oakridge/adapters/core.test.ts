@@ -8,6 +8,7 @@ import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveS
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
+import { selectCohortArtifactId } from "../lib/cohort-artifact";
 
 const run = sample.run as unknown as OperatorRunView;
 const units = sample.units as unknown as OperatorUnitView[];
@@ -80,9 +81,16 @@ describe("v2 development adapters", () => {
     expect(parseCompositeId(id, "artifact")).toEqual({ ok: true, value: { kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" } });
   });
   it("maps revisions and dispatches all six supported viewer schemas", () => {
-    const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail);
+    const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
     expect(artifactTypes().map((type) => type.component_id)).toHaveLength(6);
+  });
+  it("retains the cohort label so assessment revisions can find their brief", () => {
+    const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
+    const runDetail = runSnapshot(run, units);
+    expect(artifact.ok && runDetail.ok && artifact.value.label
+      ? selectCohortArtifactId(runDetail.value, "dev.build_brief", artifact.value.label)
+      : null).not.toBeNull();
   });
   it("maps a v2 attempt to the v1 work order reason and state", () => {
     const builder = cohort.attempts.find((attempt) => attempt.worker === "builder");
