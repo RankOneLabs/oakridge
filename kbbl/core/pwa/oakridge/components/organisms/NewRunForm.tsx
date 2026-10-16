@@ -4,8 +4,6 @@ import {
   runtimeDescriptorsForConfig,
   useServerConfig,
 } from "../../../hooks/useServerConfig";
-import type { RuntimeModelSelection } from "../../../types";
-import { coerceSelection } from "../../lib/launch-config";
 import {
   defaultWorkflowDefinitionId,
   sortWorkflowDefinitions,
@@ -13,11 +11,13 @@ import {
 import { useOakridgeConfig } from "../../hooks/useOakridgeConfig";
 import { useProjects } from "../../hooks/useProjects";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
+import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
+import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
 import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
-import { initialSelectionForRole } from "../../lib/runtime-selection";
+import { selectAgentSessionTargets, selectLaunchSessionSettings } from "../../lib/agent-session-targets";
 import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
 import { randomUuid } from "../../../lib/random-uuid";
@@ -45,13 +45,6 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const serverConfig = useServerConfig();
   const runtimeDescriptors = useMemo(() => runtimeDescriptorsForConfig(serverConfig), [serverConfig]);
   const defaultRuntimeId = useMemo(() => defaultRuntimeIdForConfig(serverConfig), [serverConfig]);
-  const runtimeKey = useMemo(
-    () =>
-      runtimeDescriptors
-        .map((r) => `${r.id}:${r.models.map((m) => m.value).join(",")}`)
-        .join("\0"),
-    [runtimeDescriptors],
-  );
 
   const [epicTitle, setEpicTitle] = useState("");
   const [finalMergePolicy, setFinalMergePolicy] = useState<FinalMergePolicy>("guarded");
@@ -63,27 +56,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", integration_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
-  const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
-    initialSelectionForRole("planner", runtimeDescriptors, defaultRuntimeId),
-  );
-  const [workerSelection, setWorkerSelection] = useState<RuntimeModelSelection>(() =>
-    initialSelectionForRole("worker", runtimeDescriptors, defaultRuntimeId),
-  );
-  const [plannerRuntimeTouched, setPlannerRuntimeTouched] = useState(false);
-  const [workerRuntimeTouched, setWorkerRuntimeTouched] = useState(false);
+  const definitionQuery = useOperatorDefinition(workflowDefId);
+  const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow) : [], [definitionQuery.data]);
+  const sessionChoices = useAgentSessionSelections(sessionTargets, runtimeDescriptors, defaultRuntimeId);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPlannerSelection((cur) =>
-      coerceSelection("planner", cur, runtimeDescriptors, defaultRuntimeId, plannerRuntimeTouched),
-    );
-  }, [defaultRuntimeId, plannerRuntimeTouched, runtimeKey, runtimeDescriptors]);
-
-  useEffect(() => {
-    setWorkerSelection((cur) =>
-      coerceSelection("worker", cur, runtimeDescriptors, defaultRuntimeId, workerRuntimeTouched),
-    );
-  }, [defaultRuntimeId, runtimeKey, runtimeDescriptors, workerRuntimeTouched]);
 
   // Sort defs: newest version first per name, then by name. Memoized so the
   // sort only runs when the server response changes.
@@ -138,6 +114,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     e.preventDefault();
     setError(null);
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
+    if (!definitionQuery.data || definitionQuery.data.bundle_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
+    const sessionSettings = selectLaunchSessionSettings(sessionTargets,
+      Object.fromEntries(sessionTargets.map((target) => [target.key, sessionChoices.selectionFor(target)])));
+    if (!sessionSettings.ok) { setError(sessionSettings.error.detail); return; }
     const repositoryResult = validateRepositoryInputs(repositories);
     if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
     const normalizedRepositories = repositoryResult.repositories;
@@ -150,8 +130,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       base_branch: epicProfile.base_branch ?? `epic/${epicProfile.slug}`,
       repositories: normalizedRepositories.map(({ key, path, integration_branch }) => ({ key, path, integration_branch })),
       oakridge_url: coreUrl,
-      planner: plannerSelection,
-      worker: workerSelection,
+      session_settings: sessionSettings.value,
     });
     if (!contextResult.ok) { setError(contextResult.error.detail); return; }
     try {
@@ -176,7 +155,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         backAction={<Button onClick={onBack}>Back</Button>}
         eyebrow="New execution"
         title="Start a workflow run"
-        summary="Choose the workflow, repositories, operating brief, and agent roles."
+        summary="Choose the workflow, repositories, operating brief, and each agent session's model."
       />
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
@@ -234,32 +213,27 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           disabled={pending}
         />
 
+        {definitionQuery.isPending && <div>Loading agent sessions…</div>}
+        {definitionQuery.isError && <FeedbackMessage tone="danger">Could not load agent sessions: {definitionQuery.error.message}</FeedbackMessage>}
         <div className="or-role-grid">
-          <RoleModelPicker
-            role="planner"
-            selection={plannerSelection}
-            setSelection={setPlannerSelection}
-            setRuntimeTouched={setPlannerRuntimeTouched}
+          {sessionTargets.map((target) => <RoleModelPicker
+            key={target.key}
+            role={target.suggested_role}
+            label={target.label}
+            selection={sessionChoices.selectionFor(target)}
+            setSelection={sessionChoices.setSelectionFor(target)}
+            setRuntimeTouched={sessionChoices.touchRuntimeFor(target)}
             runtimeDescriptors={runtimeDescriptors}
             defaultRuntimeId={defaultRuntimeId}
             isPending={pending}
-          />
-          <RoleModelPicker
-            role="worker"
-            selection={workerSelection}
-            setSelection={setWorkerSelection}
-            setRuntimeTouched={setWorkerRuntimeTouched}
-            runtimeDescriptors={runtimeDescriptors}
-            defaultRuntimeId={defaultRuntimeId}
-            isPending={pending}
-          />
+          />)}
         </div>
 
         {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
 
         <div className="flex justify-end gap-3">
           <Button onClick={onBack} disabled={pending}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={pending || !workflowDefId}>
+          <Button type="submit" variant="primary" disabled={pending || !workflowDefId || !definitionQuery.data || sessionTargets.length === 0}>
             {pending ? "Starting…" : "Start Run"}
           </Button>
         </div>

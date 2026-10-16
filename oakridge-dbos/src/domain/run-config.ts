@@ -7,7 +7,7 @@ export interface SessionSettings { readonly harness: string; readonly model: str
  * or by a more specific `stage.worker` key. A worker without either entry
  * starts with its declared runtime.
  */
-export interface RunConfig { readonly sessions: { readonly [stage: string]: SessionSettings } }
+export interface RunConfig { readonly sessions: { readonly [stage_or_worker: string]: SessionSettings } }
 
 type Fields = { readonly [key: string]: unknown };
 const isFields = (value: unknown): value is Fields => !!value && typeof value === "object" && !Array.isArray(value);
@@ -17,7 +17,7 @@ const parseSessionSettings = (value: unknown): SessionSettings | null =>
   isFields(value) && isText(value.harness) && isText(value.model) && (value.effort === null || value.effort === undefined || isText(value.effort))
     ? { harness: value.harness, model: value.model, effort: value.effort ?? null } : null;
 
-/** A launch's config, or null when it is not one: every entry names a stage and full settings. */
+/** A launch's config, or null when it is not one: every entry has full settings. */
 export function parseRunConfig(value: unknown): RunConfig | null {
   if (!isFields(value) || !isFields(value.sessions)) return null;
   const entries: (readonly [string, SessionSettings])[] = [];

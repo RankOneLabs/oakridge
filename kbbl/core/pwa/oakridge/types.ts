@@ -46,9 +46,14 @@ export interface WorkflowDefSummary {
   graph?: WorkflowGraph;
 }
 
-// Each role ships runtime, model, and effort together. A model is only valid
-// against the runtime it was chosen from, so sending a model without its runtime
-// is what let a codex planner model reach a claude-code-pinned stage.
+/** One agent worker's launch choice, mirroring OperatorSessionSettings. */
+export interface LaunchSessionSettings {
+  readonly harness: RuntimeId;
+  readonly model: string;
+  readonly effort: string | null;
+}
+
+// Each declared agent worker receives its own runtime, model and effort.
 export interface CreateRunContext {
   brief_notes: string;
   /** The one branch this run builds on. Every build unit's PR targets it. */
@@ -57,12 +62,7 @@ export interface CreateRunContext {
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
   oakridge_url: string;
-  planner_runtime: RuntimeId;
-  planner_model: string;
-  planner_effort: string | null;
-  worker_runtime: RuntimeId;
-  worker_model: string;
-  worker_effort: string | null;
+  session_settings: Readonly<{ [worker_key: string]: LaunchSessionSettings }>;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };

@@ -5,6 +5,13 @@ import { parseLaunchRequest } from "../src/http/ingress";
 const planner = { harness: "claude-code", model: "opus", effort: "high" };
 const builder = { harness: "codex", model: "gpt-6-sol", effort: "high" };
 
+test("worker settings are independent for any workflow with multiple agent workers", () => {
+  const config = { sessions: { "review.drafter": builder, "review.checker": planner } };
+  expect([selectWorkerSessionSettings(config, { workflow: "review", stage: "review", worker: "drafter" }, null),
+    selectWorkerSessionSettings(config, { workflow: "review", stage: "review", worker: "checker" }, null)])
+    .toEqual([builder, planner]);
+});
+
 test("a development assessor uses its worker choice while the builder keeps the cohort choice", () => {
   const config = { sessions: { cohort: builder, "cohort.assessor": planner } };
   expect([selectWorkerSessionSettings(config, { workflow: "development", stage: "cohort", worker: "builder" }, null),
