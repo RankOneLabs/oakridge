@@ -32,7 +32,7 @@ const developmentOrder = (stage: string): number => {
 };
 
 const suggestedRole = (workflow: string, stage: string, worker: string): ModelRole =>
-  workflow === "development" && (["analysis", "planning", "brief"].includes(stage) || (stage === "cohort" && worker === "assessor"))
+  workflow === "development" && (["analysis", "planning", "brief", "integration"].includes(stage) || (stage === "cohort" && worker === "assessor"))
     ? "planner" : "worker";
 
 /** The workflow definition, rather than a hard-coded cohort list, determines

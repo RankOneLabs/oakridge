@@ -12,6 +12,13 @@ describe("agent session choices from a pinned definition", () => {
     ]);
   });
 
+  it("defaults integration and assessment to planner models while building uses worker models", () => {
+    const targets = selectAgentSessionTargets(definition.workflow);
+    expect(targets.filter((target) => target.stage === "integration" || target.stage === "cohort")
+      .map((target) => [target.worker, target.suggested_role]))
+      .toEqual([["builder", "worker"], ["assessor", "planner"], ["integrator", "planner"]]);
+  });
+
   it("includes agent template uses and excludes code template uses", () => {
     const source = {
       ...definition.workflow,
