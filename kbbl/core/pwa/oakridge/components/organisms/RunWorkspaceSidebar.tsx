@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import type { RunArtifactRef, RunSidebarSessionsView } from "../../lib/run-overview";
+import { selectFilteredRunArtifacts, type RunArtifactFilter } from "../../lib/artifact-filter";
 import {
   LIST_PANE,
   OVERVIEW_PANE,
@@ -51,7 +53,9 @@ export function RunWorkspaceSidebar({
   onOpenPane,
   onCollapse,
 }: RunWorkspaceSidebarProps) {
+  const [artifactFilter, setArtifactFilter] = useState<RunArtifactFilter>("all");
   const open = selectOpenEntityIds(workspace);
+  const visibleArtifacts = selectFilteredRunArtifacts(artifacts, artifactFilter);
   const openSession = (sessionId: Sid, slot: RunWorkspaceSlot) =>
     onOpenPane({ kind: "session", session_id: sessionId }, slot);
   const openArtifact = (artifactId: ArtifactId, slot: RunWorkspaceSlot) =>
@@ -112,7 +116,9 @@ export function RunWorkspaceSidebar({
         openSessionIds={open.session_ids}
         onOpen={openSession}
       />
-      <RunSidebarArtifacts rows={artifacts} openArtifactIds={open.artifact_ids} onOpen={openArtifact} />
+      <RunSidebarArtifacts rows={visibleArtifacts} totalCount={artifacts.length} filter={artifactFilter}
+        onFilterChange={setArtifactFilter}
+        openArtifactIds={open.artifact_ids} onOpen={openArtifact} />
     </aside>
   );
 }

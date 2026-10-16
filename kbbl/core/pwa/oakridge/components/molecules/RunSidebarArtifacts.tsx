@@ -2,9 +2,13 @@ import { Button } from "../../../components/atoms/Button";
 import type { ArtifactId } from "../../../lib/ids";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
 import type { RunArtifactRef } from "../../lib/run-overview";
+import { RUN_ARTIFACT_FILTERS, type RunArtifactFilter } from "../../lib/artifact-filter";
 
 interface RunSidebarArtifactsProps {
   rows: readonly RunArtifactRef[];
+  totalCount: number;
+  filter: RunArtifactFilter;
+  onFilterChange: (filter: RunArtifactFilter) => void;
   /** Artifacts currently on screen in either slot, so the list can mark them. */
   openArtifactIds: ReadonlySet<string>;
   onOpen: (artifactId: ArtifactId, slot: RunWorkspaceSlot) => void;
@@ -15,15 +19,21 @@ interface RunSidebarArtifactsProps {
  * fetch is added. Clicking a row changes the pane rather than navigating away,
  * which is the whole point of the workspace.
  */
-export function RunSidebarArtifacts({ rows, openArtifactIds, onOpen }: RunSidebarArtifactsProps) {
+export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, openArtifactIds, onOpen }: RunSidebarArtifactsProps) {
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-artifacts">
       <h3 className="or-run-sidebar__heading">Artifacts</h3>
-      {rows.length === 0 && (
+      <select aria-label="Filter artifacts" data-testid="or-sidebar-artifact-filter" value={filter}
+        onChange={(event) => onFilterChange(RUN_ARTIFACT_FILTERS.find(({ key }) => key === event.target.value)?.key ?? "all")}
+        className="w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none">
+        {RUN_ARTIFACT_FILTERS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
+      </select>
+      {totalCount === 0 && (
         <p className="or-run-sidebar__empty" data-testid="or-sidebar-artifacts-empty">
           No artifacts released yet.
         </p>
       )}
+      {totalCount > 0 && rows.length === 0 && <p className="or-run-sidebar__empty">No artifacts in this group.</p>}
       <ul className="or-run-sidebar__list">
         {rows.map((row) => (
           <li key={row.artifact_id} className="or-run-sidebar__row">
