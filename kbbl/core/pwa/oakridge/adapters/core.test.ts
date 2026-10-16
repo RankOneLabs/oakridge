@@ -7,6 +7,7 @@ import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, Ope
 import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
+import { selectRunSessionRows } from "../lib/run-sessions";
 
 const run = sample.run as unknown as OperatorRunView;
 const units = sample.units as unknown as OperatorUnitView[];
@@ -28,6 +29,15 @@ describe("v2 development adapters", () => {
   it("groups units into stages with artifacts", () => {
     const stages = unitToStages(units);
     expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);
+  });
+  it("shows builder and assessor as separate cohort sessions, each on its first attempt", () => {
+    const sessions = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
+      attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt }));
+    if (sessions.some((result) => !result.ok)) throw new Error("fixture cohort session mapping failed");
+    const rows = selectRunSessionRows(sessions.flatMap((result) => result.ok ? [result.value] : []));
+    expect(rows.map((row) => [row.attempt.unit_id, row.attempt_number, row.attempt_count])).toEqual([
+      ["a / builder", 1, 1], ["a / assessor", 1, 1],
+    ]);
   });
   it("exposes a pending admission control in the frozen stage row while the run remains parked", () => {
     const original = cohort.decisions.find((decision) => decision.submit.kind === "review");
