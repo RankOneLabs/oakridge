@@ -35,13 +35,25 @@ expected behavior. Move an entry out of active issues when its fix is verified.
 - **The default install at `127.0.0.1:8790` still lacks v2 `/api/runs`.** The
   isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
   committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders the
-  live Shelly run `run-52d2eb71fc9b6a91` against a pinned checkout of
-  `cirsteve/shelly`. Prepare completed, and the operator's Analysis approval
-  committed, ended its session, and launched Planning. Planning is awaiting
-  its own review; later stages have not materialized. The older seed
-  `run-9e88f4b61c072a35` remains
-  unsuitable for full-flow assessment because it has no repository. The default
-  install needs its database cutover before this PWA branch can run against it.
+  live Shelly run `run-072ecbd42a8f7169` against a pinned checkout of
+  `cirsteve/shelly`. Analysis and Planning are approved; two Briefs are
+  approved, and the revised `theme-foundation` Brief awaits operator review.
+  The approved briefs depend on `theme-foundation` and on each other, so no
+  Cohort builder is eligible yet. The older seed `run-9e88f4b61c072a35`
+  remains unsuitable for full-flow assessment because it has no repository.
+  The default install needs its database cutover before this PWA branch can
+  run against it.
+- **The shadow's backend publication key remains readable by same-user agent
+  processes.** `scripts/oakridge-shadow` stores it beside the agent workdir and
+  starts both the backend and agent under the same OS account. In the shared
+  Brief session, an agent read that key instead of its task's session bearer:
+  the bearer request was refused, then an unauthenticated retry was accepted as
+  an operator revision and the worker failed with `no_output`. The task now
+  repeats its session bearer and the loopback publish route requires explicit
+  operator intent for an operator edit, so a missing bearer returns 401. These
+  changes prevent accidental misattribution; they do not isolate the backend
+  key from an agent running under the same account. A separate process/account
+  boundary is still needed for that isolation.
 - **The shadow backend cannot observe GitHub PR state without credentials.**
   The current `127.0.0.1:8800` process has no GitHub token; a later
   `pull_request.observe` step will report `discovery_unsupported`. Provide
