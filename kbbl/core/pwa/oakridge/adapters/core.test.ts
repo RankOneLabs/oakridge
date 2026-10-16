@@ -100,6 +100,30 @@ describe("v2 development adapters", () => {
   it("distinguishes a stalled worker from a parked review", () => {
     expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");
   });
+  it.each(["invalid_instruction", "discovery_unsupported"])("parks a cohort with manual merge confirmation despite a %s PR watcher failure", (code) => {
+    const mergeRun = cohortMerge.run as unknown as OperatorRunView;
+    const mergeUnits = cohortMerge.units as unknown as OperatorUnitView[];
+    const mergeUnit = mergeUnits.find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.decision === "confirm_merged"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const stalled: OperatorUnitView = { ...mergeUnit,
+      attention: { kind: "stalled", detail: "pr_watch failed: no pull request reader is configured" },
+      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
+        ? { ...attempt, status: "failed", failure: { code, detail: "no pull request reader is configured" } }
+        : attempt) };
+    const detail = runSnapshot(mergeRun, mergeUnits.map((unit) => unit.unit_id === mergeUnit.unit_id ? stalled : unit));
+    expect(detail.ok && [detail.value.stages.find((stage) => stage.name === "cohort")?.status,
+      detail.value.status, runSummary(detail.value, mergeRun).status]).toEqual(["parked", "parked", "parked"]);
+  });
+  it("keeps a PR mismatch visible as a failed cohort even with merge confirmation", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.decision === "confirm_merged"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    expect(deriveStatus({ ...statusInputOf(mergeUnit), attention: { kind: "stalled", detail: "pr_watch failed: PR branch differs" },
+      attempts: mergeUnit.attempts.map((attempt) => attempt.worker === "pr_watch"
+        ? { ...attempt, status: "failed", failure: { code: "pull_request_mismatch", detail: "PR branch differs" } }
+        : attempt) }).run).toBe("failed");
+  });
   it("parks a unit awaiting the operator and leaves a dependency wait pending", () => {
     const blocked = units.find((unit) => unit.attention?.kind === "waiting" && unit.decisions.length === 0);
     if (!blocked) throw new Error("captured fixture lacks a dependency wait");

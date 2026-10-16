@@ -78,10 +78,20 @@ export const statusInputOf = (unit: OperatorUnitView): StatusInput =>
 /** A wait the operator can clear: the unit offers a review decision, rather than waiting on an upstream dependency. */
 const awaitsOperator = (decisions: readonly OperatorDecisionDefinition[]): boolean =>
   decisions.some((decision) => decision.submit.kind === "review");
+/** An unavailable PR watcher must not hide a manual merge confirmation that can finish the cohort. */
+const awaitsManualMergeAfterWatchFailure = (input: StatusInput): boolean => {
+  if (input.attention?.kind !== "stalled" || !input.attention.detail.startsWith("pr_watch failed:")) return false;
+  const failures = input.attempts.filter((attempt) => attempt.is_current && attempt.failure);
+  return failures.length > 0 && failures.every((attempt) => attempt.worker === "pr_watch"
+    && (attempt.failure?.code === "invalid_instruction" || attempt.failure?.code === "discovery_unsupported"))
+    && input.decisions.some((decision) => decision.submit.kind === "review"
+      && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");
+};
 export function deriveStatus(input: StatusInput): { readonly run: RunStatus; readonly stage: StageStatus } {
   const { status, attention, attempts, decisions, hasRunStall } = input;
   if (status.kind === "done") return { run: "complete", stage: "complete" };
   if (status.kind === "cancelled") return { run: "cancelled", stage: "failed" };
+  if (!hasRunStall && awaitsManualMergeAfterWatchFailure(input)) return { run: "parked", stage: "parked" };
   if (hasRunStall || attention?.kind === "stalled")
     return { run: "failed", stage: "failed" };
   if (attention?.kind === "waiting" && awaitsOperator(decisions)) return { run: "parked", stage: "parked" };

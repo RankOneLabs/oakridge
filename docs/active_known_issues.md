@@ -57,15 +57,20 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   changes prevent accidental misattribution; they do not isolate the backend
   key from an agent running under the same account. A separate process/account
   boundary is still needed for that isolation.
-- **The shadow backend cannot observe GitHub PR state through the available
-  no-token path.** The current `127.0.0.1:8800` process has no GitHub token;
-  `pull_request.observe` reports `discovery_unsupported` without one. The
-  gated-review `pr_status` tool can read checks and review readiness, but its
-  response has no open/closed/merged state, head or base branch, or head SHA,
-  all of which the watcher validates. The installed `gh` credential is invalid,
-  and the review gate rejects `gh` commands. A read-only gated-review operation
-  returning those fields would let the watcher run without a separate GitHub
-  token; until that exists, retrying the watcher cannot clear this stall.
+- **The shadow's PR watcher fails without a GitHub token, although v1 had a
+  manual merge-confirmation fallback.** The current `127.0.0.1:8800` process
+  has no token, so `pull_request.observe` reports `discovery_unsupported` on
+  retry. The v2 cohort still offers `confirm_merged` on its `pr` revision;
+  after an actual merge, that operator decision can complete the cohort without
+  a PR observation. The v2 integration gate instead targets `pr_state`, which
+  the failed watcher cannot publish, leaving the final manual confirmation
+  unavailable. The gated-review `pr_status` tool reports checks and review
+  readiness but lacks open/closed/merged state, head and base branch, and head
+  SHA; the installed `gh` credential is invalid and the review gate rejects
+  `gh` commands. Restore the v1-style manual fallback for integration, or add a
+  complete read-only PR observation source, before claiming no-token end-to-end
+  completion. A failed optional watcher must not make a manually confirmable
+  cohort appear terminally failed.
 - **The development PR artifact can claim a PR exists with an empty URL.** In
   `run-072ecbd42a8f7169`, the builder could not reach gated-review from its
   own session and published `pr_url: ""`. The `pr_body` schema accepted it, so
