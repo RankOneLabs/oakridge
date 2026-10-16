@@ -15,7 +15,7 @@ beforeAll(async () => {
   authority = await openAuthority();
   ({ bundle_id } = await pinSample(authority));
 });
-afterAll(async () => { await authority.close(); });
+afterAll(async () => { await authority.close(); }, 30_000);
 
 const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 async function launched(request_id = crypto.randomUUID()): Promise<RunId> {
