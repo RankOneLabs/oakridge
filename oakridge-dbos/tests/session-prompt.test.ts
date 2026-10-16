@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { RevisionState } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
-import { renderSessionPreamble, renderSessionTask, renderTemplate, selectSessionTaskContext, type SessionTaskContext } from "../src/effects/session-prompt";
+import { renderSessionPreamble, renderSessionTask, renderSharedTaskDelivery, renderTemplate, selectSessionTaskContext, type SessionTaskContext } from "../src/effects/session-prompt";
 import { sampleWorkflow } from "./authority-fixture";
 
 const unit = "run-1/document";
@@ -88,4 +88,8 @@ test("a shared session's stable preamble leaves each brief's endpoint in its tas
   expect([preamble.includes("Prefix each task's endpoint with http://oakridge.test"), preamble.includes("/briefs/a"),
     renderSessionTask(a, context()).includes("run-1%2Fbriefs%2Fa"), renderSessionTask(b, context()).includes("run-1%2Fbriefs%2Fb")])
     .toEqual([true, false, true, true]);
+  const delivered = renderSharedTaskDelivery(a, renderSessionTask(a, context()), { publish_base_url: "http://oakridge.test", secret: "session-secret" });
+  expect([delivered.includes("Authorization: Bearer session-secret"),
+    delivered.includes("PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/draft"),
+    delivered.includes("Do not use the backend publication key")]).toEqual([true, true, true]);
 });

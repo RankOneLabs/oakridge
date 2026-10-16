@@ -92,6 +92,19 @@ test("a delivered input's receipt reports its turn", async () => {
     url: "http://kbbl.test/sessions/resumable/sid-1/input/action-1", body: { text: "do it" } });
 });
 
+test("a shared worker receives its own bearer token and unit endpoint with every task", async () => {
+  const base = instructionFor();
+  if (base.worker.kind !== "agent") throw new Error("writer is an agent");
+  const shared: EffectInstruction = { ...base, action: { ...base.action, unit: "run-1/briefs/a" },
+    worker: { ...base.worker, session: "shared", session_key: "shared-key", shared_session_unit: "run-1/briefs" } };
+  const { calls, fetch } = recording(() => Response.json({ accepted: true, status: "prompting" }));
+  await createAgentProvider(config(fetch)).observe(shared, { task: "write this brief" }, session);
+  const delivered = (calls[0]?.body as { readonly text: string } | undefined)?.text ?? "";
+  expect([delivered.includes(`Authorization: Bearer ${derivePublicationSecret("key", "shared-key")}`),
+    delivered.includes("PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/draft"),
+    delivered.endsWith("write this brief")]).toEqual([true, true, true]);
+});
+
 test("a session reading names how it ended: closed, failed with kbbl's code, or succeeded", async () => {
   const bodies = [
     Response.json({ session: snapshot("ended"), end: { kind: "closed" } }),

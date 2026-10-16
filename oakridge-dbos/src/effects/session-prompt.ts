@@ -161,6 +161,24 @@ export function selectPublishEndpoint(input: Pick<SessionPreambleInput, "run_id"
   return `${base}/api/runs/${encodeURIComponent(input.run_id)}/units/${encodeURIComponent(input.unit)}/artifacts/${encodeURIComponent(artifact)}`;
 }
 
+/** A shared session handles several units, so repeat the exact credentials
+ * with each unit's task instead of asking the agent to recover them from its
+ * initial preamble. The backend publication key is not a session secret. */
+export function renderSharedTaskDelivery(instruction: EffectInstruction, task: string,
+  input: { readonly publish_base_url: string; readonly secret: string }): string {
+  const worker = instruction.worker;
+  if (worker.kind !== "agent" || worker.session !== "shared") return task;
+  return [
+    "## Publication credentials for this task",
+    "Use this session bearer token for every artifact PUT. Do not use the backend publication key, an alternate header, or an unauthenticated request; those do not attribute the revision to this worker attempt.",
+    `Authorization: Bearer ${input.secret}`,
+    ...worker.creates.map(({ key }) => `PUT ${selectPublishEndpoint({ run_id: instruction.run_id, unit: instruction.action.unit,
+      publish_base_url: input.publish_base_url }, key)}`),
+    "",
+    task,
+  ].join("\n");
+}
+
 /** The publication block (part 1 §2.5 item 2), generated from config: each artifact's endpoint and schema, and the session's secret. */
 export function renderSessionPreamble(input: SessionPreambleInput): string {
   return [

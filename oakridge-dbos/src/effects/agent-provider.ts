@@ -5,7 +5,7 @@ import type { EffectInstruction } from "../domain/effect-instruction";
 import type { ResumableEnsureRequest } from "../../../kbbl/core/acp/resumable-wire";
 import type { EffectProvider, ProviderResult, TerminalObservation } from "./provider";
 import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "./provider-catalog";
-import { renderSessionPreamble } from "./session-prompt";
+import { renderSessionPreamble, renderSharedTaskDelivery } from "./session-prompt";
 
 /**
  * The publication secret of one kbbl session (part 1 §7.2): derived from the
@@ -140,7 +140,10 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
     async observe(instruction, material, handle, options = {}) {
       const kbbl = config.kbbl;
       if (!kbbl) return unconfigured;
-      const receipt = await kbbl.deliver(handle.session_id, selectDeliveryKey(instruction), material.task, options.signal);
+      const task = instruction.worker.kind === "agent" && instruction.worker.session === "shared" && config.publication_key !== null
+        ? renderSharedTaskDelivery(instruction, material.task, { publish_base_url: config.publish_base_url,
+          secret: derivePublicationSecret(config.publication_key, instruction.worker.session_key) }) : material.task;
+      const receipt = await kbbl.deliver(handle.session_id, selectDeliveryKey(instruction), task, options.signal);
       if (receipt.kind === "permanently_rejected") return ended(kbbl, handle.session_id, receipt.detail, options.signal);
       if (receipt.kind !== "acknowledged") return receipt;
       switch (receipt.value.status) {
