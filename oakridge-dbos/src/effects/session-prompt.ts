@@ -122,10 +122,12 @@ export function renderTaskPublication(instruction: EffectInstruction, context: S
   const subject = instruction.engine_inputs.subject;
   return [
     "## Publishing this task",
-    "Publish these artifacts with the endpoint and secret from the start of this session:",
+    "Publish these artifacts with the session secret. For a shared session, use the endpoint below:",
     ...creates.map((artifact) => {
       const current = latest.get(artifact.key) ?? null;
-      return `- \`${artifact.key}\`: ${current === null ? "no revision yet, so send `predecessor: null`" : `current revision \`${current}\`, so send it as \`predecessor\``}`;
+      const endpoint = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
+        ? `\n  endpoint: /api/runs/${encodeURIComponent(instruction.run_id)}/units/${encodeURIComponent(instruction.action.unit)}/artifacts/${encodeURIComponent(artifact.key)}` : "";
+      return `- \`${artifact.key}\`: ${current === null ? "no revision yet, so send `predecessor: null`" : `current revision \`${current}\`, so send it as \`predecessor\``}${endpoint}`;
     }),
     subject === null ? "Send `subject: null`." : `You are reviewing revision \`${subject.id}\`: send it as \`subject\`.`,
   ].join("\n");
@@ -134,7 +136,9 @@ export function renderTaskPublication(instruction: EffectInstruction, context: S
 /** One attempt's input: the handoff (fresh sessions), the mode prompt, and where to publish. */
 export function renderSessionTask(instruction: EffectInstruction, context: SessionTaskContext): string {
   const handoff = renderHandoff(instruction, context);
-  return [handoff, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
+  const unit = instruction.worker.kind === "agent" && instruction.worker.session === "shared"
+    ? `This task belongs to unit \`${instruction.action.unit}\`. Publish only to the endpoints below.` : null;
+  return [unit, handoff, renderModePrompt(instruction, context.prompt_text), renderTaskPublication(instruction, context)]
     .filter((part): part is string => part !== null).join("\n\n");
 }
 
@@ -148,6 +152,7 @@ export interface SessionPreambleInput {
   readonly schemas: { readonly [name: string]: TypeExpression };
   /** The backend's base URL as agents reach it: they publish to it directly, not through the kbbl proxy. */
   readonly publish_base_url: string;
+  readonly shared?: boolean;
   readonly secret: string;
 }
 
@@ -166,6 +171,7 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
     "Each task says which artifacts to publish. Publish every one of them before you finish the task: a task that ends without publishing every artifact it creates fails.",
     "",
     "Publish an artifact with an HTTP PUT to its endpoint, with your publication secret as a bearer token and a JSON body:",
+    ...(input.shared ? [`Prefix each task's endpoint with ${input.publish_base_url.replace(/\/+$/, "")}.`] : []),
     "",
     "    curl -sS -X PUT '<endpoint>' -H 'Authorization: Bearer <secret>' -H 'Content-Type: application/json' --data '<body>'",
     "",
@@ -175,7 +181,7 @@ export function renderSessionPreamble(input: SessionPreambleInput): string {
     "Artifacts:",
     ...input.creates.flatMap((artifact) => [
       `- \`${artifact.key}\``,
-      `  endpoint: ${selectPublishEndpoint(input, artifact.key)}`,
+      ...(input.shared ? ["  endpoint: supplied with each task"] : [`  endpoint: ${selectPublishEndpoint(input, artifact.key)}`]),
       `  schema: ${JSON.stringify(artifact.schema)}`,
     ]),
     ...(Object.keys(input.schemas).length === 0 ? [] : ["", "Named schemas these refer to:",

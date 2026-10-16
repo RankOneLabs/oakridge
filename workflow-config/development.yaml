@@ -3,7 +3,7 @@
 #   prepare         code worker repository.prepare per repository
 #   analysis        author agent + operator review
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
-#   briefs          one brief writer + operator review per plan cohort; validate: matches its cohort
+#   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:
 #                   builder, assessor reviewing the build, operator reviewing the assessment,
 #                   the PR observed until merged (D4); admission optional (D7);
@@ -267,6 +267,7 @@ stages:
     workers:
       writer:
         kind: agent
+        session: shared
         prompts: { initial: development/brief.md, revise: development/brief-revise.md }
         inputs: { cohort: input.cohort, plan: input.plan, analysis: input.analysis, spec: input.spec, workspaces: input.workspaces }
         creates: [brief]

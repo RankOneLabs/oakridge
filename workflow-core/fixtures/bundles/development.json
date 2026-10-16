@@ -448,6 +448,7 @@
       "workers": {
         "writer": {
           "kind": "agent",
+          "session": "shared",
           "prompts": {
             "initial": "development/brief.md",
             "revise": "development/brief-revise.md"

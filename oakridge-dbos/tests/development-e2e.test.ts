@@ -89,7 +89,8 @@ class StubForge {
 }
 
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
-const memberOf = (turn: StubTurn): string => (/on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "").split("/").at(-1) ?? "";
+const memberOf = (turn: StubTurn): string => (/This task belongs to unit `([^`]+)`/.exec(turn.task)?.[1]
+  ?? /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "").split("/").at(-1) ?? "";
 const COHORTS = [{ id: "a", depends_on: [] as string[] }, { id: "b", depends_on: ["a"] }];
 const dependenciesOf = (id: string): string[] => COHORTS.find((cohort) => cohort.id === id)?.depends_on ?? [];
 
@@ -280,6 +281,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const outcome = (run as { readonly outcome: DevelopmentRunOutcome }).outcome;
   const listed = (await (await api("GET", "/api/runs")).json() as { readonly items: readonly { readonly run_id: string; readonly title: string | null;
     readonly repository_keys: readonly string[]; readonly created_at: string; readonly updated_at: string }[] }).items.find((item) => item.run_id === run_id);
+  const brief_sessions = [...stub.sessions.values()].filter((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
+    && session.spec.initial_prompt.includes("worker `writer`"));
+  await eventually("brief session closed after both reviews", async () => brief_sessions.length === 1 && brief_sessions[0]?.status === "ended");
   expect({
     cohorts: outcome.cohorts.map((cohort) => cohort.cohort_id),
     integrations: outcome.integrations,
@@ -289,6 +293,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     pr_states_change: [unitOf("cohort", "a"), unitOf("cohort", "b"), unitOf("integration")].map((unit) => isChangesOnly(statesOf(unit))),
     merged_cohorts_without_confirmation: [...merged_cohorts_without_confirmation].sort(),
     run_summary: [listed?.title, listed?.repository_keys, !!listed && listed.updated_at >= listed.created_at],
+    brief_sessions: brief_sessions.map((session) => [session.inputs.length, session.status]),
   }).toEqual({
     cohorts: ["a", "b"],
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
@@ -298,6 +303,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     pr_states_change: [true, true, true],
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],
+    brief_sessions: [[2, "ended"]],
   });
 }, 150_000);
 

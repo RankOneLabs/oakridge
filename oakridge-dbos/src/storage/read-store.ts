@@ -320,13 +320,14 @@ export interface SessionAttempt { readonly action_id: string; readonly seq: numb
  * secret is minted per kbbl session, so it names whichever attempt of that
  * session is running now; with none running, the secret speaks for nothing.
  */
-export async function readSessionAttempt(db: Kysely<DB>, input: { readonly run_id: string; readonly secret_hash: string }): Promise<SessionAttempt | null> {
+export async function readSessionAttempt(db: Kysely<DB>, input: { readonly run_id: string; readonly unit_id: string; readonly secret_hash: string }): Promise<SessionAttempt | null> {
   return consistent(db, async (trx) => {
     const minted = await trx.selectFrom("authority.attempt").select("kbbl_session_id").where("run_id", "=", input.run_id)
       .where("publication_secret_hash", "=", input.secret_hash).where("kbbl_session_id", "is not", null).executeTakeFirst();
     if (!minted?.kbbl_session_id) return null;
     const running = await trx.selectFrom("authority.attempt").select(["action_id", "seq", "unit_id"]).where("run_id", "=", input.run_id)
-      .where("kbbl_session_id", "=", minted.kbbl_session_id).where((eb) => eb(eb.ref("status", "->>").key("kind"), "=", "running"))
+      .where("kbbl_session_id", "=", minted.kbbl_session_id).where("unit_id", "=", input.unit_id)
+      .where((eb) => eb(eb.ref("status", "->>").key("kind"), "=", "running"))
       .orderBy("seq", "desc").executeTakeFirst();
     return running ? { ...running, kbbl_session_id: minted.kbbl_session_id } : null;
   });

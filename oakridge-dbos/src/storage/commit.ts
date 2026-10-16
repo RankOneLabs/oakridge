@@ -594,16 +594,33 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
         .onRef("attempt.run_id", "=", "intent.run_id")
         .onRef("attempt.action_id", "=", "intent.action_id")
         .onRef("attempt.seq", "=", "intent.seq"))
-      .select("intent.id")
+      .select(["intent.id", "intent.payload"])
       .where("intent.run_id", "=", run_id)
       .where("intent.unit_id", "=", anyOf(plan.inactive_units))
       .where("intent.status", "=", "stopped")
       .where("intent.stop_origin", "is", null)
       .where("attempt.kbbl_session_id", "is not", null)
       .execute();
-    if (finished_sessions.length) await trx.updateTable("authority.effect_intent")
+    const unit_owned = finished_sessions.filter(({ payload }) => payload.worker.kind !== "agent" || payload.worker.session !== "shared");
+    if (unit_owned.length) await trx.updateTable("authority.effect_intent")
       .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
-      .where("id", "=", anyOf(finished_sessions.map((session) => session.id))).execute();
+      .where("id", "=", anyOf(unit_owned.map((session) => session.id))).execute();
+    const shared_groups = new Set(finished_sessions.flatMap(({ payload }) => payload.worker.kind === "agent" && payload.worker.shared_session_unit
+      ? [payload.worker.shared_session_unit] : []));
+    if (shared_groups.size) {
+      const units = await trx.selectFrom("authority.unit").select(["id", "status"]).where("run_id", "=", run_id).execute();
+      const group_intents = await trx.selectFrom("authority.effect_intent").select(["id", "payload", "status", "stop_origin"])
+        .where("run_id", "=", run_id).execute();
+      const ready = [...shared_groups].filter((group) => {
+        const members = units.filter((unit) => unit.id.startsWith(`${group}/`) && !unit.id.slice(group.length + 1).includes("/"));
+        return members.length > 0 && members.every((unit) => isTerminalStatus(unit.status));
+      });
+      const shared_ids = group_intents.filter((intent) => intent.status === "stopped" && intent.stop_origin === null
+        && intent.payload.worker.kind === "agent" && ready.includes(intent.payload.worker.shared_session_unit ?? "")).map((intent) => intent.id);
+      if (shared_ids.length) await trx.updateTable("authority.effect_intent")
+        .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
+        .where("id", "=", anyOf(shared_ids)).execute();
+    }
   }
   for (const update of plan.review_updates) await trx.updateTable("authority.unit").set({ review_prompts: jsonText(update.prompts) })
     .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();

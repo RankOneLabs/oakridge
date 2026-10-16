@@ -64,8 +64,11 @@ export function startStubKbbl(script: AgentScript): StubKbbl {
     const secret = /Your publication secret: (\S+)/.exec(preamble)?.[1] ?? "";
     const endpoint = (artifact: string): string => {
       const match = new RegExp(`- \`${artifact}\`\\n  endpoint: (\\S+)`).exec(preamble);
-      if (!match?.[1]) throw new Error(`the preamble names no endpoint for ${artifact}`);
-      return match[1];
+      if (match?.[1] && match[1] !== "supplied") return match[1];
+      const task_endpoint = new RegExp(`- \`${artifact}\`: [^\\n]+\\n  endpoint: (\\S+)`).exec(input.text)?.[1];
+      const base = /Prefix each task's endpoint with (\S+)\./.exec(preamble)?.[1];
+      if (!task_endpoint || !base) throw new Error(`the task names no endpoint for ${artifact}`);
+      return new URL(task_endpoint, base).toString();
     };
     return {
       session_key: session.session_key, sid: session.sid, delivery_key: input.delivery_key, preamble, task: input.text,

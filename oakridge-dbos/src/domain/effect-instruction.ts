@@ -17,6 +17,8 @@ export interface CreatedArtifact { readonly key: string; readonly schema: TypeEx
 export const HANDOFF_PROMPT = "handoff";
 export type WorkerInstruction =
   | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
+      /** The collection path that owns a shared session; absent for unit-owned sessions. */
+      readonly shared_session_unit?: string;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
       readonly handoff: PinnedPrompt | null;
       /** What the session starts with: the run's settings for the stage, else the worker's declared runtime; null for kbbl's default. */
@@ -60,16 +62,20 @@ export function selectEverySeconds(every: string): number | null {
 }
 
 /**
- * The kbbl session key (part 1 §7.2). `session: resume` keeps one session per
- * unit and worker; `fresh` gives each action its own. It is a sha256 hex, so it
- * is one path segment and 70 characters however long the unit's path: kbbl
+ * The kbbl session key (part 1 §7.2). `resume` keeps one session per unit and
+ * worker; `shared` keeps one for sibling units; `fresh` gives each action its own.
+ * It is a sha256 hex with a mode prefix, so it is one short path segment however long the unit's path: kbbl
  * caps keys at 300, and unit ids and action ids grow with collection keys. kbbl
- * learns the unit and worker from the ensure's `workflow` block, not the key.
+ * learns the owning unit or collection and worker from the ensure's `workflow` block, not the key.
  */
 export function selectSessionKey(action: RunWorkerAction, action_id: string, session: SessionMode): string {
-  const named = session === "resume" ? `resume\0${action.unit}\0${action.worker}` : `fresh\0${action_id}`;
+  const named = session === "resume" ? `resume\0${action.unit}\0${action.worker}`
+    : session === "shared" ? `shared\0${selectSharedSessionUnit(action.unit)}\0${action.worker}` : `fresh\0${action_id}`;
   return `${session}-${createHash("sha256").update(named).digest("hex")}`;
 }
+
+/** The collection unit above one member, shared by all its siblings. */
+export const selectSharedSessionUnit = (unit: string): string => unit.slice(0, unit.lastIndexOf("/"));
 
 export interface InstructionSource {
   readonly run_id: RunId;
@@ -135,6 +141,8 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
     const prompt = pin(path);
     if (!prompt.ok) return prompt;
     const session = declared.session ?? "resume";
+    if (session === "shared" && (!action.unit.startsWith(`${source.run_id}/`) || selectSharedSessionUnit(action.unit) === source.run_id))
+      return failure(resolved.action_id, "shared session requires a collection member unit");
     const handoff_path = session === "fresh" ? declared.prompts[HANDOFF_PROMPT] : undefined;
     const handoff = handoff_path == null ? null : pin(handoff_path);
     if (handoff && !handoff.ok) return handoff;
@@ -145,6 +153,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
     }
     worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
+      ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
       prompt: prompt.value, handoff: handoff?.value ?? null, settings: selectSessionSettings(source.config, source.stage, declared.runtime ?? null), creates,
       schemas: selectReferencedSchemas(creates.map((artifact) => artifact.schema), source.workflow.schemas ?? {}) };
   } else {
@@ -206,7 +215,8 @@ function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   if (value.kind === "code") return isString(value.operation) && isNullableString(value.every) && isString(value.artifact);
   if (value.kind !== "agent") return false;
   const settings = value.settings;
-  return isString(value.session_key) && (value.session === "resume" || value.session === "fresh")
+  return isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
+    && (value.session !== "shared" || isString(value.shared_session_unit) && value.shared_session_unit !== "")
     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
     && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort))
     && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)

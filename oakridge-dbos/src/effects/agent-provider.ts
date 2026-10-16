@@ -47,9 +47,6 @@ export interface AgentProviderConfig {
 }
 
 const KBBL_NAME_LIMIT = 80;
-/** The unit's path inside its run, for the session's name. */
-const unitPath = (instruction: EffectInstruction): string =>
-  instruction.action.unit.startsWith(`${instruction.run_id}/`) ? instruction.action.unit.slice(instruction.run_id.length + 1) : instruction.action.unit;
 const shortDigest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 /**
@@ -64,16 +61,19 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
   const worker = instruction.worker;
   if (worker.kind !== "agent") throw new Error(`instruction ${instruction.attempt.action_id} is not an agent's`);
   const workspace = selectAgentWorkspace(instruction.workspace);
-  const name = `${instruction.action.worker} · ${unitPath(instruction)}`;
+  const session_unit = worker.shared_session_unit ?? instruction.action.unit;
+  const session_path = session_unit.startsWith(`${instruction.run_id}/`) ? session_unit.slice(instruction.run_id.length + 1) : session_unit;
+  const name = `${instruction.action.worker} · ${session_path}`;
   return {
-    initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: instruction.action.unit, worker: instruction.action.worker,
-      creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret }),
+    initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: session_unit, worker: instruction.action.worker,
+      creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret,
+      shared: worker.session === "shared" }),
     workdir: workspace?.repository_path ?? config.default_workdir,
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
     ...(workspace ? { worktree: { branch_name: `oakridge/${shortDigest(worker.session_key)}`, worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
-    workflow: { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker },
+    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
   };
 }
 

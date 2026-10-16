@@ -22,7 +22,8 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const scripts = new Map<string, AgentScript>();
 const runOf = (turn: StubTurn): string => /of run `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
-const unitOf = (turn: StubTurn): string => /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
+const unitOf = (turn: StubTurn): string => /This task belongs to unit `([^`]+)`/.exec(turn.task)?.[1]
+  ?? /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
 
 let scratch: Awaited<ReturnType<typeof scratchDatabase>>;
 let db: Database;
@@ -66,6 +67,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
 const segment = encodeURIComponent;
 async function launch(workflow: Workflow, input: unknown, script: AgentScript): Promise<string> {
   const pinned = await api("POST", "/api/definitions", workflow);
+  if (!pinned.ok) throw new Error(`pin refused: ${pinned.status} ${await pinned.text()}`);
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   scripts.set(launchRunId(request_id), script);
@@ -236,6 +238,41 @@ test("I2: sample B prepares a temporary repository and runs every item in a work
       at_most_two: stub.max_running() <= 2,
     }).toEqual({ workspace: { repository_path: repo.path, push_remote_owner: "oakridge-e2e", head: repo.head }, items: 4,
       worktrees: Array.from({ length: 4 }, () => [repo.path, repo.head]), distinct_branches: 4, c_after_a: true, at_most_two: true });
+  } finally { repo.remove(); }
+}, 90_000);
+
+test("sibling reviewed items publish through one shared session until the final review closes it", async () => {
+  const repo = await temporaryRepository();
+  try {
+    const workflow = sampleWorkflow("fan-out");
+    const item = workflow.stages.item!;
+    const worker = item.workers.worker!;
+    if (worker.kind !== "agent") throw new Error("item worker is an agent");
+    const shared: Workflow = { ...workflow, workflow: "fan_out_shared", stages: { ...workflow.stages, item: { ...item,
+      workers: { ...item.workers, worker: { ...worker, session: "shared" } },
+      reviews: { editor: { of: "result", by: "operator", prompt: "fan-out/item.md", inputs: { text: "input.text" },
+        decisions: { approve: { effect: "approve", label: "Approve" } } } },
+      done_when: "approved(result)" } } };
+    const run_id = await launch(shared, { repository: { repository_path: repo.path, expected_head: null },
+      items: [{ key: "a", text: "alpha", after: [] }, { key: "b", text: "beta", after: [] }] }, async (turn) => {
+      const response = await turn.publish("result", `done: ${itemOf(turn)}`);
+      if (response.status !== 201) throw new Error(`publish refused: ${await response.text()}`);
+      return "succeeded";
+    });
+    const published = await eventually("both shared items published", async () => {
+      const rows = await revisions(run_id, "result");
+      return rows.length === 2 ? rows : null;
+    });
+    await eventually("both shared turns ended", async () => (await attempts(run_id, "worker")).filter((attempt) => attempt.status.kind === "succeeded").length === 2);
+    const session = sessionsOfRun(run_id, "worker")[0];
+    expect(sessionsOfRun(run_id, "worker").length).toBe(1);
+    const a = published.find((revision) => revision.unit_id.endsWith("/a"))!;
+    const b = published.find((revision) => revision.unit_id.endsWith("/b"))!;
+    expect((await decide(run_id, a.unit_id, "approve", a.id, {})).status).toBe(201);
+    expect(session?.status).toBe("live");
+    expect((await decide(run_id, b.unit_id, "approve", b.id, {})).status).toBe(201);
+    await eventually("shared session closed", async () => session?.status === "ended");
+    expect(await runStatus(run_id)).toBe("done");
   } finally { repo.remove(); }
 }, 90_000);
 

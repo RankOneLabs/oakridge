@@ -153,6 +153,17 @@ test("every ensure of a session sends the same spec, carrying the session's secr
   expect(publicationSecretHash(secret)).toBe(createHash("sha256").update(secret).digest("hex"));
 });
 
+test("sibling briefs ensure the same shared session start spec", () => {
+  const first = instructionFor({ action: { ...writer, unit: "run-1/briefs/a" } });
+  const second = instructionFor({ action: { ...writer, unit: "run-1/briefs/b" } });
+  if (first.worker.kind !== "agent" || second.worker.kind !== "agent") throw new Error("writer is an agent");
+  const shared_worker = { ...first.worker, session: "shared" as const, shared_session_unit: "run-1/briefs", session_key: "shared-key" };
+  const a: EffectInstruction = { ...first, worker: shared_worker };
+  const b: EffectInstruction = { ...second, worker: { ...second.worker, ...shared_worker } };
+  const options = { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" };
+  expect(selectSessionStart(a, options, "secret")).toEqual(selectSessionStart(b, options, "secret"));
+});
+
 test("a repository workspace runs in a worktree branched from the prepared head; none runs in the agent workdir", () => {
   const plain = selectSessionStart(instructionFor(), { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   const repo = selectSessionStart(instructionFor({ resolved: { workspace: { repository_path: "/srv/repo", push_remote_owner: "o", head: "abc123" } } }),
