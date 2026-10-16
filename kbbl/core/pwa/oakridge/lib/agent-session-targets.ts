@@ -1,5 +1,4 @@
 import type { RuntimeModelSelection } from "../../types";
-import type { OperatorWorkflow } from "../operator-contracts";
 import type { LaunchSessionSettings } from "../types";
 import type { ModelRole } from "./runtime-selection";
 import type { Result } from "../../lib/result";
@@ -14,6 +13,13 @@ export interface AgentSessionTarget {
   readonly suggested_role: ModelRole;
 }
 
+/** Projection of OperatorWorkflow.stages[*].workers[*].kind, including
+ * template references whose worker kind is absent in the API response. */
+export interface AgentWorkerWorkflow {
+  readonly workflow: string;
+  readonly stages: Readonly<{ [stage: string]: { readonly workers: Readonly<{ [worker: string]: { readonly kind: string | null } }> } }>;
+}
+
 const DEVELOPMENT_STAGE_ORDER = ["analysis", "planning", "brief", "cohort", "integration"] as const;
 const developmentOrder = (stage: string): number => {
   const index = DEVELOPMENT_STAGE_ORDER.findIndex((candidate) => candidate === stage);
@@ -26,7 +32,7 @@ const suggestedRole = (workflow: string, stage: string, worker: string): ModelRo
 
 /** The workflow definition, rather than a hard-coded cohort list, determines
  * which sessions the launch form can configure. Code workers have no model. */
-export function selectAgentSessionTargets(workflow: OperatorWorkflow): readonly AgentSessionTarget[] {
+export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow): readonly AgentSessionTarget[] {
   const targets = Object.entries(workflow.stages).flatMap(([stage, definition]) =>
     Object.entries(definition.workers).filter(([, worker]) => worker.kind === "agent").map(([worker]) => ({
       key: `${stage}.${worker}`, stage, worker, label: `${stage} · ${worker}`,

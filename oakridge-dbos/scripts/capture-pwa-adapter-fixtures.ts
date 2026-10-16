@@ -59,7 +59,13 @@ if (fixtureName === "v2-definition-detail") {
   const definitionPath = `/api/definitions/${encodeURIComponent(run.definition_bundle_id)}`;
   const definition = await get<OperatorDefinitionDetail>(definitionPath);
   if (definition.digest !== run.definition_digest) throw new Error(`run ${runId} definition digest mismatch`);
-  writeFileSync(output, `${JSON.stringify({ source: definitionPath, captured_at: new Date().toISOString(), definition }, null, 2)}\n`);
+  const workflow = { workflow: definition.workflow.workflow,
+    stages: Object.fromEntries(Object.entries(definition.workflow.stages).map(([stage, value]) => [stage, {
+      workers: Object.fromEntries(Object.entries(value.workers).map(([worker, declaration]) =>
+        [worker, { kind: declaration.kind ?? null }])),
+    }])) };
+  writeFileSync(output, `${JSON.stringify({ source: definitionPath, captured_at: new Date().toISOString(), run_id: runId,
+    definition: { bundle_id: definition.bundle_id, digest: definition.digest, workflow } }, null, 2)}\n`);
   console.log(`Captured ${runId}: definition ${definition.bundle_id}`);
   process.exit(0);
 }

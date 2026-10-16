@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import captured from "../__fixtures__/v2-definition-detail.json";
-import type { OperatorDefinitionDetail } from "../operator-contracts";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./agent-session-targets";
 
-const definition = captured.definition as unknown as OperatorDefinitionDetail;
+const definition = captured.definition;
 
 describe("agent session choices from a pinned definition", () => {
   it("exposes each agent worker, including builder and assessor separately", () => {

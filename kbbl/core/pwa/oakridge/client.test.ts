@@ -11,8 +11,8 @@ import { selectAgentSessionTargets } from "./lib/agent-session-targets";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
 const runId = sample.run.run_id;
-const definition = { ...(definitionFixture.definition as unknown as OperatorDefinitionDetail),
-  bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest };
+const definition = { ...definitionFixture.definition, bundle: { key: "development" }, archived_at: null, graph: {},
+  bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest } as unknown as OperatorDefinitionDetail;
 const sessionSettings = Object.fromEntries(selectAgentSessionTargets(definition.workflow).map((target) =>
   [target.key, { harness: "claude-code" as const, model: "sonnet", effort: null }]));
 const cohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
