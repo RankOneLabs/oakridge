@@ -50,8 +50,9 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
         function paths(argument: ts.Node): void {
           const literal = routeLiteral(argument);
           if (literal !== null) {
-            // kbbl owns the configuration endpoint; workflow routes go to DBOS.
-            if (literal === "/oakridge/config") return;
+            // kbbl owns configuration, session inventory, and the run-activity compatibility proxy.
+            if (literal === "/oakridge/config" || (literal === "/sessions" && method === "GET")
+              || literal.startsWith("/oakridge/api/run_events?")) return;
             const normalized = literal.replace(/^\/oakridge\/api(?=\/)/, "").split("?")[0];
             if (normalized?.startsWith("/")) routes.push({ method, path: normalized, source: path });
             return;
@@ -71,13 +72,18 @@ function clientRoutes(): readonly SourceRoute[] {
   return sourceFiles(pwaPath).flatMap((path) => sourceRoutes(path, readFileSync(path, "utf8")));
 }
 
-test("restored v1 PWA calls its run, review, and definition routes", () => {
-  const routes = clientRoutes();
-  const signatures = new Set(routes.map(({ method, path }) => `${method} ${path}`));
-  expect(signatures.has("GET /gates")).toBe(true);
-  expect(signatures.has("GET /review_inbox")).toBe(true);
-  expect([...signatures].some((signature) => signature.startsWith("GET /runs"))).toBe(true);
-  expect([...signatures].some((signature) => signature.startsWith("GET /workflow_defs"))).toBe(true);
+test("restored v1 PWA uses the v2 run, inbox, review, and definition routes", () => {
+  expect(clientRoutes().filter(({ method, path }) => !matchRoute(method, path))).toEqual([]);
+  const client = readFileSync(resolve(pwaPath, "client.ts"), "utf8");
+  expect(client).toContain('`${OPERATOR}/runs?${query}`');
+  expect(client).toContain('`${OPERATOR}/run-inboxes?ids=${ids.map(encodeURIComponent).join(",")}`');
+  expect(client).toContain('`${unitPath(runId, unitId)}/reviews/${encodeURIComponent(review)}/decide`');
+  expect(client).toContain('`${OPERATOR}/definitions?${query}`');
+  for (const route of [
+    ["GET", "/api/runs"], ["GET", "/api/run-inboxes"],
+    ["POST", "/api/runs/:run_id/units/:unit_id/reviews/:review/decide"],
+    ["GET", "/api/definitions"],
+  ] as const) expect(matchRoute(route[0], route[1].replaceAll(/:[^/]+/g, "example"))).toBeDefined();
 });
 
 test("route guard detects dead routes in helpers, pagination and direct fetches", () => {

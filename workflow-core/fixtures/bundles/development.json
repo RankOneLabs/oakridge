@@ -180,13 +180,20 @@
   "reviews": {
     "pr_closed": {
       "of": "build_result",
-      "by": "engine",
+      "by": "operator",
       "when": "closed_pr",
+      "prompt": "development/pr-closed.md",
+      "inputs": {
+        "pr": "latest(pr)",
+        "pr_state": "latest(pr_state)"
+      },
       "decisions": {
         "replace_pr": {
           "effect": "request_changes",
           "label": "Replace the closed PR",
-          "feedback": "The pull request was closed without being merged. Open a new pull request for this build and publish the build result and the PR summary again."
+          "fields": {
+            "feedback": "What must change in the replacement pull request?"
+          }
         }
       }
     }
@@ -441,6 +448,7 @@
       "workers": {
         "writer": {
           "kind": "agent",
+          "session": "shared",
           "prompts": {
             "initial": "development/brief.md",
             "revise": "development/brief-revise.md"
@@ -494,8 +502,10 @@
         "brief_value": "input.brief",
         "watch_base": "input.repository.forge.build_base",
         "pr_published": "published(pr)",
-        "closed_pr": "published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
-        "merged_pr": "published(pr_state) and latest(pr_state).state == \"merged\""
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "merged_pr": "observed_state_current and latest(observed_state).state == \"merged\""
       },
       "artifacts": {
         "brief": {
@@ -511,6 +521,9 @@
           "schema": "assessment_body"
         },
         "pr_state": {
+          "schema": "pr_status"
+        },
+        "observed_state": {
           "schema": "pr_status"
         }
       },
@@ -559,6 +572,18 @@
         },
         "pr_watch": {
           "template": "pr_watch"
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "creates": [
+            "observed_state"
+          ]
         }
       },
       "reviews": {
@@ -643,14 +668,22 @@
       "let": {
         "pr_published": "published(pr)",
         "watch_base": "input.repository.forge.final_base",
-        "closed_pr": "input.final_merge_policy == \"require_merge\" and published(pr) and published(pr_state) and latest(pr_state).state == \"closed_unmerged\"",
-        "final_state": "published(pr_state) and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
+        "pr_state_current": "published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url",
+        "observed_state_current": "published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url",
+        "closed_pr": "input.final_merge_policy == \"require_merge\" and pr_state_current and latest(pr_state).state == \"closed_unmerged\"",
+        "final_state": "pr_state_current and (latest(pr_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(pr_state).state == \"closed_unmerged\"))"
       },
       "artifacts": {
         "pr": {
           "schema": "pr_body"
         },
         "pr_state": {
+          "schema": "pr_status"
+        },
+        "manual_merge_target": {
+          "schema": "pr_body"
+        },
+        "observed_state": {
           "schema": "pr_status"
         }
       },
@@ -672,6 +705,30 @@
         },
         "pr_watch": {
           "template": "pr_watch"
+        },
+        "prepare_manual_merge": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_published",
+          "inputs": {
+            "value": "latest(pr)"
+          },
+          "every": "2m",
+          "creates": [
+            "manual_merge_target"
+          ]
+        },
+        "prepare_observed_state": {
+          "kind": "code",
+          "operation": "value.publish",
+          "when": "pr_state_current",
+          "inputs": {
+            "value": "latest(pr_state)"
+          },
+          "every": "2m",
+          "creates": [
+            "observed_state"
+          ]
         }
       },
       "reviews": {
@@ -697,9 +754,9 @@
           }
         },
         "merge_confirmation": {
-          "of": "pr",
+          "of": "manual_merge_target",
           "by": "operator",
-          "when": "pr_published and not final_state and not closed_pr and not approved(pr_state)",
+          "when": "published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
             "pr": "latest(pr)",
@@ -707,7 +764,6 @@
           },
           "decisions": {
             "confirm_merged": {
-              "on": "pr_state",
               "effect": "approve",
               "label": "Confirm merged"
             }
@@ -716,20 +772,15 @@
         "pr_closed": {
           "template": "pr_closed",
           "overrides": {
-            "of": "pr",
-            "decisions": {
-              "replace_pr": {
-                "feedback": "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again."
-              }
-            }
+            "of": "pr"
           }
         }
       },
-      "done_when": "approved(pr) and (final_state or approved(pr_state))",
+      "done_when": "approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == \"merged\" or (input.final_merge_policy == \"allow_close_without_merge\" and latest(observed_state).state == \"closed_unmerged\"))))",
       "outcome": {
         "repository_key": "input.repository.key",
         "pr_url": "latest(pr).pr_url",
-        "is_merged": "latest(pr_state).state == \"merged\" or approved(pr_state)"
+        "is_merged": "approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == \"merged\")"
       }
     }
   }

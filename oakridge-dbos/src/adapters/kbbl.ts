@@ -101,9 +101,14 @@ export class KbblClient {
     try { response = await this.fetch(url, { ...init, ...(signal ? { signal } : {}) }); }
     catch (error) { return { kind: "uncertain", detail: `kbbl ${operation}: ${String(error)}` }; }
     if (!response.ok && response.status !== 202) {
-      const detail = `kbbl ${operation} failed (${response.status}): ${await response.text().catch(() => "")}`;
+      const body = await response.text().catch(() => "");
+      const detail = `kbbl ${operation} failed (${response.status}): ${body}`;
+      let refusal: unknown = null;
+      try { refusal = JSON.parse(body); } catch { /* Non-JSON refusals have no domain code. */ }
+      const code = response.status === 409 && isFields(refusal) && typeof refusal.code === "string"
+        ? refusal.code : "kbbl_refused";
       return response.status >= 500 || response.status === 408 || response.status === 429
-        ? { kind: "transiently_unavailable", detail } : { kind: "permanently_rejected", code: "kbbl_refused", detail };
+        ? { kind: "transiently_unavailable", detail } : { kind: "permanently_rejected", code, detail };
     }
     let value: Value | null;
     try { value = await read(response); } catch (error) { return { kind: "uncertain", detail: `kbbl ${operation}: ${String(error)}` }; }

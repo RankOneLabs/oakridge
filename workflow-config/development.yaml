@@ -3,7 +3,7 @@
 #   prepare         code worker repository.prepare per repository
 #   analysis        author agent + operator review
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
-#   briefs          one brief writer + operator review per plan cohort; validate: matches its cohort
+#   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:
 #                   builder, assessor reviewing the build, operator reviewing the assessment,
 #                   the PR observed until merged (D4); admission optional (D7);
@@ -129,11 +129,13 @@ workers:
 reviews:
   pr_closed:
     of: build_result
-    by: engine
+    by: operator
     when: closed_pr
+    prompt: development/pr-closed.md
+    inputs: { pr: latest(pr), pr_state: latest(pr_state) }
     decisions:
       replace_pr: { effect: request_changes, label: Replace the closed PR,
-                    feedback: "The pull request was closed without being merged. Open a new pull request for this build and publish the build result and the PR summary again." }
+                    fields: { feedback: "What must change in the replacement pull request?" } }
 
 run:
   pools: { writers: 4, builders: 4 }
@@ -265,6 +267,7 @@ stages:
     workers:
       writer:
         kind: agent
+        session: shared
         prompts: { initial: development/brief.md, revise: development/brief-revise.md }
         inputs: { cohort: input.cohort, plan: input.plan, analysis: input.analysis, spec: input.spec, workspaces: input.workspaces }
         creates: [brief]
@@ -284,14 +287,17 @@ stages:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
       pr_published: published(pr)
-      closed_pr: published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-      merged_pr: published(pr_state) and latest(pr_state).state == "merged"
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
       brief: { schema: brief_body }
       build_result: { schema: build_body }
       pr: { schema: pr_body }
       assessment: { schema: assessment_body }
       pr_state: { schema: pr_status }
+      observed_state: { schema: pr_status }
     workers:
       # The accepted brief, published into the cohort so the operator can admit it (D7).
       publish_brief:
@@ -314,6 +320,15 @@ stages:
         reviews: build_result
         creates: [assessment]
       pr_watch: { template: pr_watch }
+      # Keep the optional PR observation separate from the manual completion
+      # path, so an unavailable watcher cannot veto confirm_merged.
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: pr_state_current
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
     reviews:
       admission:
         of: brief
@@ -358,11 +373,15 @@ stages:
     let:
       pr_published: published(pr)
       watch_base: input.repository.forge.final_base
-      closed_pr: input.final_merge_policy == "require_merge" and published(pr) and published(pr_state) and latest(pr_state).state == "closed_unmerged"
-      final_state: published(pr_state) and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
+      final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
+      manual_merge_target: { schema: pr_body }
+      observed_state: { schema: pr_status }
     workers:
       integrator:
         kind: agent
@@ -371,6 +390,22 @@ stages:
         workspace: repository(input.workspace)
         creates: [pr]
       pr_watch: { template: pr_watch }
+      # Independent evidence paths preserve the manual v1 merge fallback when
+      # no PR reader is configured. Periodic copies follow revised inputs.
+      prepare_manual_merge:
+        kind: code
+        operation: value.publish
+        when: pr_published
+        inputs: { value: latest(pr) }
+        every: 2m
+        creates: [manual_merge_target]
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: pr_state_current
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
     reviews:
       integration_review:
         of: pr
@@ -379,24 +414,20 @@ stages:
         inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       merge_confirmation:
-        of: pr
+        of: manual_merge_target
         by: operator
-        when: pr_published and not final_state and not closed_pr and not approved(pr_state)
+        when: published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)
         prompt: development/merge-confirmation.md
         inputs: { pr: latest(pr), pr_state: latest(pr_state) }
         decisions:
-          confirm_merged: { on: pr_state, effect: approve, label: Confirm merged }
+          confirm_merged: { effect: approve, label: Confirm merged }
       pr_closed:
         template: pr_closed
-        overrides:
-          of: pr
-          decisions:
-            replace_pr:
-              feedback: "The integration pull request was closed without being merged, and this run requires a merge. Open a new pull request and publish the PR summary again."
-    # Done when its PR merges or the operator confirms a merged observed state;
-    # under allow_close_without_merge, an observed unmerged close also suffices.
-    done_when: approved(pr) and (final_state or approved(pr_state))
+        overrides: { of: pr }
+    # The independent evidence paths avoid reading an unobserved PR watch in the
+    # manual path; under allow_close_without_merge, an observed close suffices.
+    done_when: approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url
-      is_merged: latest(pr_state).state == "merged" or approved(pr_state)
+      is_merged: approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == "merged")

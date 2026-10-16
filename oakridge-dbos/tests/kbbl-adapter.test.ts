@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { KbblClient, REVIVE_HEADER } from "../src/adapters/kbbl";
 import type { ResolvedRunWorker } from "../src/core-client/core-types";
 import { selectEffectInstruction, type EffectInstruction, type RunWorkerAction } from "../src/domain/effect-instruction";
-import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, type AgentProviderConfig } from "../src/effects/agent-provider";
+import { createAgentProvider, derivePublicationSecret, publicationSecretHash, selectDeliveryKey, selectSessionStart, selectWorkspaceBranch, type AgentProviderConfig } from "../src/effects/agent-provider";
 import type { ExternalHandle } from "../src/effects/provider";
 import { resolveObserve } from "../src/effects/outcomes";
 import { sampleWorkflow } from "./authority-fixture";
@@ -92,6 +92,19 @@ test("a delivered input's receipt reports its turn", async () => {
     url: "http://kbbl.test/sessions/resumable/sid-1/input/action-1", body: { text: "do it" } });
 });
 
+test("a shared worker receives its own bearer token and unit endpoint with every task", async () => {
+  const base = instructionFor();
+  if (base.worker.kind !== "agent") throw new Error("writer is an agent");
+  const shared: EffectInstruction = { ...base, action: { ...base.action, unit: "run-1/briefs/a" },
+    worker: { ...base.worker, session: "shared", session_key: "shared-key", shared_session_unit: "run-1/briefs" } };
+  const { calls, fetch } = recording(() => Response.json({ accepted: true, status: "prompting" }));
+  await createAgentProvider(config(fetch)).observe(shared, { task: "write this brief" }, session);
+  const delivered = (calls[0]?.body as { readonly text: string } | undefined)?.text ?? "";
+  expect([delivered.includes(`Authorization: Bearer ${derivePublicationSecret("key", "shared-key")}`),
+    delivered.includes("PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/draft"),
+    delivered.endsWith("write this brief")]).toEqual([true, true, true]);
+});
+
 test("a session reading names how it ended: closed, failed with kbbl's code, or succeeded", async () => {
   const bodies = [
     Response.json({ session: snapshot("ended"), end: { kind: "closed" } }),
@@ -153,12 +166,48 @@ test("every ensure of a session sends the same spec, carrying the session's secr
   expect(publicationSecretHash(secret)).toBe(createHash("sha256").update(secret).digest("hex"));
 });
 
+test("sibling briefs ensure the same shared session start spec", () => {
+  const first = instructionFor({ action: { ...writer, unit: "run-1/briefs/a" } });
+  const second = instructionFor({ action: { ...writer, unit: "run-1/briefs/b" } });
+  if (first.worker.kind !== "agent" || second.worker.kind !== "agent") throw new Error("writer is an agent");
+  const shared_worker = { ...first.worker, session: "shared" as const, shared_session_unit: "run-1/briefs", session_key: "shared-key" };
+  const a: EffectInstruction = { ...first, worker: shared_worker };
+  const b: EffectInstruction = { ...second, worker: { ...second.worker, ...shared_worker } };
+  const options = { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" };
+  expect(selectSessionStart(a, options, "secret")).toEqual(selectSessionStart(b, options, "secret"));
+});
+
 test("a repository workspace runs in a worktree branched from the prepared head; none runs in the agent workdir", () => {
   const plain = selectSessionStart(instructionFor(), { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   const repo = selectSessionStart(instructionFor({ resolved: { workspace: { repository_path: "/srv/repo", push_remote_owner: "o", head: "abc123" } } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect({ plain: [plain.workdir, plain.worktree ?? null], repo: [repo.workdir, repo.worktree?.base_ref, repo.worktree?.branch_name.startsWith("oakridge/")] })
     .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "abc123", true] });
+});
+
+test("development cohort worktrees use the cohort key and a stable six-character session hash", () => {
+  const action = { ...writer, unit: "run-1/implementation/dark_theme_palette" };
+  const cohort = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123" } } });
+  const revision = instructionFor({ action: { ...action, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" } } });
+  const branch = selectWorkspaceBranch(cohort);
+  const start = selectSessionStart(cohort, { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
+  expect({ branch, start_branch: start.worktree?.branch_name, same_on_revision: selectWorkspaceBranch(revision) === branch,
+    unrelated_stage: selectWorkspaceBranch(instructionFor()).startsWith("oakridge/") })
+    .toEqual({ branch: expect.stringMatching(/^cohort\/dark_theme_palette\/[0-9a-f]{6}$/), start_branch: branch, same_on_revision: true,
+      unrelated_stage: true });
+});
+
+test("an existing cohort session retains its old branch when kbbl rejects a changed start spec", async () => {
+  const action = { ...writer, unit: "run-1/implementation/dark_theme_palette" };
+  const instruction = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123" } } });
+  const { calls, fetch } = recording(() => calls.length === 1
+    ? Response.json({ code: "session_key_conflict", error: "different start spec" }, { status: 409 })
+    : Response.json({ kind: "attached", session: snapshot() }));
+  const result = await createAgentProvider(config(fetch)).start(instruction);
+  const branches = calls.map((call) => (call.body as { worktree: { branch_name: string } }).worktree.branch_name);
+  expect({ kind: result.kind, branches }).toEqual({ kind: "acknowledged", branches: [
+    expect.stringMatching(/^cohort\/dark_theme_palette\/[0-9a-f]{6}$/),
+    expect.stringMatching(/^oakridge\/[0-9a-f]{16}$/) ] });
 });
 
 test("a session starts with the runtime, model and effort the run chose for its stage", () => {

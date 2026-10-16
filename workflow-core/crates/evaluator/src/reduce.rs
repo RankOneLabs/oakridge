@@ -337,7 +337,7 @@ fn reduce_event(
             let decision_definition = decisions
                 .get(&decision.0)
                 .ok_or_else(|| rejected("decision absent"))?;
-            if !holds(when.as_ref(), owner, &state, context)? {
+            if !operator_review_is_open(program, &state, owner, when.as_ref(), context)? {
                 return Err(rejected("review is not open"));
             }
             if state.decisions.iter().any(|d| {

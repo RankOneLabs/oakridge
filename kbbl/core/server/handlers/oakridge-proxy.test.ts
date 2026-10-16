@@ -5,6 +5,7 @@ import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./oakridge-pro
 import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWriteMiddleware, browserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
 import { controlTokenMiddleware } from "../../../../oakridge-dbos/src/http/control-auth";
+import sample from "../../pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 
 const originalFetch = globalThis.fetch;
 
@@ -13,6 +14,33 @@ afterEach(() => {
 });
 
 describe("oakridge proxy", () => {
+  test("serves frozen run Activity from authenticated v2 unit histories", async () => {
+    const runId = sample.run.run_id;
+    const unit = sample.units.find((candidate) => candidate.stage === "prepare");
+    if (!unit) throw new Error("captured fixture lacks a prepare unit");
+    const calls: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      expect((init?.headers as Headers).get("authorization")).toBe("Bearer core-secret");
+      if (path.endsWith("/units")) return Response.json([unit]);
+      return Response.json({ unit_id: unit.unit_id, next_cursor: null, events: [{
+        id: "event-1", ingress_id: null, writer: { kind: "engine" },
+        created_at: "2026-10-15T22:08:48.000Z",
+        event: { kind: "revision_published", unit: unit.unit_id, artifact: "workspace", body: {} },
+      }] });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", browserControlToken: "browser-secret", coreControlToken: "core-secret" });
+    const path = `/oakridge/api/run_events?limit=500&run_id=${encodeURIComponent(runId)}`;
+    expect((await app.request(path)).status).toBe(401);
+    const response = await app.request(path, { headers: { authorization: "Bearer browser-secret" } });
+    expect(response.status).toBe(200);
+    const events = await response.json() as { sequence: string; operation: string; payload: { run_id: string } }[];
+    expect(events.map((event) => [event.sequence, event.operation, event.payload.run_id])).toEqual([["1", "slot_released", runId]]);
+    expect(calls).toEqual([`/api/runs/${runId}/units`, `/api/runs/${runId}/units/${encodeURIComponent(unit.unit_id)}/history`]);
+  });
+
   test("the direct and proxy paths reject every table write with non-JSON content or an unlisted origin", async () => {
     const direct = new Hono();
     direct.use("*", browserWriteMiddleware(browserWritePolicy(["https://operator.example"])));

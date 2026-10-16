@@ -1,0 +1,2894 @@
+{
+  "source": "/api/runs/run-cf40de5f78dccdcd",
+  "captured_at": "2026-10-15T23:43:14.843Z",
+  "run": {
+    "run_id": "run-cf40de5f78dccdcd",
+    "definition_bundle_id": "ea5fa9f5-0b14-4898-bf78-d20c344f2dab",
+    "definition_digest": "f7d866741495554f869facf7ef64a797fd6a7d502f31ccb562bb3bf68666fcf8",
+    "created_at": "2026-10-15T23:43:11.783Z",
+    "updated_at": "2026-10-15T23:43:14.544Z",
+    "archived_at": null,
+    "title": "Confirm PRs",
+    "repository_keys": [
+      "app"
+    ],
+    "status": {
+      "kind": "active"
+    },
+    "units": [
+      {
+        "unit_id": "run-cf40de5f78dccdcd",
+        "unit_key": "$root",
+        "label": "Development",
+        "stage": null,
+        "status": {
+          "kind": "active"
+        },
+        "is_terminal": false,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/analysis",
+        "unit_key": "analysis",
+        "label": "Analysis",
+        "stage": "analysis",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "analysis": {
+              "risks": [],
+              "summary": "Feasible.",
+              "findings": [],
+              "requirements": [
+                {
+                  "id": "r1",
+                  "status": "implementable",
+                  "description": "Do the thing."
+                }
+              ],
+              "source_spec_refs": [
+                "§1"
+              ]
+            }
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+        "unit_key": "briefs",
+        "label": "Brief",
+        "stage": "brief",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "brief": {
+              "goal": "Build it.",
+              "title": "Cohort a",
+              "cohort_id": "a",
+              "depends_on": [],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            }
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+        "unit_key": "briefs",
+        "label": "Brief",
+        "stage": "brief",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "brief": {
+              "goal": "Build it.",
+              "title": "Cohort b",
+              "cohort_id": "b",
+              "depends_on": [
+                "a"
+              ],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            }
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+        "unit_key": "implementation",
+        "label": "Cohort",
+        "stage": "cohort",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "title": "Cohort a",
+            "branch": "cohort-a",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+            "cohort_id": "a",
+            "build_result": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built a.",
+              "known_issues": [],
+              "changed_files": [
+                "a.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "repository_key": "app"
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+        "unit_key": "implementation",
+        "label": "Cohort",
+        "stage": "cohort",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "title": "Cohort b",
+            "branch": "cohort-b",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+            "cohort_id": "b",
+            "build_result": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built b.",
+              "known_issues": [],
+              "changed_files": [
+                "b.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "repository_key": "app"
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/integration/app",
+        "unit_key": "integration",
+        "label": "Integration",
+        "stage": "integration",
+        "status": {
+          "kind": "active"
+        },
+        "is_terminal": false,
+        "asks": [
+          "accept",
+          "request_changes",
+          "confirm_merged"
+        ]
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/planning",
+        "unit_key": "planning",
+        "label": "Planning",
+        "stage": "planning",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "plan": {
+              "risks": [],
+              "scope": {
+                "in_scope": [
+                  "thing"
+                ],
+                "out_of_scope": []
+              },
+              "cohorts": [
+                {
+                  "id": "a",
+                  "scope": "part",
+                  "title": "Cohort a",
+                  "decisions": [],
+                  "depends_on": [],
+                  "description": null,
+                  "files_in_scope": [],
+                  "repository_key": "app",
+                  "acceptance_criteria": [
+                    "it works"
+                  ]
+                },
+                {
+                  "id": "b",
+                  "scope": "part",
+                  "title": "Cohort b",
+                  "decisions": [],
+                  "depends_on": [
+                    "a"
+                  ],
+                  "description": null,
+                  "files_in_scope": [],
+                  "repository_key": "app",
+                  "acceptance_criteria": [
+                    "it works"
+                  ]
+                }
+              ],
+              "summary": "Two cohorts.",
+              "dependency_order": [
+                "a",
+                "b"
+              ],
+              "acceptance_criteria": [
+                "it works"
+              ]
+            }
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      },
+      {
+        "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+        "unit_key": "prepare",
+        "label": "Prepare",
+        "stage": "prepare",
+        "status": {
+          "kind": "done",
+          "outcome": {
+            "key": "app",
+            "workspace": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            }
+          }
+        },
+        "is_terminal": true,
+        "asks": []
+      }
+    ]
+  },
+  "units": [
+    {
+      "unit_id": "run-cf40de5f78dccdcd",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "$root",
+      "label": "Development",
+      "stage": null,
+      "collection_key": null,
+      "input": {
+        "spec": "Confirm both PR stages.",
+        "title": "Confirm PRs",
+        "admission": true,
+        "repositories": [
+          {
+            "key": "app",
+            "forge": {
+              "name": "app",
+              "owner": "oakridge-e2e",
+              "build_base": "develop",
+              "final_base": "main"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+            }
+          }
+        ],
+        "final_merge_policy": "require_merge"
+      },
+      "depends_on": [],
+      "status": {
+        "kind": "active"
+      },
+      "outcome": null,
+      "is_terminal": false,
+      "attention": null,
+      "decisions": [
+        {
+          "key": "cancel",
+          "label": "Cancel run",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "cancel"
+          }
+        }
+      ],
+      "attempts": [],
+      "artifacts": []
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/analysis",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "analysis",
+      "label": "Analysis",
+      "stage": "analysis",
+      "collection_key": null,
+      "input": {
+        "spec": "Confirm both PR stages.",
+        "workspaces": [
+          {
+            "key": "app",
+            "workspace": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            }
+          }
+        ],
+        "repositories": [
+          {
+            "key": "app",
+            "forge": {
+              "name": "app",
+              "owner": "oakridge-e2e",
+              "build_base": "develop",
+              "final_base": "main"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+            }
+          }
+        ]
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "analysis": {
+            "risks": [],
+            "summary": "Feasible.",
+            "findings": [],
+            "requirements": [
+              {
+                "id": "r1",
+                "status": "implementable",
+                "description": "Do the thing."
+              }
+            ],
+            "source_spec_refs": [
+              "§1"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "analysis": {
+          "risks": [],
+          "summary": "Feasible.",
+          "findings": [],
+          "requirements": [
+            {
+              "id": "r1",
+              "status": "implementable",
+              "description": "Do the thing."
+            }
+          ],
+          "source_spec_refs": [
+            "§1"
+          ]
+        }
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "5c9d43ae457ecfb4e6e7e4d8897d93d1:1",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
+          "worker": "author",
+          "number": 1,
+          "status": "failed",
+          "failure": {
+            "code": "attempt_stopped",
+            "detail": "stopped because its unit is no longer active"
+          },
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "04445256-f20e-4d8e-bb74-89315e17fffc",
+          "created_at": "2026-10-15T23:43:11.899Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
+          "artifact_key": "analysis",
+          "schema": "analysis_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/analysis:analysis:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/analysis",
+            "artifact_key": "analysis",
+            "attempt_id": "5c9d43ae457ecfb4e6e7e4d8897d93d1",
+            "body": {
+              "risks": [],
+              "summary": "Feasible.",
+              "findings": [],
+              "requirements": [
+                {
+                  "id": "r1",
+                  "status": "implementable",
+                  "description": "Do the thing."
+                }
+              ],
+              "source_spec_refs": [
+                "§1"
+              ]
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.048Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "briefs",
+      "label": "Brief",
+      "stage": "brief",
+      "collection_key": "a",
+      "input": {
+        "plan": {
+          "risks": [],
+          "scope": {
+            "in_scope": [
+              "thing"
+            ],
+            "out_of_scope": []
+          },
+          "cohorts": [
+            {
+              "id": "a",
+              "scope": "part",
+              "title": "Cohort a",
+              "decisions": [],
+              "depends_on": [],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            },
+            {
+              "id": "b",
+              "scope": "part",
+              "title": "Cohort b",
+              "decisions": [],
+              "depends_on": [
+                "a"
+              ],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            }
+          ],
+          "summary": "Two cohorts.",
+          "dependency_order": [
+            "a",
+            "b"
+          ],
+          "acceptance_criteria": [
+            "it works"
+          ]
+        },
+        "spec": "Confirm both PR stages.",
+        "cohort": {
+          "id": "a",
+          "scope": "part",
+          "title": "Cohort a",
+          "decisions": [],
+          "depends_on": [],
+          "description": null,
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ]
+        },
+        "analysis": {
+          "risks": [],
+          "summary": "Feasible.",
+          "findings": [],
+          "requirements": [
+            {
+              "id": "r1",
+              "status": "implementable",
+              "description": "Do the thing."
+            }
+          ],
+          "source_spec_refs": [
+            "§1"
+          ]
+        },
+        "workspaces": [
+          {
+            "key": "app",
+            "workspace": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            }
+          }
+        ]
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/planning",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "brief": {
+            "goal": "Build it.",
+            "title": "Cohort a",
+            "cohort_id": "a",
+            "depends_on": [],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          }
+        }
+      },
+      "outcome": {
+        "brief": {
+          "goal": "Build it.",
+          "title": "Cohort a",
+          "cohort_id": "a",
+          "depends_on": [],
+          "next_action": "build",
+          "decisions_made": [],
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ],
+          "approaches_rejected": []
+        }
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "0ab3cd8df2a82bdcc80e85bf667994eb:1",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+          "worker": "writer",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "21b3adf3-5f5a-46f5-b251-54d452db56ae",
+          "created_at": "2026-10-15T23:43:12.267Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+          "artifact_key": "brief",
+          "schema": "brief_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+            "artifact_key": "brief",
+            "attempt_id": "0ab3cd8df2a82bdcc80e85bf667994eb",
+            "body": {
+              "goal": "Build it.",
+              "title": "Cohort a",
+              "cohort_id": "a",
+              "depends_on": [],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.434Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "briefs",
+      "label": "Brief",
+      "stage": "brief",
+      "collection_key": "b",
+      "input": {
+        "plan": {
+          "risks": [],
+          "scope": {
+            "in_scope": [
+              "thing"
+            ],
+            "out_of_scope": []
+          },
+          "cohorts": [
+            {
+              "id": "a",
+              "scope": "part",
+              "title": "Cohort a",
+              "decisions": [],
+              "depends_on": [],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            },
+            {
+              "id": "b",
+              "scope": "part",
+              "title": "Cohort b",
+              "decisions": [],
+              "depends_on": [
+                "a"
+              ],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            }
+          ],
+          "summary": "Two cohorts.",
+          "dependency_order": [
+            "a",
+            "b"
+          ],
+          "acceptance_criteria": [
+            "it works"
+          ]
+        },
+        "spec": "Confirm both PR stages.",
+        "cohort": {
+          "id": "b",
+          "scope": "part",
+          "title": "Cohort b",
+          "decisions": [],
+          "depends_on": [
+            "a"
+          ],
+          "description": null,
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ]
+        },
+        "analysis": {
+          "risks": [],
+          "summary": "Feasible.",
+          "findings": [],
+          "requirements": [
+            {
+              "id": "r1",
+              "status": "implementable",
+              "description": "Do the thing."
+            }
+          ],
+          "source_spec_refs": [
+            "§1"
+          ]
+        },
+        "workspaces": [
+          {
+            "key": "app",
+            "workspace": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            }
+          }
+        ]
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/planning",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "brief": {
+            "goal": "Build it.",
+            "title": "Cohort b",
+            "cohort_id": "b",
+            "depends_on": [
+              "a"
+            ],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          }
+        }
+      },
+      "outcome": {
+        "brief": {
+          "goal": "Build it.",
+          "title": "Cohort b",
+          "cohort_id": "b",
+          "depends_on": [
+            "a"
+          ],
+          "next_action": "build",
+          "decisions_made": [],
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ],
+          "approaches_rejected": []
+        }
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "3ef2d8b55f70a0d48dcd54468c283103:1",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+          "worker": "writer",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "d2c0a5a9-2fab-48d3-b65f-e179a2ca68d4",
+          "created_at": "2026-10-15T23:43:12.268Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+          "artifact_key": "brief",
+          "schema": "brief_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+            "artifact_key": "brief",
+            "attempt_id": "3ef2d8b55f70a0d48dcd54468c283103",
+            "body": {
+              "goal": "Build it.",
+              "title": "Cohort b",
+              "cohort_id": "b",
+              "depends_on": [
+                "a"
+              ],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.455Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "implementation",
+      "label": "Cohort",
+      "stage": "cohort",
+      "collection_key": "a",
+      "input": {
+        "brief": {
+          "goal": "Build it.",
+          "title": "Cohort a",
+          "cohort_id": "a",
+          "depends_on": [],
+          "next_action": "build",
+          "decisions_made": [],
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ],
+          "approaches_rejected": []
+        },
+        "admission": true,
+        "workspace": {
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+          "push_remote_owner": "oakridge-e2e"
+        },
+        "repository": {
+          "key": "app",
+          "forge": {
+            "name": "app",
+            "owner": "oakridge-e2e",
+            "build_base": "develop",
+            "final_base": "main"
+          },
+          "preparation": {
+            "expected_head": null,
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+          }
+        }
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/briefs/a",
+        "run-cf40de5f78dccdcd/briefs/b",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "title": "Cohort a",
+          "branch": "cohort-a",
+          "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+          "cohort_id": "a",
+          "build_result": {
+            "tests": {
+              "failed": 0,
+              "output": null,
+              "passed": 1,
+              "summary": null,
+              "cargo_test_output": null
+            },
+            "summary": "Built a.",
+            "known_issues": [],
+            "changed_files": [
+              "a.ts"
+            ],
+            "repository_key": "app",
+            "delegated_session_metadata": null
+          },
+          "repository_key": "app"
+        }
+      },
+      "outcome": {
+        "title": "Cohort a",
+        "branch": "cohort-a",
+        "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+        "cohort_id": "a",
+        "build_result": {
+          "tests": {
+            "failed": 0,
+            "output": null,
+            "passed": 1,
+            "summary": null,
+            "cargo_test_output": null
+          },
+          "summary": "Built a.",
+          "known_issues": [],
+          "changed_files": [
+            "a.ts"
+          ],
+          "repository_key": "app",
+          "delegated_session_metadata": null
+        },
+        "repository_key": "app"
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "c8d82121304da9338a3f7e8545ee0489:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "worker": "publish_brief",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:12.582Z",
+          "is_current": true
+        },
+        {
+          "id": "4220c08feca065465a442e38db6c1b99:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "worker": "builder",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "6a24997f-a0ad-4df7-9a3e-a8b0c98945a3",
+          "created_at": "2026-10-15T23:43:12.775Z",
+          "is_current": true
+        },
+        {
+          "id": "5ab451cad7845af7be5cf316cb86c8d3:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "worker": "pr_watch",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "periodic",
+            "inputs": "f183f973875b07d7be3fe27cc93ebbdd",
+            "replaces": null
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:12.921Z",
+          "is_current": true
+        },
+        {
+          "id": "d27a0703da44e8a02cefe175c9f95486:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "worker": "assessor",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "review",
+          "cause": {
+            "kind": "review_of",
+            "revision": "run-cf40de5f78dccdcd/implementation/a:build_result:1"
+          },
+          "kbbl_session_id": "bd73a879-b97e-4da6-8fcc-3c702b9a2a61",
+          "created_at": "2026-10-15T23:43:12.962Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "assessment",
+          "schema": "assessment_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/a:assessment:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+            "artifact_key": "assessment",
+            "attempt_id": "d27a0703da44e8a02cefe175c9f95486",
+            "body": {
+              "verdict": "pass",
+              "findings": [
+                {
+                  "status": "met",
+                  "evidence": "tests",
+                  "criterion": "it works",
+                  "description": null
+                }
+              ],
+              "test_evidence": null,
+              "recommended_next_actions": []
+            },
+            "predecessor_id": null,
+            "subject_id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+            "created_at": "2026-10-15T23:43:13.216Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "brief",
+          "schema": "brief_body",
+          "is_reviewable": true,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+            "artifact_key": "brief",
+            "attempt_id": "c8d82121304da9338a3f7e8545ee0489",
+            "body": {
+              "goal": "Build it.",
+              "title": "Cohort a",
+              "cohort_id": "a",
+              "depends_on": [],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.710Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "build_result",
+          "schema": "build_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+            "artifact_key": "build_result",
+            "attempt_id": "4220c08feca065465a442e38db6c1b99",
+            "body": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built a.",
+              "known_issues": [],
+              "changed_files": [
+                "a.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.892Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "pr",
+          "schema": "pr_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+            "artifact_key": "pr",
+            "attempt_id": "4220c08feca065465a442e38db6c1b99",
+            "body": {
+              "branch": "cohort-a",
+              "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+              "summary": "Cohort a.",
+              "review_status": "ready"
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.921Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "pr_state",
+          "schema": "pr_status",
+          "is_reviewable": false,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/a:pr_state:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+            "artifact_key": "pr_state",
+            "attempt_id": "5ab451cad7845af7be5cf316cb86c8d3",
+            "body": {
+              "url": "https://github.com/oakridge-e2e/app/pull/1",
+              "state": "open",
+              "number": 1,
+              "head_sha": "abc123",
+              "merged_at": null
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:13.068Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "implementation",
+      "label": "Cohort",
+      "stage": "cohort",
+      "collection_key": "b",
+      "input": {
+        "brief": {
+          "goal": "Build it.",
+          "title": "Cohort b",
+          "cohort_id": "b",
+          "depends_on": [
+            "a"
+          ],
+          "next_action": "build",
+          "decisions_made": [],
+          "files_in_scope": [],
+          "repository_key": "app",
+          "acceptance_criteria": [
+            "it works"
+          ],
+          "approaches_rejected": []
+        },
+        "admission": true,
+        "workspace": {
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+          "push_remote_owner": "oakridge-e2e"
+        },
+        "repository": {
+          "key": "app",
+          "forge": {
+            "name": "app",
+            "owner": "oakridge-e2e",
+            "build_base": "develop",
+            "final_base": "main"
+          },
+          "preparation": {
+            "expected_head": null,
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+          }
+        }
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/briefs/a",
+        "run-cf40de5f78dccdcd/briefs/b",
+        "run-cf40de5f78dccdcd/implementation/a",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "title": "Cohort b",
+          "branch": "cohort-b",
+          "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+          "cohort_id": "b",
+          "build_result": {
+            "tests": {
+              "failed": 0,
+              "output": null,
+              "passed": 1,
+              "summary": null,
+              "cargo_test_output": null
+            },
+            "summary": "Built b.",
+            "known_issues": [],
+            "changed_files": [
+              "b.ts"
+            ],
+            "repository_key": "app",
+            "delegated_session_metadata": null
+          },
+          "repository_key": "app"
+        }
+      },
+      "outcome": {
+        "title": "Cohort b",
+        "branch": "cohort-b",
+        "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+        "cohort_id": "b",
+        "build_result": {
+          "tests": {
+            "failed": 0,
+            "output": null,
+            "passed": 1,
+            "summary": null,
+            "cargo_test_output": null
+          },
+          "summary": "Built b.",
+          "known_issues": [],
+          "changed_files": [
+            "b.ts"
+          ],
+          "repository_key": "app",
+          "delegated_session_metadata": null
+        },
+        "repository_key": "app"
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "d42367b32887156249ef81819581552b:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "worker": "publish_brief",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:13.389Z",
+          "is_current": true
+        },
+        {
+          "id": "effb08c3b90a98e0c60107022da34382:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "worker": "builder",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "b1f7539b-5392-4e26-96b3-931c18e30ec6",
+          "created_at": "2026-10-15T23:43:13.577Z",
+          "is_current": true
+        },
+        {
+          "id": "3b4964aa271deca704d5bfecf7162302:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "worker": "pr_watch",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "periodic",
+            "inputs": "6eb987d09cc35147cdaa8c67814fa1e0",
+            "replaces": null
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:13.823Z",
+          "is_current": true
+        },
+        {
+          "id": "014cd991694009a13f63026a5bee05a8:1",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "worker": "assessor",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "review",
+          "cause": {
+            "kind": "review_of",
+            "revision": "run-cf40de5f78dccdcd/implementation/b:build_result:1"
+          },
+          "kbbl_session_id": "3ded0d99-f48d-4818-b5b6-dbbd8a806d8f",
+          "created_at": "2026-10-15T23:43:13.960Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "assessment",
+          "schema": "assessment_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/b:assessment:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+            "artifact_key": "assessment",
+            "attempt_id": "014cd991694009a13f63026a5bee05a8",
+            "body": {
+              "verdict": "pass",
+              "findings": [
+                {
+                  "status": "met",
+                  "evidence": "tests",
+                  "criterion": "it works",
+                  "description": null
+                }
+              ],
+              "test_evidence": null,
+              "recommended_next_actions": []
+            },
+            "predecessor_id": null,
+            "subject_id": "run-cf40de5f78dccdcd/implementation/b:build_result:1",
+            "created_at": "2026-10-15T23:43:14.154Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "brief",
+          "schema": "brief_body",
+          "is_reviewable": true,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/b:brief:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+            "artifact_key": "brief",
+            "attempt_id": "d42367b32887156249ef81819581552b",
+            "body": {
+              "goal": "Build it.",
+              "title": "Cohort b",
+              "cohort_id": "b",
+              "depends_on": [
+                "a"
+              ],
+              "next_action": "build",
+              "decisions_made": [],
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ],
+              "approaches_rejected": []
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:13.499Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "build_result",
+          "schema": "build_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/b:build_result:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+            "artifact_key": "build_result",
+            "attempt_id": "effb08c3b90a98e0c60107022da34382",
+            "body": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built b.",
+              "known_issues": [],
+              "changed_files": [
+                "b.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:13.774Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "pr",
+          "schema": "pr_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/b:pr:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+            "artifact_key": "pr",
+            "attempt_id": "effb08c3b90a98e0c60107022da34382",
+            "body": {
+              "branch": "cohort-b",
+              "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+              "summary": "Cohort b.",
+              "review_status": "ready"
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:13.824Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "pr_state",
+          "schema": "pr_status",
+          "is_reviewable": false,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/implementation/b:pr_state:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+            "artifact_key": "pr_state",
+            "attempt_id": "3b4964aa271deca704d5bfecf7162302",
+            "body": {
+              "url": "https://github.com/oakridge-e2e/app/pull/2",
+              "state": "open",
+              "number": 2,
+              "head_sha": "abc123",
+              "merged_at": null
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:14.015Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/integration/app",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "integration",
+      "label": "Integration",
+      "stage": "integration",
+      "collection_key": "app",
+      "input": {
+        "cohorts": [
+          {
+            "title": "Cohort a",
+            "branch": "cohort-a",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+            "cohort_id": "a",
+            "build_result": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built a.",
+              "known_issues": [],
+              "changed_files": [
+                "a.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "repository_key": "app"
+          },
+          {
+            "title": "Cohort b",
+            "branch": "cohort-b",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+            "cohort_id": "b",
+            "build_result": {
+              "tests": {
+                "failed": 0,
+                "output": null,
+                "passed": 1,
+                "summary": null,
+                "cargo_test_output": null
+              },
+              "summary": "Built b.",
+              "known_issues": [],
+              "changed_files": [
+                "b.ts"
+              ],
+              "repository_key": "app",
+              "delegated_session_metadata": null
+            },
+            "repository_key": "app"
+          }
+        ],
+        "workspace": {
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+          "push_remote_owner": "oakridge-e2e"
+        },
+        "repository": {
+          "key": "app",
+          "forge": {
+            "name": "app",
+            "owner": "oakridge-e2e",
+            "build_base": "develop",
+            "final_base": "main"
+          },
+          "preparation": {
+            "expected_head": null,
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+          }
+        },
+        "final_merge_policy": "require_merge"
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/implementation/a",
+        "run-cf40de5f78dccdcd/implementation/b",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "active"
+      },
+      "outcome": null,
+      "is_terminal": false,
+      "attention": {
+        "kind": "waiting",
+        "reason": "awaiting integration_review review"
+      },
+      "decisions": [
+        {
+          "key": "accept",
+          "label": "Accept",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "review",
+            "review": "integration_review",
+            "decision": "accept",
+            "effect": "approve",
+            "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+          }
+        },
+        {
+          "key": "request_changes",
+          "label": "Request changes",
+          "payload_schema": "{feedback: text}",
+          "fields": [
+            {
+              "key": "feedback",
+              "label": "What must the integration change?"
+            }
+          ],
+          "submit": {
+            "kind": "review",
+            "review": "integration_review",
+            "decision": "request_changes",
+            "effect": "request_changes",
+            "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+          }
+        },
+        {
+          "key": "confirm_merged",
+          "label": "Confirm merged",
+          "payload_schema": "{}",
+          "fields": [],
+          "submit": {
+            "kind": "review",
+            "review": "merge_confirmation",
+            "decision": "confirm_merged",
+            "effect": "approve",
+            "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr_state:1"
+          }
+        }
+      ],
+      "attempts": [
+        {
+          "id": "fa4e77bfb38afda1b92b381787645615:1",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "worker": "integrator",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "356152db-dda9-457d-86fa-6a8cbd492050",
+          "created_at": "2026-10-15T23:43:14.200Z",
+          "is_current": true
+        },
+        {
+          "id": "42f0b0ce6332a3864d734a4d9effa5db:1",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "worker": "pr_watch",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "periodic",
+            "inputs": "109abc6adeefa1cc2b55e4ae247b33a1",
+            "replaces": null
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:14.364Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "artifact_key": "pr",
+          "schema": "pr_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/integration/app:pr:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/integration/app",
+            "artifact_key": "pr",
+            "attempt_id": "fa4e77bfb38afda1b92b381787645615",
+            "body": {
+              "branch": "integration",
+              "pr_url": "https://github.com/oakridge-e2e/app/pull/3",
+              "summary": "Both cohorts.",
+              "review_status": "ready"
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:14.365Z",
+            "number": 1
+          }
+        },
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "artifact_key": "pr_state",
+          "schema": "pr_status",
+          "is_reviewable": false,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/integration/app:pr_state:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/integration/app",
+            "artifact_key": "pr_state",
+            "attempt_id": "42f0b0ce6332a3864d734a4d9effa5db",
+            "body": {
+              "url": "https://github.com/oakridge-e2e/app/pull/3",
+              "state": "open",
+              "number": 3,
+              "head_sha": "abc123",
+              "merged_at": null
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:14.511Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/planning",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "planning",
+      "label": "Planning",
+      "stage": "planning",
+      "collection_key": null,
+      "input": {
+        "spec": "Confirm both PR stages.",
+        "analysis": {
+          "risks": [],
+          "summary": "Feasible.",
+          "findings": [],
+          "requirements": [
+            {
+              "id": "r1",
+              "status": "implementable",
+              "description": "Do the thing."
+            }
+          ],
+          "source_spec_refs": [
+            "§1"
+          ]
+        },
+        "workspaces": [
+          {
+            "key": "app",
+            "workspace": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            }
+          }
+        ],
+        "repositories": [
+          {
+            "key": "app",
+            "forge": {
+              "name": "app",
+              "owner": "oakridge-e2e",
+              "build_base": "develop",
+              "final_base": "main"
+            },
+            "preparation": {
+              "expected_head": null,
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+            }
+          }
+        ]
+      },
+      "depends_on": [
+        "run-cf40de5f78dccdcd/analysis",
+        "run-cf40de5f78dccdcd/prepare/app"
+      ],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "plan": {
+            "risks": [],
+            "scope": {
+              "in_scope": [
+                "thing"
+              ],
+              "out_of_scope": []
+            },
+            "cohorts": [
+              {
+                "id": "a",
+                "scope": "part",
+                "title": "Cohort a",
+                "decisions": [],
+                "depends_on": [],
+                "description": null,
+                "files_in_scope": [],
+                "repository_key": "app",
+                "acceptance_criteria": [
+                  "it works"
+                ]
+              },
+              {
+                "id": "b",
+                "scope": "part",
+                "title": "Cohort b",
+                "decisions": [],
+                "depends_on": [
+                  "a"
+                ],
+                "description": null,
+                "files_in_scope": [],
+                "repository_key": "app",
+                "acceptance_criteria": [
+                  "it works"
+                ]
+              }
+            ],
+            "summary": "Two cohorts.",
+            "dependency_order": [
+              "a",
+              "b"
+            ],
+            "acceptance_criteria": [
+              "it works"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "plan": {
+          "risks": [],
+          "scope": {
+            "in_scope": [
+              "thing"
+            ],
+            "out_of_scope": []
+          },
+          "cohorts": [
+            {
+              "id": "a",
+              "scope": "part",
+              "title": "Cohort a",
+              "decisions": [],
+              "depends_on": [],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            },
+            {
+              "id": "b",
+              "scope": "part",
+              "title": "Cohort b",
+              "decisions": [],
+              "depends_on": [
+                "a"
+              ],
+              "description": null,
+              "files_in_scope": [],
+              "repository_key": "app",
+              "acceptance_criteria": [
+                "it works"
+              ]
+            }
+          ],
+          "summary": "Two cohorts.",
+          "dependency_order": [
+            "a",
+            "b"
+          ],
+          "acceptance_criteria": [
+            "it works"
+          ]
+        }
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "ae9a06d5b09c208114b170a3a9c22de1:1",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
+          "worker": "planner",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": "f0998c2f-e520-4b2f-941d-8661a7e461c1",
+          "created_at": "2026-10-15T23:43:12.079Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
+          "artifact_key": "plan",
+          "schema": "plan_body",
+          "is_reviewable": true,
+          "is_editable": true,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/planning:plan:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/planning",
+            "artifact_key": "plan",
+            "attempt_id": "ae9a06d5b09c208114b170a3a9c22de1",
+            "body": {
+              "risks": [],
+              "scope": {
+                "in_scope": [
+                  "thing"
+                ],
+                "out_of_scope": []
+              },
+              "cohorts": [
+                {
+                  "id": "a",
+                  "scope": "part",
+                  "title": "Cohort a",
+                  "decisions": [],
+                  "depends_on": [],
+                  "description": null,
+                  "files_in_scope": [],
+                  "repository_key": "app",
+                  "acceptance_criteria": [
+                    "it works"
+                  ]
+                },
+                {
+                  "id": "b",
+                  "scope": "part",
+                  "title": "Cohort b",
+                  "decisions": [],
+                  "depends_on": [
+                    "a"
+                  ],
+                  "description": null,
+                  "files_in_scope": [],
+                  "repository_key": "app",
+                  "acceptance_criteria": [
+                    "it works"
+                  ]
+                }
+              ],
+              "summary": "Two cohorts.",
+              "dependency_order": [
+                "a",
+                "b"
+              ],
+              "acceptance_criteria": [
+                "it works"
+              ]
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:12.225Z",
+            "number": 1
+          }
+        }
+      ]
+    },
+    {
+      "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_key": "prepare",
+      "label": "Prepare",
+      "stage": "prepare",
+      "collection_key": "app",
+      "input": {
+        "repository": {
+          "key": "app",
+          "forge": {
+            "name": "app",
+            "owner": "oakridge-e2e",
+            "build_base": "develop",
+            "final_base": "main"
+          },
+          "preparation": {
+            "expected_head": null,
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK"
+          }
+        }
+      },
+      "depends_on": [],
+      "status": {
+        "kind": "done",
+        "outcome": {
+          "key": "app",
+          "workspace": {
+            "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+            "push_remote_owner": "oakridge-e2e"
+          }
+        }
+      },
+      "outcome": {
+        "key": "app",
+        "workspace": {
+          "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+          "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+          "push_remote_owner": "oakridge-e2e"
+        }
+      },
+      "is_terminal": true,
+      "attention": null,
+      "decisions": [],
+      "attempts": [
+        {
+          "id": "0d53d7e555236020d0b2dda3f3c386f6:1",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+          "worker": "git",
+          "number": 1,
+          "status": "succeeded",
+          "failure": null,
+          "mode": "initial",
+          "cause": {
+            "kind": "missing"
+          },
+          "kbbl_session_id": null,
+          "created_at": "2026-10-15T23:43:11.798Z",
+          "is_current": true
+        }
+      ],
+      "artifacts": [
+        {
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+          "artifact_key": "workspace",
+          "schema": "workspace",
+          "is_reviewable": false,
+          "is_editable": false,
+          "revision_count": 1,
+          "latest_revision": {
+            "id": "run-cf40de5f78dccdcd/prepare/app:workspace:1",
+            "run_id": "run-cf40de5f78dccdcd",
+            "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+            "artifact_key": "workspace",
+            "attempt_id": "0d53d7e555236020d0b2dda3f3c386f6",
+            "body": {
+              "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+              "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+              "push_remote_owner": "oakridge-e2e"
+            },
+            "predecessor_id": null,
+            "subject_id": null,
+            "created_at": "2026-10-15T23:43:11.900Z",
+            "number": 1
+          }
+        }
+      ]
+    }
+  ],
+  "inbox": {
+    "run_id": "run-cf40de5f78dccdcd",
+    "items": [
+      {
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/integration/app",
+        "kind": "decision",
+        "key": "accept",
+        "label": "Accept",
+        "submit": {
+          "kind": "review",
+          "review": "integration_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+        },
+        "prompt": "Review this repository's integration pull request. Accept it once you are satisfied; the integration completes when the pull request merges. Or request changes and say what must change.\n\n## The repository\n\n{\n  \"forge\": {\n    \"build_base\": \"develop\",\n    \"final_base\": \"main\",\n    \"name\": \"app\",\n    \"owner\": \"oakridge-e2e\"\n  },\n  \"key\": \"app\",\n  \"preparation\": {\n    \"expected_head\": null,\n    \"repository_path\": \"/tmp/oakridge-development-repo-nbs8pK\"\n  }\n}\n\n## The completed cohorts\n\n[\n  {\n    \"branch\": \"cohort-a\",\n    \"build_result\": {\n      \"changed_files\": [\n        \"a.ts\"\n      ],\n      \"delegated_session_metadata\": null,\n      \"known_issues\": [],\n      \"repository_key\": \"app\",\n      \"summary\": \"Built a.\",\n      \"tests\": {\n        \"cargo_test_output\": null,\n        \"failed\": 0,\n        \"output\": null,\n        \"passed\": 1,\n        \"summary\": null\n      }\n    },\n    \"cohort_id\": \"a\",\n    \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/1\",\n    \"repository_key\": \"app\",\n    \"title\": \"Cohort a\"\n  },\n  {\n    \"branch\": \"cohort-b\",\n    \"build_result\": {\n      \"changed_files\": [\n        \"b.ts\"\n      ],\n      \"delegated_session_metadata\": null,\n      \"known_issues\": [],\n      \"repository_key\": \"app\",\n      \"summary\": \"Built b.\",\n      \"tests\": {\n        \"cargo_test_output\": null,\n        \"failed\": 0,\n        \"output\": null,\n        \"passed\": 1,\n        \"summary\": null\n      }\n    },\n    \"cohort_id\": \"b\",\n    \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/2\",\n    \"repository_key\": \"app\",\n    \"title\": \"Cohort b\"\n  }\n]\n\n## The pull request\n\n{\n  \"branch\": \"integration\",\n  \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/3\",\n  \"review_status\": \"ready\",\n  \"summary\": \"Both cohorts.\"\n}\n\n## What the forge reports\n\n{\n  \"head_sha\": \"abc123\",\n  \"merged_at\": null,\n  \"number\": 3,\n  \"state\": \"open\",\n  \"url\": \"https://github.com/oakridge-e2e/app/pull/3\"\n}\n"
+      },
+      {
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/integration/app",
+        "kind": "decision",
+        "key": "request_changes",
+        "label": "Request changes",
+        "submit": {
+          "kind": "review",
+          "review": "integration_review",
+          "decision": "request_changes",
+          "effect": "request_changes",
+          "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr:1"
+        },
+        "prompt": "Review this repository's integration pull request. Accept it once you are satisfied; the integration completes when the pull request merges. Or request changes and say what must change.\n\n## The repository\n\n{\n  \"forge\": {\n    \"build_base\": \"develop\",\n    \"final_base\": \"main\",\n    \"name\": \"app\",\n    \"owner\": \"oakridge-e2e\"\n  },\n  \"key\": \"app\",\n  \"preparation\": {\n    \"expected_head\": null,\n    \"repository_path\": \"/tmp/oakridge-development-repo-nbs8pK\"\n  }\n}\n\n## The completed cohorts\n\n[\n  {\n    \"branch\": \"cohort-a\",\n    \"build_result\": {\n      \"changed_files\": [\n        \"a.ts\"\n      ],\n      \"delegated_session_metadata\": null,\n      \"known_issues\": [],\n      \"repository_key\": \"app\",\n      \"summary\": \"Built a.\",\n      \"tests\": {\n        \"cargo_test_output\": null,\n        \"failed\": 0,\n        \"output\": null,\n        \"passed\": 1,\n        \"summary\": null\n      }\n    },\n    \"cohort_id\": \"a\",\n    \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/1\",\n    \"repository_key\": \"app\",\n    \"title\": \"Cohort a\"\n  },\n  {\n    \"branch\": \"cohort-b\",\n    \"build_result\": {\n      \"changed_files\": [\n        \"b.ts\"\n      ],\n      \"delegated_session_metadata\": null,\n      \"known_issues\": [],\n      \"repository_key\": \"app\",\n      \"summary\": \"Built b.\",\n      \"tests\": {\n        \"cargo_test_output\": null,\n        \"failed\": 0,\n        \"output\": null,\n        \"passed\": 1,\n        \"summary\": null\n      }\n    },\n    \"cohort_id\": \"b\",\n    \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/2\",\n    \"repository_key\": \"app\",\n    \"title\": \"Cohort b\"\n  }\n]\n\n## The pull request\n\n{\n  \"branch\": \"integration\",\n  \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/3\",\n  \"review_status\": \"ready\",\n  \"summary\": \"Both cohorts.\"\n}\n\n## What the forge reports\n\n{\n  \"head_sha\": \"abc123\",\n  \"merged_at\": null,\n  \"number\": 3,\n  \"state\": \"open\",\n  \"url\": \"https://github.com/oakridge-e2e/app/pull/3\"\n}\n"
+      },
+      {
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/integration/app",
+        "kind": "decision",
+        "key": "confirm_merged",
+        "label": "Confirm merged",
+        "submit": {
+          "kind": "review",
+          "review": "merge_confirmation",
+          "decision": "confirm_merged",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/integration/app:pr_state:1"
+        },
+        "prompt": "Confirm that the pull request has merged into its intended base branch.\n\nCheck the PR URL, base branch, merge status, and merged commit in the forge before choosing **Confirm merged**. The observed PR state may be stale or unavailable; use the forge as the source for this confirmation. If the PR has not merged, leave this review open.\n\n## Pull request\n\n{\n  \"branch\": \"integration\",\n  \"pr_url\": \"https://github.com/oakridge-e2e/app/pull/3\",\n  \"review_status\": \"ready\",\n  \"summary\": \"Both cohorts.\"\n}\n\n## Forge observation\n\n{\n  \"head_sha\": \"abc123\",\n  \"merged_at\": null,\n  \"number\": 3,\n  \"state\": \"open\",\n  \"url\": \"https://github.com/oakridge-e2e/app/pull/3\"\n}\n"
+      },
+      {
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/integration/app",
+        "kind": "waiting",
+        "reason": "awaiting integration_review review",
+        "label": "Integration"
+      }
+    ]
+  },
+  "artifact": {
+    "run_id": "run-cf40de5f78dccdcd",
+    "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+    "artifact_key": "build_result",
+    "schema": "build_body",
+    "is_reviewable": true,
+    "is_editable": true,
+    "status": "draft",
+    "revisions": [
+      {
+        "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+        "run_id": "run-cf40de5f78dccdcd",
+        "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+        "artifact_key": "build_result",
+        "attempt_id": "4220c08feca065465a442e38db6c1b99",
+        "body": {
+          "tests": {
+            "failed": 0,
+            "output": null,
+            "passed": 1,
+            "summary": null,
+            "cargo_test_output": null
+          },
+          "summary": "Built a.",
+          "known_issues": [],
+          "changed_files": [
+            "a.ts"
+          ],
+          "repository_key": "app",
+          "delegated_session_metadata": null
+        },
+        "predecessor_id": null,
+        "subject_id": null,
+        "created_at": "2026-10-15T23:43:12.892Z",
+        "number": 1
+      }
+    ],
+    "decisions": []
+  },
+  "artifacts": [
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/analysis",
+      "artifact_key": "analysis",
+      "schema": "analysis_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/analysis:analysis:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/analysis",
+          "artifact_key": "analysis",
+          "attempt_id": "5c9d43ae457ecfb4e6e7e4d8897d93d1",
+          "body": {
+            "risks": [],
+            "summary": "Feasible.",
+            "findings": [],
+            "requirements": [
+              {
+                "id": "r1",
+                "status": "implementable",
+                "description": "Do the thing."
+              }
+            ],
+            "source_spec_refs": [
+              "§1"
+            ]
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.048Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/analysis:d1",
+          "review": "analysis_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/analysis:analysis:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:12.079Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/a",
+          "artifact_key": "brief",
+          "attempt_id": "0ab3cd8df2a82bdcc80e85bf667994eb",
+          "body": {
+            "goal": "Build it.",
+            "title": "Cohort a",
+            "cohort_id": "a",
+            "depends_on": [],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.434Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/briefs/a:d1",
+          "review": "brief_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/briefs/a:brief:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:12.527Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/briefs/b",
+          "artifact_key": "brief",
+          "attempt_id": "3ef2d8b55f70a0d48dcd54468c283103",
+          "body": {
+            "goal": "Build it.",
+            "title": "Cohort b",
+            "cohort_id": "b",
+            "depends_on": [
+              "a"
+            ],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.455Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/briefs/b:d1",
+          "review": "brief_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/briefs/b:brief:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:12.583Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "artifact_key": "assessment",
+      "schema": "assessment_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:assessment:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "assessment",
+          "attempt_id": "d27a0703da44e8a02cefe175c9f95486",
+          "body": {
+            "verdict": "pass",
+            "findings": [
+              {
+                "status": "met",
+                "evidence": "tests",
+                "criterion": "it works",
+                "description": null
+              }
+            ],
+            "test_evidence": null,
+            "recommended_next_actions": []
+          },
+          "predecessor_id": null,
+          "subject_id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+          "created_at": "2026-10-15T23:43:13.216Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:d3",
+          "review": "assessment_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:assessment:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:13.390Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": false,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "brief",
+          "attempt_id": "c8d82121304da9338a3f7e8545ee0489",
+          "body": {
+            "goal": "Build it.",
+            "title": "Cohort a",
+            "cohort_id": "a",
+            "depends_on": [],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.710Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:d1",
+          "review": "admission",
+          "decision": "admit",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:brief:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:12.776Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "artifact_key": "build_result",
+      "schema": "build_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:build_result:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "build_result",
+          "attempt_id": "4220c08feca065465a442e38db6c1b99",
+          "body": {
+            "tests": {
+              "failed": 0,
+              "output": null,
+              "passed": 1,
+              "summary": null,
+              "cargo_test_output": null
+            },
+            "summary": "Built a.",
+            "known_issues": [],
+            "changed_files": [
+              "a.ts"
+            ],
+            "repository_key": "app",
+            "delegated_session_metadata": null
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.892Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "artifact_key": "pr",
+      "schema": "pr_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "pr",
+          "attempt_id": "4220c08feca065465a442e38db6c1b99",
+          "body": {
+            "branch": "cohort-a",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/1",
+            "summary": "Cohort a.",
+            "review_status": "ready"
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.921Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:d2",
+          "review": "merge_confirmation",
+          "decision": "confirm_merged",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/a:pr:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:13.310Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+      "artifact_key": "pr_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/a:pr_state:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/a",
+          "artifact_key": "pr_state",
+          "attempt_id": "5ab451cad7845af7be5cf316cb86c8d3",
+          "body": {
+            "url": "https://github.com/oakridge-e2e/app/pull/1",
+            "state": "open",
+            "number": 1,
+            "head_sha": "abc123",
+            "merged_at": null
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:13.068Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "artifact_key": "assessment",
+      "schema": "assessment_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:assessment:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "assessment",
+          "attempt_id": "014cd991694009a13f63026a5bee05a8",
+          "body": {
+            "verdict": "pass",
+            "findings": [
+              {
+                "status": "met",
+                "evidence": "tests",
+                "criterion": "it works",
+                "description": null
+              }
+            ],
+            "test_evidence": null,
+            "recommended_next_actions": []
+          },
+          "predecessor_id": null,
+          "subject_id": "run-cf40de5f78dccdcd/implementation/b:build_result:1",
+          "created_at": "2026-10-15T23:43:14.154Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:d3",
+          "review": "assessment_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/b:assessment:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:14.201Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "artifact_key": "brief",
+      "schema": "brief_body",
+      "is_reviewable": true,
+      "is_editable": false,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:brief:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "brief",
+          "attempt_id": "d42367b32887156249ef81819581552b",
+          "body": {
+            "goal": "Build it.",
+            "title": "Cohort b",
+            "cohort_id": "b",
+            "depends_on": [
+              "a"
+            ],
+            "next_action": "build",
+            "decisions_made": [],
+            "files_in_scope": [],
+            "repository_key": "app",
+            "acceptance_criteria": [
+              "it works"
+            ],
+            "approaches_rejected": []
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:13.499Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:d1",
+          "review": "admission",
+          "decision": "admit",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/b:brief:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:13.578Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "artifact_key": "build_result",
+      "schema": "build_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:build_result:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "build_result",
+          "attempt_id": "effb08c3b90a98e0c60107022da34382",
+          "body": {
+            "tests": {
+              "failed": 0,
+              "output": null,
+              "passed": 1,
+              "summary": null,
+              "cargo_test_output": null
+            },
+            "summary": "Built b.",
+            "known_issues": [],
+            "changed_files": [
+              "b.ts"
+            ],
+            "repository_key": "app",
+            "delegated_session_metadata": null
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:13.774Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "artifact_key": "pr",
+      "schema": "pr_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:pr:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "pr",
+          "attempt_id": "effb08c3b90a98e0c60107022da34382",
+          "body": {
+            "branch": "cohort-b",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/2",
+            "summary": "Cohort b.",
+            "review_status": "ready"
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:13.824Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:d2",
+          "review": "merge_confirmation",
+          "decision": "confirm_merged",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/implementation/b:pr:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:13.895Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+      "artifact_key": "pr_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/implementation/b:pr_state:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/implementation/b",
+          "artifact_key": "pr_state",
+          "attempt_id": "3b4964aa271deca704d5bfecf7162302",
+          "body": {
+            "url": "https://github.com/oakridge-e2e/app/pull/2",
+            "state": "open",
+            "number": 2,
+            "head_sha": "abc123",
+            "merged_at": null
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:14.015Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/integration/app",
+      "artifact_key": "pr",
+      "schema": "pr_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/integration/app:pr:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "artifact_key": "pr",
+          "attempt_id": "fa4e77bfb38afda1b92b381787645615",
+          "body": {
+            "branch": "integration",
+            "pr_url": "https://github.com/oakridge-e2e/app/pull/3",
+            "summary": "Both cohorts.",
+            "review_status": "ready"
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:14.365Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/integration/app",
+      "artifact_key": "pr_state",
+      "schema": "pr_status",
+      "is_reviewable": false,
+      "is_editable": false,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/integration/app:pr_state:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/integration/app",
+          "artifact_key": "pr_state",
+          "attempt_id": "42f0b0ce6332a3864d734a4d9effa5db",
+          "body": {
+            "url": "https://github.com/oakridge-e2e/app/pull/3",
+            "state": "open",
+            "number": 3,
+            "head_sha": "abc123",
+            "merged_at": null
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:14.511Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/planning",
+      "artifact_key": "plan",
+      "schema": "plan_body",
+      "is_reviewable": true,
+      "is_editable": true,
+      "status": "approved",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/planning:plan:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/planning",
+          "artifact_key": "plan",
+          "attempt_id": "ae9a06d5b09c208114b170a3a9c22de1",
+          "body": {
+            "risks": [],
+            "scope": {
+              "in_scope": [
+                "thing"
+              ],
+              "out_of_scope": []
+            },
+            "cohorts": [
+              {
+                "id": "a",
+                "scope": "part",
+                "title": "Cohort a",
+                "decisions": [],
+                "depends_on": [],
+                "description": null,
+                "files_in_scope": [],
+                "repository_key": "app",
+                "acceptance_criteria": [
+                  "it works"
+                ]
+              },
+              {
+                "id": "b",
+                "scope": "part",
+                "title": "Cohort b",
+                "decisions": [],
+                "depends_on": [
+                  "a"
+                ],
+                "description": null,
+                "files_in_scope": [],
+                "repository_key": "app",
+                "acceptance_criteria": [
+                  "it works"
+                ]
+              }
+            ],
+            "summary": "Two cohorts.",
+            "dependency_order": [
+              "a",
+              "b"
+            ],
+            "acceptance_criteria": [
+              "it works"
+            ]
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:12.225Z",
+          "number": 1
+        }
+      ],
+      "decisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/planning:d1",
+          "review": "plan_review",
+          "decision": "accept",
+          "effect": "approve",
+          "target_revision_id": "run-cf40de5f78dccdcd/planning:plan:1",
+          "payload": {},
+          "created_at": "2026-10-15T23:43:12.269Z"
+        }
+      ]
+    },
+    {
+      "run_id": "run-cf40de5f78dccdcd",
+      "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+      "artifact_key": "workspace",
+      "schema": "workspace",
+      "is_reviewable": false,
+      "is_editable": false,
+      "status": "draft",
+      "revisions": [
+        {
+          "id": "run-cf40de5f78dccdcd/prepare/app:workspace:1",
+          "run_id": "run-cf40de5f78dccdcd",
+          "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+          "artifact_key": "workspace",
+          "attempt_id": "0d53d7e555236020d0b2dda3f3c386f6",
+          "body": {
+            "head": "8112aebb3aa678e8badbc296ed7cb12a31916427",
+            "repository_path": "/tmp/oakridge-development-repo-nbs8pK",
+            "push_remote_owner": "oakridge-e2e"
+          },
+          "predecessor_id": null,
+          "subject_id": null,
+          "created_at": "2026-10-15T23:43:11.900Z",
+          "number": 1
+        }
+      ],
+      "decisions": []
+    }
+  ],
+  "event": {
+    "kind": "revision_published",
+    "run_id": "run-cf40de5f78dccdcd",
+    "unit_id": "run-cf40de5f78dccdcd/prepare/app",
+    "awaiting": null,
+    "event_id": "148dc1d3-b195-4173-bda1-99e27f772fc6",
+    "unit_key": "prepare",
+    "run_status": "active",
+    "is_terminal": true,
+    "occurred_at": "2026-10-15T23:43:11.900Z",
+    "replay": true
+  }
+}

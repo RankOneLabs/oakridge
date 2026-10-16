@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Writer, type Workflow } from "../core-client/core-types";
+import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -566,7 +566,13 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     review_updates, blocked_updates, changed_wanted: selectChangedWanted(selectWanted(step), existing.logged_wanted), run_event_fields } };
 }
 
-/** Write the already selected plan. No storage read or domain decision belongs here. */
+/** A shared agent session outlives each member until all direct siblings end. */
+function isSharedSessionGroupReady(group: string, units: readonly { readonly id: string; readonly status: UnitStatus }[]): boolean {
+  const members = units.filter((unit) => unit.id.startsWith(`${group}/`) && !unit.id.slice(group.length + 1).includes("/"));
+  return members.length > 0 && members.every((unit) => isTerminalStatus(unit.status));
+}
+
+/** Write the selected plan and reconcile effect stops with persisted session ownership. */
 export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan): Promise<void> {
   const { run_id } = plan;
   await writeDelta(trx, run_id, plan.delta);
@@ -581,9 +587,40 @@ export async function applyCommitPlan(trx: DatabaseTransaction, plan: CommitPlan
   for (const action_id of plan.replaced_actions) await trx.updateTable("authority.effect_intent")
     .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
     .where("run_id", "=", run_id).where("action_id", "=", action_id).where("status", "in", START_OWED_STATUSES).execute();
-  if (plan.inactive_units.length) await trx.updateTable("authority.effect_intent")
-    .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
-    .where("run_id", "=", run_id).where("unit_id", "=", anyOf(plan.inactive_units)).where("status", "in", START_OWED_STATUSES).execute();
+  if (plan.inactive_units.length) {
+    const units = await trx.selectFrom("authority.unit").select(["id", "status"]).where("run_id", "=", run_id).execute();
+    const owed = await trx.selectFrom("authority.effect_intent").select(["id", "payload"])
+      .where("run_id", "=", run_id).where("unit_id", "=", anyOf(plan.inactive_units))
+      .where("status", "in", START_OWED_STATUSES).execute();
+    const stop_ids = owed.filter(({ payload }) => payload.worker.kind !== "agent" || payload.worker.session !== "shared"
+      || (payload.worker.shared_session_unit !== undefined && isSharedSessionGroupReady(payload.worker.shared_session_unit, units)))
+      .map(({ id }) => id);
+    if (stop_ids.length) await trx.updateTable("authority.effect_intent")
+      .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
+      .where("id", "=", anyOf(stop_ids)).execute();
+    // A successful turn settles its intent while its resumable kbbl session
+    // stays open for review changes. Once the unit is terminal, that session
+    // must be closed too. Reopen only intents with a recorded session and no
+    // previous stop; the cleanup carrier retries until kbbl acknowledges it.
+    const finished_sessions = await trx.selectFrom("authority.effect_intent as intent")
+      .innerJoin("authority.attempt as attempt", (join) => join
+        .onRef("attempt.run_id", "=", "intent.run_id")
+        .onRef("attempt.action_id", "=", "intent.action_id")
+        .onRef("attempt.seq", "=", "intent.seq"))
+      .select(["intent.id", "intent.payload"])
+      .where("intent.run_id", "=", run_id)
+      .where("intent.unit_id", "=", anyOf(plan.inactive_units))
+      .where("intent.status", "=", "stopped")
+      .where("intent.stop_origin", "is", null)
+      .where("attempt.kbbl_session_id", "is not", null)
+      .execute();
+    const cleanup_ids = finished_sessions.filter(({ payload }) => payload.worker.kind !== "agent" || payload.worker.session !== "shared"
+      || (payload.worker.shared_session_unit !== undefined && isSharedSessionGroupReady(payload.worker.shared_session_unit, units)))
+      .map(({ id }) => id);
+    if (cleanup_ids.length) await trx.updateTable("authority.effect_intent")
+      .set({ status: "stop_requested", stop_origin: "commit", updated_at: new Date() })
+      .where("id", "=", anyOf(cleanup_ids)).execute();
+  }
   for (const update of plan.review_updates) await trx.updateTable("authority.unit").set({ review_prompts: jsonText(update.prompts) })
     .where("run_id", "=", run_id).where("id", "=", update.unit_id).execute();
   for (const update of plan.blocked_updates) await trx.updateTable("authority.unit")

@@ -1,3 +1,3 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cancelRun } from "../client";
-export function useCancelRun(runId: string) { const client = useQueryClient(); return useMutation({ mutationFn: () => cancelRun(runId), onSuccess: () => { void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] }); void client.invalidateQueries({ queryKey: ["oakridge", "runs"] }); } }); }
+export function useCancelRun(runId: string) { const client = useQueryClient(); return useMutation({ mutationFn: () => cancelRun(runId), onSuccess: () => { void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] }); void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] }); void client.invalidateQueries({ queryKey: ["oakridge", "runs"] }); void client.invalidateQueries({ queryKey: ["oakridge", "gates"] }); void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] }); } }); }

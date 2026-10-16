@@ -5,7 +5,7 @@ import type { EffectInstruction } from "../domain/effect-instruction";
 import type { ResumableEnsureRequest } from "../../../kbbl/core/acp/resumable-wire";
 import type { EffectProvider, ProviderResult, TerminalObservation } from "./provider";
 import { HANDLE_KINDS, PROVIDER_ERROR_CODES } from "./provider-catalog";
-import { renderSessionPreamble } from "./session-prompt";
+import { renderSessionPreamble, renderSharedTaskDelivery } from "./session-prompt";
 
 /**
  * The publication secret of one kbbl session (part 1 §7.2): derived from the
@@ -47,10 +47,17 @@ export interface AgentProviderConfig {
 }
 
 const KBBL_NAME_LIMIT = 80;
-/** The unit's path inside its run, for the session's name. */
-const unitPath = (instruction: EffectInstruction): string =>
-  instruction.action.unit.startsWith(`${instruction.run_id}/`) ? instruction.action.unit.slice(instruction.run_id.length + 1) : instruction.action.unit;
 const shortDigest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+/** Development cohort worktrees expose their cohort identity in the Git branch. */
+export function selectWorkspaceBranch(instruction: EffectInstruction): string {
+  if (instruction.worker.kind !== "agent") throw new Error("a code worker has no session branch");
+  const prefix = `${instruction.run_id}/implementation/`;
+  const cohort = instruction.action.unit.startsWith(prefix) ? instruction.action.unit.slice(prefix.length) : null;
+  if (cohort && /^[A-Za-z0-9_-]+$/.test(cohort))
+    return `cohort/${cohort}/${shortDigest(instruction.worker.session_key).slice(0, 6)}`;
+  return `oakridge/${shortDigest(instruction.worker.session_key)}`;
+}
 
 /**
  * The ensure a session is started with. Everything in it is fixed for the
@@ -64,16 +71,19 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
   const worker = instruction.worker;
   if (worker.kind !== "agent") throw new Error(`instruction ${instruction.attempt.action_id} is not an agent's`);
   const workspace = selectAgentWorkspace(instruction.workspace);
-  const name = `${instruction.action.worker} · ${unitPath(instruction)}`;
+  const session_unit = worker.shared_session_unit ?? instruction.action.unit;
+  const session_path = session_unit.startsWith(`${instruction.run_id}/`) ? session_unit.slice(instruction.run_id.length + 1) : session_unit;
+  const name = `${instruction.action.worker} · ${session_path}`;
   return {
-    initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: instruction.action.unit, worker: instruction.action.worker,
-      creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret }),
+    initial_prompt: renderSessionPreamble({ run_id: instruction.run_id, unit: session_unit, worker: instruction.action.worker,
+      creates: worker.creates, schemas: worker.schemas, publish_base_url: config.publish_base_url, secret,
+      shared: worker.session === "shared" }),
     workdir: workspace?.repository_path ?? config.default_workdir,
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
-    ...(workspace ? { worktree: { branch_name: `oakridge/${shortDigest(worker.session_key)}`, worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
-    workflow: { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker },
+    ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
+    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
   };
 }
 
@@ -90,7 +100,15 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
   async function ensure(instruction: EffectInstruction, signal: AbortSignal | undefined) {
     if (!config.kbbl || config.publication_key === null || instruction.worker.kind !== "agent") return null;
     const secret = derivePublicationSecret(config.publication_key, instruction.worker.session_key);
-    const ensured = await config.kbbl.ensure(instruction.worker.session_key, selectSessionStart(instruction, config, secret), signal);
+    const spec = selectSessionStart(instruction, config, secret);
+    let ensured = await config.kbbl.ensure(instruction.worker.session_key, spec, signal);
+    // An already-claimed session keeps its original worktree branch across a code rollout.
+    if (ensured.kind === "permanently_rejected" && ensured.code === "session_key_conflict"
+      && spec.worktree?.branch_name.startsWith("cohort/")) {
+      const legacy = { ...spec, worktree: { ...spec.worktree,
+        branch_name: `oakridge/${shortDigest(instruction.worker.session_key)}` } };
+      ensured = await config.kbbl.ensure(instruction.worker.session_key, legacy, signal);
+    }
     return { ensured, secret };
   }
   /** A session that cannot take input: how it ended, as kbbl reports it. */
@@ -140,7 +158,10 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
     async observe(instruction, material, handle, options = {}) {
       const kbbl = config.kbbl;
       if (!kbbl) return unconfigured;
-      const receipt = await kbbl.deliver(handle.session_id, selectDeliveryKey(instruction), material.task, options.signal);
+      const task = instruction.worker.kind === "agent" && instruction.worker.session === "shared" && config.publication_key !== null
+        ? renderSharedTaskDelivery(instruction, material.task, { publish_base_url: config.publish_base_url,
+          secret: derivePublicationSecret(config.publication_key, instruction.worker.session_key) }) : material.task;
+      const receipt = await kbbl.deliver(handle.session_id, selectDeliveryKey(instruction), task, options.signal);
       if (receipt.kind === "permanently_rejected") return ended(kbbl, handle.session_id, receipt.detail, options.signal);
       if (receipt.kind !== "acknowledged") return receipt;
       switch (receipt.value.status) {

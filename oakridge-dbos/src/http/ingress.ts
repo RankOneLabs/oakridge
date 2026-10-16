@@ -163,7 +163,7 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
   /** Who publishes: the session whose secret is presented, else the operator, else no one. */
   async function resolvePublisher(request: Request, scope: { readonly run_id: RunId; readonly unit: string }): Promise<Publisher | null> {
     const secret_hash = publicationSecretHash(request);
-    const attempt = secret_hash ? await readSessionAttempt(deps.db, { run_id: scope.run_id, secret_hash }) : null;
+    const attempt = secret_hash ? await readSessionAttempt(deps.db, { run_id: scope.run_id, unit_id: scope.unit, secret_hash }) : null;
     if (attempt) return attempt.unit_id === scope.unit
       ? { writer: { kind: "session", session: attempt.kbbl_session_id, attempt: attempt.action_id }, by: attempt.action_id } : null;
     return deps.is_operator_request(request) ? { writer: operatorWriterFromCredential(request), by: null } : null;

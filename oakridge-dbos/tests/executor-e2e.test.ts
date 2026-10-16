@@ -22,7 +22,8 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const scripts = new Map<string, AgentScript>();
 const runOf = (turn: StubTurn): string => /of run `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
 const workerOf = (turn: StubTurn): string => /worker `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
-const unitOf = (turn: StubTurn): string => /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
+const unitOf = (turn: StubTurn): string => /This task belongs to unit `([^`]+)`/.exec(turn.task)?.[1]
+  ?? /on unit `([^`]+)`/.exec(turn.preamble)?.[1] ?? "";
 
 let scratch: Awaited<ReturnType<typeof scratchDatabase>>;
 let db: Database;
@@ -59,13 +60,14 @@ afterAll(async () => {
   await db.destroy();
   await scratch.drop();
   rmSync(workdir, { recursive: true, force: true });
-});
+}, 30_000);
 
 const api = async (method: string, path: string, body?: unknown): Promise<Response> =>
   fetch(`${base_url}${path}`, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 const segment = encodeURIComponent;
 async function launch(workflow: Workflow, input: unknown, script: AgentScript): Promise<string> {
   const pinned = await api("POST", "/api/definitions", workflow);
+  if (!pinned.ok) throw new Error(`pin refused: ${pinned.status} ${await pinned.text()}`);
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   scripts.set(launchRunId(request_id), script);
@@ -122,6 +124,8 @@ test("I1: sample A end to end through HTTP; the editor's feedback reaches the wr
     const [drafts, critiques] = await Promise.all([revisions(run_id, "draft"), revisions(run_id, "critique")]);
     return drafts.length === 1 && critiques.some((critique) => critique.subject === drafts[0]!.id) ? drafts : null;
   });
+  await eventually("first writer turn succeeded", async () => (await attempts(run_id, "writer")).some((attempt) => attempt.status.kind === "succeeded"));
+  expect(sessionsOfRun(run_id, "writer")[0]?.status).toBe("live");
   expect((await decide(run_id, unit, "request_changes", r1!.id, { feedback: "shorter" })).status).toBe(201);
   await eventually("the revise to fail", async () => (await attempts(run_id, "writer")).some((attempt) => attempt.status.kind === "failed"));
   expect(await runStatus(run_id)).toBe("active");
@@ -133,6 +137,7 @@ test("I1: sample A end to end through HTTP; the editor's feedback reaches the wr
   });
   expect((await decide(run_id, unit, "approve", r3.id, {})).status).toBe(201);
   await eventually("the run to finish", async () => await runStatus(run_id) === "done");
+  await eventually("approved writer session closed", async () => sessionsOfRun(run_id, "writer")[0]?.status === "ended");
 
   const writer_attempts = await attempts(run_id, "writer");
   const writer_sessions = sessionsOfRun(run_id, "writer");
@@ -234,6 +239,48 @@ test("I2: sample B prepares a temporary repository and runs every item in a work
     }).toEqual({ workspace: { repository_path: repo.path, push_remote_owner: "oakridge-e2e", head: repo.head }, items: 4,
       worktrees: Array.from({ length: 4 }, () => [repo.path, repo.head]), distinct_branches: 4, c_after_a: true, at_most_two: true });
   } finally { repo.remove(); }
+}, 90_000);
+
+test("sibling reviewed items publish through one shared session until the final review closes it", async () => {
+  const repo = await temporaryRepository();
+  let releaseFirst = () => {};
+  const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  try {
+    const workflow = sampleWorkflow("fan-out");
+    const item = workflow.stages.item!;
+    const worker = item.workers.worker!;
+    if (worker.kind !== "agent") throw new Error("item worker is an agent");
+    const shared: Workflow = { ...workflow, workflow: "fan_out_shared", stages: { ...workflow.stages, item: { ...item,
+      workers: { ...item.workers, worker: { ...worker, session: "shared" } },
+      reviews: { editor: { of: "result", by: "operator", prompt: "fan-out/item.md", inputs: { text: "input.text" },
+        decisions: { approve: { effect: "approve", label: "Approve" } } } },
+      done_when: "approved(result)" } } };
+    const run_id = await launch(shared, { repository: { repository_path: repo.path, expected_head: null },
+      items: [{ key: "a", text: "alpha", after: [] }, { key: "b", text: "beta", after: [] }] }, async (turn) => {
+      const response = await turn.publish("result", `done: ${itemOf(turn)}`);
+      if (response.status !== 201) throw new Error(`publish refused: ${await response.text()}`);
+      if (itemOf(turn) === "a") await firstTurn;
+      return "succeeded";
+    });
+    const published = await eventually("both shared items published", async () => {
+      const rows = await revisions(run_id, "result");
+      return rows.length === 2 ? rows : null;
+    });
+    const session = sessionsOfRun(run_id, "worker")[0];
+    expect(sessionsOfRun(run_id, "worker").length).toBe(1);
+    const a = published.find((revision) => revision.unit_id.endsWith("/a"))!;
+    const b = published.find((revision) => revision.unit_id.endsWith("/b"))!;
+    expect((await decide(run_id, a.unit_id, "approve", a.id, {})).status).toBe(201);
+    const active = await db.selectFrom("authority.effect_intent").select("status").where("run_id", "=", run_id)
+      .where("unit_id", "=", a.unit_id).executeTakeFirstOrThrow();
+    expect(active.status).toBe("acknowledged");
+    expect(session?.status).toBe("live");
+    releaseFirst();
+    await eventually("both shared turns ended", async () => (await attempts(run_id, "worker")).filter((attempt) => attempt.status.kind === "succeeded").length === 2);
+    expect((await decide(run_id, b.unit_id, "approve", b.id, {})).status).toBe(201);
+    await eventually("shared session closed", async () => session?.status === "ended");
+    expect(await runStatus(run_id)).toBe("done");
+  } finally { releaseFirst(); repo.remove(); }
 }, 90_000);
 
 test("I3: cancelling mid-flight stops every live session and cancels every unit", async () => {

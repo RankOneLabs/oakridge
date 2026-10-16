@@ -838,6 +838,8 @@ pub struct WorkerRuntime {
 pub enum SessionMode {
     Resume,
     Fresh,
+    /// Resume one session across sibling units of a collection.
+    Shared,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

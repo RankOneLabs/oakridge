@@ -123,16 +123,6 @@ describe("SessionListView grouping", () => {
   });
 
   test("groups a run's sessions by unit under the unit's label and renders a trailing unattached section", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url === "/oakridge/api/runs?filter=all") {
-        return new Response(JSON.stringify([runSummary]), { status: 200 });
-      }
-      if (url === "/oakridge/api/runs/run-1") {
-        return new Response(JSON.stringify(runDetail), { status: 200 });
-      }
-      return new Response(null, { status: 404 });
-    });
     const build = makeSnapshot({ sid: "build-1", name: "builder · cohort/one", workflow: workflow() });
     const assess = makeSnapshot({ sid: "assess-1", name: "assessor · cohort/one", workflow: workflow({ worker: "assessor" }) });
     const plan = makeSnapshot({ sid: "plan-1", name: "planner · planning", workflow: workflow({ unitId: "stage-plan", worker: "planner" }) });
@@ -144,7 +134,7 @@ describe("SessionListView grouping", () => {
         [assess.sid, assess],
         [plan.sid, plan],
         [handStarted.sid, handStarted],
-      ]), false);
+      ]));
 
       const run = screen.getByTestId("session-run-run-1");
       expect(await within(run).findByText("Run one")).toBeTruthy();
@@ -157,10 +147,8 @@ describe("SessionListView grouping", () => {
       expect(screen.getByTestId("unattached-sessions")).toBeTruthy();
       expect(container.querySelectorAll(".session-cohort-group")).toHaveLength(3);
       expect(screen.queryByText("No sessions yet.")).toBeNull();
-      await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs?filter=all"));
-      expect(fetchSpy).toHaveBeenCalledWith("/oakridge/api/runs/run-1");
     } finally {
-      fetchSpy.mockRestore();
+      vi.restoreAllMocks();
     }
   });
 

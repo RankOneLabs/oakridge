@@ -3,6 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { matchRoute } from "../../../../oakridge-dbos/src/http/routes";
 import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
 import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
+import { parseUnitViews } from "../../pwa/oakridge/adapters/parse";
+import { parseUnitHistory, runActivityEvents, type UnitActivityHistory } from "../../pwa/oakridge/adapters/activity";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -60,6 +62,42 @@ const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
  */
 const STREAMING_UPSTREAM_PATHS: ReadonlySet<string> = new Set(["/events"]);
 
+/** Serve the frozen Activity pane from v2's durable per-unit history. */
+async function legacyRunEvents(baseUrl: string, headers: Headers, requestUrl: string): Promise<Response> {
+  const query = new URL(requestUrl).searchParams;
+  const runId = query.get("run_id");
+  const limit = Number(query.get("limit") ?? "500");
+  const after = query.get("after");
+  if (!runId || !Number.isSafeInteger(limit) || limit < 1 || limit > 500 || (after !== null && !/^\d+$/.test(after)))
+    return Response.json({ error: "invalid run activity query" }, { status: 400 });
+  const unitPath = `/api/runs/${encodeURIComponent(runId)}/units`;
+  const get = (path: string): Promise<Response> => fetch(baseUrl.replace(/\/$/, "") + path, {
+    headers, signal: AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
+  });
+  const unitsResponse = await get(unitPath);
+  if (!unitsResponse.ok) return new Response(unitsResponse.body, { status: unitsResponse.status,
+    headers: { "content-type": unitsResponse.headers.get("content-type") ?? "application/json" } });
+  const units = parseUnitViews(await unitsResponse.json());
+  if (!units.ok) return Response.json({ error: units.error.detail }, { status: 502 });
+  const histories = await Promise.all(units.value.map(async (unit): Promise<UnitActivityHistory> => {
+    const events: UnitActivityHistory["events"][number][] = [];
+    let cursor: string | null = null;
+    do {
+      const path = `${unitPath}/${encodeURIComponent(unit.unit_id)}/history?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const response = await get(path);
+      if (!response.ok) throw new Error(`unit history ${unit.unit_id}: ${response.status}`);
+      const page = parseUnitHistory(await response.json());
+      if (!page.ok || page.value.unit_id !== unit.unit_id) throw new Error(`unit history ${unit.unit_id}: invalid response`);
+      events.push(...page.value.events);
+      cursor = page.value.next_cursor;
+    } while (cursor !== null);
+    return { unit, events };
+  }));
+  const events = runActivityEvents(runId, histories);
+  const first = after === null ? 0 : Number(after);
+  return Response.json(events.slice(first, first + limit), { headers: { "cache-control": "no-store" } });
+}
+
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
   const write_policy = deps.allowedOrigins === undefined ? configuredBrowserWritePolicy() : browserWritePolicy(deps.allowedOrigins);
   // Config: tells the PWA whether the Oakridge backend is configured without
@@ -82,7 +120,9 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const subPath = c.req.path.slice("/oakridge/api".length);
     const rejection = browserWriteRejection(write_policy, c.req.raw, subPath);
     if (rejection) return rejection;
-    const route = matchRoute(c.req.method, subPath);
+    const isLegacyRunEvents = c.req.method === "GET" && subPath === "/run_events";
+    const route = matchRoute(c.req.method, subPath) ?? (isLegacyRunEvents
+      ? { method: "GET" as const, path: subPath, authority: "operator" as const } : undefined);
     // The proxy presents the core token on the caller's behalf, so an operator
     // route needs kbbl's own credential whenever a core token is configured.
     // Without a browser token there is nothing to check the caller against,
@@ -126,6 +166,7 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     }
 
     try {
+      if (isLegacyRunEvents) return await legacyRunEvents(deps.baseUrl, forwardHeaders, c.req.url);
       const upstream = await fetch(targetUrl, {
         method,
         headers: forwardHeaders,

@@ -101,7 +101,7 @@ afterAll(async () => {
   await composition.close();
   await db.destroy();
   await scratch.drop();
-});
+}, 30_000);
 
 async function launchScripted(script: Script, request_id: string = crypto.randomUUID()): Promise<string> {
   scripts.set(launchRunId(request_id), script);

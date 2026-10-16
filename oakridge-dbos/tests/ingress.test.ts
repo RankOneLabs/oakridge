@@ -193,14 +193,17 @@ test("D2: the control token on the publish route is the operator's edit, which n
     by_id: revision?.by_id }).toEqual({ status: 201, writer: { kind: "operator", subject: OPERATOR_SUBJECT }, by: null, by_id: null });
 });
 
-test("D2: on a loopback-open control plane a publish with no secret is the operator's, and a wrong secret is still refused", async () => {
+test("D2: a loopback-open publication requires explicit operator intent when no session secret is supplied", async () => {
   const open = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
     access: { kind: "loopback_open" }, write_policy: browserWritePolicy([]) });
   const run_id = await sessionRun("open-secret");
-  const put = (authorization: string | null) => Promise.resolve(open.request(path("runs", run_id, "units", unitOf(run_id, "document"), "artifacts", "draft"),
-    { method: "PUT", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body: JSON.stringify(draft()) }));
-  const statuses = [(await put("Bearer wrong-secret")).status, (await put(null)).status];
-  expect({ statuses, writer: (await events(run_id)).at(-1)?.writer }).toEqual({ statuses: [401, 201], writer: { kind: "operator", subject: "local-control" } });
+  const put = (authorization: string | null, publisher?: string) => Promise.resolve(open.request(path("runs", run_id, "units", unitOf(run_id, "document"), "artifacts", "draft"),
+    { method: "PUT", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}),
+      ...(publisher ? { "x-oakridge-publisher": publisher } : {}) }, body: JSON.stringify(draft()) }));
+  const statuses = [(await put("Bearer wrong-secret")).status, (await put("Bearer wrong-secret", "operator")).status,
+    (await put(null)).status,
+    (await put(null, "operator")).status];
+  expect({ statuses, writer: (await events(run_id)).at(-1)?.writer }).toEqual({ statuses: [401, 401, 401, 201], writer: { kind: "operator", subject: "local-control" } });
 });
 
 test("a session secret speaks for nothing once its attempt has ended", async () => {

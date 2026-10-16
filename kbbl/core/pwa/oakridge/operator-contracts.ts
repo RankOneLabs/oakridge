@@ -435,7 +435,7 @@ export type OperatorPrompts = { readonly "handoff"?: string | null; readonly "in
 
 export type OperatorWorkerRuntime = { readonly "harness": string; readonly "model": string };
 
-export type OperatorSessionMode = "resume" | "fresh";
+export type OperatorSessionMode = "resume" | "fresh" | "shared";
 
 export type OperatorParsedArtifact = { readonly "schema": OperatorType; readonly "validate"?: (OperatorValidationCheck)[] };
 

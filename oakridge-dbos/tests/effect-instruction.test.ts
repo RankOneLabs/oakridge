@@ -67,6 +67,23 @@ test("a session key is fixed-length and slash-free however long the unit's path"
   expect(keys.map((key) => [key.length <= 300, /^[a-z]+-[0-9a-f]{64}$/.test(key)])).toEqual([[true, true], [true, true]]);
 });
 
+test("a shared writer uses one session key for sibling collection units", () => {
+  const workflow = sampleWorkflow("review-loop");
+  const writer = workflow.stages.document!.workers.writer!;
+  if (writer.kind !== "agent") throw new Error("writer is an agent");
+  const shared = { ...workflow, stages: { document: { ...workflow.stages.document!,
+    workers: { ...workflow.stages.document!.workers, writer: { ...writer, session: "shared" as const } } } } };
+  const first = { ...action, unit: "run-1/briefs/a" };
+  const second = { ...action, unit: "run-1/briefs/b" };
+  const a = select({ workflow: shared, action: first });
+  const b = select({ workflow: shared, action: second });
+  expect([a.ok && a.value.worker.kind === "agent" ? a.value.worker.session_key : null,
+    b.ok && b.value.worker.kind === "agent" ? b.value.worker.session_key : null,
+    a.ok && a.value.worker.kind === "agent" ? a.value.worker.shared_session_unit : null])
+    .toEqual([selectSessionKey(first, resolved.action_id, "shared"), selectSessionKey(first, resolved.action_id, "shared"), "run-1/briefs"]);
+  expect(select({ workflow: shared }).ok).toBe(false);
+});
+
 test("an unpinned prompt or an undeclared worker refuses the instruction", () => {
   const unpinned = select({ prompts: {} });
   const undeclared = select({ action: { ...action, worker: "ghost" } });
