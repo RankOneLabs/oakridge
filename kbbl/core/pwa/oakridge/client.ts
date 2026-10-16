@@ -372,13 +372,16 @@ export function fetchWorkflowDef(id: string): Promise<WorkflowDefFull> {
   }));
 }
 
+export function fetchOperatorDefinition(id: string): Promise<OperatorDefinitionDetail> {
+  return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`);
+}
+
 export function createWorkflowDef(body: WorkflowDefInput): Promise<WorkflowDefFull> {
   return Promise.reject(new Error(`v1 workflow graph ${body.name} cannot compile as a v2 definition`));
 }
 
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {
-  const definition = (await readDefinitions(false)).find((item) => item.bundle_id === body.workflow_def_id);
-  if (!definition) throw new Error(`oakridge create run: definition ${body.workflow_def_id} unavailable`);
+  const definition = await fetchOperatorDefinition(body.workflow_def_id);
   const path = `${OPERATOR}/runs`;
   const launch = unwrapAdapter(path, developmentLaunch(body, definition, idempotencyKey));
   const runId = committed(await oakridgePost<OperatorIngressResponse>(path, launch), path);

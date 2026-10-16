@@ -3,12 +3,21 @@ import sample from "./__fixtures__/v2-adapter-sample.json";
 import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
+import definitionFixture from "./__fixtures__/v2-definition-detail.json";
 import { admitStageUnit, cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
-import type { OperatorUnitView } from "./operator-contracts";
+import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
+import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
 const runId = sample.run.run_id;
+const definition = { ...definitionFixture.definition, bundle: { key: "development" }, archived_at: null, graph: {},
+  bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest } as unknown as OperatorDefinitionDetail;
+const sessionTargets = selectAgentSessionTargets(definition.workflow);
+const selectedSettings = selectLaunchSessionSettings(sessionTargets, Object.fromEntries(sessionTargets.map((target) =>
+  [target.key, { runtime: "claude-code" as const, model: "sonnet" }])));
+if (!selectedSettings.ok) throw new Error(selectedSettings.error.detail);
+const sessionSettings = selectedSettings.value;
 const cohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
 if (!cohort) throw new Error("captured fixture lacks an assessment review");
 const changeDecision = cohort.decisions.find((decision) => decision.key === "request_build_changes");
@@ -27,8 +36,7 @@ afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 const createRunRequest = (): CreateRunRequest => ({
   workflow_def_id: sample.run.definition_bundle_id, project_id: null,
   context: { brief_notes: "Build it", repositories: [{ key: "api" as RepositoryKey, path: "/repo", integration_branch: "main" }],
-    worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code",
-    planner_model: "sonnet", planner_effort: null, worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null },
+    worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", session_settings: sessionSettings },
   epic_profile: { title: "Build it", slug: "build-it", final_merge_policy: "guarded",
     repositories: [{ repository_key: "api" as RepositoryKey, repository_path: "/repo", integration_branch: "main",
       forge_repository: { provider: "github", owner: "acme", name: "api" } }] },
@@ -97,16 +105,42 @@ describe("v2 Oakridge client", () => {
     expect([(await fetchRun(runId)).status, unitReads]).toEqual(["cancelled", 2]);
   });
 
-  it("launches with the definition digest and all six stage roles, then reads back", async () => {
-    const fetch = calls((path) => path.includes("/api/definitions") ? { items: [{ bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest }], next_cursor: null }
+  it("launches with a separate setting for each declared agent worker, then reads back", async () => {
+    const fetch = calls((path) => path.includes("/api/definitions/") ? definition
       : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-2" }
       : path.includes("/units") ? sample.units : sample.run);
-    const result = await createRun(createRunRequest(), "launch-1");
+    const request = createRunRequest();
+    const result = await createRun({ ...request, context: { ...request.context,
+      session_settings: { ...sessionSettings, cohort: { ...sessionSettings.cohort,
+        builder: { harness: "codex", model: "gpt-6-sol", effort: null } } } } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort()]).toEqual([
-      runId, "launch-1", sample.run.definition_digest, false, ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
+    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort(),
+      body.config.sessions.cohort.assessor, body.config.sessions.cohort.builder]).toEqual([
+      runId, "launch-1", sample.run.definition_digest, false,
+      ["analysis", "brief", "cohort", "integration", "planning"],
+      { harness: "claude-code", model: "sonnet", effort: null },
+      { harness: "codex", model: "gpt-6-sol", effort: null },
     ]);
+  });
+
+  it("accepts settings for an agent declared through a worker template", async () => {
+    const templated = {
+      ...definition,
+      workflow: {
+        ...definitionFixture.definition.workflow,
+        workers: { author_template: { kind: "agent" }, watch_template: { kind: "code" } },
+        stages: { ...definitionFixture.definition.workflow.stages,
+          analysis: { workers: { author: { template: "author_template" }, watch: { template: "watch_template" } } } },
+      },
+    } as unknown as OperatorDefinitionDetail;
+    const fetch = calls((path) => path.includes("/api/definitions/") ? templated
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-template" }
+      : path.includes("/units") ? sample.units : sample.run);
+    await createRun(createRunRequest(), "launch-template");
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    expect(JSON.parse(String(launch?.[1]?.body)).config.sessions.analysis.author)
+      .toEqual(sessionSettings.analysis.author);
   });
 
   it("opens an artifact through its self-describing id without a prior run snapshot", async () => {

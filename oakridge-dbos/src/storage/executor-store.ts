@@ -107,15 +107,21 @@ export async function abandonIntent(db: Database, input: { readonly intent_id: s
   });
 }
 
-/** The intent owns no external execution any more. Settling is final: a settled intent is never reopened. */
-export async function settleIntent(db: Database, input: { readonly intent_id: string; readonly status: SettledStatus; readonly last_error: string | null }): Promise<EffectStatus | null> {
+interface Settlement { readonly intent_id: string; readonly status: SettledStatus; readonly last_error: string | null }
+async function settleWithin(db: Database, input: Settlement, allowed: readonly EffectStatus[]): Promise<EffectStatus | null> {
   return db.transaction().execute(async (trx) => {
     if (!await lockRunOf(trx, input.intent_id)) return null;
     await trx.updateTable("authority.effect_intent").set({ status: input.status, last_error: input.last_error, next_try_at: null, updated_at: new Date() })
-      .where("id", "=", input.intent_id).where("status", "not in", SETTLED_STATUSES).execute();
+      .where("id", "=", input.intent_id).where("status", "in", allowed).execute();
     return readStatus(trx, input.intent_id);
   });
 }
+/** A completed turn cannot settle an intent after commit or the executor requested its stop. */
+export const settleStartIntent = (db: Database, input: Settlement): Promise<EffectStatus | null> =>
+  settleWithin(db, input, START_OWED_STATUSES);
+/** The stop carrier confirms the external execution has ended. */
+export const settleIntent = (db: Database, input: Settlement): Promise<EffectStatus | null> =>
+  settleWithin(db, input, OWED_STATUSES);
 
 /** The kbbl session an attempt reported when it started, for a stop. */
 export async function readAttemptSession(db: Reader, input: { readonly action_id: string; readonly seq: number }): Promise<string | null> {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Browser } from "@playwright/test";
 import capturedRun from "../../core/pwa/oakridge/__fixtures__/v2-adapter-sample.json";
+import definitionFixture from "../../core/pwa/oakridge/__fixtures__/v2-definition-detail.json";
 
 async function browserScript(): Promise<string> {
   const directory = mkdtempSync(join(tmpdir(), "oakridge-v1-browser-"));
@@ -34,6 +35,7 @@ const definition = { bundle_id: capturedRun.run.definition_bundle_id, digest: ca
 const v2Read = (path: string): Response | null => {
   if (path === "/oakridge/api/api/projects") return json({ items: [] });
   if (path === "/oakridge/api/api/definitions") return json({ items: [definition], next_cursor: null });
+  if (path === `/oakridge/api/api/definitions/${definition.bundle_id}`) return json({ ...definitionFixture.definition, ...definition });
   if (path === `/oakridge/api/api/runs/${runId}`) return json(capturedRun.run);
   if (path === `/oakridge/api/api/runs/${runId}/units`) return json(capturedRun.units);
   if (path === "/oakridge/api/run_events") return json([]);
@@ -49,7 +51,8 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     if (url.pathname === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
     if (url.pathname === "/oakridge/config") return json({ available: true, core_url: "http://127.0.0.1:8790" });
     if (url.pathname === "/config") return json({ defaultWorkdir: "/repo", defaultRuntimeId: "claude-code",
-      runtimes: [{ id: "claude-code", label: "Claude Code", models: [{ value: "opus", label: "Opus" }], efforts: [], supportsCompaction: true }] });
+      runtimes: [{ id: "claude-code", label: "Claude Code", models: [{ value: "opus", label: "Opus" },
+        { value: "sonnet", label: "Sonnet" }], efforts: [], supportsCompaction: true }] });
     if (url.pathname.startsWith("/oakridge/api/")) requestedPaths.push(url.pathname);
     if (url.pathname === "/oakridge/api/api/runs" && request.method === "POST") {
       launches.push(await request.json());
@@ -74,12 +77,15 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
     await page.getByLabel("Repository 1 path").fill("/repo");
     await page.getByLabel("Brief notes", { exact: true }).fill("Restore the operator UI");
+    await page.getByLabel("cohort · builder model").selectOption("sonnet");
+    await page.getByLabel("cohort · assessor model").selectOption("opus");
     await page.getByRole("button", { name: "Start Run" }).click();
     await page.waitForURL(`**#run/${runId}`);
     expect(launches).toHaveLength(1);
     expect(launches[0]).toMatchObject({ digest: capturedRun.run.definition_digest,
       input: { title: "Ship the v1 UI", spec: "Restore the operator UI" },
-      config: { sessions: { prepare: {}, analysis: {}, planning: {}, brief: {}, cohort: {}, integration: {} } } });
+      config: { sessions: { analysis: { author: {} }, planning: { planner: {} }, brief: { writer: {} },
+        cohort: { builder: { model: "sonnet" }, assessor: { model: "opus" } }, integration: { integrator: { model: "opus" } } } } });
     expect(requestedPaths).toContain(`/oakridge/api/api/runs/${runId}/units`);
     expect(pageErrors).toEqual([]);
   } finally { await context.close(); server.stop(true); }

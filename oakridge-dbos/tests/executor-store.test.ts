@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
-import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent } from "../src/storage/executor-store";
+import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent, settleStartIntent } from "../src/storage/executor-store";
 import { actionOf, executor, launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -54,6 +54,15 @@ test("acknowledging keeps a stop requested meanwhile", async () => {
   const { run_id, intent_id } = await launchedIntent();
   await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
   expect(await markAcknowledged(authority.db, intent_id)).toBe("stop_requested");
+});
+
+test("a turn ending after a stop request leaves cleanup owed", async () => {
+  const { run_id, intent_id } = await launchedIntent();
+  await markAcknowledged(authority.db, intent_id);
+  await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
+  const after_turn = await settleStartIntent(authority.db, { intent_id, status: "stopped", last_error: null });
+  const owed = await listOwedIntents(authority.db, run_id);
+  expect({ after_turn, owed: owed.map((intent) => intent.status) }).toEqual({ after_turn: "stop_requested", owed: ["stop_requested"] });
 });
 
 test("settling is final and leaves the intent off the owed list", async () => {

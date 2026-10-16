@@ -50,7 +50,7 @@ CREATE TABLE authority.run (
   project_id text REFERENCES authority.project(id),
   root_unit_id text,
   input jsonb,
-  -- The operator's launch-time session settings, by stage (RunConfig).
+  -- The operator's launch-time session settings, by stage and worker (RunConfig).
   config jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   archived_at timestamptz
