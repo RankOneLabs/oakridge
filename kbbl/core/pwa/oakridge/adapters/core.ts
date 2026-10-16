@@ -82,9 +82,10 @@ export function deriveStatus(input: StatusInput): { readonly run: RunStatus; rea
   const { status, attention, attempts, decisions, hasRunStall } = input;
   if (status.kind === "done") return { run: "complete", stage: "complete" };
   if (status.kind === "cancelled") return { run: "cancelled", stage: "failed" };
-  if (hasRunStall || attention?.kind === "stalled" || attempts.some((attempt) => attempt.is_current && attempt.failure))
+  if (hasRunStall || attention?.kind === "stalled")
     return { run: "failed", stage: "failed" };
   if (attention?.kind === "waiting" && awaitsOperator(decisions)) return { run: "parked", stage: "parked" };
+  if (attempts.some((attempt) => attempt.is_current && attempt.failure)) return { run: "failed", stage: "failed" };
   if (status.kind === "active") return { run: "running", stage: "running" };
   return { run: "pending", stage: "pending" };
 }

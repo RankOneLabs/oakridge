@@ -83,6 +83,14 @@ describe("v2 development adapters", () => {
     if (!blocked) throw new Error("captured fixture lacks a dependency wait");
     expect([deriveStatus(statusInputOf(cohort)).run, deriveStatus(statusInputOf(blocked)).run]).toEqual(["parked", "pending"]);
   });
+  it("shows a reviewable revision as parked after its worker failed, in both list and detail", () => {
+    const failed = { ...cohort, attention: { kind: "waiting" as const, reason: "awaiting assessment_review review" },
+      attempts: [{ ...cohort.attempts[0]!, status: "failed" as const,
+        failure: { code: "no_output", detail: "worker ended before publishing" }, is_current: true }] };
+    const detail = runSnapshot(run, units.map((unit) => unit.unit_id === cohort.unit_id ? failed : unit));
+    expect(detail.ok && [detail.value.stages.find((stage) => stage.name === cohort.stage)?.status,
+      detail.value.status, runSummary(detail.value, run).status]).toEqual(["parked", "parked", "parked"]);
+  });
   it("maps an approve-effect decision onto a v1 action the frozen gate UI renders", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     const merge = (cohortMerge.units as unknown as OperatorUnitView[])
