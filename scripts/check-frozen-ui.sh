@@ -3,7 +3,7 @@ set -euo pipefail
 
 # To re-baseline the v1 UI, deliberately update this SHA and its frozen path
 # list in the same reviewed change that updates the corresponding UI files.
-FROZEN_BASE=b83cd10007edc7d875ccdadcb87a9844c3d5cf6c
+FROZEN_BASE=353bd129795630620d97aaa35f5e6944807652fa
 FROZEN_PATHS=(
   kbbl/core/pwa/oakridge/components/
   kbbl/core/pwa/oakridge/views/
