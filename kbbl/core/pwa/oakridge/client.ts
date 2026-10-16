@@ -272,7 +272,8 @@ export async function refreshReviewInboxRun(runId: string, current: ReviewInbox)
 
 export async function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
   const stage = unwrapAdapter(stageId, parseCompositeId(stageId, "stage"));
-  const unit = (await readUnits(stage.runId)).find((candidate) => candidate.collection_key === unitId || candidate.unit_key === unitId);
+  const unit = (await readUnits(stage.runId)).find((candidate) => candidate.stage === stage.name
+    && (candidate.collection_key === unitId || candidate.unit_key === unitId));
   if (!unit) throw new Error(`oakridge ${stageId}: unit ${unitId} not found`);
   const admit = unit.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.review === "admission");
   if (!admit || admit.submit.kind !== "review") throw new Error(`oakridge ${stageId}: admission decision unavailable`);

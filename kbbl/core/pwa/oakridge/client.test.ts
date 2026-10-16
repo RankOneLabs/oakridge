@@ -159,9 +159,11 @@ describe("v2 Oakridge client", () => {
       submit: { kind: "review", review: "admission", decision: "admit", effect: "approve",
         target_revision_id: "brief-revision-1" } };
     const unit = { ...cohort, decisions: [admission] };
-    const fetch = calls((path) => path.endsWith("/units") ? [unit]
+    const briefWithSameKey = { ...cohort, stage: "brief", unit_id: `${runId}/briefs/${cohort.collection_key}`,
+      decisions: [], artifacts: [], attempts: [] };
+    const fetch = calls((path) => path.endsWith("/units") ? [briefWithSameKey, unit]
       : { kind: "committed", run_id: runId, event_id: "event-admit" });
-    const stageId = compositeId({ kind: "stage", runId, unitId: cohort.unit_id, name: "cohort" });
+    const stageId = compositeId({ kind: "stage", runId, unitId: `${runId}/implementation/another-cohort`, name: "cohort" });
     const result = await admitStageUnit(stageId, cohort.collection_key!, "admit-1");
     const post = fetch.mock.calls.find(([path]) => String(path).endsWith("/reviews/admission/decide"));
     expect([result.admitted, JSON.parse(String(post?.[1]?.body))]).toEqual([true,
