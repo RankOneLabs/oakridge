@@ -29,6 +29,18 @@ describe("v2 development adapters", () => {
     const stages = unitToStages(units);
     expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);
   });
+  it("exposes a pending admission control in the frozen stage row while the run remains parked", () => {
+    const original = cohort.decisions.find((decision) => decision.submit.kind === "review");
+    const briefRevision = cohort.artifacts.find((artifact) => artifact.artifact_key === "brief")?.latest_revision;
+    if (!original || original.submit.kind !== "review" || !briefRevision) throw new Error("fixture lacks cohort review and brief");
+    const awaiting: OperatorUnitView = { ...cohort, attention: { kind: "waiting", reason: "awaiting admission review" },
+      decisions: [{ ...original, key: "admit", submit: { ...original.submit, review: "admission", decision: "admit",
+        effect: "approve", target_revision_id: briefRevision.id } }] };
+    const stages = unitToStages([awaiting]);
+    const unit = stages.ok ? stages.value[0]?.units?.[0] : null;
+    expect([stages.ok && stages.value[0]?.status, unit?.status, unit?.admission_required,
+      unit?.admitted, unit?.admission_eligible]).toEqual(["parked", "pending", true, false, true]);
+  });
   it("maps reviews to gates and change effects to the feedback action", () => {
     const gates = reviewToGates(cohort);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);

@@ -157,6 +157,17 @@ export function latestUnitAttemptPerSession(units: readonly OperatorUnitView[]):
   return ok([...latest.values()]);
 }
 
+/** The development cohort's optional admission review is distinct from its
+ * Brief review. A pending admission leaves the builder unstarted, which is the
+ * v1 StageUnit state that exposes the frozen Admit build control. */
+export function developmentAdmission(unit: OperatorUnitView): Pick<StageUnit, "admission_required" | "admitted" | "admission_eligible" | "admission_blocked_by"> {
+  const required = objectValue(unit.input)?.admission === true;
+  const isWaiting = unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission");
+  const hasBrief = unit.artifacts.some((artifact) => artifact.artifact_key === "brief" && artifact.latest_revision !== null);
+  return { admission_required: required, admitted: !required || (hasBrief && !isWaiting),
+    admission_eligible: isWaiting, admission_blocked_by: [] };
+}
+
 export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<StageDetail[]> {
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
@@ -164,11 +175,14 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
     const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).stage);
     const status: StageStatus = statuses.includes("failed") ? "failed" : statuses.includes("parked") ? "parked"
       : statuses.every((item) => item === "complete") ? "complete" : statuses.includes("running") ? "running" : "pending";
-    const stageUnits: StageUnit[] = members.map((unit) => ({ unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
-      repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
-      params: { unit_id: unit.collection_key ?? unit.unit_key, artifact: objectValue(unit.input)?.brief ?? unit.input },
-      worktree: worktreeOf(unit), status: deriveStatus(statusInputOf(unit)).stage,
-      gate: reviewGateId(unit) }));
+    const stageUnits: StageUnit[] = members.map((unit) => {
+      const admission = unit.stage === "cohort" ? developmentAdmission(unit) : null;
+      return { unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
+        repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
+        params: { unit_id: unit.collection_key ?? unit.unit_key, artifact: objectValue(unit.input)?.brief ?? unit.input },
+        worktree: worktreeOf(unit), status: admission?.admission_eligible ? "pending" : deriveStatus(statusInputOf(unit)).stage,
+        gate: reviewGateId(unit), ...(admission ?? {}) };
+    });
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
       status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision).map((artifact) => ({
         id: artifactId(artifact), type_id: artifactType(artifact.schema).id, version: artifact.revision_count,
