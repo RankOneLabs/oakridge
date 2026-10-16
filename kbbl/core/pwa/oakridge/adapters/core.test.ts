@@ -22,6 +22,11 @@ describe("v2 development adapters", () => {
     const detail = runSnapshot(run, units);
     expect(detail.ok && [detail.value.status, runSummary(detail.value, run).status]).toEqual(["parked", "parked"]);
   });
+  it("keeps the server's update time after a decision with no new publication", () => {
+    const updatedAt = "2099-01-01T00:00:00Z";
+    const detail = runSnapshot({ ...run, updated_at: updatedAt }, units);
+    expect(detail.ok && detail.value.updated_at).toBe(updatedAt);
+  });
   it("shows a cancelled run even when a child unit still carries an old failure", () => {
     const detail = runSnapshot({ ...run, status: { kind: "cancelled" } }, units);
     expect(detail.ok && detail.value.status).toBe("cancelled");
@@ -91,6 +96,21 @@ describe("v2 development adapters", () => {
       gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
     expect(rows[0]?.requires_operator_action).toBe(true);
   });
+  it("marks the builder session when a closed pull request needs replacement", () => {
+    const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) =>
+      decision.submit.kind === "review" && decision.submit.review === "merge_confirmation"));
+    if (!mergeUnit) throw new Error("captured fixture lacks merge confirmation");
+    const builder = mergeUnit.attempts.find((attempt) => attempt.worker === "builder");
+    if (!builder) throw new Error("captured fixture lacks a builder session");
+    const closed = withUnitFields(mergeUnit, { decisions: mergeUnit.decisions.map((decision) => decision.submit.kind === "review"
+      ? { ...decision, submit: { ...decision.submit, review: "pr_closed" } } : decision) });
+    const mapped = attemptToWorkOrder({ runId: closed.run_id, stage: "cohort", unit: closed, attempt: builder });
+    const gates = reviewToGates(closed);
+    if (!mapped.ok || !gates.ok) throw new Error("fixture closed PR mapping failed");
+    const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: [mapped.value] },
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+    expect(rows[0]?.requires_operator_action).toBe(true);
+  });
   it("keeps an input-revision review target so the frozen decision button can submit", () => {
     const accept = cohort.decisions.find((decision) => decision.key === "accept");
     if (!accept || accept.submit.kind !== "review") throw new Error("captured fixture lacks an accept review");
@@ -146,6 +166,10 @@ describe("v2 development adapters", () => {
   it("maps a run event kind", () => {
     const event = runEventKind(sample.event as OperatorRunEvent);
     expect(event.ok && event.value?.operation).toBe("slot_released");
+  });
+  it("does not report a worker ending as unit completion", () => {
+    const event = runEventKind({ ...sample.event, kind: "worker_ended" } as OperatorRunEvent);
+    expect(event).toEqual({ ok: true, value: null });
   });
   it("distinguishes a stalled worker from a parked review", () => {
     expect(deriveStatus({ status: cohort.status, attention: { kind: "stalled", detail: "worker failed" }, attempts: cohort.attempts, decisions: cohort.decisions }).run).toBe("failed");

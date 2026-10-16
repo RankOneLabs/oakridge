@@ -133,7 +133,7 @@ export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.
 const developmentReviewSession = (unit: OperatorUnitView, review: string): { readonly stage: string; readonly unit: string } => {
   if (unit.stage === "cohort" && review === "assessment_review")
     return { stage: "assessment", unit: unit.collection_key ?? unit.unit_key };
-  if (unit.stage === "cohort" && review === "merge_confirmation")
+  if (unit.stage === "cohort" && (review === "merge_confirmation" || review === "pr_closed"))
     return { stage: "builder", unit: unit.collection_key ?? unit.unit_key };
   if (unit.stage === "brief" && review === "brief_review")
     return { stage: "brief", unit: "shared writer" };
@@ -258,11 +258,9 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
-  const updated_at = [...units.flatMap((unit) => [...unit.attempts.map((attempt) => attempt.created_at),
-    ...unit.artifacts.flatMap((artifact) => artifact.latest_revision ? [artifact.latest_revision.created_at] : [])]), run.created_at].sort().at(-1)!;
   return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
     stages: grouped.value, parked_count: unitStatuses.filter((item) => item === "parked").length,
-    updated_at, is_stuck: status === "failed", epic_profile: null });
+    updated_at: run.updated_at, is_stuck: status === "failed", epic_profile: null });
 }
 export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary {
   const completed = detail.stages.filter((stage) => stage.status === "complete").length;
@@ -272,7 +270,8 @@ export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary 
     updated_at: detail.updated_at, is_stuck: detail.is_stuck, is_failed: detail.status === "failed", archived: run.archived_at !== null };
 }
 
-const EVENT_OPERATIONS = { launched: "stage_materialized", worker_started: "work_started", worker_ended: "unit_satisfied",
+// A turn can end while its unit is still active, stalled, or awaiting review.
+const EVENT_OPERATIONS = { launched: "stage_materialized", worker_started: "work_started", worker_ended: null,
   revision_published: "slot_released", operator_decided: "gate_decided", retry_requested: "operator_retry_created", cancel_requested: "run_cancelled" } as const;
 export function runEventKind(event: OperatorRunEvent): AdapterResult<RunEventFrame | null> {
   const operation = EVENT_OPERATIONS[event.kind];
