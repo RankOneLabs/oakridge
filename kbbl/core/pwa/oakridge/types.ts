@@ -62,7 +62,7 @@ export interface CreateRunContext {
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
   oakridge_url: string;
-  session_settings: Readonly<{ [worker_key: string]: LaunchSessionSettings }>;
+  session_settings: Readonly<{ [stage: string]: Readonly<{ [worker: string]: LaunchSessionSettings }> }>;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };

@@ -84,8 +84,8 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     expect(launches).toHaveLength(1);
     expect(launches[0]).toMatchObject({ digest: capturedRun.run.definition_digest,
       input: { title: "Ship the v1 UI", spec: "Restore the operator UI" },
-      config: { sessions: { "analysis.author": {}, "planning.planner": {}, "brief.writer": {},
-        "cohort.builder": { model: "sonnet" }, "cohort.assessor": { model: "opus" }, "integration.integrator": {} } } });
+      config: { sessions: { analysis: { author: {} }, planning: { planner: {} }, brief: { writer: {} },
+        cohort: { builder: { model: "sonnet" }, assessor: { model: "opus" } }, integration: { integrator: {} } } } });
     expect(requestedPaths).toContain(`/oakridge/api/api/runs/${runId}/units`);
     expect(pageErrors).toEqual([]);
   } finally { await context.close(); server.stop(true); }

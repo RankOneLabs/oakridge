@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { OperatorArtifactDetail, OperatorDefinitionDetail, OperatorInboxPage, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../../kbbl/core/pwa/oakridge/operator-contracts";
+import type { AgentWorkerWorkflow } from "../../kbbl/core/pwa/oakridge/lib/agent-session-targets";
 
 const runId = process.argv[2];
 if (!runId || !/^run-[0-9a-f]{16}$/.test(runId)) throw new Error("pass a named v2 run id (run-<16 hex characters>)");
@@ -59,10 +60,13 @@ if (fixtureName === "v2-definition-detail") {
   const definitionPath = `/api/definitions/${encodeURIComponent(run.definition_bundle_id)}`;
   const definition = await get<OperatorDefinitionDetail>(definitionPath);
   if (definition.digest !== run.definition_digest) throw new Error(`run ${runId} definition digest mismatch`);
-  const workflow = { workflow: definition.workflow.workflow,
-    stages: Object.fromEntries(Object.entries(definition.workflow.stages).map(([stage, value]) => [stage, {
+  // Project only worker declarations, retaining template uses and their kinds.
+  const source: AgentWorkerWorkflow = definition.workflow;
+  const workflow = { workflow: source.workflow,
+    workers: Object.fromEntries(Object.entries(source.workers ?? {}).map(([key, worker]) => [key, { kind: worker.kind }])),
+    stages: Object.fromEntries(Object.entries(source.stages).map(([stage, value]) => [stage, {
       workers: Object.fromEntries(Object.entries(value.workers).map(([worker, declaration]) =>
-        [worker, { kind: declaration.kind ?? null }])),
+        [worker, declaration.template ? { template: declaration.template } : { kind: declaration.kind }])),
     }])) };
   writeFileSync(output, `${JSON.stringify({ source: definitionPath, captured_at: new Date().toISOString(), run_id: runId,
     definition: { bundle_id: definition.bundle_id, digest: definition.digest, workflow } }, null, 2)}\n`);

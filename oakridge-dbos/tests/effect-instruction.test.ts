@@ -30,14 +30,14 @@ test("a cohort pins independent assessor and builder settings", () => {
   if (!document || !document.workers.writer) throw new Error("sample writer is missing");
   const workflow = { ...base, workflow: "development", stages: { cohort: { ...document,
     workers: { assessor: document.workers.writer, builder: document.workers.writer } } } };
-  const config = { sessions: { "cohort.assessor": { harness: "claude-code", model: "opus", effort: "high" },
-    "cohort.builder": { harness: "codex", model: "gpt-6-sol", effort: "high" } } };
+  const config = { sessions: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: "high" },
+    builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } };
   const settingsFor = (worker: string) => {
     const selected = select({ workflow, config, stage: "cohort", action: { ...action,
       unit: "run-1/implementation/theme", worker } });
     return selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.settings : null;
   };
-  expect([settingsFor("assessor"), settingsFor("builder")]).toEqual([config.sessions["cohort.assessor"], config.sessions["cohort.builder"]]);
+  expect([settingsFor("assessor"), settingsFor("builder")]).toEqual([config.sessions.cohort.assessor, config.sessions.cohort.builder]);
 });
 
 test("a fresh worker pins its handoff template; a resume worker never does", () => {

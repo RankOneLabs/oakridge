@@ -7,14 +7,17 @@ import definitionFixture from "./__fixtures__/v2-definition-detail.json";
 import { admitStageUnit, cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
-import { selectAgentSessionTargets } from "./lib/agent-session-targets";
+import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
 import type { CreateRunRequest, RepositoryKey } from "./types";
 
 const runId = sample.run.run_id;
 const definition = { ...definitionFixture.definition, bundle: { key: "development" }, archived_at: null, graph: {},
   bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest } as unknown as OperatorDefinitionDetail;
-const sessionSettings = Object.fromEntries(selectAgentSessionTargets(definition.workflow).map((target) =>
-  [target.key, { harness: "claude-code" as const, model: "sonnet", effort: null }]));
+const sessionTargets = selectAgentSessionTargets(definition.workflow);
+const selectedSettings = selectLaunchSessionSettings(sessionTargets, Object.fromEntries(sessionTargets.map((target) =>
+  [target.key, { runtime: "claude-code" as const, model: "sonnet" }])));
+if (!selectedSettings.ok) throw new Error(selectedSettings.error.detail);
+const sessionSettings = selectedSettings.value;
 const cohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
 if (!cohort) throw new Error("captured fixture lacks an assessment review");
 const changeDecision = cohort.decisions.find((decision) => decision.key === "request_build_changes");
@@ -108,16 +111,36 @@ describe("v2 Oakridge client", () => {
       : path.includes("/units") ? sample.units : sample.run);
     const request = createRunRequest();
     const result = await createRun({ ...request, context: { ...request.context,
-      session_settings: { ...sessionSettings, "cohort.builder": { harness: "codex", model: "gpt-6-sol", effort: null } } } }, "launch-1");
+      session_settings: { ...sessionSettings, cohort: { ...sessionSettings.cohort,
+        builder: { harness: "codex", model: "gpt-6-sol", effort: null } } } } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
     expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort(),
-      body.config.sessions["cohort.assessor"], body.config.sessions["cohort.builder"]]).toEqual([
+      body.config.sessions.cohort.assessor, body.config.sessions.cohort.builder]).toEqual([
       runId, "launch-1", sample.run.definition_digest, false,
-      ["analysis.author", "brief.writer", "cohort.assessor", "cohort.builder", "integration.integrator", "planning.planner"],
+      ["analysis", "brief", "cohort", "integration", "planning"],
       { harness: "claude-code", model: "sonnet", effort: null },
       { harness: "codex", model: "gpt-6-sol", effort: null },
     ]);
+  });
+
+  it("accepts settings for an agent declared through a worker template", async () => {
+    const templated = {
+      ...definition,
+      workflow: {
+        ...definitionFixture.definition.workflow,
+        workers: { author_template: { kind: "agent" }, watch_template: { kind: "code" } },
+        stages: { ...definitionFixture.definition.workflow.stages,
+          analysis: { workers: { author: { template: "author_template" }, watch: { template: "watch_template" } } } },
+      },
+    } as unknown as OperatorDefinitionDetail;
+    const fetch = calls((path) => path.includes("/api/definitions/") ? templated
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-template" }
+      : path.includes("/units") ? sample.units : sample.run);
+    await createRun(createRunRequest(), "launch-template");
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    expect(JSON.parse(String(launch?.[1]?.body)).config.sessions.analysis.author)
+      .toEqual(sessionSettings.analysis.author);
   });
 
   it("opens an artifact through its self-describing id without a prior run snapshot", async () => {

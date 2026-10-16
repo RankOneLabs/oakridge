@@ -8,7 +8,7 @@ const launchRequest = (notes: string): CreateRunRequest => ({
   context: {
     brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
     base_branch: "epic/x", oakridge_url: "http://oakridge",
-    session_settings: { "cohort.builder": { harness: "claude-code", model: "sonnet", effort: null } },
+    session_settings: { cohort: { builder: { harness: "claude-code", model: "sonnet", effort: null } } },
   },
   epic_profile: {
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",

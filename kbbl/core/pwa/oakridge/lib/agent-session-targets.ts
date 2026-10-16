@@ -1,5 +1,5 @@
 import type { RuntimeModelSelection } from "../../types";
-import type { LaunchSessionSettings } from "../types";
+import type { CreateRunContext, LaunchSessionSettings } from "../types";
 import type { ModelRole } from "./runtime-selection";
 import type { Result } from "../../lib/result";
 
@@ -13,11 +13,16 @@ export interface AgentSessionTarget {
   readonly suggested_role: ModelRole;
 }
 
-/** Projection of OperatorWorkflow.stages[*].workers[*].kind, including
- * template references whose worker kind is absent in the API response. */
+/** Worker declarations in GET /api/definitions/:id's authored workflow.
+ * A template use has no local kind; its kind comes from workflow.workers. */
+interface AgentWorkerDeclaration {
+  readonly kind?: string | null;
+  readonly template?: string;
+}
 export interface AgentWorkerWorkflow {
   readonly workflow: string;
-  readonly stages: Readonly<{ [stage: string]: { readonly workers: Readonly<{ [worker: string]: { readonly kind: string | null } }> } }>;
+  readonly workers?: Readonly<{ [template: string]: AgentWorkerDeclaration }>;
+  readonly stages: Readonly<{ [stage: string]: { readonly workers: Readonly<{ [worker: string]: AgentWorkerDeclaration }> } }>;
 }
 
 const DEVELOPMENT_STAGE_ORDER = ["analysis", "planning", "brief", "cohort", "integration"] as const;
@@ -34,8 +39,10 @@ const suggestedRole = (workflow: string, stage: string, worker: string): ModelRo
  * which sessions the launch form can configure. Code workers have no model. */
 export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow): readonly AgentSessionTarget[] {
   const targets = Object.entries(workflow.stages).flatMap(([stage, definition]) =>
-    Object.entries(definition.workers).filter(([, worker]) => worker.kind === "agent").map(([worker]) => ({
-      key: `${stage}.${worker}`, stage, worker, label: `${stage} · ${worker}`,
+    Object.entries(definition.workers).filter(([, declaration]) =>
+      (declaration.template ? workflow.workers?.[declaration.template]?.kind : declaration.kind) === "agent")
+      .map(([worker]) => ({
+      key: JSON.stringify([stage, worker]), stage, worker, label: `${stage} · ${worker}`,
       suggested_role: suggestedRole(workflow.workflow, stage, worker),
     })));
   return targets.sort((left, right) => developmentOrder(left.stage) - developmentOrder(right.stage)
@@ -51,15 +58,17 @@ export interface SessionSettingsSelectionError {
 
 /** Make a complete, exact config from the definition's agent workers. */
 export function selectLaunchSessionSettings(targets: readonly AgentSessionTarget[], selections: SessionSelectionMap):
-  Result<Readonly<{ [key: string]: LaunchSessionSettings }>, SessionSettingsSelectionError> {
-  const settings: { [key: string]: LaunchSessionSettings } = {};
+  Result<CreateRunContext["session_settings"], SessionSettingsSelectionError> {
+  const settings = new Map<string, Map<string, LaunchSessionSettings>>();
   for (const target of targets) {
     const selection = selections[target.key];
     if (!selection?.runtime || !selection.model.trim())
       return { ok: false, error: { operation: "select_session_settings", detail: `Choose a runtime and model for ${target.label}.` } };
-    settings[target.key] = { harness: selection.runtime, model: selection.model, effort: selection.effort ?? null };
+    const workers = settings.get(target.stage) ?? new Map<string, LaunchSessionSettings>();
+    workers.set(target.worker, { harness: selection.runtime, model: selection.model, effort: selection.effort ?? null });
+    settings.set(target.stage, workers);
   }
-  if (Object.keys(settings).length === 0)
+  if (settings.size === 0)
     return { ok: false, error: { operation: "select_session_settings", detail: "The selected workflow has no agent sessions." } };
-  return { ok: true, value: settings };
+  return { ok: true, value: Object.fromEntries([...settings].map(([stage, workers]) => [stage, Object.fromEntries(workers)])) };
 }

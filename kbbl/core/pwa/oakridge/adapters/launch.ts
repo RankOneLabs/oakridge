@@ -28,12 +28,16 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
   }
   const targets = selectAgentSessionTargets(definition.workflow);
   for (const target of targets) {
-    const choice = body.context.session_settings[target.key];
-    if (!choice?.harness || !choice.model.trim()) return fail("create run", `missing session settings for ${target.key}`);
+    const stage = Object.hasOwn(body.context.session_settings, target.stage) ? body.context.session_settings[target.stage] : undefined;
+    const choice = stage && Object.hasOwn(stage, target.worker) ? stage[target.worker] : undefined;
+    if (!choice?.harness || !choice.model.trim()) return fail("create run", `missing session settings for ${target.label}`);
   }
   const declaredKeys = new Set(targets.map((target) => target.key));
-  for (const key of Object.keys(body.context.session_settings)) {
-    if (!declaredKeys.has(key)) return fail("create run", `unknown agent worker ${key}`);
+  for (const [stage, workers] of Object.entries(body.context.session_settings)) {
+    if (Object.keys(workers).length === 0) return fail("create run", `unknown agent stage ${stage}`);
+    for (const worker of Object.keys(workers)) {
+      if (!declaredKeys.has(JSON.stringify([stage, worker]))) return fail("create run", `unknown agent worker ${stage} · ${worker}`);
+    }
   }
   // The frozen launch form has no admission option. Its Brief approval is the
   // operator's go-ahead; the first eligible cohort starts from that outcome.

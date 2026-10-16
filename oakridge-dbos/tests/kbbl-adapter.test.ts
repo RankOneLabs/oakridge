@@ -210,8 +210,8 @@ test("an existing cohort session retains its old branch when kbbl rejects a chan
     expect.stringMatching(/^oakridge\/[0-9a-f]{16}$/) ] });
 });
 
-test("a session starts with the runtime, model and effort the run chose for its stage", () => {
-  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } }),
+test("a session starts with the runtime, model and effort chosen for its worker", () => {
+  const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect([start.runtime, start.model, start.effort]).toEqual(["codex", "gpt-6-sol", "high"]);
 });

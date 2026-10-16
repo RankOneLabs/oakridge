@@ -47,11 +47,11 @@ describe("buildRunExecutionContext", () => {
       base_branch: "epic/build-it",
       repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", integration_branch: "main" }],
       oakridge_url: "http://oakridge",
-      session_settings: { "cohort.assessor": { harness: "claude-code", model: "opus", effort: null },
-        "cohort.builder": { harness: "codex", model: "gpt-6-sol", effort: "high" } },
+      session_settings: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
+        builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } },
     })).toEqual({ ok: true, value: expect.objectContaining({ session_settings: {
-      "cohort.assessor": { harness: "claude-code", model: "opus", effort: null },
-      "cohort.builder": { harness: "codex", model: "gpt-6-sol", effort: "high" },
+      cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
+        builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } },
     } }) });
   });
 

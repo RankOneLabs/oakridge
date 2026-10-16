@@ -64,10 +64,10 @@ test("a launch commits the run, its units, the event with its writer, the receip
     operator_events: 2, wakes: [run_id] });
 });
 
-test("a launch's session settings for a stage reach that stage's agent instruction", async () => {
+test("a launch's worker settings reach that worker's agent instruction", async () => {
   const settings = { harness: "codex", model: "gpt-6-sol", effort: "high" };
   const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
-    config: { sessions: { document: settings } } });
+    config: { sessions: { document: { writer: settings } } } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const [intent] = await intents(run_id);
   const instruction = decodeEffectInstruction(intent?.payload);

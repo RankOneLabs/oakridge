@@ -1,4 +1,4 @@
-import type { CompiledWorkflow, Group, ParsedWorkflow, Unit, Workflow } from "../core-client/core-types";
+import type { AuthoredWorkflow, CompiledWorkflow, Group, ParsedWorkflow, Unit, Workflow } from "../core-client/core-types";
 import { selectWorkflowSchemas, typeSchemaKey, type Schema } from "./schema-view";
 import { ROOT_UNIT_KEY, titleCase } from "./unit-label";
 
@@ -29,7 +29,7 @@ export interface DefinitionPage { readonly items: readonly DefinitionSummary[]; 
 export interface DefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 export interface DefinitionGraph { readonly nodes: readonly DefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 /** One pinned definition with the workflow source it was compiled from, which the editor clones. */
-export interface DefinitionDetail extends DefinitionSummary { readonly workflow: Workflow; readonly graph: DefinitionGraph }
+export interface DefinitionDetail extends DefinitionSummary { readonly workflow: Workflow | AuthoredWorkflow; readonly graph: DefinitionGraph }
 
 /** One unit a workflow declares: its key in its group, the group's path, and its own path, unique in the workflow. */
 interface DeclaredUnit { readonly key: string; readonly prefix: string; readonly path: string; readonly unit: Unit }
