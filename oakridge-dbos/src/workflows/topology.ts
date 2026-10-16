@@ -12,7 +12,7 @@ import type { OperationOutcome } from "../operations/outcome";
 import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
 import { abandonIntent, claimStart, isStartOwed, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure,
-  settleIntent, type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
+  settleIntent, settleStartIntent, type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
 import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readSessionHistory } from "../storage/read-store";
 import { readPromptTexts } from "../storage/registry-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
@@ -231,6 +231,8 @@ const markAcknowledgedStep = DBOS.registerStep(async (intent_id: string): Promis
 interface SettleInput { readonly intent_id: string; readonly status: SettledStatus; readonly last_error: string | null }
 const settleStep = DBOS.registerStep(async (input: SettleInput): Promise<EffectStatus | null> => settleIntent(current().db, input),
   { name: "oakridgeSettleIntent", retriesAllowed: true, maxAttempts: 5 });
+const settleStartStep = DBOS.registerStep(async (input: SettleInput): Promise<EffectStatus | null> => settleStartIntent(current().db, input),
+  { name: "oakridgeSettleStartIntent", retriesAllowed: true, maxAttempts: 5 });
 interface AbandonInput { readonly intent_id: string; readonly last_error: string }
 const abandonStep = DBOS.registerStep(async (input: AbandonInput): Promise<EffectStatus | null> => abandonIntent(current().db, input),
   { name: "oakridgeAbandonIntent", retriesAllowed: true, maxAttempts: 5 });
@@ -287,7 +289,7 @@ async function endAttempt(intent: CarriedIntent, failure: WorkerFailure, attempt
 /** The attempt failed and no execution exists (the provider definitely refused it): report it and settle the intent. */
 async function failAttempt(intent: CarriedIntent, failure: WorkerFailure): Promise<EffectStatus | null> {
   await endAttempt(intent, failure);
-  return settleStep({ intent_id: intent.id, status: "failed", last_error: failureText(failure) });
+  return settleStartStep({ intent_id: intent.id, status: "failed", last_error: failureText(failure) });
 }
 /**
  * The attempt failed but an execution may still exist: a session that can no
@@ -354,7 +356,7 @@ async function carryStart(intent_id: string): Promise<EffectStatus | null> {
     // An instruction the executor cannot read fails its attempt; it is never guessed at.
     const failure = { kind: "failed", code: PROVIDER_ERROR_CODES.invalid_instruction, detail: loaded.detail } as const;
     await report({ run_id: loaded.run_id, attempt: loaded.attempt, report: { kind: "ended", result: failure } });
-    const settled = await settleStep({ intent_id, status: "failed", last_error: loaded.detail });
+    const settled = await settleStartStep({ intent_id, status: "failed", last_error: loaded.detail });
     await wakeRun(loaded.run_id);
     return settled;
   }
@@ -415,7 +417,7 @@ async function carryAgent(intent: CarriedIntent): Promise<EffectStatus | null> {
     const outcome = resolveObserve(await observeStep(intent.instruction, material, handle));
     if (outcome.kind === "ended") {
       await report({ run_id: intent.run_id, attempt: intent.instruction.attempt, report: { kind: "ended", result: outcome.result } });
-      return settleStep({ intent_id, status: outcome.result.kind === "succeeded" ? "stopped" : "failed", last_error: failureText(outcome.result) });
+      return settleStartStep({ intent_id, status: outcome.result.kind === "succeeded" ? "stopped" : "failed", last_error: failureText(outcome.result) });
     }
     if (outcome.kind === "refused") return abandonAttempt(intent, outcome.failure);
     // Any observation without an answer counts toward the bound, an unreachable kbbl as much as a 5xx; only an answer resets it.
@@ -475,7 +477,7 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
   let seq = latest?.seq ?? intent.instruction.attempt.seq;
   if (latest && latest.status.kind !== "pending" && latest.status.kind !== "running") {
     if (interval === null || latest.status.kind === "failed")
-      return settleStep({ intent_id: intent.id, status: latest.status.kind === "failed" ? "failed" : "stopped",
+      return settleStartStep({ intent_id: intent.id, status: latest.status.kind === "failed" ? "failed" : "stopped",
         last_error: latest.status.kind === "failed" ? `${latest.status.code}: ${latest.status.detail}` : null });
     seq += 1;
   }
@@ -488,7 +490,7 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
       // A watch replaced while it slept is refused its next start; the stop commit requested settles it.
       const reloaded = await loadIntentStep(intent.id);
       if (reloaded.kind === "carried" && reloaded.intent.status === "stop_requested") return reloaded.intent.status;
-      return settleStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
+      return settleStartStep({ intent_id: intent.id, status: "failed", last_error: `start refused: ${refused_start}` });
     }
     if (status === "pending") status = await markAcknowledgedStep(intent.id);
     const outcome = await runOperation(intent, interval !== null);
@@ -506,7 +508,7 @@ async function carryCode(intent: CarriedIntent): Promise<EffectStatus | null> {
     const ended = await latestAttemptStep(attempt.action_id);
     const failure = ended?.seq === seq && ended.status.kind === "failed" ? ended.status : result.kind === "failed" ? result : null;
     if (failure !== null || interval === null)
-      return settleStep({ intent_id: intent.id, status: failure ? "failed" : "stopped", last_error: failure ? `${failure.code}: ${failure.detail}` : null });
+      return settleStartStep({ intent_id: intent.id, status: failure ? "failed" : "stopped", last_error: failure ? `${failure.code}: ${failure.detail}` : null });
     // The watch lives on, so carryStart's wake is far off: what this run published may want new workers now.
     await wakeRun(intent.run_id);
     await DBOS.sleepSeconds(interval);
