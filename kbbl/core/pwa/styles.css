@@ -2427,13 +2427,7 @@ a:focus-visible {
   backdrop-filter: blur(12px);
 }
 
-.or-run-workspace__pane-body {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  padding: 0.9rem;
-  container: run-pane / inline-size;
-}
+.or-run-workspace__pane-body { flex: 1; min-height: 0; padding: 0.9rem; }
 
 /* The element a session pane hands to `SessionSurfaceLayout` as its scroll
    host. It is bounded by the pane body rather than by the window, which is
@@ -2749,9 +2743,6 @@ a:focus-visible {
      in workspace state and in storage, so widening the viewport brings the
      operator's arrangement back instead of having silently discarded half of it. */
   .or-run-identity__sidebar-toggle { display: inline-flex; align-items: center; }
-  .or-run-identity { flex-wrap: wrap; }
-  .or-run-identity__names { flex: 1 1 100%; order: 1; overflow-wrap: anywhere; }
-  .or-run-identity > div:last-child { order: 2; }
   .or-run-workspace__body { grid-template-columns: minmax(0, 1fr); }
   .or-run-workspace__sidebar { display: none; }
   .or-run-workspace__sidebar--open { display: flex; border-right: 0; border-bottom: 1px solid var(--border-subtle); max-height: 45dvh; }
@@ -2944,57 +2935,6 @@ a:focus-visible {
 .or-run-detail__chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
 .or-run-detail__stages { display: flex; flex-direction: column; }
-
-/* The frozen stage table has long worktree paths. Keep its six fields and
-   actions visible without making a run pane scroll sideways. */
-[data-testid="or-run-detail"] .or-page-header { flex-wrap: wrap; }
-[data-testid="or-run-detail"] .or-page-header > div:first-child { min-width: 0; overflow-wrap: anywhere; }
-[data-testid="or-run-detail"] table[aria-label="Stage timeline"] { table-layout: fixed; }
-[data-testid="or-run-detail"] table[aria-label="Stage timeline"] th,
-[data-testid="or-run-detail"] table[aria-label="Stage timeline"] td { overflow-wrap: anywhere; }
-[data-testid="or-run-detail"] table[aria-label="Stage timeline"] code { white-space: normal; overflow-wrap: anywhere; }
-[data-testid="or-gate-card"] { min-width: 0; overflow-wrap: anywhere; }
-[data-testid="or-gate-card"] > .flex { min-width: 0; flex-wrap: wrap; }
-[data-testid="or-gate-card"] code,
-[data-testid="or-gate-card"] button,
-[data-testid="or-gate-card"] a,
-[data-testid="or-gate-card"] [data-testid="or-gate-unit-id"] { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
-
-@container run-pane (max-width: 48rem) {
-  [data-testid="or-run-detail"] .or-page-header { flex-direction: column; }
-  [data-testid="or-run-detail"] .or-page-header > div:first-child { width: 100%; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"],
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tbody { display: block; width: 100%; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] thead { display: none; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-bottom: 0.75rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 0.5rem;
-  }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-  }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td::before {
-    color: var(--text-muted);
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(1)::before { content: "Stage"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(2)::before { content: "Type"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(3)::before { content: "Status"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(4)::before { content: "Artifacts"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(5)::before { content: "Session"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-stage-row"] > td:nth-child(6)::before { content: "Worktree"; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-cohort-detail-row"] { display: block; margin: -0.75rem 0 0.75rem; }
-  [data-testid="or-run-detail"] table[aria-label="Stage timeline"] tr[data-testid="or-cohort-detail-row"] > td { display: block; width: 100%; }
-}
 
 .or-worktree-meta {
   display: flex;
