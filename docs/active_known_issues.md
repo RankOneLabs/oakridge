@@ -34,16 +34,25 @@ expected behavior. Move an entry out of active issues when its fix is verified.
   development `request_changes` decisions use a single `feedback` field.
 - **The default install at `127.0.0.1:8790` still lacks v2 `/api/runs`.** The
   isolated shadow backend at `127.0.0.1:8800` serves v2 and supplied the three
-  committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders a
-  seeded run list and detail, but the seed `run-9e88f4b61c072a35` is not a
-  valid full-workflow checkpoint: it has no projects or repositories, its brief
-  is one sentence, and it is awaiting `analysis_review` after an analysis that
-  says the subject system is missing. Planning is materialized but pending;
-  later stages have not materialized. A browser-intercepted click on the v1
-  Approve button generated the correct v2 review request without committing it.
-  Replace this seed with a real repository and a testable specification before
-  asking the operator to assess progression or button behavior. The default
+  committed adapter fixtures. The shadow PWA at `127.0.0.1:8798` renders the
+  live Shelly run `run-52d2eb71fc9b6a91` against a pinned checkout of
+  `cirsteve/shelly`. Prepare completed, and the operator's Analysis approval
+  committed and launched Planning. Planning is awaiting its own review; later
+  stages have not materialized. The older seed `run-9e88f4b61c072a35` remains
+  unsuitable for full-flow assessment because it has no repository. The default
   install needs its database cutover before this PWA branch can run against it.
+- **The shadow Analysis session remains idle after approval.** For
+  `run-52d2eb71fc9b6a91`, the v2 analysis unit is done and the planner has
+  started, but kbbl still reports the Analysis session as idle with no end
+  reason. The expected session lifecycle is to close the completed Analysis
+  session when the approval advances the workflow. This is a backend/session
+  lifecycle issue; the v1 adapter cannot close that session from the v2 unit
+  read model.
+- **The shadow backend cannot observe GitHub PR state without credentials.**
+  The current `127.0.0.1:8800` process has no GitHub token; a later
+  `pull_request.observe` step will report `discovery_unsupported`. Provide
+  credentials to the shadow backend before using this run to assess merge
+  confirmation or end-to-end completion.
 - **Opaque v1 artifact IDs with no v2 revision identity cannot be resolved.**
   A composite v2 ID resolves on a cold load, and the client can find a bare v2
   revision ID by searching run and unit views. An arbitrary retired v1 UUID
