@@ -104,8 +104,8 @@ describe("v2 Oakridge client", () => {
     const result = await createRun(createRunRequest(), "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, Object.keys(body.config.sessions).sort()]).toEqual([
-      runId, "launch-1", sample.run.definition_digest, ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
+    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort()]).toEqual([
+      runId, "launch-1", sample.run.definition_digest, false, ["analysis", "brief", "cohort", "integration", "planning", "prepare"],
     ]);
   });
 

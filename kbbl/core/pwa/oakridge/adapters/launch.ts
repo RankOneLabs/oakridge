@@ -27,8 +27,10 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
   }
   const planner = { harness: body.context.planner_runtime, model: body.context.planner_model, effort: body.context.planner_effort };
   const worker = { harness: body.context.worker_runtime, model: body.context.worker_model, effort: body.context.worker_effort };
+  // The frozen launch form has no admission option. Its Brief approval is the
+  // operator's go-ahead; the first eligible cohort starts from that outcome.
   const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
-    admission: true, final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
+    admission: false, final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
   return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input,
     config: { sessions: { prepare: worker, analysis: planner, planning: planner, brief: planner, cohort: worker, integration: worker } } });
 }
