@@ -38,6 +38,19 @@ describe("v2 development adapters", () => {
     const stages = unitToStages(units);
     expect(stages.ok && stages.value.find((stage) => stage.name === "cohort")?.artifacts.some((artifact) => artifact.type_id === "dev.build_result")).toBe(true);
   });
+  it("shows the prepared workspace as a read-only artifact", () => {
+    const prepare = units.find((unit) => unit.stage === "prepare");
+    const workspace = (sample.artifacts as unknown as OperatorArtifactDetail[]).find((artifact) => artifact.schema === "workspace");
+    if (!prepare || !workspace) throw new Error("captured fixture lacks the prepared workspace");
+    const stages = unitToStages(units);
+    const detail = revisionToArtifact(workspace, prepare);
+    expect(stages.ok && detail.ok && {
+      listed: stages.value.find((stage) => stage.name === "prepare")?.artifacts.map((artifact) => artifact.type_id),
+      capabilities: detail.value.capabilities,
+      body: detail.value.revisions.at(-1)?.body,
+    }).toEqual({ listed: ["workspace"], capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false },
+      body: prepare.artifacts.find((artifact) => artifact.artifact_key === "workspace")?.latest_revision?.body });
+  });
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
     if (!pr) throw new Error("captured fixture lacks a PR artifact");

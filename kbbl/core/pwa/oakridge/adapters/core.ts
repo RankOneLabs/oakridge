@@ -34,13 +34,14 @@ const SCHEMA_TYPES: Readonly<Record<string, string>> = {
   analysis_body: "dev.spec_analysis", plan_body: "dev.plan", brief_body: "dev.build_brief",
   build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
 };
-/** Internal workflow evidence is addressable by a gate, but is not a separate v1 artifact. */
+/** Keep the prepared repository visible while hiding internal PR watch state. */
 export const isVisibleDevelopmentArtifact = (artifact: OperatorArtifactView): boolean =>
-  Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema) && artifact.artifact_key !== "manual_merge_target";
-export const artifactType = (schema: string): ArtifactTypeDescriptor => ({
-  id: SCHEMA_TYPES[schema] ?? schema, component_id: SCHEMA_COMPONENTS[schema] ?? "",
-  capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null,
-});
+  (artifact.artifact_key === "workspace" && artifact.schema === "workspace")
+    || (Object.hasOwn(SCHEMA_COMPONENTS, artifact.schema) && artifact.artifact_key !== "manual_merge_target");
+export const artifactType = (schema: string): ArtifactTypeDescriptor => schema === "workspace"
+  ? { id: "workspace", component_id: "", capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false }, anchor_schema: null }
+  : { id: SCHEMA_TYPES[schema] ?? schema, component_id: SCHEMA_COMPONENTS[schema] ?? "",
+    capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null };
 export const artifactTypes = (): ArtifactTypeDescriptor[] => Object.keys(SCHEMA_COMPONENTS).map(artifactType);
 export const artifactId = (artifact: OperatorArtifactView): string => compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: artifact.artifact_key });
 export const artifactRevisionId = (artifact: OperatorArtifactView, revisionId: string): string =>
