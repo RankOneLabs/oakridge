@@ -98,6 +98,14 @@ describe("v2 development adapters", () => {
     const attempt = attemptToWorkOrder({ runId: run.run_id, stage: "cohort", unit: cohort, attempt: builder });
     expect(attempt.ok && [attempt.value.reason, attempt.value.work_order_state, attempt.value.completed_at]).toEqual(["initial", "completed", null]);
   });
+  it("labels the shared brief writer without naming one cohort", () => {
+    const brief = units.find((unit) => unit.stage === "brief" && unit.attempts.some((attempt) => attempt.worker === "writer"));
+    if (!brief) throw new Error("captured fixture lacks a brief writer attempt");
+    const writer = brief.attempts.find((attempt) => attempt.worker === "writer");
+    if (!writer) throw new Error("captured fixture lacks a brief writer attempt");
+    const mapped = attemptToWorkOrder({ runId: run.run_id, stage: "brief", unit: brief, attempt: writer });
+    expect(mapped.ok && mapped.value.unit_id).toBe("shared writer");
+  });
   it("represents a planning revision in its reused kbbl session once", () => {
     const selected = latestAttemptPerSession(planningRevise.attempts as OperatorAttemptView[]);
     expect(selected.ok && selected.value.map((attempt) => [attempt.kbbl_session_id, attempt.mode, attempt.cause.kind]))

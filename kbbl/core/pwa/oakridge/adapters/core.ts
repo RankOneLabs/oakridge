@@ -148,7 +148,11 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   // runs its builder and assessor on one unit, so include the worker in this
   // display identity; retries of the same worker still group together.
   const unitLabel = unit.collection_key ?? unit.unit_key;
-  const sessionUnitId = stage === "cohort" ? `${unitLabel} / ${attempt.worker}` : unitLabel;
+  // The development brief writer shares one kbbl session across cohort brief
+  // units. Naming its sidebar row after the latest unit would imply that the
+  // session belongs to that one cohort.
+  const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer"
+    : stage === "cohort" ? `${unitLabel} / ${attempt.worker}` : unitLabel;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
     stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: stage }), stage_key: stage,
     unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
