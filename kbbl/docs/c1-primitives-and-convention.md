@@ -1,16 +1,8 @@
 # Atomic styling handoff: c1 primitives and convention
 
-The four before/after pairs below compare the production PWA bundle at
-`main@5cc63281` with the c1 branch at `e43eba57`. Both bundles were served
-with `vite preview` and captured at 1440 × 900. The screenshots are committed
-here so the visual review evidence remains available with the PR.
-
-| Surface | Before | After | Pixel comparison |
-| --- | --- | --- | --- |
-| Runs list | [before](c1-before-runs-list.png) | [after](c1-after-runs-list.png) | Identical |
-| Workflow definition list | [before](c1-before-workflow-def-list.png) | [after](c1-after-workflow-def-list.png) | Identical |
-| New-run form | [before](c1-before-new-run-form.png) | [after](c1-after-new-run-form.png) | One border pixel at (56, 323): `#0c100f` → `#0c1014` |
-| Create-project form | [before](c1-before-create-project-form.png) | [after](c1-after-create-project-form.png) | One border pixel at (56, 323): `#0c100f` → `#0c1014` |
+The c1 primitives were pixel-compared against `main@5cc63281` at 1440 × 900:
+the runs list and workflow definition list were identical, and the new-run and
+create-project forms differed by one border pixel (`#0c100f` → `#0c1014`).
 
 ## Decisions for later cohorts
 

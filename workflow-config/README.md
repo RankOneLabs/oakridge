@@ -1,17 +1,22 @@
 # Workflow configuration
 
-Shared data for the TypeScript backend in `oakridge-dbos/`:
+`development.yaml` defines shared decision sets and worker and review templates.
+Stages can bind expressions with `let`, and unit dependencies follow the outcomes
+their inputs read. A collection can sit beside other units in its group.
 
-- `definitions/` contains versioned JSON workflow definitions. The current
-  built-in seed loads `dev_flow_v14.json`; older definitions are retained for
-  reference and compatibility tests, not automatically offered as new runs.
-- `prompts/` contains Markdown templates. Definition `prompt_template_path`
-  values are relative to this directory, including `dev-flow/` and `collab/`.
+The v2 examples are authored in `samples/review-loop.yaml` and
+`samples/fan-out.yaml`. `bun workflow-config/src/generate.ts` parses every
+workflow listed in `src/workflow-sources.ts`, the samples and development,
+with the workspace's `yaml` package and writes their JSON counterparts to
+`workflow-core/fixtures/bundles/`, which the Rust compiler and replay tests
+and the DBOS end-to-end tests use. Run `bun workflow-config/src/generate.ts
+--check` to detect drift; CI runs this check. The prompts referenced by the
+samples live under `prompts/review-loop/` and `prompts/fan-out/`, and the Rust
+sample tests load those exact files.
 
-Definitions and prompts were moved unchanged from the retired Rust backend.
-Keep definition IDs and versions immutable: stored runs must continue to use
-the contracts they were launched with. This directory contains no executor
-implementation; compilation and execution belong to `oakridge-dbos/`.
+`src/prompt-catalog.ts` lists every file under `prompts/` with a server-computed
+SHA-256 digest; the authority serves it at `/api/prompts` and resolves a pinned
+bundle's prompt keys through it.
 
-The backend and its tests resolve these paths relative to their source files,
-independently of the shell's working directory.
+The PWA's definition editor authors a workflow source as JSON; the authority
+compiles it against these prompts and pins it.

@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import type { SessionManager } from "../session/session-manager";
 import type { AcpSessionService } from "../acp/session-service";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
 import type { AuthPolicy } from "./auth";
 
 let tmpRoot: string;
-let configPath: string;
 let db: Database;
 
 function makeStubAcp(
@@ -38,22 +36,18 @@ function buildApp(
   authPolicy?: AuthPolicy,
 ): Hono {
   return createApp({
-    manager: {} as unknown as SessionManager,
     acp,
     defaultWorkdir,
-    handoffsDir: tmpRoot,
     pwaDistDir: tmpRoot,
     getBunServer: () => null,
     config,
-    configPath,
-    db,
     authPolicy,
   });
 }
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-app-test-"));
-  configPath = join(tmpRoot, "config.json");
+
   db = openTestDb();
 });
 
@@ -63,16 +57,14 @@ afterEach(() => {
 });
 
 describe("GET /config", () => {
-  test("returns defaultWorkdir and softThresholdTokens", async () => {
-    const config = KbblConfigSchema.parse({});
-    const app = buildApp(config);
+  test("returns defaultWorkdir", async () => {
+    const app = buildApp(KbblConfigSchema.parse({}));
 
     const res = await app.request("/config");
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { defaultWorkdir: string | null; softThresholdTokens: number };
+    const body = (await res.json()) as { defaultWorkdir: string | null };
     expect(body.defaultWorkdir).toBe("/tmp/test-workdir");
-    expect(body.softThresholdTokens).toBe(config.compact.soft_threshold_tokens);
   });
 
   test("returns launch choices for built-in ACP profiles", async () => {
@@ -104,7 +96,6 @@ describe("GET /config", () => {
     expect(body.runtimes[0]).toMatchObject({
       id: "claude-code",
       label: "Claude Code (ACP)",
-      supportsCompaction: false,
     });
     expect(body.runtimes[0]?.models).toContainEqual({
       value: "claude-fable-5-1",
@@ -114,7 +105,6 @@ describe("GET /config", () => {
     expect(body.runtimes[1]).toMatchObject({
       id: "codex",
       label: "Codex (ACP)",
-      supportsCompaction: false,
     });
     expect(body.runtimes[1]?.models).toContainEqual({
       value: "gpt-6-astra",
@@ -131,98 +121,6 @@ describe("GET /config", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { defaultWorkdir: string | null };
     expect(body.defaultWorkdir).toBeNull();
-  });
-});
-
-describe("retired v1 workflow routes", () => {
-  test.each(["/specs", "/plans", "/cohorts", "/briefs", "/assessments", "/epics", "/dispatch-attempts", "/review/frozen", "/artifact-stream", "/projects/old-id/specs", "/projects/old-id/epics"])("GET %s is absent", async (route) => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    expect((await app.request(route)).status).toBe(404);
-  });
-
-  test.each(["/specs", "/plans", "/briefs/old-id/build", "/dispatch-attempts", "/review/freeze", "/epics"])("POST %s cannot launch v1 work", async (route) => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    expect((await app.request(route, { method: "POST", body: "{}", headers: { "content-type": "application/json" } })).status).toBe(404);
-  });
-
-  test("keeps the project registry used by v2 launch presets", async () => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    const created = await app.request("/projects", { method: "POST", body: JSON.stringify({ name: "v2 preset", repo_path: "/tmp/v2-preset" }), headers: { "content-type": "application/json" } });
-    expect(created.status).toBe(201);
-    expect((await app.request("/projects")).status).toBe(200);
-  });
-});
-
-describe("PATCH /config", () => {
-  test("rejects invalid JSON body", async () => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    const res = await app.request("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: "{not json",
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/invalid json/);
-  });
-
-  test("rejects empty body with no settable fields", async () => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    const res = await app.request("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/no settable fields/);
-  });
-
-  test("rejects non-integer softThresholdTokens", async () => {
-    const app = buildApp(KbblConfigSchema.parse({}));
-    const res = await app.request("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ softThresholdTokens: 1.5 }),
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/positive integer/);
-  });
-
-  test("rejects softThresholdTokens >= hard threshold", async () => {
-    const config = KbblConfigSchema.parse({});
-    const app = buildApp(config);
-    const res = await app.request("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ softThresholdTokens: config.compact.hard_threshold_tokens }),
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/< hardThresholdTokens/);
-  });
-
-  test("persists softThresholdTokens and returns the updated value", async () => {
-    const config = KbblConfigSchema.parse({});
-    const app = buildApp(config);
-
-    const patchRes = await app.request("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ softThresholdTokens: 12345 }),
-    });
-
-    expect(patchRes.status).toBe(200);
-    const patchBody = (await patchRes.json()) as { softThresholdTokens: number };
-    expect(patchBody.softThresholdTokens).toBe(12345);
-
-    // In-memory config is mutated so the next GET reflects the new value.
-    const getRes = await app.request("/config");
-    const getBody = (await getRes.json()) as { softThresholdTokens: number };
-    expect(getBody.softThresholdTokens).toBe(12345);
-
-    // And the change is persisted to disk so it survives a server restart.
-    const persisted = JSON.parse(readFileSync(configPath, "utf8")) as {
-      compact: { soft_threshold_tokens: number };
-    };
-    expect(persisted.compact.soft_threshold_tokens).toBe(12345);
   });
 });
 

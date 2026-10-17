@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Starts a second Oakridge from this checkout beside the default install on the
+# same machine, sharing none of its state: its own PostgreSQL container and
+# volume, ports, kbbl data, agent workdir and publication key. Arguments are
+# passed to kbbl. Configure with OAKRIDGE_SHADOW_* (see below); every other
+# Oakridge, DBOS and kbbl variable inherited from the shell is dropped, so a
+# profile that points at the default install cannot leak into this one.
+set -euo pipefail
+
+OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME="${OAKRIDGE_SHADOW_NAME:-shadow}"
+STATE_DIR="${OAKRIDGE_SHADOW_STATE_DIR:-$HOME/.local/state/oakridge-$NAME}"
+KBBL_PORT="${OAKRIDGE_SHADOW_KBBL_PORT:-8798}"
+DBOS_PORT="${OAKRIDGE_SHADOW_DBOS_PORT:-8800}"
+POSTGRES_PORT="${OAKRIDGE_SHADOW_POSTGRES_PORT:-54339}"
+POSTGRES_CONTAINER="oakridge-$NAME-postgres"
+POSTGRES_VOLUME="oakridge-$NAME-postgres-data"
+
+# What the default install uses (scripts/oakridge-start); a shadow never touches them.
+DEFAULT_PORTS=(8788 8790 54329)
+DEFAULT_CONTAINER="oakridge-postgres"
+DEFAULT_VOLUME="oakridge-postgres-data"
+
+fail() { echo "oakridge-shadow: $*" >&2; exit 1; }
+
+[[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "OAKRIDGE_SHADOW_NAME must be lowercase letters, digits and dashes"
+[ "$NAME" != "postgres" ] || fail "OAKRIDGE_SHADOW_NAME=postgres would reuse the default container's name"
+for port in "$KBBL_PORT" "$DBOS_PORT" "$POSTGRES_PORT"; do
+  for taken in "${DEFAULT_PORTS[@]}"; do
+    [ "$port" != "$taken" ] || fail "port $port belongs to the default install"
+  done
+done
+[ "$KBBL_PORT" != "$DBOS_PORT" ] && [ "$KBBL_PORT" != "$POSTGRES_PORT" ] && [ "$DBOS_PORT" != "$POSTGRES_PORT" ] \
+  || fail "the kbbl, DBOS and PostgreSQL ports must differ"
+
+is_listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+is_listening "$KBBL_PORT" && fail "port $KBBL_PORT is in use; is this shadow already running?"
+is_listening "$DBOS_PORT" && fail "port $DBOS_PORT is in use; is this shadow already running?"
+if docker container inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+  mounts="$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$POSTGRES_CONTAINER")"
+  [[ " $mounts " != *" $DEFAULT_VOLUME "* ]] || fail "container $POSTGRES_CONTAINER mounts the default install's volume; remove it"
+  [[ " $mounts " == *" $POSTGRES_VOLUME "* ]] || fail "container $POSTGRES_CONTAINER does not mount $POSTGRES_VOLUME; remove it"
+  # oakridge-start reuses an existing container as is, so it must already publish the requested port.
+  bindings="$(docker inspect -f '{{range $port, $hosts := .HostConfig.PortBindings}}{{range $hosts}}{{$port}}={{.HostIp}}:{{.HostPort}} {{end}}{{end}}' "$POSTGRES_CONTAINER")"
+  [ "$bindings" = "5432/tcp=127.0.0.1:$POSTGRES_PORT " ] \
+    || fail "container $POSTGRES_CONTAINER publishes '${bindings% }', not 127.0.0.1:$POSTGRES_PORT; remove it or use its port"
+elif is_listening "$POSTGRES_PORT"; then
+  fail "port $POSTGRES_PORT is in use by something other than $POSTGRES_CONTAINER"
+fi
+
+# kbbl takes the last --port and --dataDir it sees; the shadow appends its own, but refuses
+# a caller's rather than leave a silently ignored flag.
+for arg in "$@"; do
+  case "$arg" in
+    --port|--port=*|--dataDir|--dataDir=*) fail "$arg is set by oakridge-shadow; use OAKRIDGE_SHADOW_KBBL_PORT or OAKRIDGE_SHADOW_STATE_DIR" ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR/kbbl" "$STATE_DIR/agent-workdir"
+# One key for the shadow's lifetime: rotating it breaks every resumed agent session.
+KEY_FILE="$STATE_DIR/publication.key"
+if [ ! -s "$KEY_FILE" ]; then
+  (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
+fi
+
+github_token="${OAKRIDGE_SHADOW_GITHUB_TOKEN:-${OAKRIDGE_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}}"
+[ -n "$github_token" ] || echo "oakridge-shadow: no GitHub token; pull_request.observe will fail with discovery_unsupported" >&2
+
+# The shadow's own values must survive the scrub even when the shell exported these names.
+export -n OAKRIDGE_ROOT KBBL_PORT DBOS_PORT
+for variable in $(compgen -e); do
+  case "$variable" in
+    OAKRIDGE_*|DBOS_*|KBBL_*|GITHUB_TOKEN) unset "$variable" ;;
+  esac
+done
+
+echo "oakridge-shadow: '$NAME' state in $STATE_DIR"
+echo "oakridge-shadow: PostgreSQL $POSTGRES_CONTAINER on 127.0.0.1:$POSTGRES_PORT (volume $POSTGRES_VOLUME)"
+OAKRIDGE_POSTGRES_CONTAINER="$POSTGRES_CONTAINER" \
+  OAKRIDGE_POSTGRES_VOLUME="$POSTGRES_VOLUME" \
+  OAKRIDGE_POSTGRES_PORT="$POSTGRES_PORT" \
+  OAKRIDGE_DBOS_PORT="$DBOS_PORT" \
+  KBBL_PORT="$KBBL_PORT" \
+  OAKRIDGE_ALLOWED_ORIGINS="http://127.0.0.1:$KBBL_PORT" \
+  OAKRIDGE_AGENT_WORKDIR="$STATE_DIR/agent-workdir" \
+  OAKRIDGE_PUBLICATION_KEY="$(cat "$KEY_FILE")" \
+  OAKRIDGE_GITHUB_TOKEN="$github_token" \
+  exec "$OAKRIDGE_ROOT/scripts/oakridge-start" "$@" --port="$KBBL_PORT" --dataDir="$STATE_DIR/kbbl"

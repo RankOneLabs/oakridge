@@ -9,15 +9,7 @@ import {
 import type { PwaSessionSnapshot, PwaSessionWorkflowIdentity } from "./pwa-wire";
 
 function workflow(overrides: Partial<PwaSessionWorkflowIdentity> = {}): PwaSessionWorkflowIdentity {
-  return {
-    runId: "run-1",
-    stageInstanceId: "stage-build",
-    unitId: "cohort-a",
-    operatorRole: "build",
-    cohortTitle: null,
-    repositoryKey: null,
-    ...overrides,
-  };
+  return { runId: "run-1", unitId: "unit-a", worker: "builder", ...overrides };
 }
 
 function makeSnapshot(overrides: Partial<PwaSessionSnapshot> = {}): PwaSessionSnapshot {
@@ -89,47 +81,14 @@ test("selectNextJustNowExpiryDelay ignores sessions outside the bucket", () => {
   expect(selectNextJustNowExpiryDelay([expired], now)).toBeNull();
 });
 
-test("a build session and an assessor session sharing a run and unit land in one group", () => {
-  const build = makeSnapshot({ sid: "build-1", workflow: workflow({ operatorRole: "build" }) });
-  const assess = makeSnapshot({
-    sid: "assess-1",
-    workflow: workflow({ operatorRole: "assessment", stageInstanceId: "stage-assess" }),
-  });
+test("a builder session and an assessor session on one unit land in one group", () => {
+  const build = makeSnapshot({ sid: "build-1", workflow: workflow({ worker: "builder" }) });
+  const assess = makeSnapshot({ sid: "assess-1", workflow: workflow({ worker: "assessor" }) });
   const grouping = groupSessionsByRun([build, assess]);
   expect(grouping.runs).toHaveLength(1);
-  expect(grouping.runs[0]?.groups[0]?.sessions.map((s) => s.sid).sort()).toEqual(["assess-1", "build-1"]);
+  expect(grouping.runs[0]?.units[0]).toMatchObject({ unitId: "unit-a" });
+  expect(grouping.runs[0]?.units[0]?.sessions.map((s) => s.sid).sort()).toEqual(["assess-1", "build-1"]);
   expect(grouping.unattached).toEqual([]);
-});
-
-test("the build member's cohort title wins when the assessor member carries none", () => {
-  const build = makeSnapshot({
-    sid: "build-1",
-    lastActivityTs: "2026-01-01T00:00:00.000Z",
-    workflow: workflow({ cohortTitle: "Targets spec contract" }),
-  });
-  const assess = makeSnapshot({
-    sid: "assess-1",
-    lastActivityTs: "2026-01-02T00:00:00.000Z",
-    workflow: workflow({ operatorRole: "assessment", cohortTitle: null }),
-  });
-  const grouping = groupSessionsByRun([build, assess]);
-  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "Targets spec contract" });
-});
-
-test("a group with no titled member falls back to the unit id", () => {
-  const build = makeSnapshot({ sid: "build-1", workflow: workflow({ cohortTitle: null }) });
-  const grouping = groupSessionsByRun([build]);
-  expect(grouping.runs[0]?.groups[0]).toMatchObject({ title: "cohort-a" });
-});
-
-test("the group's repositoryKey is the first non-null one among its members", () => {
-  const build = makeSnapshot({ sid: "build-1", workflow: workflow({ repositoryKey: null }) });
-  const assess = makeSnapshot({
-    sid: "assess-1",
-    workflow: workflow({ operatorRole: "assessment", repositoryKey: "pipefitter" }),
-  });
-  const grouping = groupSessionsByRun([build, assess]);
-  expect(grouping.runs[0]?.groups[0]?.repositoryKey).toBe("pipefitter");
 });
 
 test("a null workflow is unattached and never creates a run", () => {
@@ -139,41 +98,17 @@ test("a null workflow is unattached and never creates a run", () => {
   expect(grouping.unattached.map((s) => s.sid)).toEqual(["hand-1"]);
 });
 
-test("unitId '0' stays attached to its run as a stage group", () => {
-  const scalar = makeSnapshot({ sid: "scalar-1", workflow: workflow({ unitId: "0" }) });
-  const grouping = groupSessionsByRun([scalar]);
-  expect(grouping.runs[0]?.groups[0]).toMatchObject({
-    kind: "stage",
-    stageInstanceId: "stage-build",
-    sessions: [{ sid: "scalar-1" }],
-  });
-  expect(grouping.unattached).toEqual([]);
-});
-
-test("runs and groups order by their most recent member; members use the same ordering", () => {
-  const olderGroupOld = makeSnapshot({
-    sid: "older-old", lastActivityTs: "2026-01-01T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-old" }),
-  });
-  const olderGroupNew = makeSnapshot({
-    sid: "older-new", lastActivityTs: "2026-01-03T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-old", operatorRole: "assessment" }),
-  });
-  const middleGroup = makeSnapshot({
-    sid: "middle-only", lastActivityTs: "2026-01-04T00:00:00.000Z",
-    workflow: workflow({ unitId: "cohort-middle" }),
-  });
-  const newerGroup = makeSnapshot({
-    sid: "newer-only", lastActivityTs: "2026-01-05T00:00:00.000Z",
-    workflow: workflow({ runId: "run-2", unitId: "cohort-new" }),
-  });
-  const grouping = groupSessionsByRun([olderGroupOld, olderGroupNew, middleGroup, newerGroup]);
+test("runs and units order by their most recent session; sessions use the same ordering", () => {
+  const olderUnitOld = makeSnapshot({ sid: "older-old", lastActivityTs: "2026-01-01T00:00:00.000Z", workflow: workflow({ unitId: "unit-old" }) });
+  const olderUnitNew = makeSnapshot({ sid: "older-new", lastActivityTs: "2026-01-03T00:00:00.000Z",
+    workflow: workflow({ unitId: "unit-old", worker: "assessor" }) });
+  const middleUnit = makeSnapshot({ sid: "middle-only", lastActivityTs: "2026-01-04T00:00:00.000Z", workflow: workflow({ unitId: "unit-middle" }) });
+  const newerUnit = makeSnapshot({ sid: "newer-only", lastActivityTs: "2026-01-05T00:00:00.000Z",
+    workflow: workflow({ runId: "run-2", unitId: "unit-new" }) });
+  const grouping = groupSessionsByRun([olderUnitOld, olderUnitNew, middleUnit, newerUnit]);
   expect(grouping.runs.map((run) => run.runId)).toEqual(["run-2", "run-1"]);
-  expect(grouping.runs[1]?.groups.map((group) => group.sessions[0]?.sid)).toEqual([
-    "middle-only",
-    "older-new",
-  ]);
-  expect(grouping.runs[1]?.groups[1]?.sessions.map((s) => s.sid)).toEqual(["older-new", "older-old"]);
+  expect(grouping.runs[1]?.units.map((unit) => unit.sessions[0]?.sid)).toEqual(["middle-only", "older-new"]);
+  expect(grouping.runs[1]?.units[1]?.sessions.map((s) => s.sid)).toEqual(["older-new", "older-old"]);
 });
 
 test("the unattached section is sorted by activity, newest first", () => {

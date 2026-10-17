@@ -25,8 +25,7 @@ import type {
   TurnKey,
 } from "./types";
 
-// Stable canonicalization matching the legacy resumable flow: sort object
-// keys recursively, then sha256 the JSON. Same spec must hash identically
+// Stable canonicalization of a start spec: sort object keys recursively, then sha256 the JSON. Same spec must hash identically
 // regardless of property order in the HTTP body.
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -128,7 +127,7 @@ function nowIso(): string {
 }
 
 /**
- * `acp_sessions`' actual column shape: the workflow identity is six flat
+ * `acp_sessions`' actual column shape: the workflow identity is three flat
  * nullable TEXT columns, not the nested object `AcpSessionRow` exposes.
  * Every `SELECT *`/`RETURNING *` reads this shape; `toAcpSessionRow`
  * assembles the nested `workflow` member consumers see.
@@ -156,36 +155,16 @@ interface RawAcpSessionRow {
   last_activity_at: string;
   created_at: string;
   updated_at: string;
-  workflow_run_id: string | null;
-  stage_instance_id: string | null;
-  stage_unit_id: string | null;
-  operator_role: string | null;
-  cohort_title: string | null;
-  repository_key: string | null;
+  run_id: string | null;
+  unit_id: string | null;
+  worker: string | null;
 }
 
-/** Absence is the nullable: yields `null` unless all three required columns are non-null. */
+/** Absence is the nullable: yields `null` unless all three columns are non-null. */
 function toAcpSessionRow(raw: RawAcpSessionRow): AcpSessionRow {
-  const {
-    workflow_run_id,
-    stage_instance_id,
-    stage_unit_id,
-    operator_role,
-    cohort_title,
-    repository_key,
-    ...rest
-  } = raw;
+  const { run_id, unit_id, worker, ...rest } = raw;
   const workflow: AcpSessionWorkflowIdentity | null =
-    workflow_run_id !== null && stage_instance_id !== null && stage_unit_id !== null
-      ? {
-          workflow_run_id,
-          stage_instance_id,
-          unit_id: stage_unit_id,
-          operator_role,
-          cohort_title,
-          repository_key,
-        }
-      : null;
+    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker } : null;
   return { ...rest, workflow } as AcpSessionRow;
 }
 
@@ -240,18 +219,12 @@ export class AcpSessionStore {
   ): void {
     this.db
       .prepare(
-        `UPDATE acp_sessions
-         SET workflow_run_id = ?, stage_instance_id = ?, stage_unit_id = ?,
-             operator_role = ?, cohort_title = ?, repository_key = ?, updated_at = ?
-         WHERE sid = ?`,
+        `UPDATE acp_sessions SET run_id = ?, unit_id = ?, worker = ?, updated_at = ? WHERE sid = ?`,
       )
       .run(
-        workflow.workflow_run_id,
-        workflow.stage_instance_id,
+        workflow.run_id,
         workflow.unit_id,
-        workflow.operator_role,
-        workflow.cohort_title,
-        workflow.repository_key,
+        workflow.worker,
         nowIso(),
         sid,
       );
@@ -281,18 +254,14 @@ export class AcpSessionStore {
           string | null,
           string | null,
           string | null,
-          string | null,
-          string | null,
-          string | null,
         ]
       >(
         `INSERT INTO acp_sessions (
            sid, resumable_key, start_spec_hash, agent_profile, name,
            artifact_id, project_workdir, worktree_path, requested_model,
            requested_effort, requested_mode, status, last_activity_at,
-           created_at, updated_at, workflow_run_id, stage_instance_id,
-           stage_unit_id, operator_role, cohort_title, repository_key
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           created_at, updated_at, run_id, unit_id, worker
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -310,12 +279,9 @@ export class AcpSessionStore {
         ts,
         ts,
         ts,
-        input.workflow?.workflow_run_id ?? null,
-        input.workflow?.stage_instance_id ?? null,
+        input.workflow?.run_id ?? null,
         input.workflow?.unit_id ?? null,
-        input.workflow?.operator_role ?? null,
-        input.workflow?.cohort_title ?? null,
-        input.workflow?.repository_key ?? null,
+        input.workflow?.worker ?? null,
       )!;
     this.notifySessionsChanged();
     return toAcpSessionRow(row);
@@ -456,6 +422,16 @@ export class AcpSessionStore {
       )
       .run(status, ts, sid);
     this.notifySessionsChanged();
+  }
+
+  /** Reopen an ended resumable row after its ACP session has been loaded. */
+  reviveEnded(sid: KbblSessionId): boolean {
+    const changed = this.db.prepare(
+      `UPDATE acp_sessions SET status = 'idle', end_reason = NULL, end_detail = NULL, updated_at = ?
+       WHERE sid = ? AND status IN ('ended', 'failed') AND fenced_by IS NULL`,
+    ).run(nowIso(), sid).changes > 0;
+    if (changed) this.notifySessionsChanged();
+    return changed;
   }
 
   setRequestedMode(sid: KbblSessionId, mode: string): void {
@@ -739,15 +715,17 @@ export class AcpSessionStore {
       );
   }
 
-  /**
-   * Boot recovery sweep (§10.7), one transaction. `prompting` turns may
-   * or may not have reached an agent — mark them unknown, never retry.
-   * `accepted` turns provably never reached an agent — retain them for
-   * exactly-once dispatch when the controller next becomes live.
-   */
+  /** Boot recovery sweep, one transaction. */
   bootSweep(): BootSweepResult {
     const result = this.db.transaction((): BootSweepResult => {
       const ts = nowIso();
+      this.db.prepare(
+        `UPDATE acp_turns
+         SET status = 'accepted', completed_at = NULL, failure_code = NULL, failure_detail = NULL
+         WHERE source = 'initial' AND status IN ('prompting', 'unknown')
+           AND sid IN (SELECT sid FROM acp_sessions WHERE resumable_key IS NOT NULL
+             AND status NOT IN ('failed', 'fenced', 'ended'))`,
+      ).run();
       const unknownTurns = this.db
         .prepare(
           `UPDATE acp_turns

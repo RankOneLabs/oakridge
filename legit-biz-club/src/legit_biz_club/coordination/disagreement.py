@@ -8,7 +8,7 @@ project runs end-to-end without operator intervention.
 
 Human-in-loop is an optional alternative strategy: the operator wires
 a Python callback (or a stdin / file-watch channel) per project. There
-is no kbbl operator-pick UI in v1; human-in-loop is genuinely
+is no operator-pick UI; human-in-loop is genuinely
 optional.
 
 Design memo rationale: "operator picks every escalation" would

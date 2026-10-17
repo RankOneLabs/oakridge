@@ -1,0 +1,433 @@
+# The development workflow uses shared decisions, workers and inferred dependencies.
+#
+#   prepare         code worker repository.prepare per repository
+#   analysis        author agent + operator review
+#   planning        planner agent + operator review; validate: cohorts, repositories, graph
+#   briefs          one shared writer session across plan cohorts, with a separate review per brief
+#   implementation  one cohort per brief, after its dependencies, four at a time:
+#                   builder, assessor reviewing the build, operator reviewing the assessment,
+#                   the PR observed until merged (D4); admission optional (D7);
+#                   a closed, unmerged PR requests build changes (D5)
+#   integration     one integration PR per repository with cohorts, into its final base (D6)
+#
+# The six artifact bodies are named schemas: the PWA picks each viewer by name.
+workflow: development
+input:
+  title: text
+  spec: text
+  repositories: list(repository)
+  admission: boolean
+  final_merge_policy: final_merge_policy
+schemas:
+  final_merge_policy: enum(require_merge, allow_close_without_merge)
+  repository:
+    key: ident
+    preparation: { repository_path: repo_path, expected_head: optional(text) }
+    forge: forge
+  forge: { owner: ident, name: ident, build_base: text, final_base: text }
+  workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident }
+  prepared: { key: ident, workspace: workspace }
+  pr_status: { state: "enum(open, merged, closed_unmerged)", number: integer, url: text, head_sha: optional(text), merged_at: optional(text) }
+  completed_cohort: outcome_of(cohort)
+
+  severity: enum(blocking, warning, info)
+  risk: { description: text, mitigation: text }
+  issue: { description: text, severity: severity }
+
+  analysis_body:
+    summary: text
+    source_spec_refs: list(text)
+    findings: list(spec_finding)
+    requirements: list(requirement)
+    risks: list(risk)
+  spec_finding: { id: ident, description: text, severity: severity }
+  requirement: { id: ident, description: text, status: requirement_status }
+  requirement_status: enum(implementable, blocked, ambiguous)
+
+  plan_body:
+    summary: text
+    cohorts: list(plan_cohort)
+    dependency_order: list(ident)
+    scope: { in_scope: list(text), out_of_scope: list(text) }
+    acceptance_criteria: list(text)
+    risks: list(risk)
+  plan_cohort:
+    id: ident
+    repository_key: optional(ident)
+    title: text
+    scope: text
+    depends_on: list(ident)
+    description: optional(text)
+    files_in_scope: list(text)
+    decisions: list(text)
+    acceptance_criteria: list(text)
+
+  brief_body:
+    cohort_id: ident
+    repository_key: ident
+    title: text
+    depends_on: list(ident)
+    goal: text
+    files_in_scope: list(text)
+    decisions_made: list(brief_decision)
+    approaches_rejected: list(rejected_approach)
+    acceptance_criteria: list(text)
+    next_action: text
+  brief_decision: { decision: text, rationale: text }
+  rejected_approach: { approach: text, reason: text }
+
+  build_body:
+    repository_key: optional(ident)
+    summary: text
+    changed_files: list(text)
+    tests: test_evidence
+    delegated_session_metadata: optional(build_metadata)
+    known_issues: list(issue)
+  test_evidence:
+    passed: integer
+    failed: integer
+    output: optional(text)
+    summary: optional(text)
+    cargo_test_output: optional(text)
+  build_metadata: { cohort_id: optional(ident), session_id: optional(ident), branch: optional(ident) }
+
+  assessment_body:
+    verdict: enum(pass, pass_with_notes, fail)
+    findings: list(assessment_finding)
+    test_evidence: optional(test_evidence)
+    recommended_next_actions: list(text)
+  assessment_finding:
+    criterion: optional(text)
+    status: optional(enum(met, not_met, partial))
+    evidence: optional(text)
+    description: optional(text)
+
+  pr_body:
+    pr_url: text
+    branch: text
+    summary: text
+    review_status: optional(enum(draft, ready, changes_requested, approved, merged, closed))
+
+decisions:
+  accept_or_request:
+    accept: { effect: approve, label: Accept }
+    request_changes:
+      effect: request_changes
+      label: Request changes
+      fields: { feedback: "What must the analysis change?" }
+
+workers:
+  pr_watch:
+    kind: code
+    operation: pull_request.observe
+    when: pr_published
+    inputs:
+      query: "{owner: input.repository.forge.owner, name: input.repository.forge.name, head_owner: input.workspace.push_remote_owner, head_branch: latest(pr).branch, base_branch: watch_base, pr_url: latest(pr).pr_url}"
+    every: 2m
+    creates: [pr_state]
+
+reviews:
+  pr_closed:
+    of: build_result
+    by: operator
+    when: closed_pr
+    prompt: development/pr-closed.md
+    inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+    decisions:
+      replace_pr: { effect: request_changes, label: Replace the closed PR,
+                    fields: { feedback: "What must change in the replacement pull request?" } }
+
+run:
+  pools: { writers: 4, builders: 4 }
+  units:
+    prepare:
+      for_each: input.repositories
+      key: each.key
+      stage: prepare
+      input: { repository: each }
+    analysis:
+      stage: analysis
+      input: { spec: input.spec, repositories: input.repositories, workspaces: "map(prepare, prepare.outcome)" }
+    planning:
+      stage: planning
+      input:
+        spec: input.spec
+        repositories: input.repositories
+        workspaces: "map(prepare, prepare.outcome)"
+        analysis: analysis.outcome.analysis
+    briefs:
+      for_each: planning.outcome.plan.cohorts
+      key: each.id
+      stage: brief
+      pool: writers
+      input:
+        cohort: each
+        plan: planning.outcome.plan
+        spec: input.spec
+        workspaces: "map(prepare, prepare.outcome)"
+        analysis: analysis.outcome.analysis
+    implementation:
+      for_each: "map(briefs, briefs.outcome.brief)"
+      key: each.cohort_id
+      after: each.depends_on
+      stage: cohort
+      pool: builders
+      input:
+        brief: each
+        repository: "require(lookup(input.repositories, key, each.repository_key))"
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
+        admission: input.admission
+    integration:
+      for_each: "filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))"
+      key: each.key
+      stage: integration
+      input:
+        repository: each
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, each.key)).workspace"
+        cohorts: "filter(map(implementation, implementation.outcome), item.repository_key == each.key)"
+        final_merge_policy: input.final_merge_policy
+  outcome: { cohorts: "map(implementation, implementation.outcome)", integrations: "map(integration, integration.outcome)" }
+
+stages:
+  prepare:
+    input: { repository: repository }
+    artifacts:
+      workspace: { schema: workspace }
+    workers:
+      git:
+        kind: code
+        operation: repository.prepare
+        inputs:
+          repository_path: input.repository.preparation.repository_path
+          expected_head: input.repository.preparation.expected_head
+        creates: [workspace]
+    done_when: published(workspace)
+    outcome: { key: input.repository.key, workspace: latest(workspace) }
+
+  analysis:
+    input: { spec: text, repositories: list(repository), workspaces: list(prepared) }
+    artifacts:
+      analysis: { schema: analysis_body }
+    workers:
+      author:
+        kind: agent
+        prompts: { initial: development/analysis.md, revise: development/analysis-revise.md }
+        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces }
+        creates: [analysis]
+    reviews:
+      analysis_review:
+        of: analysis
+        by: operator
+        prompt: development/analysis-review.md
+        inputs: { spec: input.spec, analysis: latest(analysis) }
+        decisions: { set: accept_or_request }
+    done_when: approved(analysis)
+    outcome: { analysis: latest(analysis) }
+
+  planning:
+    input: { spec: text, repositories: list(repository), workspaces: list(prepared), analysis: analysis_body }
+    artifacts:
+      plan:
+        schema: plan_body
+        validate:
+          - check: len(plan.cohorts) > 0
+            message: The plan must name at least one cohort.
+          - check: every(plan.cohorts, contains(map(input.repositories, item.key), item.repository_key))
+            message: Every cohort's repository_key must be the key of one of the run's repositories.
+          - check: valid_graph(plan.cohorts, id, depends_on)
+            message: Cohort ids must be unique idents, and each depends_on must name other cohorts without repeats or a cycle.
+    workers:
+      planner:
+        kind: agent
+        prompts: { initial: development/plan.md, revise: development/plan-revise.md }
+        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces, analysis: input.analysis }
+        creates: [plan]
+    reviews:
+      plan_review:
+        of: plan
+        by: operator
+        prompt: development/plan-review.md
+        inputs: { analysis: input.analysis, plan: latest(plan) }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the plan change?" } } } }
+    done_when: approved(plan)
+    outcome: { plan: latest(plan) }
+
+  brief:
+    input: { cohort: plan_cohort, plan: plan_body, analysis: analysis_body, spec: text, workspaces: list(prepared) }
+    artifacts:
+      brief:
+        schema: brief_body
+        validate:
+          - check: brief.cohort_id == input.cohort.id
+            message: The brief's cohort_id must be its plan cohort's id.
+          - check: brief.repository_key == input.cohort.repository_key
+            message: The brief's repository_key must be its plan cohort's.
+          - check: brief.depends_on == input.cohort.depends_on
+            message: The brief's depends_on must be its plan cohort's, in the same order.
+    workers:
+      writer:
+        kind: agent
+        session: shared
+        prompts: { initial: development/brief.md, revise: development/brief-revise.md }
+        inputs: { cohort: input.cohort, plan: input.plan, analysis: input.analysis, spec: input.spec, workspaces: input.workspaces }
+        creates: [brief]
+    reviews:
+      brief_review:
+        of: brief
+        by: operator
+        prompt: development/brief-review.md
+        inputs: { cohort: input.cohort, brief: latest(brief) }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the brief change?" } } } }
+    done_when: approved(brief)
+    outcome: { brief: latest(brief) }
+
+  cohort:
+    input: { brief: brief_body, repository: repository, workspace: workspace, admission: boolean }
+    let:
+      brief_value: input.brief
+      watch_base: input.repository.forge.build_base
+      pr_published: published(pr)
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
+      merged_pr: observed_state_current and latest(observed_state).state == "merged"
+    artifacts:
+      brief: { schema: brief_body }
+      build_result: { schema: build_body }
+      pr: { schema: pr_body }
+      assessment: { schema: assessment_body }
+      pr_state: { schema: pr_status }
+      observed_state: { schema: pr_status }
+    workers:
+      # The accepted brief, published into the cohort so the operator can admit it (D7).
+      publish_brief:
+        kind: code
+        operation: value.publish
+        inputs: { value: input.brief }
+        creates: [brief]
+      builder:
+        kind: agent
+        when: approved(brief) or not input.admission
+        prompts: { initial: development/build.md, revise: development/build-revise.md }
+        inputs: { brief: brief_value, repository: input.repository }
+        workspace: repository(input.workspace)
+        creates: [build_result, pr]
+      assessor:
+        kind: agent
+        prompts: { review: development/assess.md }
+        inputs: { brief: brief_value, pr: latest(pr) }
+        workspace: repository(input.workspace)
+        reviews: build_result
+        creates: [assessment]
+      pr_watch: { template: pr_watch }
+      # Keep the optional PR observation separate from the manual completion
+      # path, so an unavailable watcher cannot veto confirm_merged.
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: pr_state_current
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
+    reviews:
+      admission:
+        of: brief
+        by: operator
+        when: input.admission
+        prompt: development/admission.md
+        inputs: { brief: latest(brief) }
+        decisions:
+          admit: { effect: approve, label: Admit }
+      assessment_review:
+        of: assessment
+        by: operator
+        prompt: development/assessment-review.md
+        inputs: { brief: input.brief, build_result: latest(build_result), pr: latest(pr), assessment: latest(assessment) }
+        decisions:
+          set: accept_or_request
+          rename: { request_changes: request_build_changes }
+          overrides:
+            request_changes: { on: build_result, label: Request build changes,
+                               fields: { feedback: "What must the builder change?" } }
+      merge_confirmation:
+        of: pr
+        by: operator
+        when: pr_published and not merged_pr and not approved(pr)
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { effect: approve, label: Confirm merged }
+      # D5: a closed, unmerged PR counts as changes requested on the build.
+      pr_closed: { template: pr_closed }
+    done_when: approved(assessment) and published(build_result) and pr_published and (merged_pr or approved(pr))
+    outcome:
+      cohort_id: brief_value.cohort_id
+      repository_key: input.brief.repository_key
+      title: input.brief.title
+      pr_url: latest(pr).pr_url
+      branch: latest(pr).branch
+      build_result: latest(build_result)
+
+  integration:
+    input: { repository: repository, workspace: workspace, cohorts: list(completed_cohort), final_merge_policy: final_merge_policy }
+    let:
+      pr_published: published(pr)
+      watch_base: input.repository.forge.final_base
+      pr_state_current: published(pr) and published(pr_state) and latest(pr_state).url == latest(pr).pr_url
+      observed_state_current: published(pr) and published(observed_state) and latest(observed_state).url == latest(pr).pr_url
+      closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
+      final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
+    artifacts:
+      pr: { schema: pr_body }
+      pr_state: { schema: pr_status }
+      manual_merge_target: { schema: pr_body }
+      observed_state: { schema: pr_status }
+    workers:
+      integrator:
+        kind: agent
+        prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
+        inputs: { repository: input.repository, cohorts: input.cohorts }
+        workspace: repository(input.workspace)
+        creates: [pr]
+      pr_watch: { template: pr_watch }
+      # Independent evidence paths preserve the manual v1 merge fallback when
+      # no PR reader is configured. Periodic copies follow revised inputs.
+      prepare_manual_merge:
+        kind: code
+        operation: value.publish
+        when: pr_published
+        inputs: { value: latest(pr) }
+        every: 2m
+        creates: [manual_merge_target]
+      prepare_observed_state:
+        kind: code
+        operation: value.publish
+        when: pr_state_current
+        inputs: { value: latest(pr_state) }
+        every: 2m
+        creates: [observed_state]
+    reviews:
+      integration_review:
+        of: pr
+        by: operator
+        prompt: development/integration-review.md
+        inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
+      merge_confirmation:
+        of: manual_merge_target
+        by: operator
+        when: published(manual_merge_target) and not final_state and not closed_pr and not approved(manual_merge_target)
+        prompt: development/merge-confirmation.md
+        inputs: { pr: latest(pr), pr_state: latest(pr_state) }
+        decisions:
+          confirm_merged: { effect: approve, label: Confirm merged }
+      pr_closed:
+        template: pr_closed
+        overrides: { of: pr }
+    # The independent evidence paths avoid reading an unobserved PR watch in the
+    # manual path; under allow_close_without_merge, an observed close suffices.
+    done_when: approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
+    outcome:
+      repository_key: input.repository.key
+      pr_url: latest(pr).pr_url
+      is_merged: approved(manual_merge_target) or (observed_state_current and latest(observed_state).state == "merged")

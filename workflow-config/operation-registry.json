@@ -1,0 +1,52 @@
+[
+  {
+    "key": "repository.prepare",
+    "input_schema": {
+      "repository_path": "repo_path",
+      "expected_head": "optional(text)"
+    },
+    "output_schema": {
+      "repository_path": "repo_path",
+      "push_remote_owner": "ident",
+      "head": "ident"
+    },
+    "error_codes": [
+      "worktree_unrecoverable",
+      "head_changed"
+    ]
+  },
+  {
+    "key": "pull_request.observe",
+    "input_schema": {
+      "query": {
+        "owner": "ident",
+        "name": "ident",
+        "head_owner": "ident",
+        "head_branch": "text",
+        "base_branch": "text",
+        "pr_url": "text"
+      }
+    },
+    "output_schema": {
+      "state": "enum(open, merged, closed_unmerged)",
+      "number": "integer",
+      "url": "text",
+      "head_sha": "optional(text)",
+      "merged_at": "optional(text)"
+    },
+    "error_codes": [
+      "discovery_unsupported",
+      "auth",
+      "provider_rejected",
+      "pull_request_mismatch"
+    ]
+  },
+  {
+    "key": "value.publish",
+    "input_schema": {
+      "value": "$value"
+    },
+    "output_schema": "$value",
+    "error_codes": []
+  }
+]

@@ -7,8 +7,7 @@
 // - fresh session:            new worktree `kbbl/<sid8>` cut from workdir HEAD
 // - DBOS identity worktree:   branch/subdir/base exactly as requested
 // - inherit_worktree_from:    a NEW worktree cut from the parent session's
-//   worktree (depth-suffixed branch), preserving the legacy resume-chain
-//   semantics — never the same directory, never a provider-session lookup
+//   worktree (depth-suffixed branch) — never the same directory, never a provider-session lookup
 //   (§17.3: kbbl stores worktree metadata directly).
 
 import type { AcpSessionStore } from "../acp/store";
@@ -119,8 +118,8 @@ export class GitWorktreeProvider implements WorktreeProvider {
   }
 
   /**
-   * Best-effort worktree removal for an operator purge. Follows the legacy
-   * contract: failures are logged, never thrown — the caller has already
+   * Best-effort worktree removal for an operator purge: failures are
+   * logged, never thrown — the caller has already
    * committed to deleting the session.
    */
   async remove(row: {
@@ -143,14 +142,11 @@ export class GitWorktreeProvider implements WorktreeProvider {
   ): Promise<Result<WorktreeResolution, AcpError>> {
     const parent = this.deps.store.getSession(parentSid as KbblSessionId);
     if (!parent) {
-      // Pre-cutover legacy sessions live in JSONL, not acp_sessions; a
-      // run whose lineage predates the ACP cutover must re-anchor with an
-      // explicit worktree spec instead of inheriting across backends.
       return err(
         acpError(
           "worktree_failed",
           "worktree.resolveInherited",
-          `inherit_worktree_from ${parentSid} is not a known ACP session (legacy sessions cannot be inherited across the cutover)`,
+          `inherit_worktree_from ${parentSid} is not a known session`,
           sid,
         ),
       );

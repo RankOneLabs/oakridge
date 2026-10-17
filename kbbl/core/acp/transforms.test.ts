@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import type * as schema from "@agentclientprotocol/sdk";
 
 import { buildAgentEnv } from "./agent-profile";
+import { builtinAgentProfiles } from "./default-profiles";
 import { resolveRequestedOption } from "./controller";
 import { projectSessionUpdate } from "./event-projector";
 
@@ -27,6 +28,22 @@ test("buildAgentEnv exclude strips a variable even when inheriting", () => {
   );
   expect(env.PATH).toBe("/usr/bin");
   expect("ANTHROPIC_API_KEY" in env).toBe(false);
+});
+
+test("an exclude entry ending in * strips every variable with its prefix", () => {
+  const env = buildAgentEnv(
+    { inherit: true, exclude: ["OAKRIDGE_*"] },
+    { PATH: "/usr/bin", OAKRIDGE_CONTROL_TOKEN: "operator", OAKRIDGE_CORE_CONTROL_TOKEN: "core", OAKRIDGEX: "kept" },
+  );
+  expect(env).toEqual({ PATH: "/usr/bin", OAKRIDGEX: "kept" });
+});
+
+test("no built-in agent profile hands an agent the operator's OAKRIDGE_* credentials", () => {
+  const base = { PATH: "/usr/bin", OAKRIDGE_CONTROL_TOKEN: "operator", OAKRIDGE_CORE_CONTROL_TOKEN: "core",
+    OAKRIDGE_PUBLICATION_KEY: "key", OAKRIDGE_GITHUB_TOKEN: "gh" };
+  const leaked = [...builtinAgentProfiles("/kbbl").values()]
+    .map((profile) => [profile.id, Object.keys(buildAgentEnv(profile.env_policy, base)).filter((key) => key.startsWith("OAKRIDGE_"))]);
+  expect(leaked).toEqual([["claude-code", []], ["codex", []]]);
 });
 
 test("buildAgentEnv set overrides win and inherit=false starts empty", () => {

@@ -1,0 +1,77 @@
+{
+  "source": "/api/definitions/f225c3d4-80e3-429e-9991-bdb2d2eb5a7f",
+  "captured_at": "2026-10-16T23:03:45.577Z",
+  "run_id": "run-2dc6bf5a65fc53b7",
+  "definition": {
+    "bundle_id": "f225c3d4-80e3-429e-9991-bdb2d2eb5a7f",
+    "digest": "232a5b48d1f05a5c8abe76fdd03d2a935309151c404d8b6c35fe68db7ee15823",
+    "workflow": {
+      "workflow": "development",
+      "stages": {
+        "brief": {
+          "workers": {
+            "writer": {
+              "kind": "agent"
+            }
+          }
+        },
+        "cohort": {
+          "workers": {
+            "builder": {
+              "kind": "agent"
+            },
+            "assessor": {
+              "kind": "agent"
+            },
+            "pr_watch": {
+              "kind": null
+            },
+            "publish_brief": {
+              "kind": "code"
+            },
+            "prepare_observed_state": {
+              "kind": "code"
+            }
+          }
+        },
+        "prepare": {
+          "workers": {
+            "git": {
+              "kind": "code"
+            }
+          }
+        },
+        "analysis": {
+          "workers": {
+            "author": {
+              "kind": "agent"
+            }
+          }
+        },
+        "planning": {
+          "workers": {
+            "planner": {
+              "kind": "agent"
+            }
+          }
+        },
+        "integration": {
+          "workers": {
+            "pr_watch": {
+              "kind": null
+            },
+            "integrator": {
+              "kind": "agent"
+            },
+            "prepare_manual_merge": {
+              "kind": "code"
+            },
+            "prepare_observed_state": {
+              "kind": "code"
+            }
+          }
+        }
+      }
+    }
+  }
+}

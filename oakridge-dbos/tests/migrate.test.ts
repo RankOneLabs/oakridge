@@ -1,244 +1,87 @@
-import { afterAll, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, copyFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { expect, test } from "bun:test";
+import { sql } from "kysely";
+import { jsonText, openDatabase } from "../src/storage/database";
+import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { scratchDatabase } from "./authority-fixture";
 
-import { applyMigrations, migrationNames } from "../src/storage/migrate";
-import { PgPostgresExecutor } from "../src/storage/sql-executor";
-import { createScratchDatabase, type ScratchDatabase } from "./support/durable-database";
-
-test("migration discovery accepts only numbered SQL files in deterministic order", () => {
-  expect(migrationNames(["notes.md", "0004_projects.sql", "0003_artifact_lifecycle.sql", "0002_workflow_attempt.sql", "0001_domain.sql", "1_bad.sql", "0003-UP.sql"]))
-    .toEqual(["0001_domain.sql", "0002_workflow_attempt.sql", "0003_artifact_lifecycle.sql", "0004_projects.sql"]);
+test("an empty database takes the baseline once, and a repeat confirms it", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db);
+    await migrateEmptyDatabase(db);
+    const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(db);
+    expect(baselines.rows[0]?.count).toBe(1);
+  } finally { await db.destroy(); await scratch.drop(); }
 });
 
-const MIGRATIONS = new URL("../src/storage/migrations", import.meta.url).pathname;
-const BEFORE_BRANCH_ROLES = "0008_epic_base_branch.sql";
-
-/** The migrations that ran before the one under test, in their own directory. */
-const migrationsBefore = async (excluded: string): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), "oakridge-migrations-"));
-  await mkdir(directory, { recursive: true });
-  for (const name of migrationNames(await readdir(MIGRATIONS))) {
-    if (name >= excluded) continue;
-    await copyFile(join(MIGRATIONS, name), join(directory, name));
-  }
-  return directory;
-};
-
-const scratches: ScratchDatabase[] = [];
-afterAll(async () => { for (const scratch of scratches) await scratch.drop(); });
-
-/** A database with every migration before the branch-roles one applied. */
-const databaseBeforeBranchRoles = async (name: string) => {
-  const scratch = await createScratchDatabase(name);
-  if (!scratch.ok) {
-    // A missing PostgreSQL is a skip; a refused CREATE DATABASE is not, and a
-    // caller that treated them alike would report a broken environment green.
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    return null;
-  }
-  scratches.push(scratch.value);
-  const sql = PgPostgresExecutor.connect(scratch.value.url);
-  const before = await migrationsBefore(BEFORE_BRANCH_ROLES);
-  await applyMigrations(sql, before);
-  await rm(before, { recursive: true, force: true });
-  return sql;
-};
-
-/** A run, so an epic profile has something to hang off. */
-const seedRun = async (sql: PgPostgresExecutor): Promise<void> => {
-  await sql.query(`INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
-    VALUES ('00000000-0000-4000-8000-000000000001', 'dev-flow', 12, '{}'::jsonb, false, now())`, []);
-  await sql.query(`INSERT INTO oakridge.workflow_run (id, workflow_definition_id, context)
-    VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '{}'::jsonb)`, []);
-};
-
-/**
- * The branch-roles migration, run against rows written before it.
- *
- * It rewrites data an operator owns: an epic's branch bindings, in jsonb. A
- * migration that only ever runs against an empty test database proves that it
- * parses, not that it moves anything — and the thing it moves here is which
- * branch every build unit's pull request will target.
- */
-test("the branch-roles migration promotes the epic branch and renames the integration one", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_test");
-  if (!sql) {
-    console.warn("migration backfill SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+test("two processes applying the baseline concurrently apply it exactly once", async () => {
+  const scratch = await scratchDatabase();
+  const first = openDatabase(scratch.url);
+  const second = openDatabase(scratch.url);
   try {
-    // A run and an epic profile exactly as the pre-rename code wrote them: the
-    // epic's branch repeated inside every repository binding, and `base_branch`
-    // meaning `main`.
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Tiers page', 'tiers-page', 'active', 'guarded',
-        '[{"repository_key":"api","repository_path":"/repos/api","base_branch":"main","epic_branch":"epic/tiers-page","final_merge_state":"pending"},
-          {"repository_key":"web","repository_path":"/repos/web","base_branch":"trunk","epic_branch":"epic/tiers-page","final_merge_state":"pending"}]'::jsonb,
-        now(), now())`, []);
+    await Promise.all([migrateEmptyDatabase(first), migrateEmptyDatabase(second)]);
+    const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(first);
+    expect(baselines.rows[0]?.count).toBe(1);
+  } finally { await first.destroy(); await second.destroy(); await scratch.drop(); }
+});
 
-    const applied = await applyMigrations(sql, MIGRATIONS);
-    expect(applied).toContain(BEFORE_BRANCH_ROLES);
-
-    const rows = await sql.query<{ readonly base_branch: string; readonly repositories: readonly { readonly repository_key: string; readonly integration_branch: string; readonly base_branch?: string; readonly epic_branch?: string }[] }>(
-      "SELECT base_branch, repositories FROM oakridge.epic_workflow_profile", []);
-    const profile = rows[0];
-
-    // The epic's branch is promoted out of the bindings, once.
-    expect(profile?.base_branch).toBe("epic/tiers-page");
-    // Each repository keeps its own integration branch — they differ here on
-    // purpose, because a rewrite that collapsed them would look correct against
-    // the usual all-`main` case.
-    expect(profile?.repositories.map((repository) => [repository.repository_key, repository.integration_branch]))
-      .toEqual([["api", "main"], ["web", "trunk"]]);
-    // And the words that meant two branches are gone.
-    for (const repository of profile?.repositories ?? []) {
-      expect(repository.epic_branch).toBeUndefined();
-      expect(repository.base_branch).toBeUndefined();
-    }
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/**
- * An epic whose bindings named different epic branches cannot become one base
- * branch, and picking the first would drop the others silently and
- * unrecoverably. It should never occur — `epic_branch` defaulted to
- * `epic/<slug>` for every repository and the launcher never sent it — but a
- * migration that guesses on data it cannot convert is worse than one that
- * stops.
- */
-test("the branch-roles migration refuses an epic that carries more than one epic branch", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_divergent_test");
-  if (!sql) {
-    console.warn("divergent-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+test("a database with other tables is refused, and a changed baseline is detected", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
   try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Split epic', 'split-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main","epic_branch":"epic/api"},
-          {"repository_key":"web","base_branch":"main","epic_branch":"epic/web"}]'::jsonb,
-        now(), now())`, []);
+    await sql`CREATE TABLE public.stray (id int)`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("requires an empty database; found public.stray");
+    await sql`DROP TABLE public.stray`.execute(db);
+    await migrateEmptyDatabase(db);
+    await sql`UPDATE authority.schema_baseline SET digest = ${"0".repeat(64)}`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("authority baseline digest mismatch");
+  } finally { await db.destroy(); await scratch.drop(); }
+});
 
-    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
-
-    // And it stopped before touching anything: the bindings are as they were.
-    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
-      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual(["epic/api", "epic/web"]);
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/**
- * The case the divergence check first missed: one binding with no `epic_branch`
- * and one with an explicit non-default value.
- *
- * An absent `epic_branch` was not "no opinion" — it *meant* `epic/<slug>`, the
- * same default `selectEpicBranch` applied. Counting only the explicit values
- * saw one distinct branch here and let the row through, and the promotion then
- * took `repositories->0`, which is the absent one, and dropped `epic/custom`.
- */
-test("the branch-roles migration refuses an implicit default beside an explicit branch", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_mixed_test");
-  if (!sql) {
-    console.warn("mixed-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+test("the new baseline rejects compiled bundles without a parsed workflow", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
   try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Mixed epic', 'mixed-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main"},
-          {"repository_key":"web","base_branch":"main","epic_branch":"epic/custom"}]'::jsonb,
-        now(), now())`, []);
+    await migrateEmptyDatabase(db);
+    await expect(db.insertInto("authority.definition_bundle").values({ id: "old", digest: "old", source: jsonText({}) as never,
+      checked_program: jsonText({ digest: "old", stages: [] }) as never }).execute())
+      .rejects.toThrow();
+  } finally { await db.destroy(); await scratch.drop(); }
+});
 
-    await expect(applyMigrations(sql, MIGRATIONS)).rejects.toThrow(/more than one epic_branch/);
-
-    const rows = await sql.query<{ readonly repositories: readonly { readonly epic_branch?: string }[] }>(
-      "SELECT repositories FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.repositories.map((repository) => repository.epic_branch)).toEqual([undefined, "epic/custom"]);
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-/** Every binding leaving `epic_branch` unset agrees on `epic/<slug>`, so it migrates. */
-test("the branch-roles migration accepts bindings that all take the implicit default", async () => {
-  const sql = await databaseBeforeBranchRoles("oakridge_migration_implicit_test");
-  if (!sql) {
-    console.warn("implicit-migration check SKIPPED: no PostgreSQL reachable");
-    return;
-  }
+test("two runs each have a root unit with no parent, and ingress ids are scoped to a run", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
   try {
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.epic_workflow_profile
-        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
-      VALUES ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002',
-        'Implicit epic', 'implicit-epic', 'active', 'guarded',
-        '[{"repository_key":"api","base_branch":"main"},
-          {"repository_key":"web","base_branch":"main"}]'::jsonb,
-        now(), now())`, []);
+    await migrateEmptyDatabase(db);
+    await db.insertInto("authority.definition_bundle").values({ id: "b", digest: "d", source: jsonText({}) as never,
+      checked_program: jsonText({ workflow: {} }) as never }).execute();
+    for (const run of ["r1", "r2"]) await db.transaction().execute(async (trx) => {
+      await trx.insertInto("authority.run").values({ id: run, definition_bundle_id: "b", root_unit_id: run }).execute();
+      await trx.insertInto("authority.unit").values({ id: run, run_id: run, declaration: "$root", input: jsonText({}) as never, status: jsonText({}) as never }).execute();
+      await trx.insertInto("authority.ingress_receipt").values({ id: `${run}-receipt`, run_id: run, ingress_id: "same", request_digest: "x", result: jsonText({}) as never }).execute();
+    });
+    const units = await db.selectFrom("authority.unit").select("id").execute();
+    expect(units.length).toBe(2);
+  } finally { await db.destroy(); await scratch.drop(); }
+});
 
-    expect(await applyMigrations(sql, MIGRATIONS)).toContain(BEFORE_BRANCH_ROLES);
-    const rows = await sql.query<{ readonly base_branch: string }>(
-      "SELECT base_branch FROM oakridge.epic_workflow_profile", []);
-    expect(rows[0]?.base_branch).toBe("epic/implicit-epic");
-  } finally {
-    await sql.close();
-  }
-}, 60_000);
-
-test("0022 sequences existing 0018 transition rows and accepts the four feed operations", async () => {
-  const scratch = await createScratchDatabase("oakridge_transition_feed_migration_test");
-  if (!scratch.ok) {
-    if (scratch.error.operation !== "reach_admin_endpoint") throw new Error(`${scratch.error.operation}: ${scratch.error.detail}`);
-    console.warn("transition-feed migration SKIPPED: no PostgreSQL reachable");
-    return;
-  }
-  scratches.push(scratch.value);
-  const sql = PgPostgresExecutor.connect(scratch.value.url);
-  const before = await migrationsBefore("0022_run_transition_sequence_and_operations.sql");
+test("the baseline indexes units by parent, the wanted log by event and collaboration rows by their run and parent", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
   try {
-    await applyMigrations(sql, before);
-    await seedRun(sql);
-    await sql.query(`INSERT INTO oakridge.run_transition
-      (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
-      VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000002',
-        'run_cancelled','operator',0,0,'{}'::jsonb,now())`, []);
-    expect(await applyMigrations(sql, MIGRATIONS)).toContain("0022_run_transition_sequence_and_operations.sql");
-    const rows = await sql.query<{ readonly sequence: string }>("SELECT sequence::text FROM oakridge.run_transition", []);
-    expect(rows[0]?.sequence).toBe("1");
-    for (const operation of ["gate_opened", "gate_decided", "pull_request_observed", "pull_request_merge_confirmed"]) {
-      await sql.query(`INSERT INTO oakridge.run_transition
-        (id,run_id,operation,actor,prior_record_version,resulting_record_version,detail,created_at)
-        VALUES (gen_random_uuid(),'00000000-0000-4000-8000-000000000002',$1,'test',0,0,'{}'::jsonb,now())`, [operation]);
-    }
-  } finally {
-    await sql.close();
-    await rm(before, { recursive: true, force: true });
-  }
-}, 60_000);
-
-/**
- * The validator sits before any DDL, so its refusal has to travel the same way
- * every other setup failure does. It threw past the `Result` its caller
- * declares — the one thing an early guard should not do.
- */
-test("a scratch database name that is not a safe identifier is an Err, not a throw", async () => {
-  const refused = await createScratchDatabase('evil"; DROP DATABASE oakridge; --');
-  expect(refused).toEqual({ ok: false, error: expect.objectContaining({
-    operation: "validate_scratch_database_name", database_name: 'evil"; DROP DATABASE oakridge; --' }) });
+    await migrateEmptyDatabase(db);
+    const indexes = await sql<{ table_name: string; columns: string }>`SELECT index_table.relname AS table_name,
+        string_agg(attribute.attname, ',' ORDER BY key.ordinality) AS columns
+      FROM pg_index AS idx JOIN pg_class AS index_table ON index_table.oid = idx.indrelid
+      JOIN pg_namespace AS namespace ON namespace.oid = index_table.relnamespace AND namespace.nspname = 'authority'
+      CROSS JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS key(attnum, ordinality)
+      JOIN pg_attribute AS attribute ON attribute.attrelid = idx.indrelid AND attribute.attnum = key.attnum
+      GROUP BY idx.indexrelid, index_table.relname`.execute(db);
+    const indexed = new Set(indexes.rows.map((row) => `${row.table_name}(${row.columns})`));
+    const wanted = ["unit(run_id,parent_id)", "wanted_log(run_id,event_id)", "collaboration_thread(run_id,unit_id,artifact_revision_id)",
+      "collaboration_message(run_id,thread_id)", "review_item(run_id,thread_id)"];
+    expect(wanted.filter((index) => !indexed.has(index))).toEqual([]);
+  } finally { await db.destroy(); await scratch.drop(); }
 });

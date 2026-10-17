@@ -24,12 +24,18 @@ function installedBin(kbblRoot: string, binName: string): string {
  * session to per-token API billing. An operator who genuinely wants API
  * billing overrides the profile in config.acp.agents.
  *
+ * Neither inherits an `OAKRIDGE_*` variable. Those carry the operator's
+ * control tokens and the backend's keys; an agent holding one could act as
+ * the operator (validation spec §3.2 item 6).
+ *
  * `claude-code` starts sessions in Auto mode: kbbl hands the agent nothing
  * but a cwd, so in the SDK's "default" mode every edit and non-read-only
  * command in a run worktree waits on an operator click. Auto keeps the
  * provider's own classifier (and its bypass-immune asks) in the loop; the
  * adapter itself drops to "acceptEdits" when the model lacks Auto support.
  */
+const OAKRIDGE_VARIABLES = "OAKRIDGE_*";
+
 export function builtinAgentProfiles(
   kbblRoot: string,
 ): Map<AgentProfileId, AgentProfile> {
@@ -39,7 +45,7 @@ export function builtinAgentProfiles(
     label: "Claude Code (ACP)",
     command: installedBin(kbblRoot, "claude-agent-acp"),
     args: [],
-    env_policy: { inherit: true, exclude: ["ANTHROPIC_API_KEY"] },
+    env_policy: { inherit: true, exclude: ["ANTHROPIC_API_KEY", OAKRIDGE_VARIABLES] },
     enabled: true,
     requireLoadSession: true,
     sessionMode: "auto",
@@ -49,7 +55,7 @@ export function builtinAgentProfiles(
     label: "Codex (ACP)",
     command: installedBin(kbblRoot, "codex-acp"),
     args: [],
-    env_policy: { inherit: true },
+    env_policy: { inherit: true, exclude: [OAKRIDGE_VARIABLES] },
     enabled: true,
     requireLoadSession: true,
     sessionMode: null,

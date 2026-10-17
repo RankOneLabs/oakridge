@@ -1,7 +1,7 @@
 """legit-biz-club: the workspace layer of oakridge.
 
 Multi-agent collaboration over a shared artifact, mediated by a project layer.
-Built on jig (agent kit) and consumed by kbbl (operator surface).
+Built on jig (agent kit) and observed by lbc-dashboard.
 """
 
 from legit_biz_club.composition import (

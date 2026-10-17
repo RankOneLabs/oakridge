@@ -1,0 +1,47 @@
+import type { RunId, UnitId } from "../domain/primitives";
+import type { RunSummaryRead } from "../storage/read-store";
+import { selectAttention, selectRunAttention, selectRunStallDetail, selectStalledWorkerDetail } from "./attention";
+import { selectUnitLabel, selectUnitTree } from "./unit-label";
+import { isAsk, selectAvailableDecisions, type DecisionSubmit } from "./unit-view";
+
+/**
+ * What asks for the operator across live runs, derived from attention (never
+ * read from `review_item` rows): each decision, a stalled worker, or a unit
+ * parked on a review or a dependency.
+ */
+export type InboxItem =
+  | { readonly kind: "decision"; readonly run_id: RunId; readonly unit_id: UnitId; readonly key: string; readonly label: string;
+    readonly submit: DecisionSubmit;
+    /** The awaiting review's prompt, rendered with its resolved inputs; null for a retry. */
+    readonly prompt: string | null }
+  | { readonly kind: "waiting"; readonly run_id: RunId; readonly unit_id: UnitId; readonly reason: string; readonly label: string }
+  | { readonly kind: "stalled"; readonly run_id: RunId; readonly unit_id: UnitId; readonly detail: string };
+
+export interface InboxPage { readonly items: readonly InboxItem[]; readonly next_cursor: string | null }
+export interface RunInboxBatchEntry { readonly run_id: RunId; readonly items: readonly InboxItem[] }
+export interface RunInboxBatch { readonly items: readonly RunInboxBatchEntry[] }
+
+/** A run's inbox items, unit by unit: the run's stalls, each decision that asks for the operator, each stalled worker, and the unit's wait. */
+export function selectRunInboxItems(read: RunSummaryRead): readonly InboxItem[] {
+  const tree = selectUnitTree(read.units, read.definition.workflow);
+  return selectRunAttention(read).flatMap((attention) => {
+    const unit = read.units.find((candidate) => candidate.id === attention.unit_id);
+    if (!unit) return [];
+    const base = { run_id: unit.run_id, unit_id: unit.id };
+    const decisions = selectAvailableDecisions(read, unit, attention).filter(isAsk)
+      .map((decision): InboxItem => ({ ...base, kind: "decision", key: decision.key, label: decision.label, submit: decision.submit,
+        prompt: decision.submit.kind === "review" ? attention.awaiting.find((awaiting) =>
+          decision.submit.kind === "review" && awaiting.review === decision.submit.review)?.prompt ?? null : null }));
+    const run_stalls = attention.run_stalls.map((stall): InboxItem => ({ ...base, kind: "stalled", detail: selectRunStallDetail(stall) }));
+    const stalled = attention.stalled.map((worker): InboxItem => ({ ...base, kind: "stalled", detail: selectStalledWorkerDetail(worker) }));
+    const line = attention.stalled.length === 0 && attention.run_stalls.length === 0 ? selectAttention(attention, read) : null;
+    const waiting: InboxItem[] = line?.kind === "waiting" ? [{ ...base, kind: "waiting", reason: line.reason, label: selectUnitLabel(unit, tree) }] : [];
+    return [...run_stalls, ...decisions, ...stalled, ...waiting];
+  });
+}
+
+export const selectInboxPage = (runs: readonly RunSummaryRead[], next_cursor: string | null): InboxPage =>
+  ({ items: runs.flatMap(selectRunInboxItems), next_cursor });
+
+export const selectRunInboxBatch = (runs: readonly RunSummaryRead[]): RunInboxBatch =>
+  ({ items: runs.map((read) => ({ run_id: read.run.id, items: selectRunInboxItems(read) })) });

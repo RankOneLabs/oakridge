@@ -246,7 +246,6 @@ name = "legit-biz-club"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "httpx" },
     { name = "jig", extra = ["anthropic", "ollama", "openai"] },
     { name = "pydantic" },
 ]
@@ -261,7 +260,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
     { name = "jig", extras = ["anthropic", "openai", "ollama"], git = "https://github.com/rankonelabs/jig.git" },
     { name = "pydantic", specifier = ">=2.0" },
 ]

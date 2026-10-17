@@ -1,0 +1,13 @@
+[package]
+name = "workflow-evaluator"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+workflow-model = { path = "../model" }
+workflow-compiler = { path = "../compiler" }
+serde_json.workspace = true
+sha2.workspace = true

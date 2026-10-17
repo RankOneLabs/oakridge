@@ -41,15 +41,18 @@ describe("buildEpicProfile", () => {
 });
 
 describe("buildRunExecutionContext", () => {
-  it("preserves default runtime effort as explicit null context bindings", () => {
+  it("preserves the exact agent worker settings in the context", () => {
     expect(buildRunExecutionContext({
       brief_notes: "Build it",
       base_branch: "epic/build-it",
       repositories: [{ key: "oakridge" as RepositoryKey, path: "/code/oakridge", integration_branch: "main" }],
       oakridge_url: "http://oakridge",
-      planner: { runtime: "claude-code", model: "opus" },
-      worker: { runtime: "claude-code", model: "sonnet" },
-    })).toEqual({ ok: true, value: expect.objectContaining({ planner_effort: null, worker_effort: null }) });
+      session_settings: { cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
+        builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } } },
+    })).toEqual({ ok: true, value: expect.objectContaining({ session_settings: {
+      cohort: { assessor: { harness: "claude-code", model: "opus", effort: null },
+        builder: { harness: "codex", model: "gpt-6-sol", effort: "high" } },
+    } }) });
   });
 
   it("rejects an empty repository list instead of creating an empty worktree path", () => {
@@ -58,8 +61,7 @@ describe("buildRunExecutionContext", () => {
       base_branch: "epic/build-it",
       repositories: [],
       oakridge_url: "http://oakridge",
-      planner: { runtime: "claude-code", model: "opus" },
-      worker: { runtime: "claude-code", model: "sonnet" },
+      session_settings: {},
     })).toEqual({
       ok: false,
       error: { operation: "build_run_execution_context", detail: "At least one repository with a worktree path is required." },

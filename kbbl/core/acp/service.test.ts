@@ -289,6 +289,26 @@ test("same delivery key with a different body conflicts", async () => {
   expect(!conflict.ok && conflict.error.code).toBe("delivery_key_conflict");
 }, 15000);
 
+test("collaboration revives an ended resumable session with its sid and transcript", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir });
+  const ensured = await service.ensureResumableSession("key-review", spec(workdir, "remember the first turn"));
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  await service.closeSession(sid);
+  expect(store.getSession(sid as KbblSessionId)?.status).toBe("ended");
+
+  const revived = await service.reviveResumable("key-review");
+  expect(revived.ok && revived.value.sid).toBe(sid);
+  const history = await service.loadHistory(sid);
+  expect(history.ok && history.value.events.some((event) =>
+    event.kind === "user_message" && event.content.some((part) => part.type === "text" && part.text === "remember the first turn"))).toBe(true);
+  const sent = await service.sendInput(sid, "review this", { delivery_key: "collaboration:review" });
+  expect(sent.ok).toBe(true);
+  expect(store.getTurn(sid as KbblSessionId, "initial:key-review" as TurnKey)?.status).toBe("succeeded");
+}, 15000);
+
 test("operator input to a busy session is accepted durably and dispatched afterwards", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, store } = makeHarness({
@@ -784,7 +804,7 @@ test("an agent without loadSession is rejected for a load-requiring profile", as
   expect(observed.ok && observed.value.kind).toBe("failed");
 }, 15000);
 
-test("process exit during a prompt yields unknown/failure, never success", async () => {
+test("process exit during a prompt reports a lost initial turn as terminal without retrying it", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry, store } = makeHarness({
     stateDir,
@@ -799,8 +819,6 @@ test("process exit during a prompt yields unknown/failure, never success", async
   expect(observed.ok).toBe(true);
   if (!observed.ok) return;
   expect(observed.value.kind).toBe("failed");
-  if (observed.value.kind !== "failed") return;
-  expect(observed.value.failure_code).toBe("acp_transport_lost");
   expect(store.getTurn(sid as KbblSessionId, "initial:key-1" as TurnKey)?.status).toBe(
     "unknown",
   );

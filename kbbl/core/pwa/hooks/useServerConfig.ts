@@ -6,14 +6,12 @@ import { PWA_MODEL_OPTIONS } from "../lib/format";
 
 interface ServerConfigResponse {
   defaultWorkdir: string | null;
-  softThresholdTokens?: number;
   defaultRuntimeId?: string;
   runtimes?: unknown;
 }
 
 export interface ServerConfig {
   defaultWorkdir: string | null;
-  softThresholdTokens?: number;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
 }
@@ -96,11 +94,10 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
 /**
  * Fetches the server's /config once. Returns null until the fetch resolves
  * so callers can render a "loading" placeholder rather than racing forms
- * with empty defaults. Cached indefinitely — the server's config doesn't
- * change mid-session, and SessionTopBar's PATCH /config invalidates this
- * query so the next read reflects the server response.
+ * with empty defaults. Cached indefinitely: the server's config doesn't
+ * change mid-session.
  */
-export function useServerConfig(): ServerConfig | null {
+export function useServerConfigState(enabled = true): { readonly config: ServerConfig | null; readonly error: Error | null } {
   const query = useQuery({
     queryKey: ["config"],
     queryFn: async (): Promise<ServerConfigResponse> => {
@@ -109,25 +106,25 @@ export function useServerConfig(): ServerConfig | null {
       return (await res.json()) as ServerConfigResponse;
     },
     staleTime: Infinity,
+    enabled,
   });
   return useMemo(() => {
-    if (!query.data) return null;
+    if (!query.data) return { config: null, error: query.error };
     const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
-    return {
+    return { config: {
       defaultWorkdir: query.data.defaultWorkdir,
-      softThresholdTokens:
-        typeof query.data.softThresholdTokens === "number"
-          ? query.data.softThresholdTokens
-          : undefined,
       defaultRuntimeId: defaultRuntimeIdForConfig({
         defaultWorkdir: query.data.defaultWorkdir,
-        softThresholdTokens: query.data.softThresholdTokens,
         defaultRuntimeId: isRuntimeId(query.data.defaultRuntimeId)
           ? query.data.defaultRuntimeId
           : "claude-code",
         runtimes,
       }),
       runtimes,
-    };
-  }, [query.data]);
+    }, error: null };
+  }, [query.data, query.error]);
+}
+
+export function useServerConfig(): ServerConfig | null {
+  return useServerConfigState().config;
 }

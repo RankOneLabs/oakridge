@@ -8,13 +8,25 @@ Conventions for `kbbl` — the operator surface for CLI coding agents.
 
 Bun + Hono backend on `:8788` that serves a React PWA and manages Claude Code
 and Codex sessions through ACP. Workflow orchestration belongs to
-`oakridge-dbos/`; kbbl hosts its v2 UI and same-origin proxy. The old kbbl
-v1 Projects UI and review/dispatch backend have been removed. V2 uses the
-DBOS project registry at `/oakridge/api/projects`; the separate legacy
-kbbl `/projects` registry and shared v2 collaboration components remain.
+`oakridge-dbos/`; kbbl hosts its UI and same-origin proxy. Projects come from
+the DBOS project registry at `/oakridge/api/projects`.
 Session-shaped UX (live transcripts, inbox, per-sid streams). LBC's
 project-shaped dashboard lives separately in `../lbc-dashboard` — do not
 conflate.
+
+## Run authority and cutover
+
+The Rust library evaluates pinned workflow definitions without external IO.
+`oakridge-dbos/` accepts commands and publications durably and owns all
+workflow decisions. kbbl proxies its API and runs ACP sessions; its SQLite
+ledger remains authoritative only for local sessions, turns and process
+observations.
+
+For the Oakridge database cutover: (1) stop the service; (2) `pg_dump` to a
+file nothing in this repository reads; (3) drop and recreate the Oakridge
+database empty; (4) deploy the core WASM, DBOS backend and kbbl PWA; and
+(5) admit traffic after the new stack is healthy. Do not reset kbbl's separate
+SQLite ACP ledger.
 
 ## Tech stack
 
@@ -41,9 +53,7 @@ core/pwa/
 │   ├── atoms/
 │   ├── molecules/
 │   └── organisms/
-├── oakridge/             # v2 workflow views, components, hooks, selectors
-└── review/               # shared v2 building blocks, not v1 routes
-    └── shared/            # ThreadSidebar, ThreadView
+└── oakridge/             # workflow views, components, hooks, selectors
 ```
 
 ## Hard rules
@@ -56,7 +66,7 @@ core/pwa/
 2. **File size soft cap: 300 lines.** When a component crosses 300 lines,
    split before adding more. When a file crosses 500 lines, splitting is
    mandatory before the PR ships. Existing oversized files must shrink
-   when changed; removed v1 views are not precedents.
+   when changed.
 
    **`core/pwa/styles.css` is exempt.** It is the single global stylesheet
    until the Tailwind migration lands, so every feature that needs a rule
@@ -70,9 +80,8 @@ core/pwa/
    abort handling, and refresh key. Don't define hooks inside view
    components.
 
-4. **One view per route.** Session routes use `views/`; v2 workflow routes
+4. **One view per route.** Session routes use `views/`; workflow routes
    are composed under `oakridge/`. App.tsx never inlines route bodies.
-   Do not restore retired `#plan`, `#brief`, `#cohort`, `#repo`, or `#epic` routes.
 
 5. **External library CSS must be imported at the consumer.** Forgetting
    `import "reactflow/dist/style.css"` in the old plan canvas is what
@@ -152,8 +161,7 @@ repository; do not edit them from this checkout.
 - Heartbeat at 15s with `: ping\n\n` is standard. Don't tune per-route.
 - Client-side: SSE lifecycle goes in a `hooks/use<Stream>.ts`. View
   components consume, they don't `new EventSource` directly.
-  Follow `hooks/useAcpSession.ts` and the Oakridge stream hooks; the v1
-  artifact stream and its hook have been removed.
+  Follow `hooks/useAcpSession.ts` and the Oakridge stream hooks.
 - Client must close the EventSource in the effect cleanup. A `useRef` over
   `cancelled` per the React docs pattern is fine.
 
@@ -195,7 +203,6 @@ Production mode is what `kbbl-start` runs. The PWA is rebuilt on every
   Tailscale access.
 - `--config=<path>` — optional override for `config.json` location.
 - `acp.default_agent` and `acp.agents` configure active agent profiles.
-  Legacy runtime settings do not configure the removed adapters.
 
 ## What's NOT in this project (yet)
 

@@ -9,8 +9,7 @@ The loop stops when the termination policy fires OR every agent has
 exhausted their retry budget — whichever comes first. Workspace events
 are emitted at start, on each proposal outcome, and at termination,
 via the supplied :data:`WorkspaceEventEmitter` callback. Tests can
-pass a no-op emitter; production wires it to the kbbl adapter's
-``post_workspace_event``.
+pass a no-op emitter; ``run.py`` wires it to a JSONL tee.
 """
 from __future__ import annotations
 
@@ -238,8 +237,7 @@ class IncrementalCoordinator:
     ) -> None:
         """Emit, but never abort the coordination loop on emit failure.
 
-        In production ``self._emit`` is wired to an HTTP call (the kbbl
-        adapter's ``post_workspace_event``); a transient kbbl outage
+        ``self._emit`` is caller-supplied IO; a transient sink failure
         would otherwise stop the whole project mid-run even though the
         underlying proposal already mediated successfully. Workspace
         events are best-effort observability — losing one is recoverable

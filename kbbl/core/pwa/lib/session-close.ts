@@ -9,7 +9,7 @@ import {
  *
  * Mirrors the failure bodies of `DELETE /sessions/:sid`
  * (core/server/handlers/sessions.ts): every one of them carries `error`, and
- * only the execution-hold refusal (409) adds `code` and the `hold` that
+ * only the attempt-hold refusal (409) adds `code` and the `hold` that
  * explains it. The distinction is not cosmetic — a hold is the single failure
  * an operator is allowed to override, so it is the only one the UI can offer a
  * way past. Flattening both into a bare message is what made the held session
@@ -17,7 +17,7 @@ import {
  */
 export type SessionCloseRefusal =
   | {
-      readonly kind: "held_by_execution";
+      readonly kind: "held_by_attempt";
       readonly message: string;
       readonly hold: SessionHold;
     }
@@ -43,7 +43,7 @@ export function selectSessionCloseRefusal(
       ? fields.error
       : `remove session failed: ${status}`;
   if (fields?.code === SESSION_HELD_CODE && isSessionHold(fields.hold)) {
-    return { kind: "held_by_execution", message, hold: fields.hold };
+    return { kind: "held_by_attempt", message, hold: fields.hold };
   }
   return { kind: "rejected", message };
 }

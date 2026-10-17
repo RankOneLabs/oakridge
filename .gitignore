@@ -26,3 +26,4 @@ __pycache__/
 # Retired backend: preserve local databases, build output, and the temporary
 # prompt compatibility symlink without adding them back to the repository.
 /oakridge-core/
+/workflow-core/target/

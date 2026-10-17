@@ -1,6 +1,6 @@
 # legit-biz-club
 
-The workspace layer of oakridge: multi-agent collaboration over a shared artifact, built on jig (agent kit) and consumed by kbbl (operator surface).
+The workspace layer of oakridge: multi-agent collaboration over a shared artifact, built on jig (agent kit) and observed by `lbc-dashboard`.
 
 **Status:** v1 build complete. All five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) are shipped on `main` across PRs #19, #23, and #24. Workstream D — actually running the v1 study — is research output and lives outside this package.
 
@@ -16,9 +16,7 @@ legit-biz-club/
 │       ├── coordination/     # incremental + convergence; mediator, OCC, consensus mechanisms, JigProposer
 │       ├── eval/             # code + prose eval primitives (jig-grader-backed)
 │       ├── memory.py         # operator-driven MemoryCommitter (Python API)
-│       ├── study/            # four-condition study harness — tasks, conditions, runner, results
-│       └── adapters/
-│           └── kbbl/         # Python HTTP client against kbbl's TS server
+│       └── study/            # four-condition study harness — tasks, conditions, runner, results
 └── tests/
 ```
 
@@ -33,7 +31,7 @@ uv run mypy src              # type-check (strict)
 
 ## Running a project
 
-legit-biz-club is a **library** — there is no CLI, no UI, and no config-file driver in v1. The operator (or a script) writes Python that builds the agents, project, mediator, and proposers, then awaits a coordinator. kbbl is an *observation* surface (workspace events arrive in its inbox); it does not drive legit-biz-club.
+legit-biz-club is a **library** — there is no CLI, no UI, and no config-file driver in v1. The operator (or a script) writes Python that builds the agents, project, mediator, and proposers, then awaits a coordinator. Workspace events go to whatever `WorkspaceEventEmitter` the caller supplies.
 
 Two API levels:
 
@@ -50,7 +48,7 @@ uv run python scripts/run_one_project.py
 
 The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored).
 
-A spec-driven CLI entrypoint is also available for programmatic invocation (e.g. from the kbbl dashboard server):
+A spec-driven CLI entrypoint is also available for programmatic invocation (e.g. from the lbc-dashboard server):
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -88,10 +86,10 @@ Per the design memo:
 - Coordination is substrate-mediated, not message-passing — agents read the canonical artifact state plus, in convergence rounds, peer proposals exposed as substrate.
 - Three coordination modes: incremental commits (default), convergence (coordinator-internal — driven by the project's coordination-protocol config, not operator-triggered), and escalation (automated `DisagreementSurface` default; operator-in-loop is an optional callback).
 - Pluggable consensus mechanism, round budget policy, disagreement surface, and termination policy — v1 ships sensible defaults behind interfaces so v2+ can swap.
-- Memory commit is **operator-driven and Python-API-only** in v1 — the operator (or a script) calls `MemoryCommitter.commit(...)` after a project ends to persist approved observations into the agent's jig SqliteStore. A kbbl review UI is deferred; kbbl stays out of the memory commit path.
+- Memory commit is **operator-driven and Python-API-only** in v1 — the operator (or a script) calls `MemoryCommitter.commit(...)` after a project ends to persist approved observations into the agent's jig SqliteStore.
 
 ## Polyglot setup
 
-This package is Python (≥3.12, async, pydantic 2). It consumes jig directly as a Python library; jig is fetched from git via `[tool.uv.sources]`. The polyglot boundary with kbbl (TypeScript) lives at `adapters/kbbl/`, where a Python HTTP client calls into kbbl's Hono server. Trust model is Tailscale-network trust (same as kbbl's existing PWA gate).
+This package is Python (≥3.12, async, pydantic 2). It consumes jig directly as a Python library; jig is fetched from git via `[tool.uv.sources]`.
 
 The directory name `legit-biz-club` avoids collision with Bun's package-management "workspaces" feature; per the design memo, the conceptual term for what this package implements is "the workspace."

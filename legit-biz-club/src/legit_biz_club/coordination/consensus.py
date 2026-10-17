@@ -229,9 +229,8 @@ class ConsensusMechanism(ABC):
         # this, the final commit of an INCREMENTAL_THEN_CONVERGE
         # project is invisible to a `proposal_applied`-only consumer.
         # Emit only on a successful apply — apply failures already log
-        # at warning level inside the apply step and aren't a
-        # kbbl-facing event in this protocol (no retry semantics in
-        # consensus).
+        # at warning level inside the apply step and aren't an
+        # event in this protocol (no retry semantics in consensus).
         if result.apply_outcome.result == ProposalResult.APPLIED:
             await self._safe_emit(
                 "proposal_applied",
@@ -555,7 +554,7 @@ class ConsensusMechanism(ABC):
         self, kind: WorkspaceEventKind, payload: WorkspaceEventPayload
     ) -> None:
         """Same safe-emit pattern as IncrementalCoordinator: catch and
-        log emit failures so a transient kbbl outage can't abort
+        log emit failures so a transient sink failure can't abort
         consensus mid-run after a proposal already mediated."""
         try:
             emit = cast(

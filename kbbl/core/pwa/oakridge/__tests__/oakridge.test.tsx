@@ -9,6 +9,11 @@ import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetai
 import { GlobalParkedGateList } from "../components/organisms/ParkedGateList";
 import type { RunSummary, RunDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
 import type { BuildBrief } from "../lib/build-brief";
+import { compositeId } from "../adapters/core";
+import { invalidateCachedRunUnits } from "../client";
+import mergeFixture from "../__fixtures__/v2-integration-merge.json";
+import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
+import type { OperatorUnitView } from "../operator-contracts";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -17,11 +22,22 @@ type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Re
 // ──────────────────────────────────────────────────────────────────────────────
 
 function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
 }
 
+let runsSeed: RunSummary[] | null = null;
+let runSeed: RunDetail | null = null;
+let runGatesSeed: ParkedGate[] = [];
+let gatesSeed: ParkedGate[] | null = null;
 function wrap(ui: ReactElement) {
   const client = makeClient();
+  if (runsSeed) client.setQueryData(["oakridge", "runs", ""], runsSeed);
+  if (runSeed) {
+    client.setQueryData(["oakridge", "run", runSeed.id], runSeed);
+    client.setQueryData(["oakridge", "run", runSeed.id, "gates"], runGatesSeed);
+    client.setQueryData(["oakridge", "run", runSeed.id, "sessions"], []);
+  }
+  if (gatesSeed) client.setQueryData(["oakridge", "gates"], gatesSeed);
   return { client, ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>) };
 }
 
@@ -32,7 +48,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); runsSeed = null; runSeed = null; runGatesSeed = []; gatesSeed = null; });
 
 /**
  * A stage unit's `params` is the minted fan-out item (`{unit_id, artifact}`)
@@ -161,6 +177,7 @@ describe("RunListView", () => {
   });
 
   it("renders a row for each run", async () => {
+    runsSeed = [RUN_SUMMARY_FIXTURE, PARKED_RUN_SUMMARY];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([RUN_SUMMARY_FIXTURE, PARKED_RUN_SUMMARY]),
     );
@@ -173,6 +190,7 @@ describe("RunListView", () => {
   });
 
   it("shows parked_count badge when parked_count > 0", async () => {
+    runsSeed = [PARKED_RUN_SUMMARY];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([PARKED_RUN_SUMMARY]),
     );
@@ -182,6 +200,7 @@ describe("RunListView", () => {
   });
 
   it("uses one status precedence for the visible run state", async () => {
+    runsSeed = [{ ...PARKED_RUN_SUMMARY, is_stuck: true }];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([{ ...PARKED_RUN_SUMMARY, is_stuck: true }]),
     );
@@ -190,12 +209,14 @@ describe("RunListView", () => {
   });
 
   it("shows empty state when no runs", async () => {
+    runsSeed = [];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
     wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByTestId("or-run-list-empty")).toBeTruthy();
   });
 
   it("calls onSelectRun when a row is clicked", async () => {
+    runsSeed = [RUN_SUMMARY_FIXTURE];
     const onSelectRun = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([RUN_SUMMARY_FIXTURE]));
     wrap(<RunListView onSelectRun={onSelectRun} onNewRun={() => {}} onNewProject={() => {}} />);
@@ -219,6 +240,8 @@ describe("RunListView", () => {
 
 describe("RunDetail stage list", () => {
   function makeFetch(detail = RUN_DETAIL_FIXTURE, gates: ParkedGate[] = []): FetchHandler {
+    runSeed = detail;
+    runGatesSeed = gates;
     return vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/gates")) return json(gates);
@@ -311,6 +334,7 @@ describe("RunDetail stage list", () => {
       return json([]);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    runSeed = detail;
 
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
@@ -351,12 +375,14 @@ describe("RunDetail stage list", () => {
   });
 
   it("retries a failed build unit without restarting the run", async () => {
+    const unit = retryUnit("cohort-a");
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "build" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "parked",
       is_stuck: false,
       stages: [{
-        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
+        stage_instance_id: stageId, name: "build", type: "delegated_session",
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
@@ -366,19 +392,20 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/units/cohort-a/retry")) return json({ work_order: { id: "retry-1" } }, 202);
+      if (url.endsWith("/units")) return json([unit]);
+      if (url.endsWith("/workers/builder/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-1" }, 201);
       if (url.includes("/gates")) return json([]);
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    runSeed = detail;
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
-    // Oakridge's operator retry is per unit, addressed by stage instance + unit id, idempotent on its header.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stage_instances/build-stage-1/units/cohort-a/retry",
-      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+      `/oakridge/api/api/runs/run-1/units/${encodeURIComponent(unit.unit_id)}/workers/builder/retry`,
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("request_id") }),
     ));
   });
 
@@ -404,30 +431,34 @@ describe("RunDetail stage list", () => {
   });
 
   it("retries the single unit hidden behind a collapsed stage row", async () => {
+    const unit = retryUnit("0");
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "brief_writer" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "running",
       is_stuck: true,
       stages: [{
-        stage_instance_id: "brief-writer-stage", name: "brief_writer", type: "artifact_collection",
+        stage_instance_id: stageId, name: "brief_writer", type: "artifact_collection",
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "running", gate: null, params: null }],
       }],
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/units/0/retry")) return json({ work_order: { id: "retry-brief-writer" } }, 202);
+      if (url.endsWith("/units")) return json([unit]);
+      if (url.endsWith("/workers/builder/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-brief-writer" }, 201);
       if (url.includes("/gates")) return json([]);
       return json(detail);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    runSeed = detail;
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
     fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stage_instances/brief-writer-stage/units/0/retry",
-      expect.objectContaining({ method: "PUT", headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+      `/oakridge/api/api/runs/run-1/units/${encodeURIComponent(unit.unit_id)}/workers/builder/retry`,
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("request_id") }),
     ));
   });
 
@@ -475,6 +506,9 @@ describe("RunDetail stage list", () => {
 
   it("shows final integration and explicitly confirms external completion", async () => {
     const repositoryKey = "oakridge" as RepositoryKey;
+    const capturedIntegration = (mergeFixture.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration" && unit.decisions.some((decision) => decision.key === "confirm_merged"));
+    if (!capturedIntegration) throw new Error("captured fixture lacks integration merge review");
+    const integrationUnit = withUnitFields(capturedIntegration, { run_id: "run-1", collection_key: repositoryKey });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       epic_profile: {
@@ -516,15 +550,17 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/final_pull_requests/") && url.endsWith("/confirm")) {
+      if (url.endsWith("/units")) return json([integrationUnit]);
+      if (url.endsWith("/reviews/merge_confirmation/decide")) {
         expect(init?.method).toBe("POST");
-        return json({ outcome: "completed", profile: { ...detail.epic_profile, lifecycle_state: "completed" } });
+        return json({ kind: "committed", run_id: "run-1", event_id: "merge-confirmed" }, 201);
       }
       if (url.includes("/gates")) return json([]);
       if (url.includes("/runs/")) return json(detail);
       return json([]);
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    runSeed = detail;
 
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
@@ -534,7 +570,7 @@ describe("RunDetail stage list", () => {
     expect(screen.queryByTestId("or-confirm-final-docs")).toBeNull();
     fireEvent.click(screen.getByTestId("or-confirm-final-oakridge"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/workflow_runs/run-1/final_pull_requests/oakridge/confirm",
+      `/oakridge/api/api/runs/run-1/units/${encodeURIComponent(integrationUnit.unit_id)}/reviews/merge_confirmation/decide`,
       expect.objectContaining({ method: "POST" }),
     ));
   });
@@ -546,6 +582,7 @@ describe("RunDetail stage list", () => {
 
 describe("GlobalParkedGateList", () => {
   it("renders gate card with type, stage, branch, and path", async () => {
+    gatesSeed = [PARKED_GATE_FIXTURE];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
 
@@ -557,12 +594,14 @@ describe("GlobalParkedGateList", () => {
   });
 
   it("shows empty state when no gates are parked", async () => {
+    gatesSeed = [];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
     expect(await screen.findByTestId("or-gate-list-empty")).toBeTruthy();
   });
 
   it("calls onNavigateRun with the gate's run_id when run link is clicked", async () => {
+    gatesSeed = [PARKED_GATE_FIXTURE];
     const onNavigateRun = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
     wrap(<GlobalParkedGateList onNavigateRun={onNavigateRun} />);
@@ -572,6 +611,7 @@ describe("GlobalParkedGateList", () => {
   });
 
   it("links a parked gate directly to its review artifact", async () => {
+    gatesSeed = [PARKED_GATE_FIXTURE];
     const onNavigateArtifact = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} onNavigateArtifact={onNavigateArtifact} />);
@@ -581,6 +621,7 @@ describe("GlobalParkedGateList", () => {
 
   it("still lists a gate whose run is no longer active, rendered stranded rather than hidden", async () => {
     const strandedGate: ParkedGate = { ...PARKED_GATE_FIXTURE, id: "gate-2", run_state: "failed", actionable: false };
+    gatesSeed = [strandedGate];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([strandedGate]));
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
 

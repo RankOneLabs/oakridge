@@ -29,7 +29,9 @@ export function useConfirmCohortMerged(runId: string) {
     onSuccess: (_data, { cohortId }) => {
       requestKeys.current.delete(cohortId);
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
       void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "gates"] });
       void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] });
     },
   });

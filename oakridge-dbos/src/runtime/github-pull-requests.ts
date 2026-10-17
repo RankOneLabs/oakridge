@@ -1,25 +1,38 @@
 /**
- * Watching GitHub for the merges a run is waiting on.
- *
- * A cohort parked in `github_review` is waiting for a human to merge its pull
- * request somewhere Oakridge cannot see. Polling is how it finds out. The
- * operator's confirm-merged button exists for when this cannot run at all — no
- * token, a repository the token cannot read, a merge the API does not reflect —
- * so the poller is allowed to be absent, and a backend without a token simply
- * does not start one.
- *
- * Every observation goes through the same reconciliation the manual path uses.
- * Nothing here decides that a wait is over; it only reports what GitHub said.
+ * Pull requests as GitHub reports them, read-only: the `pull_request.observe`
+ * operation reads one by number. A backend without a token has no reader, and
+ * the operation fails rather than guess.
  */
-import type { PullRequestObservation } from "../domain/pull-request";
-import { parseGithubPullRequestIdentity } from "../domain/pull-request";
-import type { StageInstanceId, UnitId } from "../domain/primitives";
-import type { OperatorCohortSummary } from "../domain/operator-projections";
-import { findCohortPullRequestExpectation, reconcileCohortEvidence, type CohortPullRequestDependencies, type CohortPullRequestResolution } from "./cohort-pull-request";
+import type { ObservedPullRequestState } from "../domain/pull-request";
+import { err, ok, type Result } from "../domain/primitives";
 
-/** Reads one pull request's current state. Absent when it cannot be read. */
+export interface PullRequestReadOptions { readonly signal?: AbortSignal }
+/** One pull request of a repository, by its number. */
+export interface PullRequestRef { readonly owner: string; readonly name: string; readonly number: number }
+/**
+ * One pull request as the forge reports it now: its state, and the head and
+ * base it was opened between. `head_owner` is null when the head repository
+ * is gone (a deleted fork).
+ */
+export interface ForgePullRequest {
+  readonly number: number;
+  readonly url: string;
+  readonly state: ObservedPullRequestState;
+  readonly head_owner: string | null;
+  readonly head_branch: string;
+  readonly base_branch: string;
+  readonly head_sha: string | null;
+  readonly merged_at: string | null;
+}
+/** Reads one pull request by number; null when the forge has no such pull request. */
 export interface PullRequestReader {
-  read(owner: string, name: string, number: number): Promise<PullRequestObservation | null>;
+  get(ref: PullRequestRef, options?: PullRequestReadOptions): Promise<Result<ForgePullRequest | null, PullRequestReadError>>;
+}
+
+export interface PullRequestReadError {
+  readonly kind: "unavailable" | "auth" | "rejected";
+  readonly status: number | null;
+  readonly detail: string;
 }
 
 export interface GithubPullRequestReaderConfig {
@@ -28,101 +41,77 @@ export interface GithubPullRequestReaderConfig {
   readonly user_agent?: string;
 }
 
-interface GithubPullRequestPayload {
+export interface GithubPullRequestPayload {
   readonly number?: unknown;
   readonly html_url?: unknown;
   readonly state?: unknown;
   readonly merged?: unknown;
   readonly merged_at?: unknown;
-  readonly head?: { readonly ref?: unknown; readonly sha?: unknown } | null;
+  readonly head?: { readonly ref?: unknown; readonly sha?: unknown; readonly repo?: { readonly full_name?: unknown } | null } | null;
   readonly base?: { readonly ref?: unknown } | null;
 }
 
 const asString = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+/** The owner half of a `owner/name` repository slug; a fork may be renamed, so only the owner is compared. */
+const repositoryOwner = (full_name: unknown): string | null => asString(full_name)?.split("/")[0] ?? null;
+/**
+ * GitHub answers a primary or a secondary rate limit with 403 (or 429): an
+ * exhausted `x-ratelimit-remaining`, or a `retry-after`. That is transient,
+ * not a credential the token lacks.
+ */
+export function isRateLimited(status: number, headers: Headers): boolean {
+  return (status === 403 || status === 429) && (headers.get("x-ratelimit-remaining") === "0" || headers.has("retry-after"));
+}
+export function selectStatusError(response: Pick<Response, "status" | "headers">, detail: string): PullRequestReadError {
+  const { status } = response;
+  const kind = isRateLimited(status, response.headers) ? "unavailable"
+    : status === 401 || status === 403 ? "auth"
+    : status === 408 || status === 409 || status === 429 || status >= 500 ? "unavailable" : "rejected";
+  return { kind, status, detail };
+}
 
 /**
- * GitHub's REST API, read-only.
+ * One pull request as GitHub's pull request endpoint reports it. Null when a
+ * field the observation needs is missing. It carries no read time, so an
+ * unchanged pull request is an unchanged observation and publishes nothing.
  *
  * `merged` is trusted over `state` — a merged pull request reports
  * `state: "closed"`, and reading only the state would file every merge as a
  * close without merge.
  */
+export function selectPullRequest(payload: GithubPullRequestPayload): ForgePullRequest | null {
+  const url = asString(payload.html_url);
+  const head_branch = asString(payload.head?.ref);
+  const base_branch = asString(payload.base?.ref);
+  if (!url || !head_branch || !base_branch || typeof payload.number !== "number") return null;
+  const merged_at = asString(payload.merged_at);
+  const is_merged = payload.merged === true || merged_at !== null;
+  return { number: payload.number, url, head_owner: repositoryOwner(payload.head?.repo?.full_name), head_branch, base_branch,
+    head_sha: asString(payload.head?.sha), state: is_merged ? "merged" : payload.state === "closed" ? "closed_unmerged" : "open", merged_at };
+}
+
+/** GitHub's REST API, read-only. */
 export class GithubPullRequestReader implements PullRequestReader {
   private readonly apiBaseUrl: string;
   constructor(private readonly config: GithubPullRequestReaderConfig, private readonly http: typeof fetch = fetch) {
     this.apiBaseUrl = (config.api_base_url ?? "https://api.github.com").replace(/\/+$/, "");
   }
 
-  async read(owner: string, name: string, number: number): Promise<PullRequestObservation | null> {
-    const response = await this.http(`${this.apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${this.config.token}`,
-        "x-github-api-version": "2022-11-28",
-        "user-agent": this.config.user_agent ?? "oakridge",
-      },
-    });
-    if (!response.ok) return null;
-    const payload = await response.json() as GithubPullRequestPayload;
-    const url = asString(payload.html_url);
-    const headBranch = asString(payload.head?.ref);
-    const baseBranch = asString(payload.base?.ref);
-    if (!url || !headBranch || !baseBranch || typeof payload.number !== "number") return null;
-    const mergedAt = asString(payload.merged_at);
-    const merged = payload.merged === true || mergedAt !== null;
-    return {
-      provider: "github", owner, name, number: payload.number, url,
-      head_branch: headBranch, base_branch: baseBranch, head_sha: asString(payload.head?.sha),
-      state: merged ? "merged" : payload.state === "closed" ? "closed_unmerged" : "open",
-      source: "poll", observed_at: new Date().toISOString(), merged_at: mergedAt,
-    };
+  /** `GET /repos/{owner}/{name}/pulls/{number}`; a 404 is no such pull request. */
+  async get(ref: PullRequestRef, options: PullRequestReadOptions = {}): Promise<Result<ForgePullRequest | null, PullRequestReadError>> {
+    const url = `${this.apiBaseUrl}/repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/pulls/${ref.number}`;
+    let response: Response;
+    try { response = await this.http(url, { signal: options.signal, headers: { accept: "application/vnd.github+json",
+      authorization: `Bearer ${this.config.token}`, "x-github-api-version": "2022-11-28", "user-agent": this.config.user_agent ?? "oakridge" } }); }
+    catch (cause) { return err({ kind: "unavailable", status: null, detail: String(cause) }); }
+    if (response.status === 404) return ok(null);
+    if (!response.ok) return err(selectStatusError(response, `could not read pull request ${ref.owner}/${ref.name}#${ref.number}`));
+    let payload: unknown;
+    try { payload = await response.json(); }
+    catch (cause) { return err({ kind: "unavailable", status: response.status, detail: String(cause) }); }
+    const pull_request = typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? selectPullRequest(payload as GithubPullRequestPayload) : null;
+    if (!pull_request) return err({ kind: "unavailable", status: response.status, detail: `pull request ${ref.number} is missing fields` });
+    return ok(pull_request);
   }
 }
-
-export interface CohortPullRequestPollDependencies extends CohortPullRequestDependencies {
-  /** The cohorts the run is currently waiting on, from the operator projection. */
-  list_cohorts(): Promise<readonly OperatorCohortSummary[]>;
-  readonly reader: PullRequestReader;
-}
-
-export interface CohortPollOutcome {
-  readonly stage_instance_id: StageInstanceId;
-  readonly unit_id: UnitId;
-  readonly resolution: CohortPullRequestResolution | { readonly kind: "unreadable" } | { readonly kind: "refused"; readonly detail: string };
-}
-
-/** Cohorts whose handoff is parked on the external review, and nothing else. */
-export const selectCohortsAwaitingReview = (cohorts: readonly OperatorCohortSummary[]): readonly OperatorCohortSummary[] =>
-  cohorts.filter((cohort) => cohort.lifecycle === "github_review");
-
-/**
- * One sweep. Errors are per-cohort: a pull request that cannot be read, or a
- * mismatch that has to be recorded and looked at, must not stop the sweep from
- * reaching the cohorts behind it.
- */
-export const pollCohortPullRequests = async (dependencies: CohortPullRequestPollDependencies): Promise<readonly CohortPollOutcome[]> => {
-  const outcomes: CohortPollOutcome[] = [];
-  for (const cohort of selectCohortsAwaitingReview(await dependencies.list_cohorts())) {
-    const expectation = await findCohortPullRequestExpectation(dependencies, cohort.stage_instance_id, cohort.unit_id);
-    if (!expectation.ok) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "refused", detail: expectation.error.detail } });
-      continue;
-    }
-    const identity = parseGithubPullRequestIdentity(expectation.value.url);
-    if (!identity) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "refused", detail: "reported pull request URL is not a canonical GitHub URL" } });
-      continue;
-    }
-    const observation = await dependencies.reader.read(identity.owner, identity.name, identity.number).catch(() => null);
-    if (!observation) {
-      outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "unreadable" } });
-      continue;
-    }
-    const reconciled = await reconcileCohortEvidence(dependencies, cohort.stage_instance_id, cohort.unit_id, { kind: "observation", observation });
-    outcomes.push({
-      stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id,
-      resolution: reconciled.ok ? reconciled.value.resolution : { kind: "refused", detail: reconciled.error.detail },
-    });
-  }
-  return outcomes;
-};

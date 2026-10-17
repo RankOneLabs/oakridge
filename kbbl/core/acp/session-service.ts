@@ -1,5 +1,4 @@
-// Application service used by HTTP handlers (§8.6) — the replacement for
-// the generic half of the legacy SessionManager. Routes never reach into
+// Application service used by HTTP handlers (§8.6). Routes never reach into
 // an SDK connection; everything goes through this facade. Every prompt is
 // dispatched through the controller's accepted-turn loop, so "one active
 // prompt per session, ledger as the only deferral" holds by construction.
@@ -447,6 +446,26 @@ export class AcpSessionService {
     return { kind: "advanced", session: toSnapshot(after ?? row) };
   }
 
+  /** Collaboration resumes the pinned sid and ACP transcript without replaying the initial turn. */
+  async reviveResumable(key: string): Promise<Result<AcpSessionSnapshot, AcpError>> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row) return err(acpError("session_not_found", "service.reviveResumable", `no resumable session for ${key}`));
+    if (row.fenced_by !== null || row.status === "fenced")
+      return err(acpError("session_fenced", "service.reviveResumable", `session is fenced`, row.sid));
+    if (row.status !== "ended" && row.status !== "failed") return ok(toSnapshot(row));
+    if (row.acp_session_id === null)
+      return err(acpError("acp_session_load_failed", "service.reviveResumable", "session has no stored ACP session id", row.sid));
+    const loaded = await this.touchController(row.sid, undefined, true);
+    if (!loaded.ok) return loaded;
+    this.deps.store.reviveEnded(row.sid);
+    const revived = this.deps.store.getSession(row.sid);
+    if (!revived || revived.fenced_by !== null || revived.status === "fenced") {
+      await loaded.value.closeChild();
+      return err(acpError("session_fenced", "service.reviveResumable", "session was fenced during resume", row.sid));
+    }
+    return ok(toSnapshot(revived));
+  }
+
   /**
    * Operator hard delete: fence out any live child, best-effort worktree
    * removal, then drop the row (turn ledger goes with it).
@@ -884,6 +903,7 @@ export class AcpSessionService {
   private async touchController(
     sid: KbblSessionId,
     loadSignal?: AbortSignal,
+    allowTerminalResume = false,
   ): Promise<Result<AcpSessionController, AcpError>> {
     const live = this.deps.controllers.getLive(sid);
     if (live) return ok(live);
@@ -898,9 +918,10 @@ export class AcpSessionService {
       );
     }
     if (
-      row.status === "ended" ||
+      (row.status === "ended" && !allowTerminalResume) ||
       row.status === "fenced" ||
-      row.status === "failed"
+      (row.status === "failed" && !allowTerminalResume) ||
+      row.fenced_by !== null
     ) {
       return err(
         acpError(

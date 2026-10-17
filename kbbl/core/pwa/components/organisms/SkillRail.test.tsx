@@ -8,7 +8,7 @@ import type { SessionSnapshot } from "../../types";
 vi.mock("../../hooks/useSkills");
 import { useSkills, useInvokeSkill, useInvokeAgentCommand } from "../../hooks/useSkills";
 
-const LIVE_SNAPSHOT = { status: "idle", agentProfile: "claude-code", source: "acp" } as SessionSnapshot;
+const LIVE_SNAPSHOT = { status: "idle", agentProfile: "claude-code" } as SessionSnapshot;
 
 const CONFIRM_SKILL: Skill = {
   id: "s-deploy",
@@ -28,7 +28,7 @@ const CONFIRM_SKILL_WITH_ARGS: Skill = {
   description: "",
   backend: "claude-code",
   scope: "user",
-  args: [{ key: "env", required: true, hint: "target environment" }],
+  args: [{ key: "env", required: true, hint: "target environment", kind: "string" }],
   user_invocable: true,
   model_invocable: false,
   confirm: true,
@@ -140,7 +140,7 @@ describe("SkillRail confirm gate — ArgSheet cleared on gate entry", () => {
       ...PLAIN_SKILL,
       id: "s-plain-args",
       name: "search",
-      args: [{ key: "query", required: true, hint: "search query" }],
+      args: [{ key: "query", required: true, hint: "search query", kind: "string" }],
     };
     setup([PLAIN_WITH_ARGS, CONFIRM_SKILL]);
     renderOpenRail();

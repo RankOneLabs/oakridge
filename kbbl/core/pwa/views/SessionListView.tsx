@@ -15,7 +15,7 @@ import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { FeedbackMessage } from "../components/atoms/FeedbackMessage";
-import { SessionCohortHeading } from "../components/molecules/SessionCohortHeading";
+import { SessionUnitHeading } from "../components/molecules/SessionUnitHeading";
 import {
   NewSessionForm,
   type NewSessionFormValues,
@@ -75,8 +75,7 @@ function SessionRunSection({
   onResume,
   resumeDisabled,
 }: SessionRunSectionProps) {
-  const hasStageGroup = run.groups.some((group) => group.kind === "stage");
-  const runQuery = useRun(run.runId, hasStageGroup);
+  const runQuery = useRun(run.runId);
 
   return (
     <section
@@ -84,17 +83,11 @@ function SessionRunSection({
       data-testid={`session-run-${run.runId}`}
     >
       <h2 className="session-cohort-heading session-cohort-heading--plain">
-        {title ?? "Run"}
+        {title ?? run.runId}
       </h2>
-      {run.groups.map((group) => (
+      {run.units.map((group) => (
         <section key={group.key} className="session-cohort-group">
-          <SessionCohortHeading
-            title={group.kind === "cohort"
-              ? group.title
-              : selectSessionStageName(group.stageInstanceId, runQuery.data) ?? "Stage"}
-            secondaryId={group.kind === "cohort" ? group.unitId : undefined}
-            repositoryKey={group.repositoryKey}
-          />
+          <SessionUnitHeading title={selectSessionStageName(group.unitId, runQuery.data) ?? group.unitId} />
           <SessionRowList
             sessions={group.sessions}
             onSelect={onSelect}

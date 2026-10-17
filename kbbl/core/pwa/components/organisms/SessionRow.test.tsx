@@ -6,12 +6,12 @@ import type { SessionSnapshot } from "../../types";
 import type { PwaSessionWorkflowIdentity } from "../../../acp/pwa-wire";
 import { SessionRow } from "./SessionRow";
 
-const TEMPLATED_NAME = "build-3f9e2b10-6c8b-4c1e-9a2b-1234567890ab-cohort-one";
+const SESSION_NAME = "builder · cohort/one";
 
 function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
     sid: "sid-1",
-    name: TEMPLATED_NAME,
+    name: SESSION_NAME,
     agentProfile: "claude-code",
     status: "idle",
     source: "acp",
@@ -42,14 +42,11 @@ function renderRow(snapshot: SessionSnapshot) {
 }
 
 describe("SessionRow with a workflow identity", () => {
-  test("renders the operator role in its own element and drops the raw templated name", () => {
-    const workflow: PwaSessionWorkflowIdentity = {
-      runId: "run-1", stageInstanceId: "3f9e2b10-6c8b-4c1e-9a2b-1234567890ab", unitId: "cohort-one",
-      operatorRole: "build", cohortTitle: "Cohort One", repositoryKey: null,
-    };
+  test("renders the worker in its own element beside the session's name", () => {
+    const workflow: PwaSessionWorkflowIdentity = { runId: "run-1", unitId: "run-1/cohort/one", worker: "builder" };
     renderRow(makeSnapshot({ workflow }));
 
-    expect(screen.getByText("build")).toBeTruthy();
-    expect(screen.queryByText(TEMPLATED_NAME)).toBeNull();
+    expect(screen.getByText("builder")).toBeTruthy();
+    expect(screen.getByText(SESSION_NAME)).toBeTruthy();
   });
 });

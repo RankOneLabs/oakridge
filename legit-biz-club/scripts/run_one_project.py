@@ -14,9 +14,7 @@ Output goes to ``legit-biz-club/.run/<ISO timestamp>/`` (gitignored).
 The cell's artifact lives at
 ``<output_dir>/<target.name>/<condition.name>/<artifact_filename>``.
 
-This is the v0 "minimalist UX" — terminal only, no kbbl wiring. The
-``emit`` callback prints ``[workspace_event]`` lines so we can see
-what events kbbl *would* receive once an interface is sketched out.
+Terminal only: the ``emit`` callback prints ``[workspace_event]`` lines.
 """
 from __future__ import annotations
 
