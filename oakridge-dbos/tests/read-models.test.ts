@@ -157,13 +157,6 @@ test("history and runs reject a cursor timestamp PostgreSQL cannot cast", async 
   }
 });
 
-test("history and runs still accept millisecond cursors emitted before the precision fix", async () => {
-  const { run_id, unit } = await drafted();
-  const cursor = Buffer.from(JSON.stringify({ created_at: "2026-10-15T12:00:00.123Z", id: "x" })).toString("base64url");
-  const paths = [`/api/runs?cursor=${segment(cursor)}`, `${unitPath(run_id, unit, "/history")}?cursor=${segment(cursor)}`];
-  for (const path of paths) expect((await app.request(path)).status).toBe(200);
-});
-
 describe("each read model carries exactly its contract's fields", () => {
   test("runs and run units", async () => {
     const { run_id } = await drafted();

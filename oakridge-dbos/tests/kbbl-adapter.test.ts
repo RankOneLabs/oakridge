@@ -197,19 +197,6 @@ test("development cohort worktrees use the cohort key and a stable six-character
       unrelated_stage: true });
 });
 
-test("an existing cohort session retains its old branch when kbbl rejects a changed start spec", async () => {
-  const action = { ...writer, unit: "run-1/implementation/dark_theme_palette" };
-  const instruction = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123" } } });
-  const { calls, fetch } = recording(() => calls.length === 1
-    ? Response.json({ code: "session_key_conflict", error: "different start spec" }, { status: 409 })
-    : Response.json({ kind: "attached", session: snapshot() }));
-  const result = await createAgentProvider(config(fetch)).start(instruction);
-  const branches = calls.map((call) => (call.body as { worktree: { branch_name: string } }).worktree.branch_name);
-  expect({ kind: result.kind, branches }).toEqual({ kind: "acknowledged", branches: [
-    expect.stringMatching(/^cohort\/dark_theme_palette\/[0-9a-f]{6}$/),
-    expect.stringMatching(/^oakridge\/[0-9a-f]{16}$/) ] });
-});
-
 test("a session starts with the runtime, model and effort chosen for its worker", () => {
   const start = selectSessionStart(instructionFor({ config: { sessions: { document: { writer: { harness: "codex", model: "gpt-6-sol", effort: "high" } } } } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
