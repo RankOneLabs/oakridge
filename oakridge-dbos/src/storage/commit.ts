@@ -38,6 +38,8 @@ export type CommitOutcome =
   /** `step` refused the event. Stored as a rejected receipt when it carries an ingress id. */
   | { readonly kind: "rejected"; readonly reason: string }
   | { readonly kind: "conflict"; readonly detail: string }
+  /** Transient contention (deadlock, serialization failure, a concurrent launch mid-write): the same event can be retried as is. */
+  | { readonly kind: "contended"; readonly detail: string }
   | { readonly kind: "missing"; readonly detail: string };
 export interface CommitDependencies {
   readonly db: Database;
@@ -98,12 +100,13 @@ export async function commitEvent(deps: CommitDependencies, request: CommitReque
     }
     await trx.commit().execute();
     trx = null;
-    if (outcome.kind === "committed") deps.wake(request.run_id);
+    // A replay wakes too: the original commit's wake may have been lost.
+    if (outcome.kind === "committed" || outcome.kind === "replayed") deps.wake(request.run_id);
     return { ok: true, value: outcome };
   } catch (error) {
     if (trx !== null) await trx.rollback().execute().catch(() => undefined);
     const conflict = concurrencyConflict(error);
-    if (conflict) return { ok: true, value: { kind: "conflict", detail: conflict } };
+    if (conflict) return { ok: true, value: { kind: "contended", detail: conflict } };
     return { ok: false, error: { operation: "commit_event", entity_id: request.run_id, detail: String(error) } };
   }
 }
@@ -212,7 +215,7 @@ async function storeLaunchRefusal(db: Database, request: CommitRequest, launch: 
     .onConflict((conflict) => conflict.columns(["run_id", "ingress_id"]).doNothing()).returning("id").executeTakeFirst();
   if (stored) return { ok: true, value: launch.outcome };
   const earlier = await readReceipt(db, request);
-  if (!earlier) return { ok: true, value: { kind: "conflict", detail: "a concurrent launch's receipt could not be read; retry the launch" } };
+  if (!earlier) return { ok: true, value: { kind: "contended", detail: "a concurrent launch's receipt could not be read; retry the launch" } };
   return { ok: true, value: earlier.request_digest === refusal.request_digest ? { kind: "replayed", receipt: earlier.result }
     : { kind: "conflict", detail: "ingress id reused with different content" } };
 }

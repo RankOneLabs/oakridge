@@ -5,7 +5,7 @@ import type { RunId } from "../domain/primitives";
 import { selectControlPlaneAccess } from "../http/control-auth";
 import { configuredBrowserWritePolicy } from "../http/browser-write-policy";
 import { createHttpApp } from "../http/app";
-import { openDatabase } from "../storage/database";
+import { openDatabase, type Database } from "../storage/database";
 import { KbblClient } from "../adapters/kbbl";
 import { createAgentProvider } from "../effects/agent-provider";
 import type { EffectProvider } from "../effects/provider";
@@ -13,7 +13,7 @@ import { createOperationRunner, type OperationRunner } from "../operations/runne
 import { BunGitCommandRunner } from "./git-command-runner";
 import { GithubPullRequestReader } from "./github-pull-requests";
 import { selectApplicationVersion } from "../workflows/engine-version";
-import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, wakeRun, type WorkflowTiming } from "../workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, sweepRunsNeedingWork, wakeRun, type WorkflowTiming } from "../workflows/topology";
 
 /** Where the executor carries attempts: agents to kbbl, code workers to the registered operations. */
 export interface ExecutorOptions {
@@ -48,6 +48,19 @@ export interface ProductionComposition { readonly app: Hono; readonly applicatio
  * launched here, every run gets a durable workflow, and effect intents are
  * carried by workflows that resume after a crash. Nothing here polls.
  */
+const RUN_SWEEP_INTERVAL_MS = 60_000;
+/** Recover runs a lost wake left without a workflow; a sweep still in flight skips the next tick. */
+function startRunSweep(db: Database): ReturnType<typeof setInterval> {
+  let is_sweeping = false;
+  return setInterval(() => {
+    if (is_sweeping) return;
+    is_sweeping = true;
+    sweepRunsNeedingWork(db)
+      .catch((error: unknown) => DBOS.logger.warn(`run sweep failed: ${String(error)}`))
+      .finally(() => { is_sweeping = false; });
+  }, RUN_SWEEP_INTERVAL_MS);
+}
+
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
   if (access.kind === "refused") throw new Error(access.detail);
@@ -70,9 +83,11 @@ export async function createProductionComposition(options: ProductionOptions): P
     launch_attempted = true;
     await DBOS.launch();
     await resumeActiveRuns(db);
+    const sweep = startRunSweep(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
     const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access });
     return { app, application_version, async close() {
+      clearInterval(sweep);
       try { await parkRunningWorkflows(); }
       finally { try { await DBOS.shutdown(); } finally { core.close(); await db.destroy(); } }
     } };

@@ -250,6 +250,8 @@ const reportStep = DBOS.registerStep(async (input: ReportInput): Promise<string 
   const committed = await reportWorker({ db, core, wake: () => undefined }, input);
   if (!committed.ok) throw new Error(`${committed.error.operation}: ${committed.error.detail}`);
   const outcome = committed.value;
+  // Thrown so DBOS retries the step: a contended report is not a refusal.
+  if (outcome.kind === "contended") throw new Error(`report contended: ${outcome.detail}`);
   if (outcome.kind === "committed") return null;
   if (outcome.kind === "replayed") return outcome.receipt.kind === "committed" ? null : `rejected: ${outcome.receipt.reason}`;
   return `${outcome.kind}: ${"reason" in outcome ? outcome.reason : outcome.detail}`;
@@ -798,6 +800,18 @@ export async function resumeActiveRuns(db: Database): Promise<number> {
   const runs = await listRunsNeedingWork(db);
   for (const run_id of runs) await ensureRunWorkflow(run_id);
   return runs.length;
+}
+
+/**
+ * Every run that needs work gets its workflow, as at boot. A wake whose
+ * ensureRunWorkflow failed leaves a committed run with no workflow to recheck
+ * it, so this runs on an interval; a run whose workflow is live is untouched.
+ */
+export async function sweepRunsNeedingWork(db: Database): Promise<void> {
+  for (const run_id of await listRunsNeedingWork(db)) {
+    try { await ensureRunWorkflow(run_id); }
+    catch (error) { DBOS.logger.warn(`run ${run_id}: sweep could not ensure its workflow: ${String(error)}`); }
+  }
 }
 
 /**
