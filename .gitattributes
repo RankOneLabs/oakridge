@@ -1,13 +1,12 @@
 # Committed generated output. GitHub collapses these in pull request diffs.
-# The contracts regenerate with scripts/generate-core-contracts.sh and the
-# storage records with oakridge-dbos/scripts/generate-storage-records.ts. The
-# the pinned operator fixture and the dev-flow prompts are frozen: their
-# generator retired with the v1 authoring surface, so edit those files directly
-# or delete them with their last consumer.
-oakridge-dbos/src/core-client/generated-contracts.ts linguist-generated=true
-oakridge-dbos/src/storage/generated-records.ts linguist-generated=true
-workflow-config/src/source-contracts.ts linguist-generated=true
-kbbl/core/pwa/oakridge/__fixtures__/development-definition.json linguist-generated=true
+# The core contracts regenerate with scripts/generate-core-contracts.sh, the
+# storage records with oakridge-dbos/scripts/generate-storage-records.ts, the
+# operator contracts with kbbl/scripts/generate-operator-contracts.ts, and the
+# workflow bundles from their YAML with workflow-config/src/generate.ts.
+oakridge-dbos/src/core-client/core-types.ts linguist-generated=true
+oakridge-dbos/src/storage/db-types.ts linguist-generated=true
 kbbl/core/pwa/oakridge/workflow-definition-types.ts linguist-generated=true
 kbbl/core/pwa/oakridge/operator-contracts.ts linguist-generated=true
-workflow-config/prompts/dev-flow/v3/*.md linguist-generated=true
+workflow-core/fixtures/bundles/development.json linguist-generated=true
+workflow-core/fixtures/bundles/fan-out.json linguist-generated=true
+workflow-core/fixtures/bundles/review-loop.json linguist-generated=true

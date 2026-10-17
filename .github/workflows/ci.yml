@@ -76,7 +76,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test oakridge-dbos/tests/core-fixture-parity.test.ts
-      - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
 
   core-contracts:
     name: Generated Rust/TypeScript contracts
