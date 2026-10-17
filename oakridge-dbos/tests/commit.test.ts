@@ -35,7 +35,7 @@ test("deadlock and serialization conflicts report distinct retryable reasons", a
       const result = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, {
         run_id: "missing" as RunId, ingress_id: null, writer: OPERATOR, event: { kind: "launched", input: {} },
       });
-      if (!result.ok || result.value.kind !== "conflict") throw new Error(`expected retryable conflict: ${JSON.stringify(result)}`);
+      if (!result.ok || result.value.kind !== "contended") throw new Error(`expected contended outcome: ${JSON.stringify(result)}`);
       reasons.push(result.value.detail);
     } finally { start.mockRestore(); }
   }

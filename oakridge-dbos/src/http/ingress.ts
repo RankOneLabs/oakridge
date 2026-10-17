@@ -74,7 +74,7 @@ export function ingressResponse(run_id: string, result: CommitResult): Response 
     case "replayed": return outcome.receipt.kind === "committed" ? json({ kind: "committed", run_id, event_id: outcome.receipt.event_id })
       : json({ kind: "rejected", reason: outcome.receipt.reason }, 409);
     case "rejected": return json({ kind: "rejected", reason: outcome.reason }, 409);
-    case "conflict": return json({ kind: "conflict", detail: outcome.detail }, 409);
+    case "conflict": case "contended": return json({ kind: "conflict", detail: outcome.detail }, 409);
     case "missing": return errorResponse(new MissingEntityError(outcome.detail));
   }
 }

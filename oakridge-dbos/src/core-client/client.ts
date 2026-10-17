@@ -15,7 +15,7 @@ export type CoreResult<T> = { readonly ok: true; readonly value: T }
 export type CoreStartupResult = { readonly ok: true; readonly value: CoreClient }
   | { readonly ok: false; readonly error: { readonly kind: "transport"; readonly detail: CoreTransportError } };
 export interface CoreClientOptions { readonly wasm_path?: string }
-export interface CoreChildHealth { readonly pid: null; readonly uptime_ms: number; readonly restart_count: number; readonly last_stderr_lines: readonly string[] }
+export interface CoreHealth { readonly uptime_ms: number; readonly restart_count: number }
 type RequestInput<O extends CoreRequest["operation"]> = Extract<CoreRequest, { readonly operation: O }>["input"];
 interface CoreWasmExports {
   readonly memory: WebAssembly.Memory;
@@ -52,8 +52,8 @@ export class CoreClient {
     catch (cause) { return { ok: false, error: { kind: "transport", detail: { kind: "malformed_request", detail: `failed to load core WASM: ${String(cause)}` } } }; }
   }
 
-  get health(): CoreChildHealth {
-    return { pid: null, uptime_ms: Date.now() - this.startedAt, restart_count: this.restartCount, last_stderr_lines: [] };
+  get health(): CoreHealth {
+    return { uptime_ms: Date.now() - this.startedAt, restart_count: this.restartCount };
   }
 
   async request<O extends CoreRequest["operation"]>(operation: O, input: RequestInput<O>): Promise<CoreResult<Output>> {

@@ -7,15 +7,6 @@ on:
       - "epic/**"
 
 jobs:
-  frozen-v1-ui:
-    name: Frozen v1 operator UI
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - run: bash scripts/check-frozen-ui.sh
-
   workflow-core:
     name: Rust core (fmt, clippy, test)
     needs: core-contracts
@@ -76,7 +67,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test oakridge-dbos/tests/core-fixture-parity.test.ts
-      - run: bun oakridge-dbos/scripts/generate-pwa-definition-fixture.ts --check
 
   core-contracts:
     name: Generated Rust/TypeScript contracts

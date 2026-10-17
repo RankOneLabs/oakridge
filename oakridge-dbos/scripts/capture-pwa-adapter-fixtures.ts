@@ -81,6 +81,14 @@ if (fixtureName === "v2-planning-revise") {
   console.log(`Captured ${runId}: ${planning.attempts.length} planning attempts`);
   process.exit(0);
 }
+if (fixtureName === "v2-cohort-merge" || fixtureName === "v2-integration-merge") {
+  // The merge tests read the run and the unit awaiting merge confirmation, nothing else.
+  const merging = units.filter((unit) => unit.decisions.some((decision) => decision.key === "confirm_merged"));
+  if (!merging.length) throw new Error(`run ${runId} has no unit awaiting merge confirmation`);
+  writeFileSync(output, `${JSON.stringify({ source: path, captured_at: new Date().toISOString(), run, units: merging }, null, 2)}\n`);
+  console.log(`Captured ${runId}: ${merging.length} merge units`);
+  process.exit(0);
+}
 const artifacts: OperatorArtifactDetail[] = [];
 for (const unit of units) for (const artifact of unit.artifacts) {
   artifacts.push(await get<OperatorArtifactDetail>(`${path}/units/${encodeURIComponent(unit.unit_id)}/artifacts/${encodeURIComponent(artifact.artifact_key)}`));
@@ -88,5 +96,6 @@ for (const unit of units) for (const artifact of unit.artifacts) {
 const artifact = artifacts.find((candidate) => candidate.schema === "build_body");
 if (!artifact) throw new Error(`run ${runId} has no build result; capture at an assessment review`);
 const event = await captureEvent();
-writeFileSync(output, `${JSON.stringify({ source: path, captured_at: new Date().toISOString(), run, units, inbox: { run_id: runId, items: inbox.items }, artifact, artifacts, event }, null, 2)}\n`);
+writeFileSync(output, `${JSON.stringify({ source: path, captured_at: new Date().toISOString(), run, units, inbox: { run_id: runId, items: inbox.items }, artifact,
+  artifacts: artifacts.filter((candidate) => candidate.schema === "workspace"), event }, null, 2)}\n`);
 console.log(`Captured ${runId}: ${units.length} units, ${inbox.items.length} inbox items, ${artifacts.length} artifacts`);

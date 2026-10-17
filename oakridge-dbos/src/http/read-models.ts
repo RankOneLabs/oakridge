@@ -31,9 +31,9 @@ function decodeCursor<Value>(raw: string | undefined, accept: (value: unknown) =
   } catch { return new MalformedRequestError(`invalid ${what} cursor`); }
 }
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
-// Accept current six-digit PostgreSQL cursors and three-digit cursors emitted before the precision fix.
-// Date.parse alone accepts strings such as "2026" that PostgreSQL rejects as timestamptz.
-const isCursorTimestamp = (value: string): boolean => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:\d{3})?Z$/.test(value)
+// A cursor carries PostgreSQL's six-digit fraction. Date.parse alone accepts
+// strings such as "2026" that PostgreSQL rejects as timestamptz.
+const isCursorTimestamp = (value: string): boolean => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)
   && value.slice(0, 4) !== "0000" && Number.isFinite(Date.parse(value))
   && new Date(value).toISOString().slice(0, 23) === value.slice(0, 23);
 const isTimeCursor = (value: unknown): value is { readonly created_at: string; readonly id: string } => isObject(value)

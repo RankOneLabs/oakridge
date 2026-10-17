@@ -12,8 +12,9 @@ import type { EffectProvider } from "../effects/provider";
 import { createOperationRunner, type OperationRunner } from "../operations/runner";
 import { BunGitCommandRunner } from "./git-command-runner";
 import { GithubPullRequestReader } from "./github-pull-requests";
+import { startRunSweep } from "./run-sweep";
 import { selectApplicationVersion } from "../workflows/engine-version";
-import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, wakeRun, type WorkflowTiming } from "../workflows/topology";
+import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, sweepRunsNeedingWork, wakeRun, type WorkflowTiming } from "../workflows/topology";
 
 /** Where the executor carries attempts: agents to kbbl, code workers to the registered operations. */
 export interface ExecutorOptions {
@@ -46,7 +47,7 @@ export interface ProductionComposition { readonly app: Hono; readonly applicatio
 /**
  * The production composition. DBOS is the runtime: it is configured and
  * launched here, every run gets a durable workflow, and effect intents are
- * carried by workflows that resume after a crash. Nothing here polls.
+ * carried by workflows that resume after a crash.
  */
 export async function createProductionComposition(options: ProductionOptions): Promise<ProductionComposition> {
   const access = selectControlPlaneAccess({ host: options.host, token: options.control_token, allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1" });
@@ -72,8 +73,9 @@ export async function createProductionComposition(options: ProductionOptions): P
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
     const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access });
+    const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     return { app, application_version, async close() {
-      try { await parkRunningWorkflows(); }
+      try { await sweep.stop(); await parkRunningWorkflows(); }
       finally { try { await DBOS.shutdown(); } finally { core.close(); await db.destroy(); } }
     } };
   } catch (cause) {
