@@ -3,15 +3,28 @@ import type { CreateRunContext, LaunchSessionSettings } from "../types";
 import type { ModelRole } from "./runtime-selection";
 import type { Result } from "../../lib/result";
 
-/** One agent worker declared by the pinned v2 workflow. A collection may start
- * several sessions from this declaration; each inherits this run-level choice. */
-export interface AgentSessionTarget {
+/** Anything the launch form offers one runtime/model picker for. */
+export interface ModelChoiceTarget {
   readonly key: string;
-  readonly stage: string;
-  readonly worker: string;
   readonly label: string;
   readonly suggested_role: ModelRole;
 }
+
+/** One agent worker declared by the pinned v2 workflow. A collection may start
+ * several sessions from this declaration; each inherits this run-level choice. */
+export interface AgentSessionTarget extends ModelChoiceTarget {
+  readonly stage: string;
+  readonly worker: string;
+}
+
+/** A planner or worker picker that sets every session of its role. */
+export interface RoleChoiceTarget extends ModelChoiceTarget {
+  /** The session labels this role's choice applies to. */
+  readonly covers: readonly string[];
+}
+
+/** By role asks for two models; by session asks for one per agent session. */
+export type SessionModelMode = "by_role" | "by_session";
 
 /** Worker declarations in GET /api/definitions/:id's authored workflow.
  * A template use has no local kind; its kind comes from workflow.workers. */
@@ -51,6 +64,29 @@ export function selectAgentSessionTargets(workflow: AgentWorkerWorkflow): readon
 }
 
 export type SessionSelectionMap = Readonly<{ [key: string]: RuntimeModelSelection }>;
+
+const ROLE_LABELS: Readonly<{ [role in ModelRole]: string }> = { planner: "Planner", worker: "Worker" };
+
+/** The role pickers by-role mode shows: one per role that has at least one session. */
+export function selectRoleChoiceTargets(targets: readonly AgentSessionTarget[]): readonly RoleChoiceTarget[] {
+  return (["planner", "worker"] as const)
+    .map((role) => ({ key: role, label: ROLE_LABELS[role], suggested_role: role,
+      covers: targets.filter((target) => target.suggested_role === role).map((target) => target.label) }))
+    .filter((target) => target.covers.length > 0);
+}
+
+/** Expand role choices into one choice per session, keyed like by-session mode. */
+export function selectSessionSelectionsFromRoles(targets: readonly AgentSessionTarget[], roles: SessionSelectionMap): SessionSelectionMap {
+  return Object.fromEntries(targets.flatMap((target) => {
+    const selection = roles[target.suggested_role];
+    return selection ? [[target.key, selection] as const] : [];
+  }));
+}
+
+/** The sessions whose role had its runtime chosen explicitly. */
+export function selectSessionKeysFromRoleKeys(targets: readonly AgentSessionTarget[], role_keys: ReadonlySet<string>): ReadonlySet<string> {
+  return new Set(targets.filter((target) => role_keys.has(target.suggested_role)).map((target) => target.key));
+}
 export interface SessionSettingsSelectionError {
   readonly operation: "select_session_settings";
   readonly detail: string;

@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import type { RuntimeId } from "../../../runtime";
 import type { RuntimeDescriptors } from "../../hooks/useServerConfig";
 import type { RuntimeModelSelection } from "../../types";
-import type { AgentSessionTarget, SessionSelectionMap } from "../lib/agent-session-targets";
+import type { ModelChoiceTarget, SessionSelectionMap } from "../lib/agent-session-targets";
 import { coerceSelection } from "../lib/launch-config";
 import { initialSelectionForRole } from "../lib/runtime-selection";
 
-/** Local launch-form choices keyed by the workflow's declared agent workers. */
-export function useAgentSessionSelections(targets: readonly AgentSessionTarget[], descriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId) {
+export type ModelChoices = ReturnType<typeof useAgentSessionSelections>;
+
+/** Local launch-form choices keyed by their targets: declared agent workers, or roles. */
+export function useAgentSessionSelections(targets: readonly ModelChoiceTarget[], descriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId) {
   const [selections, setSelections] = useState<SessionSelectionMap>({});
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
 
@@ -25,15 +27,15 @@ export function useAgentSessionSelections(targets: readonly AgentSessionTarget[]
     });
   }, [targets, descriptors, defaultRuntimeId, touched]);
 
-  const selectionFor = (target: AgentSessionTarget): RuntimeModelSelection =>
+  const selectionFor = (target: ModelChoiceTarget): RuntimeModelSelection =>
     selections[target.key] ?? initialSelectionForRole(target.suggested_role, descriptors, defaultRuntimeId);
-  const setSelectionFor = (target: AgentSessionTarget) => (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => {
+  const setSelectionFor = (target: ModelChoiceTarget) => (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => {
     setSelections((current) => {
       const previous = current[target.key] ?? selectionFor(target);
       return { ...current, [target.key]: typeof value === "function" ? value(previous) : value };
     });
   };
-  const touchRuntimeFor = (target: AgentSessionTarget) => (isTouched: boolean) => {
+  const touchRuntimeFor = (target: ModelChoiceTarget) => (isTouched: boolean) => {
     setTouched((current) => {
       const next = new Set(current);
       if (isTouched) next.add(target.key);
@@ -41,5 +43,10 @@ export function useAgentSessionSelections(targets: readonly AgentSessionTarget[]
       return next;
     });
   };
-  return { selections, selectionFor, setSelectionFor, touchRuntimeFor };
+  /** Replace every choice, e.g. to start per-session choices from the role choices. */
+  const seed = (next: SessionSelectionMap, touched_keys: ReadonlySet<string>) => {
+    setSelections(next);
+    setTouched(touched_keys);
+  };
+  return { selections, touched, selectionFor, setSelectionFor, touchRuntimeFor, seed };
 }
