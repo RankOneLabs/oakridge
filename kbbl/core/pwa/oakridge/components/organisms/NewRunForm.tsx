@@ -16,8 +16,9 @@ import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections
 import { useCreateRun } from "../../hooks/useCreateRun";
 import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
-import { RoleModelPicker } from "../molecules/RoleModelPicker";
-import { selectAgentSessionTargets, selectLaunchSessionSettings } from "../../lib/agent-session-targets";
+import { SessionModelFields } from "../molecules/SessionModelFields";
+import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,
+  selectSessionSelectionsFromRoles, type SessionModelMode } from "../../lib/agent-session-targets";
 import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
 import { randomUuid } from "../../../lib/random-uuid";
@@ -59,6 +60,11 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const definitionQuery = useOperatorDefinition(workflowDefId);
   const sessionTargets = useMemo(() => definitionQuery.data ? selectAgentSessionTargets(definitionQuery.data.workflow) : [], [definitionQuery.data]);
   const sessionChoices = useAgentSessionSelections(sessionTargets, runtimeDescriptors, defaultRuntimeId);
+  const roleTargets = useMemo(() => selectRoleChoiceTargets(sessionTargets), [sessionTargets]);
+  const roleChoices = useAgentSessionSelections(roleTargets, runtimeDescriptors, defaultRuntimeId);
+  const [modelMode, setModelMode] = useState<SessionModelMode>("by_role");
+  const sessionSelectionsFromRoles = () => selectSessionSelectionsFromRoles(sessionTargets,
+    Object.fromEntries(roleTargets.map((target) => [target.key, roleChoices.selectionFor(target)])));
   const [error, setError] = useState<string | null>(null);
 
   // Sort defs: newest version first per name, then by name. Memoized so the
@@ -110,13 +116,24 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     setBriefNotesSource({ kind: "file", file_name: result.value.file_name });
   };
 
+  // Per-session choices always start from the current planner and worker
+  // choices, so switching shows exactly what by-role mode would launch.
+  const onModelModeChange = (mode: SessionModelMode) => {
+    if (mode === modelMode) return;
+    if (mode === "by_session") {
+      sessionChoices.seed(sessionSelectionsFromRoles(), selectSessionKeysFromRoleKeys(sessionTargets, roleChoices.touched));
+    }
+    setModelMode(mode);
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
     if (!definitionQuery.data || definitionQuery.data.bundle_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
-    const sessionSettings = selectLaunchSessionSettings(sessionTargets,
-      Object.fromEntries(sessionTargets.map((target) => [target.key, sessionChoices.selectionFor(target)])));
+    const sessionSettings = selectLaunchSessionSettings(sessionTargets, modelMode === "by_role"
+      ? sessionSelectionsFromRoles()
+      : Object.fromEntries(sessionTargets.map((target) => [target.key, sessionChoices.selectionFor(target)])));
     if (!sessionSettings.ok) { setError(sessionSettings.error.detail); return; }
     const repositoryResult = validateRepositoryInputs(repositories);
     if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
@@ -155,7 +172,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         backAction={<Button onClick={onBack}>Back</Button>}
         eyebrow="New execution"
         title="Start a workflow run"
-        summary="Choose the workflow, repositories, operating brief, and each agent session's model."
+        summary="Choose the workflow, repositories, operating brief, and the agent models."
       />
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
@@ -215,19 +232,16 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
         {definitionQuery.isPending && <div>Loading agent sessions…</div>}
         {definitionQuery.isError && <FeedbackMessage tone="danger">Could not load agent sessions: {definitionQuery.error.message}</FeedbackMessage>}
-        <div className="or-role-grid">
-          {sessionTargets.map((target) => <RoleModelPicker
-            key={target.key}
-            role={target.suggested_role}
-            label={target.label}
-            selection={sessionChoices.selectionFor(target)}
-            setSelection={sessionChoices.setSelectionFor(target)}
-            setRuntimeTouched={sessionChoices.touchRuntimeFor(target)}
-            runtimeDescriptors={runtimeDescriptors}
-            defaultRuntimeId={defaultRuntimeId}
-            isPending={pending}
-          />)}
-        </div>
+        {sessionTargets.length > 0 && <SessionModelFields
+          mode={modelMode}
+          onModeChange={onModelModeChange}
+          roleTargets={roleTargets}
+          roleChoices={roleChoices}
+          sessionTargets={sessionTargets}
+          sessionChoices={sessionChoices}
+          runtimes={{ descriptors: runtimeDescriptors, default_id: defaultRuntimeId }}
+          disabled={pending}
+        />}
 
         {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
 

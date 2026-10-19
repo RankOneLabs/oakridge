@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import captured from "../__fixtures__/v2-definition-detail.json";
-import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./agent-session-targets";
+import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,
+  selectSessionSelectionsFromRoles } from "./agent-session-targets";
 
 const definition = captured.definition;
 
@@ -58,5 +59,34 @@ describe("agent session choices from a pinned definition", () => {
   it("rejects an incomplete choice before launch", () => {
     const result = selectLaunchSessionSettings(selectAgentSessionTargets(definition.workflow), {});
     expect(result.ok ? null : result.error.detail).toBe("Choose a runtime and model for analysis · author.");
+  });
+
+  it("offers a planner and a worker choice covering every agent session", () => {
+    expect(selectRoleChoiceTargets(selectAgentSessionTargets(definition.workflow)).map((target) => [target.key, target.covers]))
+      .toEqual([
+        ["planner", ["analysis · author", "planning · planner", "brief · writer", "cohort · assessor", "integration · integrator"]],
+        ["worker", ["cohort · builder"]],
+      ]);
+  });
+
+  it("omits a role no session uses", () => {
+    const targets = selectAgentSessionTargets({ workflow: "review", stages: { review: { workers: { checker: { kind: "agent" } } } } });
+    expect(selectRoleChoiceTargets(targets).map((target) => target.key)).toEqual(["worker"]);
+  });
+
+  it("launches every session with its role's model when choosing by role", () => {
+    const targets = selectAgentSessionTargets(definition.workflow);
+    const selections = selectSessionSelectionsFromRoles(targets, {
+      planner: { runtime: "claude-code", model: "opus" },
+      worker: { runtime: "codex", model: "gpt-5" },
+    });
+    const result = selectLaunchSessionSettings(targets, selections);
+    expect(result.ok && [result.value.cohort.builder.model, result.value.cohort.assessor.model, result.value.integration.integrator.model])
+      .toEqual(["gpt-5", "opus", "opus"]);
+  });
+
+  it("marks a session's runtime as chosen when its role's runtime was chosen", () => {
+    const targets = selectAgentSessionTargets(definition.workflow);
+    expect([...selectSessionKeysFromRoleKeys(targets, new Set(["worker"]))]).toEqual([JSON.stringify(["cohort", "builder"])]);
   });
 });
