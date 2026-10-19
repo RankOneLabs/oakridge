@@ -27,7 +27,7 @@ function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]):
   return unit.stage === "integration" ? "github_review" : "building";
 }
 
-export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[]): AdapterResult<ReviewInbox> {
+export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], runTitle: string | null = null): AdapterResult<ReviewInbox> {
   const byId = new Map(units.map((unit) => [unit.unit_id, unit]));
   const cohorts: CohortLifecycleSummary[] = units.filter((unit) => unit.stage === "cohort" || unit.stage === "integration").map((unit) => {
     const unitItems = entry.items.filter((item) => item.unit_id === unit.unit_id);
@@ -38,7 +38,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const reviewName = review?.kind === "decision" && review.submit.kind === "review" ? review.submit.review : null;
     const gate = reviewName ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: reviewName }) : null;
     return { id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
-      title: unit.label, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
+      title: unit.label, run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
         assessment_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "assessment" && !!candidate.latest_revision) },
       admission: { required: unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission"),
         admitted: !unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission"),
@@ -73,7 +73,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      title: unit.label, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      title: unit.label, run_title: runTitle, artifact_key: artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => byId.get(id)?.label ?? id) }];

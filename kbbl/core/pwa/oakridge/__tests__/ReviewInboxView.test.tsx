@@ -191,7 +191,7 @@ describe("ReviewInboxView", () => {
     const briefB = briefGate("brief-b", "Brief B");
     const assessment = briefGate("assessment", "Assessment");
     let decided = false;
-    const units = [briefA, briefB, assessment].map((item) => ({ ...v2Unit, unit_id: item.unit_id, label: item.title,
+    const units = [briefA, briefB, assessment].map((item) => ({ ...v2Unit, unit_id: item.unit_id, collection_key: item.unit_id, label: item.title,
       decisions: v2Unit.decisions.map((decision) => ({ ...decision, submit: { ...decision.submit, target_revision_id: "revision-build" } })) }));
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
@@ -212,7 +212,7 @@ describe("ReviewInboxView", () => {
     await screen.findByTestId("or-review-inbox-settled-item");
     const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
       .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
-    expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);
+    expect(rows).toEqual(["settled:brief-a", "live:brief-b", "live:assessment"]);
   });
 
   it("shows automatic merged completion from durable reconciliation", async () => {

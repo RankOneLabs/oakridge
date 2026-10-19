@@ -551,6 +551,7 @@ export interface CohortLifecycleSummary {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   title?: string | null;
+  run_title?: string | null;
   lifecycle: CohortLifecycle;
   completion: CohortCompletion;
   admission: CohortAdmission;
@@ -587,6 +588,8 @@ export interface ReviewInboxItem {
   repository_key?: RepositoryKey | null;
   lifecycle: CohortLifecycle;
   title?: string | null;
+  run_title?: string | null;
+  artifact_key?: string | null;
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
   gate_id?: string | null;

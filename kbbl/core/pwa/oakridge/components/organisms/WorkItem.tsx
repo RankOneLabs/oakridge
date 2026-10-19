@@ -1,6 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
+import { selectAttentionContext } from "../../lib/run-attention";
 import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
@@ -50,8 +51,8 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
     <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
         <span className="or-work-item__eyebrow">{workLabel(item)}</span>
-        <h3>{item.title || item.unit_id}</h3>
-        <p>{item.repository_key || item.workflow_name}</p>
+        <h3>{item.unit_id}</h3>
+        <p>{selectAttentionContext(item)}</p>
         {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}
         <div className="or-work-item__links">
           {artifactRevisionId && <Button variant="link" onClick={() => onSelectArtifact(artifactRevisionId)} data-testid="or-inbox-artifact-link">Open full review</Button>}

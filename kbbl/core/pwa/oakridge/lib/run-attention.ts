@@ -18,3 +18,10 @@ type ReviewCohortIdentity = Pick<CohortLifecycleSummary, "run_id" | "stage_insta
 export function selectReviewCohortKey(cohort: ReviewCohortIdentity): string {
   return `${cohort.run_id}:${cohort.stage_instance_id}:${cohort.unit_id}`;
 }
+
+type AttentionContext = Pick<ReviewInboxItem, "run_title" | "title" | "artifact_key">;
+
+/** The run, stage and artifact a piece of attention work belongs to. */
+export function selectAttentionContext(work: AttentionContext): string {
+  return [work.run_title, work.title, work.artifact_key].filter((part) => !!part).join(" · ");
+}
