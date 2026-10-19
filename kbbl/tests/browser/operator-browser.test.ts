@@ -77,6 +77,7 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
     await page.getByLabel("Repository 1 path").fill("/repo");
     await page.getByLabel("Brief notes", { exact: true }).fill("Restore the operator UI");
+    await page.getByRole("button", { name: "Per session" }).click();
     await page.getByLabel("cohort · builder model").selectOption("sonnet");
     await page.getByLabel("cohort · assessor model").selectOption("opus");
     await page.getByRole("button", { name: "Start Run" }).click();
