@@ -199,6 +199,18 @@ describe("the run route", () => {
 });
 
 describe("opening a pane from the sidebar", () => {
+  it("filters artifact rows and restores them when All is selected", async () => {
+    renderWorkspace();
+    const filter = await screen.findByTestId("or-sidebar-artifact-filter");
+    expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
+
+    fireEvent.change(filter, { target: { value: "build_results" } });
+    expect(screen.getAllByTestId("or-sidebar-artifact").map((row) => row.getAttribute("data-artifact-id"))).toEqual(["art-build"]);
+
+    fireEvent.change(filter, { target: { value: "all" } });
+    expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
+  });
+
   it("changes the pane rather than navigating away", async () => {
     renderWorkspace();
     const hashBefore = window.location.hash;
