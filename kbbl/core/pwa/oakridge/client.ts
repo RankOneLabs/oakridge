@@ -259,14 +259,16 @@ export async function fetchReviewInbox(): Promise<ReviewInbox> {
   const runs = await readRunPage();
   if (runs.length === 0) return { cohorts: [], items: [] };
   const entries = await readRunInboxBatch(runs.map((run) => run.run_id));
-  const slices = await Promise.all(entries.map(async (entry) => unwrapAdapter(`${runPath(entry.run_id)}/inbox`, classifyDevelopmentInbox(entry, await readUnits(entry.run_id)))));
+  const titles = new Map(runs.map((run) => [run.run_id, run.title]));
+  const slices = await Promise.all(entries.map(async (entry) => unwrapAdapter(`${runPath(entry.run_id)}/inbox`, classifyDevelopmentInbox(entry, await readUnits(entry.run_id), titles.get(entry.run_id) ?? null))));
   return { cohorts: slices.flatMap((slice) => slice.cohorts), items: slices.flatMap((slice) => slice.items) };
 }
 
 export async function refreshReviewInboxRun(runId: string, current: ReviewInbox): Promise<ReviewInbox> {
   const path = `${runPath(runId)}/inbox`;
   const page = await oakridgeGet<{ readonly items: OperatorRunInboxBatch["items"][number]["items"] }>(path);
-  const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, await readUnits(runId)));
+  const runTitle = [...current.items, ...current.cohorts].find((work) => work.run_id === runId)?.run_title ?? null;
+  const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, await readUnits(runId), runTitle));
   return replaceDevelopmentInboxRun(current, runId, slice);
 }
 

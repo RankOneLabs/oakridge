@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ReviewInboxItem } from "../types";
-import { selectReviewCohortKey, selectRunAttentionCounts } from "./run-attention";
+import { selectAttentionContext, selectReviewCohortKey, selectRunAttentionCounts } from "./run-attention";
 
 function inboxItem(
   id: string,
@@ -64,4 +64,13 @@ it("keeps scalar admission and gate identities separate across stages", () => {
 
   expect([cohorts.get(selectReviewCohortKey(gate)), cohorts.get(selectReviewCohortKey(admission))])
     .toEqual(["gate stage", "admission stage"]);
+});
+
+it("names the run, stage and artifact of attention work", () => {
+  expect(selectAttentionContext({ run_title: "import validation", title: "Brief", artifact_key: "brief" }))
+    .toBe("import validation · Brief · brief");
+});
+
+it("leaves out context the work does not have", () => {
+  expect(selectAttentionContext({ run_title: null, title: "Cohort" })).toBe("Cohort");
 });
