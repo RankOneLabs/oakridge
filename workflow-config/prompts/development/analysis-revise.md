@@ -1,14 +1,14 @@
-Revise your analysis of the specification. The operator reviewed the analysis below and asked for changes.
+Revise the proposed specification using the operator's feedback. Publish the complete `spec` artifact again, preserving requirements and exact wording outside the requested changes.
 
-## Your previous analysis
+## Previous proposed specification
 
 {{previous}}
 
-## What must change
+## Operator feedback
 
 {{feedback}}
 
-## Specification
+## Original specification
 
 {{spec}}
 
@@ -16,6 +16,6 @@ Revise your analysis of the specification. The operator reviewed the analysis be
 
 {{repositories}}
 
-{{workspaces}}
+## Prepared workspaces
 
-Publish the revised `analysis` artifact with every field, not only the ones that changed.
+{{workspaces}}

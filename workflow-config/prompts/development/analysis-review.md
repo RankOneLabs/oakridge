@@ -1,9 +1,9 @@
-Review the analysis of this specification. Accept it to start planning, or request changes and say what must change.
+Review the proposed specification against the original. Accept it as the specification for planning, or request precise changes. Do not accept unresolved product decisions.
 
-## Specification
+## Original specification
+
+{{original_spec}}
+
+## Proposed specification
 
 {{spec}}
-
-## Analysis
-
-{{analysis}}

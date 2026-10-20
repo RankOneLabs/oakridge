@@ -36,6 +36,19 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   });
 }
 
+test("development plans and briefs from the approved specification", () => {
+  interface DevelopmentSpecFlow {
+    readonly run: { readonly units: { readonly planning: { readonly input: { readonly spec: string } };
+      readonly briefs: { readonly input: { readonly spec: string } } } };
+    readonly stages: { readonly analysis: { readonly reviews: { readonly analysis_review: { readonly of: string } };
+      readonly outcome: { readonly spec: string } } };
+  }
+  const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development), "utf8")) as DevelopmentSpecFlow;
+  expect({ review: workflow.stages.analysis.reviews.analysis_review.of, outcome: workflow.stages.analysis.outcome.spec,
+    planning: workflow.run.units.planning.input.spec, brief: workflow.run.units.briefs.input.spec })
+    .toEqual({ review: "spec", outcome: "latest(spec)", planning: "analysis.outcome.spec", brief: "analysis.outcome.spec" });
+});
+
 test("a duplicate key in a sample is an error rather than a silent overwrite", () => {
   const document = YAML.parseDocument("workflow: a\nworkflow: b\n", { uniqueKeys: true });
   expect(document.errors.length).toBeGreaterThan(0);

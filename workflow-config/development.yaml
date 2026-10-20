@@ -1,7 +1,7 @@
 # The development workflow uses shared decisions, workers and inferred dependencies.
 #
 #   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
-#   analysis        author agent + operator review
+#   analysis        author revises the spec; operator approves the canonical text
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
 #   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:
@@ -10,7 +10,7 @@
 #                   a closed, unmerged PR requests build changes (D5)
 #   integration     one integration PR per repository with cohorts, into its final base (D6)
 #
-# The six artifact bodies are named schemas: the PWA picks each viewer by name.
+# Structured artifacts use named schemas; the approved spec is a text artifact.
 workflow: development
 input:
   title: text
@@ -33,16 +33,6 @@ schemas:
   severity: enum(blocking, warning, info)
   risk: { description: text, mitigation: text }
   issue: { description: text, severity: severity }
-
-  analysis_body:
-    summary: text
-    source_spec_refs: list(text)
-    findings: list(spec_finding)
-    requirements: list(requirement)
-    risks: list(risk)
-  spec_finding: { id: ident, description: text, severity: severity }
-  requirement: { id: ident, description: text, status: requirement_status }
-  requirement_status: enum(implementable, blocked, ambiguous)
 
   plan_body:
     summary: text
@@ -114,7 +104,7 @@ decisions:
     request_changes:
       effect: request_changes
       label: Request changes
-      fields: { feedback: "What must the analysis change?" }
+      fields: { feedback: "What must the proposed specification change?" }
 
 workers:
   pr_watch:
@@ -151,10 +141,9 @@ run:
     planning:
       stage: planning
       input:
-        spec: input.spec
+        spec: analysis.outcome.spec
         repositories: input.repositories
         workspaces: "map(prepare, prepare.outcome)"
-        analysis: analysis.outcome.analysis
     briefs:
       for_each: planning.outcome.plan.cohorts
       key: each.id
@@ -162,7 +151,7 @@ run:
       pool: writers
       input:
         cohort: each
-        spec: input.spec
+        spec: analysis.outcome.spec
     implementation:
       for_each: "map(briefs, briefs.outcome.brief)"
       key: each.cohort_id
@@ -206,25 +195,25 @@ stages:
   analysis:
     input: { spec: text, repositories: list(repository), workspaces: list(prepared) }
     artifacts:
-      analysis: { schema: analysis_body }
+      spec: { schema: text }
     workers:
       author:
         kind: agent
         prompts: { initial: development/analysis.md, revise: development/analysis-revise.md }
         inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces }
-        creates: [analysis]
+        creates: [spec]
     reviews:
       analysis_review:
-        of: analysis
+        of: spec
         by: operator
         prompt: development/analysis-review.md
-        inputs: { spec: input.spec, analysis: latest(analysis) }
+        inputs: { original_spec: input.spec, spec: latest(spec) }
         decisions: { set: accept_or_request }
-    done_when: approved(analysis)
-    outcome: { analysis: latest(analysis) }
+    done_when: approved(spec)
+    outcome: { spec: latest(spec) }
 
   planning:
-    input: { spec: text, repositories: list(repository), workspaces: list(prepared), analysis: analysis_body }
+    input: { spec: text, repositories: list(repository), workspaces: list(prepared) }
     artifacts:
       plan:
         schema: plan_body
@@ -239,14 +228,14 @@ stages:
       planner:
         kind: agent
         prompts: { initial: development/plan.md, revise: development/plan-revise.md }
-        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces, analysis: input.analysis }
+        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces }
         creates: [plan]
     reviews:
       plan_review:
         of: plan
         by: operator
         prompt: development/plan-review.md
-        inputs: { analysis: input.analysis, plan: latest(plan) }
+        inputs: { spec: input.spec, plan: latest(plan) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the plan change?" } } } }
     done_when: approved(plan)
     outcome: { plan: latest(plan) }

@@ -50,24 +50,6 @@
       "description": "text",
       "severity": "severity"
     },
-    "analysis_body": {
-      "summary": "text",
-      "source_spec_refs": "list(text)",
-      "findings": "list(spec_finding)",
-      "requirements": "list(requirement)",
-      "risks": "list(risk)"
-    },
-    "spec_finding": {
-      "id": "ident",
-      "description": "text",
-      "severity": "severity"
-    },
-    "requirement": {
-      "id": "ident",
-      "description": "text",
-      "status": "requirement_status"
-    },
-    "requirement_status": "enum(implementable, blocked, ambiguous)",
     "plan_body": {
       "summary": "text",
       "cohorts": "list(plan_cohort)",
@@ -159,7 +141,7 @@
         "effect": "request_changes",
         "label": "Request changes",
         "fields": {
-          "feedback": "What must the analysis change?"
+          "feedback": "What must the proposed specification change?"
         }
       }
     }
@@ -224,10 +206,9 @@
       "planning": {
         "stage": "planning",
         "input": {
-          "spec": "input.spec",
+          "spec": "analysis.outcome.spec",
           "repositories": "input.repositories",
-          "workspaces": "map(prepare, prepare.outcome)",
-          "analysis": "analysis.outcome.analysis"
+          "workspaces": "map(prepare, prepare.outcome)"
         }
       },
       "briefs": {
@@ -237,7 +218,7 @@
         "pool": "writers",
         "input": {
           "cohort": "each",
-          "spec": "input.spec"
+          "spec": "analysis.outcome.spec"
         }
       },
       "implementation": {
@@ -308,8 +289,8 @@
         "workspaces": "list(prepared)"
       },
       "artifacts": {
-        "analysis": {
-          "schema": "analysis_body"
+        "spec": {
+          "schema": "text"
         }
       },
       "workers": {
@@ -325,35 +306,34 @@
             "workspaces": "input.workspaces"
           },
           "creates": [
-            "analysis"
+            "spec"
           ]
         }
       },
       "reviews": {
         "analysis_review": {
-          "of": "analysis",
+          "of": "spec",
           "by": "operator",
           "prompt": "development/analysis-review.md",
           "inputs": {
-            "spec": "input.spec",
-            "analysis": "latest(analysis)"
+            "original_spec": "input.spec",
+            "spec": "latest(spec)"
           },
           "decisions": {
             "set": "accept_or_request"
           }
         }
       },
-      "done_when": "approved(analysis)",
+      "done_when": "approved(spec)",
       "outcome": {
-        "analysis": "latest(analysis)"
+        "spec": "latest(spec)"
       }
     },
     "planning": {
       "input": {
         "spec": "text",
         "repositories": "list(repository)",
-        "workspaces": "list(prepared)",
-        "analysis": "analysis_body"
+        "workspaces": "list(prepared)"
       },
       "artifacts": {
         "plan": {
@@ -384,8 +364,7 @@
           "inputs": {
             "spec": "input.spec",
             "repositories": "input.repositories",
-            "workspaces": "input.workspaces",
-            "analysis": "input.analysis"
+            "workspaces": "input.workspaces"
           },
           "creates": [
             "plan"
@@ -398,7 +377,7 @@
           "by": "operator",
           "prompt": "development/plan-review.md",
           "inputs": {
-            "analysis": "input.analysis",
+            "spec": "input.spec",
             "plan": "latest(plan)"
           },
           "decisions": {
