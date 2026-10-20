@@ -240,8 +240,8 @@ test("I2: sample B prepares a temporary repository and runs every item in a work
       distinct_branches: new Set(item_sessions.map((session) => session.spec.worktree?.branch_name)).size,
       c_after_a: (timeline.started.get("c") ?? 0) >= (timeline.finished.get("a") ?? Infinity),
       at_most_two: stub.max_running() <= 2,
-    }).toEqual({ workspace: { repository_path: repo.path, push_remote_owner: "oakridge-e2e", head: repo.head }, items: 4,
-      worktrees: Array.from({ length: 4 }, () => [repo.path, repo.head]), distinct_branches: 4, c_after_a: true, at_most_two: true });
+    }).toEqual({ workspace: { repository_path: repo.path, push_remote_owner: "oakridge-e2e", head: repo.head, base_branch: BASE_BRANCH }, items: 4,
+      worktrees: Array.from({ length: 4 }, () => [repo.path, `origin/${BASE_BRANCH}`]), distinct_branches: 4, c_after_a: true, at_most_two: true });
   } finally { repo.remove(); }
 }, 90_000);
 
@@ -383,7 +383,7 @@ test("a periodic code worker repeats under one intent across carrier generations
       run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head",
         base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } }, outcome: {} },
       stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
-        artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" } } },
+        artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" } } },
         workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
           inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head",
             base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } },

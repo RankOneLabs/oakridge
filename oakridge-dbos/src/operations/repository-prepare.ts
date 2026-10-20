@@ -18,10 +18,13 @@ export interface RepositoryPrepareInput {
  * `repository_path` echoes the input path verbatim: a workflow joins the
  * prepared workspace back to its repository by that value, so it must not be
  * the canonical toplevel git reports (which differs for a trailing slash,
- * subdirectory or symlink). `head` is the base branch's commit on origin,
- * which every session's worktree is cut from.
+ * subdirectory or symlink). `head` is the base branch's commit on origin
+ * when the run was prepared; `base_branch` is the branch every session's
+ * worktree is cut from, fetched fresh when the session starts.
  */
-export interface RepositoryPrepareOutput { readonly repository_path: string; readonly push_remote_owner: string; readonly head: string }
+export interface RepositoryPrepareOutput {
+  readonly repository_path: string; readonly push_remote_owner: string; readonly head: string; readonly base_branch: string;
+}
 
 export function decodeRepositoryPrepareInput(value: unknown): RepositoryPrepareInput | null {
   if (!isFields(value) || !isNonEmptyString(value.repository_path)) return null;
@@ -98,6 +101,7 @@ export async function prepareRepository(git: GitCommandRunner, input: Repository
   const base = await run(["rev-parse", "--verify", `refs/remotes/origin/${input.base_branch}^{commit}`]);
   if (options.signal?.aborted) return aborted();
   if (base.exit_code !== 0 || base.stdout.trim() === "") return { kind: "unavailable", detail: `${input.base_branch} does not resolve: ${outcomeDetail(base)}` };
-  const body: RepositoryPrepareOutput = { repository_path: input.repository_path, push_remote_owner: identity.owner, head: base.stdout.trim() };
+  const body: RepositoryPrepareOutput = { repository_path: input.repository_path, push_remote_owner: identity.owner, head: base.stdout.trim(),
+    base_branch: input.base_branch };
   return { kind: "succeeded", body };
 }

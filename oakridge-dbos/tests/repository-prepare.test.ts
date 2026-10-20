@@ -31,7 +31,8 @@ test("a base branch already on origin is used as it is, never reseeded", async (
   const git = scriptedGit({ listings: [`${BASE_SHA}\trefs/heads/epic/tiers\n`] });
   const outcome = await prepareRepository(git, INPUT);
   expect({ outcome, pushes: pushes(git.calls) }).toEqual({
-    outcome: { kind: "succeeded", body: { repository_path: "/srv/repo", push_remote_owner: "RankOneLabs", head: BASE_SHA } }, pushes: [] });
+    outcome: { kind: "succeeded", body: { repository_path: "/srv/repo", push_remote_owner: "RankOneLabs", head: BASE_SHA,
+      base_branch: "epic/tiers" } }, pushes: [] });
 });
 
 test("a missing base branch is cut from origin's integration branch and pushed", async () => {

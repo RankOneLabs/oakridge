@@ -59,7 +59,8 @@
           "body": {
             "repository_path": "/tmp/repo",
             "push_remote_owner": "owner",
-            "head": "abc"
+            "head": "abc",
+            "base_branch": "epic/x"
           }
         },
         {

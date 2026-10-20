@@ -25,7 +25,7 @@ schemas:
     preparation: { repository_path: repo_path, expected_head: optional(text) }
     forge: forge
   forge: { owner: ident, name: ident, build_base: text, final_base: text }
-  workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident }
+  workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident, base_branch: text }
   prepared: { key: ident, workspace: workspace }
   pr_status: { state: "enum(open, merged, closed_unmerged)", number: integer, url: text, head_sha: optional(text), merged_at: optional(text) }
   completed_cohort: outcome_of(cohort)

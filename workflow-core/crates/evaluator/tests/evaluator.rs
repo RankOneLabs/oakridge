@@ -177,6 +177,7 @@ fn sample(name: &str) -> CheckedWorkflow {
                     TypeExpression::Name("ident".into()),
                 ),
                 ("head".into(), TypeExpression::Name("ident".into())),
+                ("base_branch".into(), TypeExpression::Name("text".into())),
             ]
             .into(),
         ),
@@ -1087,7 +1088,7 @@ fn repository_workspace_resolves_from_the_stage_input() {
     assert_eq!(
         item.workspace,
         Some(
-            serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc"})
+            serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc","base_branch":"epic/x"})
         )
     );
 }
@@ -1959,7 +1960,7 @@ fn fan_out_preparing(items: Value) -> (CheckedWorkflow, StepSnapshot, Incoming) 
     let publish = Event::RevisionPublished {
         unit: UnitId::from("run/prepare"),
         artifact: SymbolKey::from("workspace"),
-        body: serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc"}),
+        body: serde_json::json!({"repository_path":"/tmp/repo","push_remote_owner":"owner","head":"abc","base_branch":"epic/x"}),
         predecessor: None,
         subject: None,
         by: Some(git),
@@ -2308,6 +2309,6 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         format!("{:x}", digest.finalize()),
         // The base corpus serialized through serde_json::Value has this
         // canonical-key-order digest; w6_projection restores its old shape.
-        "f167a9222ed673b82f2bb1c2c89948976ad757d6718db3653f8eddfdd6e9fb76"
+        "a2789f0ab4dca05165fc2057758db525b679ae7b076c0a6a211c9b9146c24f8f"
     );
 }

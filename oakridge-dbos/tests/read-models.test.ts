@@ -104,7 +104,7 @@ async function fanned(): Promise<RunId> {
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action: git }, writer: executor(git) });
   await submit({ run_id, event: { kind: "revision_published", unit: prepare, artifact: "workspace",
-    body: { repository_path: "/tmp/repo", push_remote_owner: "owner", head: "abc" }, by: git }, writer: executor(git) });
+    body: { repository_path: "/tmp/repo", push_remote_owner: "owner", head: "abc", base_branch: "epic/x" }, by: git }, writer: executor(git) });
   return run_id;
 }
 async function runEvents(run_id: string): Promise<readonly RunEvent[]> {
@@ -335,7 +335,7 @@ describe("derived fields", () => {
         { key: "c", text: "C", after: [] }, { key: "d", text: "D", after: ["a"] }] });
     const git = await actionOf(authority, run_id, "git");
     await submitter(authority)({ run_id, event: { kind: "revision_published", unit: unitOf(run_id, "prepare"), artifact: "workspace",
-      body: { repository_path: "/tmp/repo", push_remote_owner: "owner", head: "abc" }, by: git }, writer: executor(git) });
+      body: { repository_path: "/tmp/repo", push_remote_owner: "owner", head: "abc", base_branch: "epic/x" }, by: git }, writer: executor(git) });
     const inbox = await get<InboxPage>(`/api/runs/${segment(run_id)}/inbox`);
     const waits = inbox.items.filter((item) => item.kind === "waiting").map((item) => [item.unit_id, item.reason]);
     const stored = await authority.db.selectFrom("authority.unit").select(["id", "status", "blocked_reason"])

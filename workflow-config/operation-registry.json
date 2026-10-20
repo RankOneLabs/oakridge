@@ -10,7 +10,8 @@
     "output_schema": {
       "repository_path": "repo_path",
       "push_remote_owner": "ident",
-      "head": "ident"
+      "head": "ident",
+      "base_branch": "text"
     },
     "error_codes": [
       "worktree_unrecoverable",
