@@ -1,6 +1,6 @@
 # The development workflow uses shared decisions, workers and inferred dependencies.
 #
-#   prepare         code worker repository.prepare per repository
+#   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
 #   analysis        author agent + operator review
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
 #   briefs          one shared writer session across plan cohorts, with a separate review per brief
@@ -200,6 +200,8 @@ stages:
         inputs:
           repository_path: input.repository.preparation.repository_path
           expected_head: input.repository.preparation.expected_head
+          base_branch: input.repository.forge.build_base
+          integration_branch: input.repository.forge.final_base
         creates: [workspace]
     done_when: published(workspace)
     outcome: { key: input.repository.key, workspace: latest(workspace) }

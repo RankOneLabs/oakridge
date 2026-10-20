@@ -43,6 +43,14 @@ fn operations() -> Vec<CodeOperation> {
                     "expected_head".into(),
                     TypeExpression::Name("optional(text)".into()),
                 ),
+                (
+                    "base_branch".into(),
+                    TypeExpression::Name("text".into()),
+                ),
+                (
+                    "integration_branch".into(),
+                    TypeExpression::Name("text".into()),
+                ),
             ]
             .into(),
         ),

@@ -10,7 +10,9 @@
           "input": {
             "repository": {
               "repository_path": "/tmp/repo",
-              "expected_head": null
+              "expected_head": null,
+              "base_branch": "epic/sample",
+              "integration_branch": "main"
             },
             "items": [
               {
