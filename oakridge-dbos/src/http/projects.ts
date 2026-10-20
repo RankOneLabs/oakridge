@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { err, ok, type Result } from "../domain/primitives";
-import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
+import type { ProjectDraft, ProjectWriteError, ProjectWriteInput } from "../domain/projects";
+import { resolveProjectRepositoryIdentity } from "../runtime/project-identity";
 import type { Database } from "../storage/database";
 import { createProject, listProjects, updateProject } from "../storage/registry-store";
 import type { ForgeRepository } from "../storage/json-column-types";
@@ -23,7 +24,7 @@ const text = (value: unknown): value is string => typeof value === "string" && v
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** The operator's draft, checked at the HTTP boundary. */
-export function parseProjectDraft(value: unknown): Result<ProjectDraft, InvalidPayloadError> {
+export function parseProjectDraft(value: unknown): Result<ProjectWriteInput, InvalidPayloadError> {
   if (!isObject(value)) return err(new InvalidPayloadError("project must be an object"));
   const { name, repo_dir, forge_repository, integration_branch } = value;
   if (!text(name)) return err(new InvalidPayloadError("name is required"));
@@ -31,18 +32,26 @@ export function parseProjectDraft(value: unknown): Result<ProjectDraft, InvalidP
   if (integration_branch !== null && integration_branch !== undefined && !text(integration_branch))
     return err(new InvalidPayloadError("integration_branch must be a branch name or null"));
   if (forge_repository === null || forge_repository === undefined)
-    return ok({ name: name.trim(), repo_dir, forge_repository: null, integration_branch: integration_branch ?? null });
+    return ok({ name: name.trim(), repo_dir, forge_repository, integration_branch });
   if (!isObject(forge_repository) || forge_repository.provider !== "github" || !text(forge_repository.owner) || !text(forge_repository.name))
     return err(new InvalidPayloadError("forge_repository must name a github owner and repository"));
-  return ok({ name: name.trim(), repo_dir, integration_branch: integration_branch ?? null,
+  return ok({ name: name.trim(), repo_dir, integration_branch,
     forge_repository: { provider: "github", owner: forge_repository.owner, name: forge_repository.name } });
+}
+
+async function completeProjectDraft(input: ProjectWriteInput): Promise<ProjectDraft> {
+  const identity = input.forge_repository === undefined || input.integration_branch === undefined
+    ? await resolveProjectRepositoryIdentity(input.repo_dir) : null;
+  return { name: input.name, repo_dir: input.repo_dir,
+    forge_repository: input.forge_repository === undefined ? identity?.forge_repository ?? null : input.forge_repository,
+    integration_branch: input.integration_branch === undefined ? identity?.integration_branch ?? null : input.integration_branch };
 }
 
 const failure = errorResponse;
 function writeFailure(error: ProjectWriteError): Response {
   return failure(error.kind === "missing" ? new MissingEntityError("project not found") : new ConflictError(`a project named ${error.name} exists`));
 }
-async function draftOf(request: Request): Promise<Result<ProjectDraft, RequestError>> {
+async function draftOf(request: Request): Promise<Result<ProjectWriteInput, RequestError>> {
   try { return parseProjectDraft(await request.json()); } catch { return err(new MalformedRequestError("invalid JSON")); }
 }
 
@@ -55,7 +64,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: Database }): v
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const created = await createProject(deps.db, draft.value);
+      const created = await createProject(deps.db, await completeProjectDraft(draft.value));
       return created.ok ? Response.json(created.value, { status: 201 }) : writeFailure(created.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });
@@ -63,7 +72,7 @@ export function installProjectApi(app: Hono, deps: { readonly db: Database }): v
     const draft = await draftOf(c.req.raw);
     if (!draft.ok) return failure(draft.error);
     try {
-      const updated = await updateProject(deps.db, c.req.param("project_id") as ProjectId, draft.value);
+      const updated = await updateProject(deps.db, c.req.param("project_id") as ProjectId, await completeProjectDraft(draft.value));
       return updated.ok ? Response.json(updated.value) : writeFailure(updated.error);
     } catch (cause) { return failure(new InternalFaultError(String(cause))); }
   });
