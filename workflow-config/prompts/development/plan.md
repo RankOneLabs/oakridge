@@ -14,6 +14,25 @@ Plan the implementation from the accepted analysis, the specification and the pr
 
 {{workspaces}}
 
+Each cohort must operate in exactly one repository and must set
+`repository_key` to a key from the repositories above. Dependencies may cross
+repositories.
+
+Repository topology is guaranteed before planning begins: the run's base
+branch (each repository's `forge.build_base`) has already been prepared on
+origin from that repository's final base (`forge.final_base`, typically
+`main`). The prepare stage owns that guarantee, and the supplied branch values
+are authoritative. Do not create, rebase, reset, or otherwise repair a branch
+from this planner session. If the supplied topology does not look like the
+above, record a blocking risk instead of planning around stale or unknown
+ancestry.
+
+The accepted analysis may identify genuine discrepancies between requested
+features and the current code. Preserve those incompatibilities and their
+resolutions in the plan. Do not reinterpret the ordinary fact that code must
+change to satisfy the specification as a discrepancy: that before-to-after
+difference is the work being planned.
+
 ## Cohort sizing and review
 
 A cohort is an implementation and pull request review unit. Choose boundaries
@@ -54,3 +73,5 @@ Publish the `plan` artifact. Split the work into cohorts, each with:
 - its title, scope, files in scope, decisions and acceptance criteria
 
 Name at least one cohort. Give a `dependency_order`, the scope in and out, the plan's acceptance criteria and its risks. A plan that breaks these rules is returned to you with what to fix.
+
+Plan only; do not implement.

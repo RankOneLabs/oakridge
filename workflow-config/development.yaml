@@ -311,7 +311,7 @@ stages:
         kind: agent
         when: approved(brief) or not input.admission
         prompts: { initial: development/build.md, revise: development/build-revise.md }
-        inputs: { brief: brief_value, repository: input.repository }
+        inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base, final_base: input.repository.forge.final_base }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
