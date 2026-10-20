@@ -605,12 +605,13 @@ test("allow_close_without_merge completes on an observed close without claiming 
     .toEqual([{ repository_key: "app", pr_url: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
-test("development body schemas and v1 PWA viewer component IDs remain available", () => {
-  // The v1 registry resolves component_id; the data layer supplies the schema-to-component mapping.
+test("development artifact schemas and PWA viewer component IDs align", () => {
+  // The spec uses the built-in text schema; the other bodies use named schemas.
   // Read the registry as text rather than importing across the PWA boundary.
   const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
   const workflow = developmentWorkflow();
-  const declared = Object.values(BODY_SCHEMAS).filter((name) => workflow.schemas?.[name] !== undefined);
+  const declared = [workflow.stages.analysis?.artifacts.spec?.schema,
+    ...Object.values(BODY_SCHEMAS).filter((name) => name !== BODY_SCHEMAS.spec && workflow.schemas?.[name] !== undefined)];
   const registered = Object.entries(VIEWER_COMPONENTS).filter(([componentId, viewer]) =>
     registry.includes(`"${componentId}": { Viewer: ${viewer} }`));
   expect({ declared, registered }).toEqual({
