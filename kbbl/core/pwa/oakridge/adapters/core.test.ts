@@ -60,6 +60,17 @@ describe("v2 development adapters", () => {
     const stage = unitToStages([withUnitFields(analysis, { artifacts: [spec] })]);
     expect(stage.ok && stage.value[0]?.artifacts.map((artifact) => artifact.type_id)).toEqual(["dev.spec"]);
   });
+  it("names the two analysis-stage sessions by the document they produce", () => {
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    const source = cohort.attempts.find((attempt) => attempt.kbbl_session_id);
+    if (!analysis || !source) throw new Error("captured fixture lacks an agent attempt");
+    const labels = ["author", "spec_editor"].map((worker) => {
+      const result = attemptToWorkOrder({ runId: run.run_id, stage: "analysis", unit: analysis,
+        attempt: { ...source, worker, unit_id: analysis.unit_id } });
+      return result.ok ? [result.value.stage_key, result.value.display_label] : null;
+    });
+    expect(labels).toEqual([["analysis", "Spec analysis"], ["analysis", "Spec update"]]);
+  });
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
     if (!pr) throw new Error("captured fixture lacks a PR artifact");

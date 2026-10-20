@@ -114,7 +114,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
         data-current={row.is_current}
       >
         <span className="or-run-sidebar__row-title">
-          {row.stage_key}
+          {row.display_label}
           <span className="or-run-sidebar__row-unit">{row.unit_id}</span>
         </span>
         <span className="or-run-sidebar__row-meta">

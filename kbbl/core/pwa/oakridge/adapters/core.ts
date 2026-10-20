@@ -179,9 +179,11 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   // units. Naming its sidebar row after the latest unit would imply that the
   // session belongs to that one cohort.
   const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer" : unitLabel;
+  const display_label = stage === "analysis" && attempt.worker === "author" ? "Spec analysis"
+    : stage === "analysis" && attempt.worker === "spec_editor" ? "Spec update" : sessionStage;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
     stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: sessionStage }), stage_key: sessionStage,
-    unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
+    display_label, unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
 
