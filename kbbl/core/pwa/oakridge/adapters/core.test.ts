@@ -146,10 +146,13 @@ describe("v2 development adapters", () => {
     const id = compositeId({ kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" });
     expect(parseCompositeId(id, "artifact")).toEqual({ ok: true, value: { kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" } });
   });
-  it("maps revisions and dispatches all six supported viewer schemas", () => {
+  it("maps revisions and dispatches the analysis, spec, and implementation viewers", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
-    expect(artifactTypes().map((type) => type.component_id)).toHaveLength(6);
+    expect(artifactTypes().map((type) => type.component_id)).toEqual([
+      "dev-spec-analysis-viewer", "dev-spec-viewer", "dev-plan-viewer", "dev-build-brief-viewer",
+      "dev-build-result-viewer", "dev-assessment-viewer", "dev-pr-summary-viewer",
+    ]);
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);

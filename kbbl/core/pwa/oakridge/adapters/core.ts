@@ -27,11 +27,11 @@ export function parseCompositeId(value: string, expected: CompositeKind): Adapte
 }
 
 const SCHEMA_COMPONENTS: Readonly<Record<string, string>> = {
-  text: "dev-spec-viewer", plan_body: "dev-plan-viewer", brief_body: "dev-build-brief-viewer",
+  analysis_body: "dev-spec-analysis-viewer", text: "dev-spec-viewer", plan_body: "dev-plan-viewer", brief_body: "dev-build-brief-viewer",
   build_body: "dev-build-result-viewer", assessment_body: "dev-assessment-viewer", pr_body: "dev-pr-summary-viewer",
 };
 const SCHEMA_TYPES: Readonly<Record<string, string>> = {
-  text: "dev.spec", plan_body: "dev.plan", brief_body: "dev.build_brief",
+  analysis_body: "dev.spec_analysis", text: "dev.spec", plan_body: "dev.plan", brief_body: "dev.build_brief",
   build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
 };
 /** Keep the prepared repository visible while hiding internal PR watch state. */

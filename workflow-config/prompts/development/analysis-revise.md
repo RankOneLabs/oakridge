@@ -1,6 +1,6 @@
-Discuss the operator's feedback and update your blocker, warning, or qualification analysis in this session where needed. Revise the proposed specification accordingly, then publish the complete `spec` artifact again. Preserve requirements and exact wording outside the agreed changes. The analysis note remains in the session; it is not an artifact for planning.
+Discuss the operator's feedback, revise the `analysis` artifact, and publish it again for review. Do not update the specification yet. Preserve findings and requirements outside the requested changes.
 
-## Previous proposed specification
+## Previous analysis
 
 {{previous}}
 
@@ -8,7 +8,7 @@ Discuss the operator's feedback and update your blocker, warning, or qualificati
 
 {{feedback}}
 
-## Original specification
+## Specification
 
 {{spec}}
 
