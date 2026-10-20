@@ -174,6 +174,7 @@ run:
       pool: builders
       input:
         brief: each
+        spec: input.spec
         repository: "require(lookup(input.repositories, key, each.repository_key))"
         workspace: "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
         admission: input.admission
@@ -284,7 +285,7 @@ stages:
     outcome: { brief: latest(brief) }
 
   cohort:
-    input: { brief: brief_body, repository: repository, workspace: workspace, admission: boolean }
+    input: { brief: brief_body, spec: text, repository: repository, workspace: workspace, admission: boolean }
     let:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
@@ -311,13 +312,13 @@ stages:
         kind: agent
         when: approved(brief) or not input.admission
         prompts: { initial: development/build.md, revise: development/build-revise.md }
-        inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base, final_base: input.repository.forge.final_base }
+        inputs: { brief: brief_value, spec: input.spec, repository: input.repository, build_base: input.repository.forge.build_base, final_base: input.repository.forge.final_base }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
         kind: agent
         prompts: { review: development/assess.md }
-        inputs: { brief: brief_value, pr: latest(pr) }
+        inputs: { brief: brief_value, spec: input.spec, pr: latest(pr) }
         workspace: repository(input.workspace)
         reviews: build_result
         creates: [assessment]

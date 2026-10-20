@@ -11,6 +11,10 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 
 {{brief}}
 
+### Original spec
+
+{{spec}}
+
 ### The repository
 
 {{repository}}
@@ -18,7 +22,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 ## Your tasks
 
 1. You are already in the cohort worktree, branched from the base branch. Do not `cd` away from it for edits, commits, or branch operations.
-2. Read the brief above. It is your complete scope — implement exactly what it describes.
+2. Read the brief above for your scope. Use the original spec for exact source wording and facts referenced by the brief.
 3. Follow the brief's decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave tests passing and typecheck clean (the repository's test command, plus its typecheck if it has one).
 5. When all subgoals are committed, push the branch and open a PR (see below), then publish the two artifacts in order.
