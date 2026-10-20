@@ -10,9 +10,7 @@ Bun + Hono backend on `:8788` that serves a React PWA and manages Claude Code
 and Codex sessions through ACP. Workflow orchestration belongs to
 `oakridge-dbos/`; kbbl hosts its UI and same-origin proxy. Projects come from
 the DBOS project registry at `/oakridge/api/projects`.
-Session-shaped UX (live transcripts, inbox, per-sid streams). LBC's
-project-shaped dashboard lives separately in `../lbc-dashboard` — do not
-conflate.
+Session-shaped UX (live transcripts, inbox, per-sid streams).
 
 ## Run authority and cutover
 
@@ -109,8 +107,6 @@ and status labels. `core/pwa/oakridge/lib/status-tone.ts` maps Oakridge status
 values to Chip tones. `FeedbackMessage` lives beside them in
 `core/pwa/components/atoms/`; `StatusBadge` stays under
 `core/pwa/oakridge/components/atoms/` until a non-Oakridge consumer needs it.
-The convention is kbbl-scoped: `lbc-dashboard/pwa/components/atoms/` is a known
-exclusion with its own vocabulary.
 
 Choose a control's look with `variant` and `size`, not `className`. kbbl has no
 class-merging step, so when `className` carries a utility for a property the

@@ -9,9 +9,6 @@ its SQLite ledger owns only adapter-local sessions, turns and process
 observations. It does not decide workflow acceptance, retries, stage completion
 or parent failure. `workflow-config/` holds example bundles and prompts.
 
-The workspace layer (`legit-biz-club/`) remains an independent library, and
-`lbc-dashboard/` remains its read-only dashboard.
-
 Sub-packages each carry their own AGENTS.md / CLAUDE.md with stack-specific
 conventions. This root file sets the universal floor only.
 
@@ -21,10 +18,6 @@ conventions. This root file sets the universal floor only.
 - **oakridge-dbos/** — Bun + DBOS durable run authority and read projections.
 - **workflow-config/** — the development workflow, samples and prompts.
 - **kbbl/** — Bun + Hono + React operator PWA and ACP session adapter.
-- **lbc-dashboard/** — Bun + Hono + React + Tailwind. Read-only dashboard
-  for legit-biz-club study runs.
-- **legit-biz-club/** — Python. Workspace layer (multi-agent collaboration
-  over a shared artifact). Library, no CLI.
 
 Workspace-level commands:
 

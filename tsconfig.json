@@ -1,9 +1,8 @@
 {
-  // Editor workspace references. Authoritative checks: bun run typecheck (three independent packages).
+  // Editor workspace references. Authoritative checks: bun run typecheck (two independent packages).
   "files": [],
   "references": [
     { "path": "./kbbl" },
-    { "path": "./lbc-dashboard" },
     { "path": "./oakridge-dbos" }
   ],
   "compilerOptions": {
@@ -23,7 +22,6 @@
     "types": ["bun"],
     "typeRoots": [
       "./kbbl/node_modules/@types",
-      "./lbc-dashboard/node_modules/@types",
       "./node_modules/@types"
     ],
     "lib": ["ESNext", "DOM"]

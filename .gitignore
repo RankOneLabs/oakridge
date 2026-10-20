@@ -3,8 +3,6 @@ comms/
 kbbl/data/
 kbbl/config.json
 kbbl/core/pwa/dist/
-lbc-dashboard/pwa/dist/
-legit-biz-club/.run/
 .claude/settings.local.json
 
 # Python
