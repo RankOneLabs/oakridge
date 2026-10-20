@@ -7,7 +7,7 @@ import type { ProjectId, RunId } from "../src/domain/primitives";
 import { readWorkflowPrompts } from "../src/runtime/prompt-files";
 import { createProject, findLaunchableDefinition, hasProject, listProjects, pinDefinition, readPromptTexts,
   setDefinitionArchived, setRunArchived, updateProject } from "../src/storage/registry-store";
-import { launch, openAuthority, pinSample, sampleWorkflow, type Authority } from "./authority-fixture";
+import { launch, openAuthority, pinSample, pinWorkflow, sampleWorkflow, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 beforeAll(async () => { authority = await openAuthority(); });
@@ -38,6 +38,15 @@ test("pinning stores each prompt by digest and the bundle's path map; a repeat r
   const texts = await readPromptTexts(authority.db, Object.values(bundle.prompts));
   expect({ same: again.bundle_id === first.bundle_id, paths: Object.keys(bundle.prompts).sort(), stored: texts.size })
     .toEqual({ same: true, paths: ["review-loop/critique.md", "review-loop/editor.md", "review-loop/revise.md", "review-loop/write.md"], stored: 4 });
+});
+
+test("an edited prompt pins a new definition of the same source", async () => {
+  const workflow = { ...sampleWorkflow("review-loop"), workflow: "edited_prompt" };
+  const first = await pinWorkflow(authority, workflow);
+  const edited = await pinWorkflow(authority, workflow, { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" });
+  const again = await pinWorkflow(authority, workflow, { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" });
+  expect({ is_new: edited.bundle_id !== first.bundle_id, is_repeat_existing: again.bundle_id === edited.bundle_id })
+    .toEqual({ is_new: true, is_repeat_existing: true });
 });
 
 test("a pinned definition keeps its prompt text after the file changes", async () => {

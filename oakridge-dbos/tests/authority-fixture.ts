@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RunConfig } from "../src/domain/run-config";
 import { resolve } from "node:path";
@@ -50,14 +51,19 @@ export function pinSample(authority: Pick<Authority, "db" | "core">, name: "revi
   Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
   return pinWorkflow(authority, sampleWorkflow(name));
 }
-export async function pinWorkflow(authority: Pick<Authority, "db" | "core">, workflow: Workflow):
+/** A prompt's text replaced before pinning, as an edit to its file would. */
+export interface PromptEdit { readonly path: string; readonly content: string }
+
+export async function pinWorkflow(authority: Pick<Authority, "db" | "core">, workflow: Workflow, edit?: PromptEdit):
   Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
-  const prompts = readWorkflowPrompts(workflow);
-  if (!prompts.ok) throw new Error(prompts.error.detail);
+  const read = readWorkflowPrompts(workflow);
+  if (!read.ok) throw new Error(read.error.detail);
+  const prompts = edit === undefined ? read.value : { ...read.value,
+    [edit.path]: { content_digest: createHash("sha256").update(edit.content).digest("hex"), content: edit.content } };
   const compiled = await compileWorkflow(authority.core, { workflow,
-    prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+    prompts: Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, prompt.content])) });
   if (!compiled.ok) throw new Error(compiled.error.detail);
-  const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts: prompts.value });
+  const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts });
   return { bundle_id: pinned.bundle.id, digest: pinned.bundle.digest };
 }
 

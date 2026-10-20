@@ -288,6 +288,13 @@ test("a definition pinned before its operations were recorded compiles against t
   expect(result.ok && result.value.kind).toBe("committed");
 });
 
+test("a definition pinned with an edited prompt still steps after a restart", async () => {
+  const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "edited_prompt_restart" },
+    { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" });
+  const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
+  expect(result.ok && result.value.kind).toBe("committed");
+});
+
 test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {
   const { bundle_id: fan_out } = await pinSample(authority, "fan-out");
   const { run_id } = await launch(authority, { bundle_id: fan_out, request_id: crypto.randomUUID(),
