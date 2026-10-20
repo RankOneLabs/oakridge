@@ -3,7 +3,9 @@
     "key": "repository.prepare",
     "input_schema": {
       "repository_path": "repo_path",
-      "expected_head": "optional(text)"
+      "expected_head": "optional(text)",
+      "base_branch": "text",
+      "integration_branch": "text"
     },
     "output_schema": {
       "repository_path": "repo_path",
@@ -12,7 +14,8 @@
     },
     "error_codes": [
       "worktree_unrecoverable",
-      "head_changed"
+      "head_changed",
+      "provider_rejected"
     ]
   },
   {

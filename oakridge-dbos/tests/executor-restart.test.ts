@@ -6,6 +6,7 @@ import type { Subprocess } from "bun";
 import { openDatabase, type Database } from "../src/storage/database";
 import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
 import { eventually, startStubKbbl, type StubKbbl } from "./stub-kbbl";
+import { addLocalOrigin } from "./local-origin";
 
 /**
  * Part 1 §11 I4: kill the server mid-run and restart it. The run finishes,
@@ -65,13 +66,13 @@ test("I4: a run survives a killed server, with no session started twice", async 
   try {
     await git(repo, "init", "-q", "-b", "main");
     await git(repo, "-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-    await git(repo, "remote", "add", "origin", "git@github.com:oakridge-e2e/restart.git");
+    await addLocalOrigin(repo, "git@github.com:oakridge-e2e/restart.git", ["epic/restart"]);
     server = await startServer();
     const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const { digest } = await (await fetch(`${base_url()}/api/definitions`, json(sampleWorkflow("fan-out")))).json() as { readonly digest: string };
     const items = ["a", "b", "c", "d"].map((key) => ({ key, text: key, after: [] }));
     const launched = await fetch(`${base_url()}/api/runs`, json({ request_id: crypto.randomUUID(), digest,
-      input: { repository: { repository_path: repo, expected_head: null }, items } }));
+      input: { repository: { repository_path: repo, expected_head: null, base_branch: "epic/restart", integration_branch: "main" }, items } }));
     const { run_id } = await launched.json() as { readonly run_id: string };
     await eventually("two item sessions working", async () => started.size === 2, 60_000);
 

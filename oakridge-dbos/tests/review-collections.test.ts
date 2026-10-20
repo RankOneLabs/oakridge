@@ -18,7 +18,7 @@ let authority: Authority;
 beforeAll(async () => { authority = await openAuthority(); });
 afterAll(async () => { await authority.close(); });
 
-const REPOSITORY = { repository_path: "/srv/repo", expected_head: null };
+const REPOSITORY = { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" };
 const WORKSPACE = { repository_path: "/srv/repo", push_remote_owner: "owner", head: "abc" };
 const deps = () => ({ db: authority.db, core: authority.core, wake: () => undefined });
 

@@ -12,6 +12,7 @@ import { selectCollectionKey } from "../src/projections/unit-label";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { scratchDatabase } from "./authority-fixture";
+import { addLocalOrigin } from "./local-origin";
 import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTurn } from "./stub-kbbl";
 
 /**
@@ -165,7 +166,7 @@ beforeAll(async () => {
   const git = (...args: string[]) => Bun.spawn(["git", "-C", repository, ...args]).exited;
   await git("init", "-q", "-b", "main");
   await git("-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-  await git("remote", "add", "origin", "git@github.com:oakridge-e2e/app.git");
+  await addLocalOrigin(repository, "git@github.com:oakridge-e2e/app.git", ["develop"]);
   stub = startStubKbbl(developmentAgents(forge, timeline));
   let handler: (request: Request) => Response | Promise<Response> = () => new Response("starting", { status: 503 });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });

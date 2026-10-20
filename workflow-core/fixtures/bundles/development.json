@@ -288,7 +288,9 @@
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.preparation.repository_path",
-            "expected_head": "input.repository.preparation.expected_head"
+            "expected_head": "input.repository.preparation.expected_head",
+            "base_branch": "input.repository.forge.build_base",
+            "integration_branch": "input.repository.forge.final_base"
           },
           "creates": [
             "workspace"

@@ -262,24 +262,26 @@ test("a core that has not compiled the pinned workflow compiles it from the pinn
 test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {
   const { bundle_id: fan_out } = await pinSample(authority, "fan-out");
   const { run_id } = await launch(authority, { bundle_id: fan_out, request_id: crypto.randomUUID(),
-    input: { repository: { repository_path: "/srv/repo", expected_head: null }, items: [] } });
+    input: { repository: { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" }, items: [] } });
   const instructions = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload));
   expect(instructions.map((decoded) => decoded.ok && [decoded.value.worker, decoded.value.inputs]))
-    .toEqual([[{ kind: "code", operation: "repository.prepare", every: null, artifact: "workspace" }, { repository_path: "/srv/repo", expected_head: null }]]);
+    .toEqual([[{ kind: "code", operation: "repository.prepare", every: null, artifact: "workspace" }, { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" }]]);
 });
 
 const PERIODIC: Workflow = {
-  workflow: "periodic", input: { repository_path: "repo_path", expected_head: "optional(text)" },
-  run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } }, outcome: {} },
-  stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)" },
+  workflow: "periodic", input: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
+  run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head",
+    base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } }, outcome: {} },
+  stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
     artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" } } },
     workers: { prepare: { kind: "code", operation: "repository.prepare", every: "1s", creates: ["workspace"],
-      inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } },
+      inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head",
+        base_branch: "input.base_branch", integration_branch: "input.integration_branch" } } },
     done_when: "false", outcome: {} } },
 };
 test("a periodic worker keeps one intent across its attempts, which carries the schedule", async () => {
   const { bundle_id: periodic } = await pinWorkflow(authority, PERIODIC);
-  const { run_id, result } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null } });
+  const { run_id, result } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error(JSON.stringify(result));
   const [first] = await intents(run_id);
   if (!first) throw new Error("launch wrote no intent");

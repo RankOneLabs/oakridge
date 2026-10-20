@@ -3,7 +3,9 @@
   "input": {
     "repository": {
       "repository_path": "repo_path",
-      "expected_head": "optional(text)"
+      "expected_head": "optional(text)",
+      "base_branch": "text",
+      "integration_branch": "text"
     },
     "items": "list({ key: ident, text: text, after: list(ident) })"
   },
@@ -52,7 +54,9 @@
       "input": {
         "repository": {
           "repository_path": "repo_path",
-          "expected_head": "optional(text)"
+          "expected_head": "optional(text)",
+          "base_branch": "text",
+          "integration_branch": "text"
         }
       },
       "artifacts": {
@@ -70,7 +74,9 @@
           "operation": "repository.prepare",
           "inputs": {
             "repository_path": "input.repository.repository_path",
-            "expected_head": "input.repository.expected_head"
+            "expected_head": "input.repository.expected_head",
+            "base_branch": "input.repository.base_branch",
+            "integration_branch": "input.repository.integration_branch"
           },
           "creates": [
             "workspace"

@@ -13,9 +13,9 @@ export const TYPE_VARIABLE = "$value";
 export const OPERATION_REGISTRY = [
   {
     key: "repository.prepare",
-    input_schema: { repository_path: "repo_path", expected_head: "optional(text)" },
+    input_schema: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
     output_schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" },
-    error_codes: [PROVIDER_ERROR_CODES.worktree_unrecoverable, PROVIDER_ERROR_CODES.head_changed],
+    error_codes: [PROVIDER_ERROR_CODES.worktree_unrecoverable, PROVIDER_ERROR_CODES.head_changed, PROVIDER_ERROR_CODES.provider_rejected],
   },
   {
     key: "pull_request.observe",
