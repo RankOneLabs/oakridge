@@ -158,10 +158,7 @@ fn sample(name: &str) -> CheckedWorkflow {
                     "expected_head".into(),
                     TypeExpression::Name("optional(text)".into()),
                 ),
-                (
-                    "base_branch".into(),
-                    TypeExpression::Name("text".into()),
-                ),
+                ("base_branch".into(), TypeExpression::Name("text".into())),
                 (
                     "integration_branch".into(),
                     TypeExpression::Name("text".into()),
@@ -592,10 +589,7 @@ fn failed_code_validation_does_not_publish_a_revision() {
                 "expected_head".into(),
                 TypeExpression::Name("optional(text)".into()),
             ),
-            (
-                "base_branch".into(),
-                TypeExpression::Name("text".into()),
-            ),
+            ("base_branch".into(), TypeExpression::Name("text".into())),
             (
                 "integration_branch".into(),
                 TypeExpression::Name("text".into()),

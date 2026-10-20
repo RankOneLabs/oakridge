@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
-import type { CompiledWorkflow, CoreCompileError, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
+import type { CodeOperation, CompiledWorkflow, CoreCompileError, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
 import { OPERATION_REGISTRY } from "../operations/registry";
 
@@ -100,11 +100,22 @@ export class CoreClient {
   close(): void { this.closed = true; }
 }
 
-/** Source and prompt texts (by path) that a workflow compiles from. */
-export interface CompileInput { readonly workflow: Workflow; readonly prompts: { readonly [path: string]: string } }
-/** Compile a workflow against the declared code operations and leave it in the core's program cache. */
-export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledWorkflow>> {
-  const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...OPERATION_REGISTRY] });
+/**
+ * Source and prompt texts (by path) that a workflow compiles from, and the
+ * code operations it is checked against: the declared registry unless a
+ * pinned definition recorded the one it was pinned under.
+ */
+export interface CompileInput {
+  readonly workflow: Workflow;
+  readonly prompts: { readonly [path: string]: string };
+  readonly operations?: readonly CodeOperation[];
+}
+/** A compile result with the operations it was checked against, which pinning records beside it. */
+export type CompiledAgainst = CompiledWorkflow & { readonly operations: readonly CodeOperation[] };
+/** Compile a workflow against code operations and leave it in the core's program cache. */
+export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledAgainst>> {
+  const operations = input.operations ?? OPERATION_REGISTRY;
+  const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...operations] });
   if (!response.ok) {
     const detail = response.error.kind === "compile"
       ? response.error.detail.map((error) => `${error.path}:${error.span.start}..${error.span.end} [${error.check}] ${error.detail}`).join("; ")
@@ -112,7 +123,7 @@ export async function compileWorkflow(core: CoreClient, input: CompileInput): Pr
     return traced("compile", input.workflow.workflow, detail);
   }
   if (response.value.kind !== "compiled") return traced("compile", input.workflow.workflow, "core returned a non-compiled response");
-  return { ok: true, value: response.value.value };
+  return { ok: true, value: { ...response.value.value, operations: [...operations] } };
 }
 
 /** Each active stage's wanted workers, including an empty set when none are wanted. */
