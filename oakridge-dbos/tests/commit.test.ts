@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { sql } from "kysely";
-import { CoreClient } from "../src/core-client/client";
+import { compileWorkflow, CoreClient } from "../src/core-client/client";
+import { OPERATION_REGISTRY } from "../src/operations/registry";
+import { pinDefinition } from "../src/storage/registry-store";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
@@ -249,14 +251,41 @@ test("cancel requests the stop of every live intent of the run", async () => {
   expect({ statuses: rows.map((row) => row.status), run: run.status.kind }).toEqual({ statuses: ["stop_requested"], run: "cancelled" });
 });
 
-test("a core that has not compiled the pinned workflow compiles it from the pinned prompts", async () => {
+/** A watch on `repository.prepare` as its contract stood before it took the run's branches. */
+const BEFORE_BRANCHES: Workflow = {
+  workflow: "before_branches", input: { repository_path: "repo_path", expected_head: "optional(text)" },
+  run: { units: { watch: { stage: "watch", input: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } }, outcome: {} },
+  stages: { watch: { input: { repository_path: "repo_path", expected_head: "optional(text)" },
+    artifacts: { workspace: { schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" } } },
+    workers: { prepare: { kind: "code", operation: "repository.prepare", creates: ["workspace"],
+      inputs: { repository_path: "input.repository_path", expected_head: "input.expected_head" } } },
+    done_when: "published(workspace)", outcome: {} } },
+};
+const BEFORE_BRANCHES_REGISTRY = OPERATION_REGISTRY.map((operation) => operation.key !== "repository.prepare" ? operation
+  : { ...operation, input_schema: { repository_path: "repo_path", expected_head: "optional(text)" } });
+
+/** Steps a launch on a core that has cached nothing, as one does after a restart. */
+async function launchOnFreshCore(pinned: DefinitionBundleId, input: unknown) {
   const started = CoreClient.start();
   if (!started.ok) throw new Error("core WASM did not load");
-  try {
-    const fresh = { db: authority.db, core: started.value };
-    const { result } = await launch(fresh, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
-    expect(result.ok && result.value.kind).toBe("committed");
-  } finally { started.value.close(); }
+  try { return (await launch({ db: authority.db, core: started.value }, { bundle_id: pinned, request_id: crypto.randomUUID(), input })).result; }
+  finally { started.value.close(); }
+}
+
+test("a definition pinned under an older operation contract still steps after a restart", async () => {
+  const compiled = await compileWorkflow(authority.core, { workflow: BEFORE_BRANCHES, prompts: {}, operations: BEFORE_BRANCHES_REGISTRY });
+  if (!compiled.ok) throw new Error(compiled.error.detail);
+  const { bundle } = await pinDefinition(authority.db, { source: BEFORE_BRANCHES, compiled: compiled.value, prompts: {} });
+  const result = await launchOnFreshCore(bundle.id, { repository_path: "/srv/repo", expected_head: null });
+  expect(result.ok && result.value.kind).toBe("committed");
+});
+
+test("a definition pinned before its operations were recorded compiles against the declared registry", async () => {
+  const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "no_recorded_operations" });
+  await authority.db.updateTable("authority.definition_bundle")
+    .set({ checked_program: sql`checked_program - 'operations'` }).where("id", "=", pinned).execute();
+  const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
+  expect(result.ok && result.value.kind).toBe("committed");
 });
 
 test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {

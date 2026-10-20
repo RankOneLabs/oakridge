@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
-import { compileWorkflow, selectWanted, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
+import { compileWorkflow, selectWanted, type CompiledAgainst, type WantedForUnit } from "../core-client/client";
+import { VALIDATION_REVIEW, type BlockedReason, type CodeOperation, type CompiledWorkflow, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -284,7 +284,7 @@ async function affectedUnit(trx: DatabaseTransaction, run_id: string, event: Eve
 
 interface StepInput {
   readonly run_id: string;
-  readonly definition: { readonly digest: string; readonly source: import("../core-client/core-types").Workflow; readonly prompts: { readonly [path: string]: string } };
+  readonly definition: { readonly digest: string; readonly source: Workflow; readonly checked_program: CompiledWorkflow; readonly prompts: { readonly [path: string]: string } };
   readonly snapshot: StepSnapshot;
   readonly incoming: Incoming;
 }
@@ -293,7 +293,16 @@ type Stepped =
   | { readonly kind: "rejected"; readonly reason: string }
   /** The event was refused because advancing the run past it stopped at `unit`. */
   | { readonly kind: "stalled"; readonly unit: string; readonly reason: string };
-/** Step against the pinned program, compiling it from its pinned source and prompts when the core has not cached it. */
+/** The operations a definition was pinned under; definitions pinned before they were recorded have none. */
+const pinnedOperations = (compiled: CompiledWorkflow): readonly CodeOperation[] | undefined =>
+  (compiled as Partial<Pick<CompiledAgainst, "operations">>).operations;
+
+/**
+ * Step against the pinned program, compiling it from its pinned source,
+ * prompts and operations when the core has not cached it. The pinned
+ * operations, not today's registry, so a changed operation contract never
+ * strands a run that is already pinned.
+ */
 async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: StepInput): Promise<Result<Stepped, CommitFault>> {
   const step = () => core.request("step", { workflow_digest: input.definition.digest, snapshot: input.snapshot, incoming: input.incoming });
   let response = await step();
@@ -303,7 +312,8 @@ async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: Ste
       const text = texts.get(digest);
       return text === undefined ? [] : [[path, text]];
     }));
-    const compiled = await compileWorkflow(core, { workflow: input.definition.source, prompts });
+    const compiled = await compileWorkflow(core, { workflow: input.definition.source, prompts,
+      operations: pinnedOperations(input.definition.checked_program) });
     if (!compiled.ok) return { ok: false, error: fault(input.run_id, `pinned definition no longer compiles: ${compiled.error.detail}`) };
     if (compiled.value.digest !== input.definition.digest) return { ok: false, error: fault(input.run_id,
       `pinned definition compiles to ${compiled.value.digest}, not ${input.definition.digest}`) };

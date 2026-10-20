@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
-import type { CompiledWorkflow, Workflow } from "../core-client/core-types";
+import type { CompiledAgainst } from "../core-client/client";
+import type { Workflow } from "../core-client/core-types";
 import { err, ok, type DefinitionBundleId, type ProjectId, type Result, type RunId } from "../domain/primitives";
 import type { ProjectDraft, ProjectWriteError } from "../domain/projects";
 import type { OperatorEventPayload } from "../projections/operator-event";
@@ -67,7 +68,8 @@ export async function hasProject(db: Reader, id: ProjectId): Promise<boolean> {
 
 export interface DefinitionPin {
   readonly source: Workflow;
-  readonly compiled: CompiledWorkflow;
+  /** Stored with the operations it was checked against, so a recompile after the registry changes still matches. */
+  readonly compiled: CompiledAgainst;
   /** Every prompt the source names, by path, with the text it compiled against. */
   readonly prompts: { readonly [path: string]: PromptContent };
 }
