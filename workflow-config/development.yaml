@@ -1,7 +1,7 @@
 # The development workflow uses shared decisions, workers and inferred dependencies.
 #
 #   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
-#   analysis        author revises the spec; operator approves the canonical text
+#   analysis        author discusses blockers and warnings; operator approves the revised spec
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
 #   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:

@@ -1,4 +1,4 @@
-Review the specification against the prepared repositories. Publish one complete revised specification for operator approval. Do not plan or implement.
+Analyze the specification against the prepared repositories. Write your analysis in this session, then publish one complete proposed specification for operator review. Use the operator's review feedback to revise it. Do not plan or implement.
 
 ## Current specification
 
@@ -12,6 +12,6 @@ Review the specification against the prepared repositories. Publish one complete
 
 {{workspaces}}
 
-Preserve the requested behavior and exact source wording unless a concrete incompatibility or ambiguity requires a change. Resolve a qualification in the specification itself, with precise, implementable wording. Do not create a separate list of requirements or findings that later stages would have to reconcile with it. Do not add requirements the operator did not request.
+Before publishing, write a concise analysis note in the session: list concrete blockers, warnings, and any qualifications the specification needs, with code evidence and the proposed resolution. A blocker is an unresolved decision or prerequisite that prevents correct implementation; a warning has a viable path. Empty sections are fine. This note is for discussion with the operator, not an artifact or an additional source of requirements.
 
-If no change is needed, publish the current specification verbatim as the `spec` artifact. If a product decision cannot be derived from the specification or code, mark that question in the revised specification for the operator to resolve before approval. Publish the full specification, not a diff or summary.
+In the proposed specification, preserve requested behavior and exact wording unless a concrete finding requires a change. Incorporate resolved qualifications directly into the relevant requirement. Do not add requirements the operator did not request. If no change is needed, publish the current specification verbatim as the `spec` artifact. Mark unresolved product decisions clearly for the operator to resolve during review. Publish the full specification, not a diff, summary, or analysis note. Planning begins only after the operator approves it.

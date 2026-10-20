@@ -1,4 +1,4 @@
-Review the proposed specification against the original. Accept it as the specification for planning, or request precise changes. Do not accept unresolved product decisions.
+Review the analyst's blocker and warning discussion in the session, then compare the proposed specification with the original. Discuss necessary qualifications and request precise changes until the specification contains the agreed decisions. Accept the proposed specification only when it is ready to be the sole requirements source for planning; do not accept unresolved product decisions.
 
 ## Original specification
 
