@@ -14,8 +14,6 @@ and process observations.
 - `oakridge-dbos/` — TypeScript durable run authority and HTTP API.
 - `workflow-config/` — the development workflow, samples and prompts.
 - `kbbl/` — operator PWA and interactive ACP sessions.
-- `legit-biz-club/` — independent workspace collaboration library.
-- `lbc-dashboard/` — read-only dashboard for the workspace library.
 
 Workflow names, stages, workers and reviews come from the pinned definition.
 The evaluator has no workflow-specific branch. A successful decision or

@@ -99,7 +99,6 @@ jobs:
       # committed lock.
       - run: bun install --frozen-lockfile
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
-      - run: bunx tsc --noEmit -p lbc-dashboard/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
 
@@ -223,30 +222,3 @@ jobs:
           TEST_SHARD: ${{ matrix.shard }}
           TEST_SHARD_COUNT: "2"
         run: bun run --filter oakridge-dbos test:integration
-
-  lbc-dashboard-tests:
-    name: lbc-dashboard tests (bun)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --filter lbc-dashboard test
-
-  legit-biz-club:
-    name: legit-biz-club checks (Python)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: legit-biz-club
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          python-version: "3.12"
-      # --frozen fails fast if uv.lock has drifted from pyproject.toml,
-      # matching the bun side's reproducibility guarantee.
-      - run: uv sync --frozen
-      - run: uv run ruff check
-      - run: uv run mypy src
-      - run: uv run pytest
