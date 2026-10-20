@@ -54,7 +54,8 @@ export function parseUnitView(value: unknown): AdapterResult<OperatorUnitView> {
 export function parseArtifactDetail(value: unknown): AdapterResult<OperatorArtifactDetail> {
   if (!record(value) || !string(value.run_id) || !string(value.unit_id) || !string(value.artifact_key)
       || !string(value.schema) || !array(value.revisions) || !value.revisions.every(revision)
-      || !array(value.decisions)) return fail("parse artifact", "invalid artifact detail");
+      || !array(value.decisions) || !(value.original_spec === undefined || value.original_spec === null || string(value.original_spec)))
+    return fail("parse artifact", "invalid artifact detail");
   return ok(value as unknown as OperatorArtifactDetail);
 }
 

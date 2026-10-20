@@ -95,6 +95,7 @@ export interface OperatorArtifactDetail {
   readonly status: OperatorArtifactRevisionStatus;
   readonly revisions: readonly OperatorArtifactRevisionView[];
   readonly decisions: readonly OperatorRevisionDecision[];
+  readonly original_spec: string | null;
 }
 
 export type OperatorArtifactRevisionStatus = "draft" | "approved" | "changes_requested";

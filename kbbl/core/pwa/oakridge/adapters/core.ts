@@ -83,7 +83,8 @@ export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: Opera
     type_id: descriptor.id, component_id: descriptor.component_id,
     capabilities: { ...descriptor.capabilities, reviewable: artifact.is_reviewable, atom_editable: artifact.is_editable },
     anchor_schema: descriptor.anchor_schema,
-    run_id: artifact.run_id, producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
+    run_id: artifact.run_id, original_spec: artifact.original_spec ?? null,
+    producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
 };
 
 export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];

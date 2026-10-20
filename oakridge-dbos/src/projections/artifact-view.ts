@@ -28,6 +28,16 @@ export interface ArtifactDetail {
   readonly status: ArtifactRevisionStatus;
   readonly revisions: readonly ArtifactRevisionView[];
   readonly decisions: readonly RevisionDecision[];
+  /** The launch spec, retained for comparing a published revised spec. */
+  readonly original_spec: string | null;
+}
+
+function originalSpec(read: RunRead, location: ArtifactLocation): string | null {
+  if (location.artifact !== "spec") return null;
+  const input = read.run.input;
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const spec = (input as { readonly spec?: unknown }).spec;
+  return typeof spec === "string" ? spec : null;
 }
 
 export interface ArtifactLocation { readonly unit_id: string; readonly artifact: string }
@@ -45,5 +55,6 @@ export function selectArtifactDetail(read: RunRead, location: ArtifactLocation):
   const verdict = latest ? decisions.filter((decision) => decision.target_revision_id === latest.id).at(-1) : undefined;
   return { run_id: unit.run_id, unit_id: unit.id, artifact_key: location.artifact, schema: selectArtifactSchema(stage, location.artifact),
     is_reviewable: isReviewable(stage, location.artifact), is_editable: isEditable(stage, location.artifact),
-    status: verdict === undefined ? "draft" : verdict.effect === "approve" ? "approved" : "changes_requested", revisions, decisions };
+    status: verdict === undefined ? "draft" : verdict.effect === "approve" ? "approved" : "changes_requested", revisions, decisions,
+    original_spec: originalSpec(read, location) };
 }
