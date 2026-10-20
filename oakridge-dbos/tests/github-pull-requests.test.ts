@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import type { OperatorCohortLifecycle, OperatorCohortSummary } from "../src/domain/operator-projections";
 import type { StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { GithubPullRequestReader, selectCohortsAwaitingReview } from "../src/runtime/github-pull-requests";
+import { GatedReviewPullRequestReader, GithubPullRequestReader, selectCohortsAwaitingReview, type ReportedPullRequest } from "../src/runtime/github-pull-requests";
 
 const cohort = (unitId: string, lifecycle: OperatorCohortLifecycle): OperatorCohortSummary => ({
   id: `stage:${unitId}`, run_id: "00000000-0000-4000-8000-000000000001" as WorkflowRunId, workflow_name: "dev flow",
@@ -21,6 +21,10 @@ test("only cohorts parked on their pull request are polled", () => {
   ]);
   expect(selected.map((candidate) => String(candidate.unit_id))).toEqual(["foundation"]);
 });
+
+const reported: ReportedPullRequest = {
+  url: "https://github.com/RankOneLabs/oakridge/pull/440", head_branch: "cohort/foundation", base_branch: "epic/tiers",
+};
 
 const githubPayload = (overrides: Record<string, unknown> = {}) => ({
   number: 440, html_url: "https://github.com/RankOneLabs/oakridge/pull/440",
@@ -78,4 +82,43 @@ test("a pull request that cannot be read yields no observation", async () => {
 test("a payload missing the fields an observation needs yields no observation", async () => {
   const { reader } = readerReturning(200, githubPayload({ head: null }));
   expect(await reader.read("RankOneLabs", "oakridge", 440)).toBeNull();
+});
+
+const gatedReviewReturning = (state: string) => {
+  const calls: { readonly method: string; readonly arguments?: unknown }[] = [];
+  const http = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { method: string; params?: { arguments?: unknown } };
+    calls.push({ method: body.method, arguments: body.params?.arguments });
+    if (body.method === "initialize") return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), { headers: { "mcp-session-id": "session-1" } });
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { structuredContent: { pullRequestNumber: 440, state } } }));
+  }) as unknown as typeof fetch;
+  return { reader: new GatedReviewPullRequestReader({ mcp_url: "http://otto:3555/mcp" }, http), calls };
+};
+
+test("gated-review asks pr_status for the pull request", async () => {
+  const { reader, calls } = gatedReviewReturning("OPEN");
+  await reader.read("RankOneLabs", "oakridge", 440, reported);
+  expect(calls.at(-1)).toEqual({ method: "tools/call", arguments: { repository: "RankOneLabs/oakridge", pullRequestNumber: 440 } });
+});
+
+test("a gated-review OPEN reads as open", async () => {
+  const { reader } = gatedReviewReturning("OPEN");
+  expect((await reader.read("RankOneLabs", "oakridge", 440, reported))?.state).toBe("open");
+});
+
+test("a gated-review MERGED reads as merged with merge evidence", async () => {
+  const { reader } = gatedReviewReturning("MERGED");
+  const observation = await reader.read("RankOneLabs", "oakridge", 440, reported);
+  expect(observation?.merged_at).toBe(observation?.observed_at ?? "missing");
+});
+
+test("a gated-review CLOSED reads as closed_unmerged", async () => {
+  const { reader } = gatedReviewReturning("CLOSED");
+  expect((await reader.read("RankOneLabs", "oakridge", 440, reported))?.state).toBe("closed_unmerged");
+});
+
+test("a gated-review response without a state yields no observation", async () => {
+  const { reader } = gatedReviewReturning("");
+  expect(await reader.read("RankOneLabs", "oakridge", 440, reported)).toBeNull();
 });

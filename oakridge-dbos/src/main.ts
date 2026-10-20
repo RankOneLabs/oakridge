@@ -12,7 +12,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { selectControlPlaneAccess } from "./http/control-auth";
 import { createOakridgeRuntime } from "./runtime/compose";
-import { GithubPullRequestReader } from "./runtime/github-pull-requests";
+import { GatedReviewPullRequestReader, GithubPullRequestReader } from "./runtime/github-pull-requests";
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -46,6 +46,9 @@ if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
 // merge is confirmed by an operator through the same route the poller uses —
 // which is also the fallback when the token cannot see a given repository.
 const githubToken = process.env.OAKRIDGE_GITHUB_TOKEN?.trim();
+const gatedReviewUrl = process.env.OAKRIDGE_GATED_REVIEW_URL?.trim();
+const pullRequestReader = gatedReviewUrl ? new GatedReviewPullRequestReader({ mcp_url: gatedReviewUrl })
+  : githubToken ? new GithubPullRequestReader({ token: githubToken }) : null;
 const pullRequestPollIntervalMs = Number(process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS ?? "60") * 1_000;
 if (!Number.isFinite(pullRequestPollIntervalMs) || pullRequestPollIntervalMs < 5_000) throw new Error("OAKRIDGE_PULL_REQUEST_POLL_SECONDS must be at least 5 seconds");
 
@@ -60,10 +63,10 @@ const runtime = await createOakridgeRuntime({
     ...(maxSilentMs !== null ? { max_silent_ms: maxSilentMs } : {}),
   })],
   prompt_template_directory: resolve(import.meta.dir, "../../workflow-config/prompts"),
-  ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
+  ...(pullRequestReader ? { pull_request_reader: pullRequestReader } : {}),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
-if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
+if (!pullRequestReader) console.warn("OAKRIDGE_GATED_REVIEW_URL and OAKRIDGE_GITHUB_TOKEN are unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
 
 await runtime.seed_builtins();
 await DBOS.launch();

@@ -11,15 +11,19 @@
  * Every observation goes through the same reconciliation the manual path uses.
  * Nothing here decides that a wait is over; it only reports what GitHub said.
  */
-import type { PullRequestObservation } from "../domain/pull-request";
+import type { ObservedPullRequestState, PullRequestObservation } from "../domain/pull-request";
 import { parseGithubPullRequestIdentity } from "../domain/pull-request";
 import type { StageInstanceId, UnitId } from "../domain/primitives";
 import type { OperatorCohortSummary } from "../domain/operator-projections";
+import type { ExpectedCohortPullRequest } from "../domain/cohort-pull-request";
 import { findCohortPullRequestExpectation, reconcileCohortEvidence, type CohortPullRequestDependencies, type CohortPullRequestResolution } from "./cohort-pull-request";
+
+/** What the build reported about the pull request a cohort is waiting on. */
+export type ReportedPullRequest = Pick<ExpectedCohortPullRequest, "url" | "head_branch" | "base_branch">;
 
 /** Reads one pull request's current state. Absent when it cannot be read. */
 export interface PullRequestReader {
-  read(owner: string, name: string, number: number): Promise<PullRequestObservation | null>;
+  read(owner: string, name: string, number: number, reported: ReportedPullRequest): Promise<PullRequestObservation | null>;
 }
 
 export interface GithubPullRequestReaderConfig {
@@ -79,6 +83,59 @@ export class GithubPullRequestReader implements PullRequestReader {
   }
 }
 
+export interface GatedReviewPullRequestReaderConfig {
+  /** The gated-review MCP endpoint, e.g. `http://otto:3555/mcp`. */
+  readonly mcp_url: string;
+}
+
+const GATED_REVIEW_STATES: Readonly<Record<string, ObservedPullRequestState>> = { OPEN: "open", MERGED: "merged", CLOSED: "closed_unmerged" };
+
+/**
+ * Pull request state from gated-review's `pr_status` tool.
+ *
+ * `pr_status` reports only the state, so the URL and branches are the ones the
+ * build reported, and a merge is stamped with the time it was observed — the
+ * same evidence the operator's manual confirmation records.
+ */
+export class GatedReviewPullRequestReader implements PullRequestReader {
+  constructor(private readonly config: GatedReviewPullRequestReaderConfig, private readonly http: typeof fetch = fetch) {}
+
+  private async post(body: unknown, sessionId: string | null): Promise<Response> {
+    return this.http(this.config.mcp_url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(sessionId ? { "mcp-session-id": sessionId, "mcp-protocol-version": "2025-06-18" } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async read(owner: string, name: string, number: number, reported: ReportedPullRequest): Promise<PullRequestObservation | null> {
+    const initialized = await this.post({ jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "oakridge", version: "1" } } }, null);
+    const sessionId = initialized.headers.get("mcp-session-id");
+    if (!initialized.ok || !sessionId) return null;
+    await this.post({ jsonrpc: "2.0", method: "notifications/initialized" }, sessionId);
+    const response = await this.post({ jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "pr_status", arguments: { repository: `${owner}/${name}`, pullRequestNumber: number } } }, sessionId);
+    if (!response.ok) return null;
+    const payload = await response.json() as { readonly result?: { readonly isError?: boolean; readonly structuredContent?: { readonly state?: unknown } } };
+    if (payload.result?.isError) return null;
+    const rawState = payload.result?.structuredContent?.state;
+    const state = typeof rawState === "string" ? GATED_REVIEW_STATES[rawState] : undefined;
+    if (!state) return null;
+    const observedAt = new Date().toISOString();
+    return {
+      provider: "github", owner, name, number, url: reported.url,
+      // An unset expected base branch is never compared, so any value stands in.
+      head_branch: reported.head_branch, base_branch: reported.base_branch ?? "", head_sha: null,
+      state, source: "poll", observed_at: observedAt, merged_at: state === "merged" ? observedAt : null,
+    };
+  }
+}
+
 export interface CohortPullRequestPollDependencies extends CohortPullRequestDependencies {
   /** The cohorts the run is currently waiting on, from the operator projection. */
   list_cohorts(): Promise<readonly OperatorCohortSummary[]>;
@@ -113,7 +170,7 @@ export const pollCohortPullRequests = async (dependencies: CohortPullRequestPoll
       outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "refused", detail: "reported pull request URL is not a canonical GitHub URL" } });
       continue;
     }
-    const observation = await dependencies.reader.read(identity.owner, identity.name, identity.number).catch(() => null);
+    const observation = await dependencies.reader.read(identity.owner, identity.name, identity.number, expectation.value).catch(() => null);
     if (!observation) {
       outcomes.push({ stage_instance_id: cohort.stage_instance_id, unit_id: cohort.unit_id, resolution: { kind: "unreadable" } });
       continue;
