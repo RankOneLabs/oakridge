@@ -11,7 +11,7 @@ import { createAgentProvider } from "../effects/agent-provider";
 import type { EffectProvider } from "../effects/provider";
 import { createOperationRunner, type OperationRunner } from "../operations/runner";
 import { BunGitCommandRunner } from "./git-command-runner";
-import { GithubPullRequestReader } from "./github-pull-requests";
+import { GatedReviewPullRequestReader } from "./gated-review-pull-requests";
 import { startRunSweep } from "./run-sweep";
 import { selectApplicationVersion } from "../workflows/engine-version";
 import { DEFAULT_WORKFLOW_TIMING, parkRunningWorkflows, registerWorkflowServices, resumeActiveRuns, sweepRunsNeedingWork, wakeRun, type WorkflowTiming } from "../workflows/topology";
@@ -29,7 +29,7 @@ export interface ExecutorOptions {
   /** Where a `workspace: none` session runs. */
   readonly agent_workdir: string;
   /** Null leaves `pull_request.observe` without a reader: it fails with `discovery_unsupported`. */
-  readonly github_token: string | null;
+  readonly gated_review_url: string | null;
 }
 export interface ProductionOptions {
   readonly database_url: string; readonly host: string; readonly control_token?: string;
@@ -57,7 +57,7 @@ export async function createProductionComposition(options: ProductionOptions): P
   const provider = options.effect_provider ?? createAgentProvider({ kbbl: executor?.kbbl_base_url ? new KbblClient({ base_url: executor.kbbl_base_url, control_token: executor.kbbl_control_token ?? null }) : null,
     publication_key: executor?.publication_key ?? null, publish_base_url: executor?.publish_base_url ?? "", default_workdir: executor?.agent_workdir ?? "" });
   const operations = options.operation_runner ?? createOperationRunner({ git: new BunGitCommandRunner(),
-    pull_requests: executor?.github_token ? new GithubPullRequestReader({ token: executor.github_token }) : null });
+    pull_requests: executor?.gated_review_url ? new GatedReviewPullRequestReader(executor.gated_review_url) : null });
   const started = CoreClient.start();
   if (!started.ok) throw new Error(`workflow WASM could not load: ${started.error.detail.detail}`);
   const core = started.value;

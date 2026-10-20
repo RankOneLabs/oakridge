@@ -38,7 +38,7 @@ beforeAll(async () => {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });
   base_url = `http://127.0.0.1:${server.port}`;
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
-    executor: { kbbl_base_url: kbbl_url, publication_key: crypto.randomUUID(), publish_base_url: base_url, agent_workdir: workdir, github_token: null } });
+    executor: { kbbl_base_url: kbbl_url, publication_key: crypto.randomUUID(), publish_base_url: base_url, agent_workdir: workdir, gated_review_url: null } });
   handler = composition.app.fetch;
 }, 120_000);
 afterAll(async () => {
