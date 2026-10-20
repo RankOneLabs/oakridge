@@ -172,7 +172,7 @@ beforeAll(async () => {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });
   base_url = `http://127.0.0.1:${server.port}`;
   composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1",
-    executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, github_token: null },
+    executor: { kbbl_base_url: stub.url, publication_key: "development-e2e-key", publish_base_url: base_url, agent_workdir: workdir, gated_review_url: null },
     operation_runner: createOperationRunner(operationServices),
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 5, wake_timeout_seconds: 0.5 } });
   handler = composition.app.fetch;

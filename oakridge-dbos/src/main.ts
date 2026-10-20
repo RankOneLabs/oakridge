@@ -26,8 +26,8 @@ if (kbbl_base_url) {
   if (!workdir.ok) throw new Error(`agent workdir: ${workdir.error.detail}`);
   agent_workdir = workdir.value;
 }
-const github_token = optional("OAKRIDGE_GITHUB_TOKEN");
-if (!github_token) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: pull_request.observe fails with discovery_unsupported");
+const gated_review_url = optional("OAKRIDGE_GATED_REVIEW_URL");
+if (!gated_review_url) console.warn("OAKRIDGE_GATED_REVIEW_URL is unset: pull_request.observe fails with discovery_unsupported");
 // The DBOS application version is the engine digest unless DBOS_APPLICATION_VERSION
 // pins it; see workflows/engine-version.ts for what moves it and what does not.
 // One startup sequence: validate the locked baseline, then launch DBOS, then bind HTTP.
@@ -35,7 +35,7 @@ const migration_db = openDatabase(database_url);
 try { await migrateEmptyDatabase(migration_db); }
 finally { await migration_db.destroy(); }
 const composition = await createProductionComposition({ database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
-  executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, github_token } });
+  executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, gated_review_url } });
 let server: ReturnType<typeof Bun.serve>;
 try { server = Bun.serve({ hostname: host, port, fetch: composition.app.fetch }); }
 catch (cause) { await composition.close(); throw cause; }
