@@ -8,4 +8,4 @@ Update the original specification using the approved analysis. Publish the compl
 
 {{approved_analysis}}
 
-Apply only qualifications and decisions supported by the approved analysis. Preserve requested behavior and exact wording elsewhere. Do not add requirements the operator did not request. If no change is needed, publish the original specification verbatim. Publish the full specification as text, not a diff, summary, or analysis note.
+Apply only the `proposed_spec_updates` approved in the analysis. Preserve requested behavior and exact wording elsewhere. Do not add requirements the operator did not request. If the update list is empty, publish the original specification verbatim. Publish the full specification as text, not a diff, summary, or analysis note. The operator will review this revised specification before it goes to planning.

@@ -42,18 +42,19 @@ test("development publishes reviewed analysis, then updates the specification fo
       readonly briefs: { readonly input: { readonly spec: string } } } };
     readonly stages: { readonly analysis: { readonly artifacts: { readonly analysis: { readonly schema: string }; readonly spec: { readonly schema: string } };
       readonly workers: { readonly author: { readonly creates: string[] }; readonly spec_editor: { readonly when: string; readonly creates: string[] } };
-      readonly reviews: { readonly analysis_review: { readonly of: string } };
+      readonly reviews: { readonly analysis_review: { readonly of: string }; readonly spec_review: { readonly of: string } };
       readonly done_when: string; readonly outcome: { readonly spec: string } } };
   }
   const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development), "utf8")) as DevelopmentSpecFlow;
   const analysis = workflow.stages.analysis;
   expect({ artifacts: analysis.artifacts, author: analysis.workers.author.creates,
     editor: { when: analysis.workers.spec_editor.when, creates: analysis.workers.spec_editor.creates },
-    review: analysis.reviews.analysis_review.of, done_when: analysis.done_when, outcome: analysis.outcome.spec,
+    review: analysis.reviews.analysis_review.of, specReview: analysis.reviews.spec_review.of,
+    done_when: analysis.done_when, outcome: analysis.outcome.spec,
     planning: workflow.run.units.planning.input.spec, brief: workflow.run.units.briefs.input.spec })
     .toEqual({ artifacts: { analysis: { schema: "analysis_body" }, spec: { schema: "text" } }, author: ["analysis"],
-      editor: { when: "approved(analysis)", creates: ["spec"] }, review: "analysis",
-      done_when: "approved(analysis) and published(spec)", outcome: "latest(spec)",
+      editor: { when: "approved(analysis)", creates: ["spec"] }, review: "analysis", specReview: "spec",
+      done_when: "approved(analysis) and approved(spec)", outcome: "latest(spec)",
       planning: "analysis.outcome.spec", brief: "analysis.outcome.spec" });
 });
 

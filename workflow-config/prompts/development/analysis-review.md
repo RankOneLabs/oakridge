@@ -1,4 +1,4 @@
-Review the published analysis against the specification and repository evidence. Request changes until its findings and proposed resolutions reflect the decisions you approve. Accept the analysis only when no unresolved product decision blocks updating the specification. After acceptance, the spec editor will apply the approved analysis; planning will receive only that updated specification.
+Review the published analysis against the specification and repository evidence. Check that `proposed_spec_updates` states each intended spec edit and its reason. Request changes until its findings, proposed resolutions, and proposed edits reflect the decisions you approve. Accept the analysis only when no unresolved product decision blocks updating the specification. This approval authorizes the spec editor to apply the listed changes. Review the published revised specification separately before planning receives it.
 
 ## Original specification
 

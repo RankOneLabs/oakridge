@@ -26,7 +26,9 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const root = resolve(import.meta.dir, "../..");
 const APPROVED_SPEC = "Approved specification from analysis.";
 const APPROVED_ANALYSIS = { summary: "Approved analysis for spec update.", source_spec_refs: ["Goal"],
-  findings: [], requirements: [], risks: [] };
+  findings: [], requirements: [], risks: [], proposed_spec_updates: [
+    { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement." },
+  ] };
 const REVISED_ANALYSIS = { ...APPROVED_ANALYSIS, summary: "Revised analysis for spec update." };
 const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
@@ -202,7 +204,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
 const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
-const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", plan_review: "accept", brief_review: "accept",
+const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", plan_review: "accept", brief_review: "accept",
   admission: "admit", assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
 const capturedAdapterFixtures = new Set<string>();
 async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
@@ -329,7 +331,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   });
 }, 150_000);
 
-test("analysis changes are reviewed before a spec is published for planning", async () => {
+test("analysis and revised spec are separately approved before planning", async () => {
   const pinned = await api("POST", "/api/definitions", developmentWorkflow());
   if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
   const { digest } = await pinned.json() as { readonly digest: string };
@@ -364,6 +366,24 @@ test("analysis changes are reviewed before a spec is published for planning", as
     { request_id: crypto.randomUUID(), decision: "accept", target: revised, payload: {} });
   expect(accepted.status).toBe(201);
   await eventually("updated spec publication", async () => await revisionCount("spec") === 1 ? true : null);
+  const specTarget = await eventually("revised spec review", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    return unit?.review_prompts.spec_review?.target ?? null;
+  });
+  const beforeSpecApproval = await db.selectFrom("authority.unit").select("status").where("id", "=", `${run_id}/planning`).executeTakeFirst();
+  expect(beforeSpecApproval?.status.kind).toBe("not_started");
+  const specChange = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "request_changes", target: specTarget, payload: { feedback: "Clarify the approved edit." } });
+  expect(specChange.status).toBe(201);
+  const revisedSpecTarget = await eventually("revised spec review after changes", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    const target = unit?.review_prompts.spec_review?.target;
+    return target && target !== specTarget ? target : null;
+  });
+  expect(await revisionCount("spec")).toBe(2);
+  const specAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "accept", target: revisedSpecTarget, payload: {} });
+  expect(specAccepted.status).toBe(201);
   const planning = await eventually("planning input", async () => {
     const unit = await db.selectFrom("authority.unit").select("input").where("id", "=", `${run_id}/planning`).executeTakeFirst();
     return unit?.input && typeof unit.input === "object" && "spec" in unit.input ? unit.input : null;

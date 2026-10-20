@@ -40,8 +40,10 @@ schemas:
     findings: list(spec_finding)
     requirements: list(requirement)
     risks: list(risk)
+    proposed_spec_updates: list(spec_update)
   spec_finding: { id: ident, description: text, severity: severity }
   requirement: { id: ident, description: text, status: requirement_status }
+  spec_update: { section: text, change: text, reason: text }
   requirement_status: enum(implementable, blocked, ambiguous)
 
   plan_body:
@@ -216,7 +218,7 @@ stages:
       spec_editor:
         kind: agent
         when: approved(analysis)
-        prompts: { initial: development/analysis-to-spec.md }
+        prompts: { initial: development/analysis-to-spec.md, revise: development/analysis-to-spec-revise.md }
         inputs: { original_spec: input.spec, approved_analysis: latest(analysis) }
         creates: [spec]
     reviews:
@@ -226,7 +228,13 @@ stages:
         prompt: development/analysis-review.md
         inputs: { original_spec: input.spec, analysis: latest(analysis) }
         decisions: { set: accept_or_request }
-    done_when: approved(analysis) and published(spec)
+      spec_review:
+        of: spec
+        by: operator
+        prompt: development/spec-review.md
+        inputs: { original_spec: input.spec, approved_analysis: latest(analysis), revised_spec: latest(spec) }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the revised specification change?" } } } }
+    done_when: approved(analysis) and approved(spec)
     outcome: { spec: latest(spec) }
 
   planning:

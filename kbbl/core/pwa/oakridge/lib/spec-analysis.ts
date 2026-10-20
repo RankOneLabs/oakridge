@@ -20,6 +20,13 @@ export interface SpecRisk {
   mitigation: string;
 }
 
+/** A concrete edit the operator authorizes by approving the analysis. */
+export interface SpecUpdate {
+  section: string;
+  change: string;
+  reason: string;
+}
+
 /** Mirrors the registered oakridge-dbos `dev.spec_analysis` artifact body. */
 export interface SpecAnalysis {
   summary: string;
@@ -27,6 +34,7 @@ export interface SpecAnalysis {
   findings: SpecFinding[];
   requirements: SpecRequirement[];
   risks: SpecRisk[];
+  proposed_spec_updates: SpecUpdate[];
 }
 
 /** Anything in a spec analysis that stops the work: a blocking finding or a blocked requirement. */
@@ -51,6 +59,7 @@ export interface SpecAnalysisView {
   findings: SpecFinding[];
   requirements: SpecRequirement[];
   risks: SpecRisk[];
+  proposed_spec_updates: SpecUpdate[];
   tally: SpecAnalysisTally;
 }
 
@@ -85,13 +94,21 @@ function isSpecRisk(value: unknown): value is SpecRisk {
     && typeof value.mitigation === "string";
 }
 
+function isSpecUpdate(value: unknown): value is SpecUpdate {
+  return isRecord(value)
+    && typeof value.section === "string"
+    && typeof value.change === "string"
+    && typeof value.reason === "string";
+}
+
 export function isSpecAnalysis(value: unknown): value is SpecAnalysis {
   return isRecord(value)
     && typeof value.summary === "string"
     && isStringArray(value.source_spec_refs)
     && Array.isArray(value.findings) && value.findings.every(isSpecFinding)
     && Array.isArray(value.requirements) && value.requirements.every(isSpecRequirement)
-    && Array.isArray(value.risks) && value.risks.every(isSpecRisk);
+    && Array.isArray(value.risks) && value.risks.every(isSpecRisk)
+    && Array.isArray(value.proposed_spec_updates) && value.proposed_spec_updates.every(isSpecUpdate);
 }
 
 function countBy<K extends FindingSeverity | RequirementStatus, T>(keys: readonly K[], items: readonly T[], keyOf: (item: T) => K): SpecStatusCount[] {
@@ -115,6 +132,7 @@ export function selectSpecAnalysisView(analysis: SpecAnalysis): SpecAnalysisView
     findings: orderBy(FINDING_SEVERITIES, analysis.findings.filter((finding) => finding.severity !== "blocking"), (finding) => finding.severity),
     requirements: orderBy(REQUIREMENT_STATUSES, analysis.requirements.filter((requirement) => requirement.status !== "blocked"), (requirement) => requirement.status),
     risks: analysis.risks,
+    proposed_spec_updates: analysis.proposed_spec_updates,
     tally: {
       status_counts: [
         ...countBy(FINDING_SEVERITIES, analysis.findings, (finding) => finding.severity),
