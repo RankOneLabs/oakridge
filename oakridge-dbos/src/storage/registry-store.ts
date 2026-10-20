@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { CompiledAgainst } from "../core-client/client";
 import type { Workflow } from "../core-client/core-types";
@@ -76,10 +77,20 @@ export interface DefinitionPin {
 export type PinnedBundle = { readonly kind: "pinned" | "existing"; readonly bundle: DefinitionBundleRecord };
 
 /**
+ * A definition's identity: the core's digest of its source, with the content
+ * digest of every prompt it pins. The core digest covers the source alone, so
+ * without the prompts an edited prompt would pin as the definition it replaced.
+ */
+export const selectDefinitionDigest = (compiled_digest: string, prompts: { readonly [path: string]: string }): string =>
+  createHash("sha256").update(JSON.stringify([compiled_digest, Object.entries(prompts).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)]))
+    .digest("hex");
+
+/**
  * Pin a compiled workflow: its prompt texts are stored content-addressed and
  * the bundle records path -> digest (D9), so editing a prompt file afterwards
- * cannot change what this definition renders. A digest pinned before is
- * returned as it stands.
+ * cannot change what this definition renders; it pins a new definition. A
+ * definition pinned before with the same source and prompts is returned as it
+ * stands.
  */
 export async function pinDefinition(db: Database, pin: DefinitionPin): Promise<PinnedBundle> {
   return db.transaction().execute(async (trx) => {
@@ -87,14 +98,15 @@ export async function pinDefinition(db: Database, pin: DefinitionPin): Promise<P
     if (contents.length) await trx.insertInto("authority.prompt_content").values(contents.map((prompt) => ({ ...prompt })))
       .onConflict((conflict) => conflict.column("content_digest").doNothing()).execute();
     const prompts = Object.fromEntries(Object.entries(pin.prompts).map(([path, prompt]) => [path, prompt.content_digest]));
-    const inserted = await trx.insertInto("authority.definition_bundle").values({ id: crypto.randomUUID(), digest: pin.compiled.digest,
+    const digest = selectDefinitionDigest(pin.compiled.digest, prompts);
+    const inserted = await trx.insertInto("authority.definition_bundle").values({ id: crypto.randomUUID(), digest,
       source: jsonText(pin.source), checked_program: jsonText(pin.compiled), prompts: jsonText(prompts) })
       .onConflict((conflict) => conflict.column("digest").doNothing()).returningAll().executeTakeFirst();
     if (inserted) {
       await announce(trx, null, inserted.id, { kind: "invalidate", data: { target: "definitions", run_id: null } });
       return { kind: "pinned", bundle: inserted as DefinitionBundleRecord };
     }
-    const existing = await trx.selectFrom("authority.definition_bundle").selectAll().where("digest", "=", pin.compiled.digest).executeTakeFirstOrThrow();
+    const existing = await trx.selectFrom("authority.definition_bundle").selectAll().where("digest", "=", digest).executeTakeFirstOrThrow();
     return { kind: "existing", bundle: existing as DefinitionBundleRecord };
   });
 }

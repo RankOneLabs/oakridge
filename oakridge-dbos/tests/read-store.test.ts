@@ -83,8 +83,8 @@ test("definitions list, read, and resolve from a run with their checked program"
   const page = await listDefinitions(authority.db, { after: null, limit: 10, is_archived: false });
   const detail = await readDefinition(authority.db, bundle_id);
   const pinned = await readPinnedDefinition(authority.db, run_id);
-  expect({ listed: page.items.map((item) => item.bundle_id), detail: detail?.source.workflow, pinned: [pinned?.digest, pinned?.checked_program.digest] })
-    .toEqual({ listed: [bundle_id], detail: "review_loop", pinned: [digest, digest] });
+  expect({ listed: page.items.map((item) => item.bundle_id), detail: detail?.source.workflow, pinned: [pinned?.digest, pinned?.checked_program.stages] })
+    .toEqual({ listed: [bundle_id], detail: "review_loop", pinned: [digest, ["document"]] });
 });
 
 test("the operator stream returns events after a cursor and holds back transactions still open", async () => {
