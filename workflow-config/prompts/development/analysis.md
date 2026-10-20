@@ -12,6 +12,17 @@ Each repository is prepared at the path in its workspace:
 
 {{workspaces}}
 
+Repository keys are stable identifiers; preserve them when describing findings
+and scope.
+
+Treat the specification's requested changes as requirements, not discrepancies
+merely because the current code does not implement them yet. A discrepancy
+exists only when a requested feature or constraint is incompatible with the
+current codebase: for example, it contradicts an existing invariant, depends on
+an API or data model that cannot support it, conflicts with another
+requirement, or cannot be implemented within the supplied repository
+boundaries. Describe the specific incompatibility and evidence from the code.
+
 ## Finding severity and requirement status
 
 Assign severity by the consequence for delivering the specification, not by how
@@ -59,4 +70,4 @@ specification is implementable without discrepancies.
 
 Publish the `analysis` artifact: a summary, the specification sections you relied on (`source_spec_refs`), findings with a severity (`blocking`, `warning` or `info`), the requirements with their status (`implementable`, `blocked` or `ambiguous`), and the risks with their mitigations.
 
-Route remote git and pull request operations through gated-review.
+Do not plan or implement. Empty arrays are valid.

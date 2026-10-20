@@ -550,7 +550,9 @@
           },
           "inputs": {
             "brief": "brief_value",
-            "repository": "input.repository"
+            "repository": "input.repository",
+            "build_base": "input.repository.forge.build_base",
+            "final_base": "input.repository.forge.final_base"
           },
           "workspace": "repository(input.workspace)",
           "creates": [
