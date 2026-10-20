@@ -14,4 +14,4 @@ Publish the `brief` artifact for this cohort only. Keep its `cohort_id`, `reposi
 
 The brief is the builder's complete scope and the assessor's sole requirement source. Make each acceptance criterion self-contained. When the specification requires exact copy, labels, values, or other source facts for this cohort, include those exact values in the brief's acceptance criteria or decisions. Do not refer the builder or assessor back to the specification for missing details.
 
-Every field is required. Arrays may be empty only when the accepted plan truly contains no corresponding item. Never use placeholders or absolute paths.
+Every field is required. Arrays may be empty when the cohort and specification contain no corresponding item. Never use placeholders or absolute paths.
