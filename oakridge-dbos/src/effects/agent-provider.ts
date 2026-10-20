@@ -24,12 +24,12 @@ export const selectDeliveryKey = (instruction: EffectInstruction): string =>
   createHash("sha256").update(`${instruction.attempt.action_id}\0${instruction.attempt.seq}`).digest("hex");
 
 /** The repository a `repository(<expr>)` workspace names, as `repository.prepare` publishes it. */
-export interface AgentWorkspace { readonly repository_path: string; readonly head: string }
+export interface AgentWorkspace { readonly repository_path: string; readonly base_branch: string }
 export function selectAgentWorkspace(workspace: unknown): AgentWorkspace | null {
   if (typeof workspace !== "object" || workspace === null || Array.isArray(workspace)) return null;
-  const { repository_path, head } = workspace as { readonly [key: string]: unknown };
-  return typeof repository_path === "string" && repository_path !== "" && typeof head === "string" && head !== ""
-    ? { repository_path, head } : null;
+  const { repository_path, base_branch } = workspace as { readonly [key: string]: unknown };
+  return typeof repository_path === "string" && repository_path !== "" && typeof base_branch === "string" && base_branch !== ""
+    ? { repository_path, base_branch } : null;
 }
 
 export interface AgentProviderConfig {
@@ -63,8 +63,9 @@ export function selectWorkspaceBranch(instruction: EffectInstruction): string {
  * The ensure a session is started with. Everything in it is fixed for the
  * session (unit, worker, created artifacts, workspace, secret), so every
  * attempt that resumes the session sends the same spec. A repository
- * workspace gets its own worktree, branched from the prepared head on a
- * branch named for the session.
+ * workspace gets its own worktree on a branch named for the session, cut
+ * from `origin/<base_branch>`, which kbbl fetches before branching, so a
+ * cohort starts from its dependencies' merged work (as v1 did).
  */
 export function selectSessionStart(instruction: EffectInstruction, config: Pick<AgentProviderConfig, "publish_base_url" | "default_workdir">,
   secret: string): ResumableEnsureRequest {
@@ -82,7 +83,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
     name: name.length > KBBL_NAME_LIMIT ? `${name.slice(0, KBBL_NAME_LIMIT - 1)}…` : name,
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
-    ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: workspace.head } } : {}),
+    ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: `origin/${workspace.base_branch}` } } : {}),
     workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
   };
 }

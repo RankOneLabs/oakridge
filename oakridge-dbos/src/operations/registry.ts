@@ -14,7 +14,7 @@ export const OPERATION_REGISTRY = [
   {
     key: "repository.prepare",
     input_schema: { repository_path: "repo_path", expected_head: "optional(text)", base_branch: "text", integration_branch: "text" },
-    output_schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident" },
+    output_schema: { repository_path: "repo_path", push_remote_owner: "ident", head: "ident", base_branch: "text" },
     error_codes: [PROVIDER_ERROR_CODES.worktree_unrecoverable, PROVIDER_ERROR_CODES.head_changed, PROVIDER_ERROR_CODES.provider_rejected],
   },
   {

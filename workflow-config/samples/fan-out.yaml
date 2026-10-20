@@ -23,7 +23,7 @@ stages:
   prepare:
     input: { repository: { repository_path: repo_path, expected_head: optional(text), base_branch: text, integration_branch: text } }
     artifacts:
-      workspace: { schema: { repository_path: repo_path, push_remote_owner: ident, head: ident } }
+      workspace: { schema: { repository_path: repo_path, push_remote_owner: ident, head: ident, base_branch: text } }
     workers:
       git:
         kind: code
@@ -34,7 +34,7 @@ stages:
     done_when: published(workspace)
     outcome: { workspace: latest(workspace) }
   item:
-    input: { text: text, workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident } }
+    input: { text: text, workspace: { repository_path: repo_path, push_remote_owner: ident, head: ident, base_branch: text } }
     artifacts: { result: { schema: text } }
     workers:
       worker:

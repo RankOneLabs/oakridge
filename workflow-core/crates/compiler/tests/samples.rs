@@ -62,6 +62,7 @@ fn operations() -> Vec<CodeOperation> {
                     TypeExpression::Name("ident".into()),
                 ),
                 ("head".into(), TypeExpression::Name("ident".into())),
+                ("base_branch".into(), TypeExpression::Name("text".into())),
             ]
             .into(),
         ),

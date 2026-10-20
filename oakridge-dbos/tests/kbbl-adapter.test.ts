@@ -177,17 +177,18 @@ test("sibling briefs ensure the same shared session start spec", () => {
   expect(selectSessionStart(a, options, "secret")).toEqual(selectSessionStart(b, options, "secret"));
 });
 
-test("a repository workspace runs in a worktree branched from the prepared head; none runs in the agent workdir", () => {
+test("a repository workspace runs in a worktree branched from origin's base branch; none runs in the agent workdir", () => {
   const plain = selectSessionStart(instructionFor(), { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
-  const repo = selectSessionStart(instructionFor({ resolved: { workspace: { repository_path: "/srv/repo", push_remote_owner: "o", head: "abc123" } } }),
+  const repo = selectSessionStart(instructionFor({ resolved: { workspace: { repository_path: "/srv/repo", push_remote_owner: "o", head: "abc123",
+    base_branch: "epic/tiers" } } }),
     { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
   expect({ plain: [plain.workdir, plain.worktree ?? null], repo: [repo.workdir, repo.worktree?.base_ref, repo.worktree?.branch_name.startsWith("oakridge/")] })
-    .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "abc123", true] });
+    .toEqual({ plain: ["/srv/agents", null], repo: ["/srv/repo", "origin/epic/tiers", true] });
 });
 
 test("development cohort worktrees use the cohort key and a stable six-character session hash", () => {
   const action = { ...writer, unit: "run-1/implementation/dark_theme_palette" };
-  const cohort = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123" } } });
+  const cohort = instructionFor({ action, resolved: { workspace: { repository_path: "/srv/repo", head: "abc123", base_branch: "epic/tiers" } } });
   const revision = instructionFor({ action: { ...action, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "d1" } } });
   const branch = selectWorkspaceBranch(cohort);
   const start = selectSessionStart(cohort, { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" }, "s");
