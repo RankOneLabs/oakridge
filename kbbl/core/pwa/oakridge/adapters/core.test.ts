@@ -51,6 +51,15 @@ describe("v2 development adapters", () => {
     }).toEqual({ listed: ["workspace"], capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false },
       body: prepare.artifacts.find((artifact) => artifact.artifact_key === "workspace")?.latest_revision?.body });
   });
+  it("shows the approved text specification as a reviewable artifact", () => {
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    const oldArtifact = analysis?.artifacts.find((artifact) => artifact.artifact_key === "analysis");
+    if (!analysis || !oldArtifact) throw new Error("captured fixture lacks an analysis unit");
+    const spec = { ...oldArtifact, artifact_key: "spec", schema: "text",
+      latest_revision: oldArtifact.latest_revision ? { ...oldArtifact.latest_revision, body: "Revised requirements" } : null };
+    const stage = unitToStages([withUnitFields(analysis, { artifacts: [spec] })]);
+    expect(stage.ok && stage.value[0]?.artifacts.map((artifact) => artifact.type_id)).toEqual(["dev.spec"]);
+  });
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
     if (!pr) throw new Error("captured fixture lacks a PR artifact");

@@ -1,9 +1,9 @@
-Review the analysis of this specification. Accept it to start planning, or request changes and say what must change.
+Review the analyst's blocker and warning discussion in the session, then compare the proposed specification with the original. Discuss necessary qualifications and request precise changes until the specification contains the agreed decisions. Accept the proposed specification only when it is ready to be the sole requirements source for planning; do not accept unresolved product decisions.
 
-## Specification
+## Original specification
+
+{{original_spec}}
+
+## Proposed specification
 
 {{spec}}
-
-## Analysis
-
-{{analysis}}

@@ -5,8 +5,6 @@ You are the build agent. Changes were requested on your build of this cohort. Ma
 ## Cohort
 
 **Base branch (your PR targets this):** {{build_base}}
-**Integration branch (where the run's work merges later — not yours):** {{final_base}}
-
 ### The brief
 
 {{brief}}

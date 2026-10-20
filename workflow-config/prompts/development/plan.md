@@ -1,12 +1,8 @@
-Plan the implementation from the accepted analysis, the specification and the prepared repositories.
+Plan the implementation from the approved specification and the prepared repositories.
 
 ## Specification
 
 {{spec}}
-
-## Accepted analysis
-
-{{analysis}}
 
 ## Repositories
 
@@ -26,12 +22,6 @@ are authoritative. Do not create, rebase, reset, or otherwise repair a branch
 from this planner session. If the supplied topology does not look like the
 above, record a blocking risk instead of planning around stale or unknown
 ancestry.
-
-The accepted analysis may identify genuine discrepancies between requested
-features and the current code. Preserve those incompatibilities and their
-resolutions in the plan. Do not reinterpret the ordinary fact that code must
-change to satisfy the specification as a discrepancy: that before-to-after
-difference is the work being planned.
 
 ## Cohort sizing and review
 

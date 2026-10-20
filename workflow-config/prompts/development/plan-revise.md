@@ -12,10 +12,6 @@ Revise your implementation plan.
 
 {{spec}}
 
-## Accepted analysis
-
-{{analysis}}
-
 ## Repositories
 
 {{repositories}}

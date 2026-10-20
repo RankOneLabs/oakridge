@@ -5,8 +5,6 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 ## Cohort
 
 **Base branch (your PR targets this):** {{build_base}}
-**Integration branch (where the run's work merges later — not yours):** {{final_base}}
-
 ### The brief
 
 {{brief}}
@@ -28,7 +26,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 After all commits are complete, use the gated-review MCP tools to publish the branch:
 
 1. Push the branch: call `mcp__gated-review__git_push` with `repository` set to the repository's `owner/name` and `repo_path` set to your worktree's absolute path.
-2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch; never substitute the integration branch, the branch's tracking upstream, or another repository default. Open it ready for review, not as a draft.
+2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch. Open it ready for review, not as a draft.
 3. Note the `url` returned by `open_pr` — you will include it in the `pr` artifact below.
 
 Never merge a pull request: merges belong to the operator.

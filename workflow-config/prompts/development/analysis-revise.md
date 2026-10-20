@@ -1,14 +1,14 @@
-Revise your analysis of the specification. The operator reviewed the analysis below and asked for changes.
+Discuss the operator's feedback and update your blocker, warning, or qualification analysis in this session where needed. Revise the proposed specification accordingly, then publish the complete `spec` artifact again. Preserve requirements and exact wording outside the agreed changes. The analysis note remains in the session; it is not an artifact for planning.
 
-## Your previous analysis
+## Previous proposed specification
 
 {{previous}}
 
-## What must change
+## Operator feedback
 
 {{feedback}}
 
-## Specification
+## Original specification
 
 {{spec}}
 
@@ -16,6 +16,6 @@ Revise your analysis of the specification. The operator reviewed the analysis be
 
 {{repositories}}
 
-{{workspaces}}
+## Prepared workspaces
 
-Publish the revised `analysis` artifact with every field, not only the ones that changed.
+{{workspaces}}

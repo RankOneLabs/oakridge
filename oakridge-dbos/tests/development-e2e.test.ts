@@ -24,14 +24,15 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
  */
 
 const root = resolve(import.meta.dir, "../..");
-const BODY_SCHEMAS = { analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
+const APPROVED_SPEC = "Approved specification from analysis.";
+const BODY_SCHEMAS = { spec: "text", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
   readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[];
 }
 const VIEWER_COMPONENTS = {
-  "dev-spec-analysis-viewer": "SpecAnalysisViewer",
+  "dev-spec-viewer": "SpecViewer",
   "dev-plan-viewer": "PlanViewer",
   "dev-build-brief-viewer": "BuildBriefViewer",
   "dev-build-result-viewer": "BuildResultReview",
@@ -112,15 +113,16 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
     };
     switch (workerOf(turn)) {
       case "author":
-        await publish("analysis", { summary: "Feasible.", source_spec_refs: ["§1"], findings: [],
-          requirements: [{ id: "r1", description: "Do the thing.", status: "implementable" }], risks: [] });
+        await publish("spec", APPROVED_SPEC);
         break;
       case "planner":
+        if (!turn.task.includes(APPROVED_SPEC)) throw new Error("planner did not receive the approved specification");
         await publish("plan", { summary: "Two cohorts.", dependency_order: ["a", "b"], scope: { in_scope: ["thing"], out_of_scope: [] },
           acceptance_criteria: ["it works"], risks: [], cohorts: COHORTS.map((cohort) => ({ ...cohort, repository_key: "app",
             title: `Cohort ${cohort.id}`, scope: "part", description: null, files_in_scope: [], decisions: [], acceptance_criteria: ["it works"] })) });
         break;
       case "writer":
+        if (!turn.task.includes(APPROVED_SPEC)) throw new Error("brief writer did not receive the approved specification");
         await publish("brief", { cohort_id: member, repository_key: "app", title: `Cohort ${member}`, depends_on: dependenciesOf(member),
           goal: "Build it.", files_in_scope: [], decisions_made: [], approaches_rejected: [], acceptance_criteria: ["it works"], next_action: "build" });
         break;
@@ -279,7 +281,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const schemaOf = async (unit: string, artifact: string): Promise<string> =>
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
   const schemas = {
-    analysis: await schemaOf(unitOf("analysis"), "analysis"), plan: await schemaOf(unitOf("planning"), "plan"),
+    spec: await schemaOf(unitOf("analysis"), "spec"), plan: await schemaOf(unitOf("planning"), "plan"),
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
     assessment: await schemaOf(unitOf("cohort", "a"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
   };
@@ -603,12 +605,13 @@ test("allow_close_without_merge completes on an observed close without claiming 
     .toEqual([{ repository_key: "app", pr_url: pullUrl(3), is_merged: false }]);
 }, 150_000);
 
-test("development body schemas and v1 PWA viewer component IDs remain available", () => {
-  // The v1 registry resolves component_id; the data layer supplies the schema-to-component mapping.
+test("development artifact schemas and PWA viewer component IDs align", () => {
+  // The spec uses the built-in text schema; the other bodies use named schemas.
   // Read the registry as text rather than importing across the PWA boundary.
   const registry = readFileSync(resolve(root, "kbbl/core/pwa/oakridge/artifactRegistry.tsx"), "utf8");
   const workflow = developmentWorkflow();
-  const declared = Object.values(BODY_SCHEMAS).filter((name) => workflow.schemas?.[name] !== undefined);
+  const declared = [workflow.stages.analysis?.artifacts.spec?.schema,
+    ...Object.values(BODY_SCHEMAS).filter((name) => name !== BODY_SCHEMAS.spec && workflow.schemas?.[name] !== undefined)];
   const registered = Object.entries(VIEWER_COMPONENTS).filter(([componentId, viewer]) =>
     registry.includes(`"${componentId}": { Viewer: ${viewer} }`));
   expect({ declared, registered }).toEqual({
