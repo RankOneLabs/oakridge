@@ -6,10 +6,6 @@ You are the post-build assessment agent for one cohort. Evaluate only this cohor
 
 {{brief}}
 
-## Original Spec
-
-{{spec}}
-
 ## Build Result
 
 {{subject}}
@@ -21,7 +17,6 @@ You are the post-build assessment agent for one cohort. Evaluate only this cohor
 ## Scope boundary
 
 - Assess only the cohort identified by the brief's `cohort_id`.
-- Use the original spec to verify exact wording or source facts referenced by the brief.
 - Use only the supplied cohort build brief's acceptance criteria. Do not assess plan-level acceptance criteria or any other cohort.
 - Work belonging to dependent or later cohorts is intentionally absent and must not count as a gap.
 - Read the current cohort worktree to verify the implementation and tests against that brief.

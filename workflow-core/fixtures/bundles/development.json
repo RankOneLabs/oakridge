@@ -237,10 +237,7 @@
         "pool": "writers",
         "input": {
           "cohort": "each",
-          "plan": "planning.outcome.plan",
-          "spec": "input.spec",
-          "workspaces": "map(prepare, prepare.outcome)",
-          "analysis": "analysis.outcome.analysis"
+          "spec": "input.spec"
         }
       },
       "implementation": {
@@ -251,7 +248,6 @@
         "pool": "builders",
         "input": {
           "brief": "each",
-          "spec": "input.spec",
           "repository": "require(lookup(input.repositories, key, each.repository_key))",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace",
           "admission": "input.admission"
@@ -425,10 +421,7 @@
     "brief": {
       "input": {
         "cohort": "plan_cohort",
-        "plan": "plan_body",
-        "analysis": "analysis_body",
-        "spec": "text",
-        "workspaces": "list(prepared)"
+        "spec": "text"
       },
       "artifacts": {
         "brief": {
@@ -459,10 +452,7 @@
           },
           "inputs": {
             "cohort": "input.cohort",
-            "plan": "input.plan",
-            "analysis": "input.analysis",
-            "spec": "input.spec",
-            "workspaces": "input.workspaces"
+            "spec": "input.spec"
           },
           "creates": [
             "brief"
@@ -476,7 +466,8 @@
           "prompt": "development/brief-review.md",
           "inputs": {
             "cohort": "input.cohort",
-            "brief": "latest(brief)"
+            "brief": "latest(brief)",
+            "spec": "input.spec"
           },
           "decisions": {
             "set": "accept_or_request",
@@ -498,7 +489,6 @@
     "cohort": {
       "input": {
         "brief": "brief_body",
-        "spec": "text",
         "repository": "repository",
         "workspace": "workspace",
         "admission": "boolean"
@@ -552,10 +542,8 @@
           },
           "inputs": {
             "brief": "brief_value",
-            "spec": "input.spec",
             "repository": "input.repository",
-            "build_base": "input.repository.forge.build_base",
-            "final_base": "input.repository.forge.final_base"
+            "build_base": "input.repository.forge.build_base"
           },
           "workspace": "repository(input.workspace)",
           "creates": [
@@ -570,7 +558,6 @@
           },
           "inputs": {
             "brief": "brief_value",
-            "spec": "input.spec",
             "pr": "latest(pr)"
           },
           "workspace": "repository(input.workspace)",

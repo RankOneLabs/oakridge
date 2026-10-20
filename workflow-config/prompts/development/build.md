@@ -5,15 +5,9 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 ## Cohort
 
 **Base branch (your PR targets this):** {{build_base}}
-**Integration branch (where the run's work merges later — not yours):** {{final_base}}
-
 ### The brief
 
 {{brief}}
-
-### Original spec
-
-{{spec}}
 
 ### The repository
 
@@ -22,7 +16,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 ## Your tasks
 
 1. You are already in the cohort worktree, branched from the base branch. Do not `cd` away from it for edits, commits, or branch operations.
-2. Read the brief above for your scope. Use the original spec for exact source wording and facts referenced by the brief.
+2. Read the brief above. It is your complete scope — implement exactly what it describes.
 3. Follow the brief's decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave tests passing and typecheck clean (the repository's test command, plus its typecheck if it has one).
 5. When all subgoals are committed, push the branch and open a PR (see below), then publish the two artifacts in order.
@@ -32,7 +26,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 After all commits are complete, use the gated-review MCP tools to publish the branch:
 
 1. Push the branch: call `mcp__gated-review__git_push` with `repository` set to the repository's `owner/name` and `repo_path` set to your worktree's absolute path.
-2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch; never substitute the integration branch, the branch's tracking upstream, or another repository default. Open it ready for review, not as a draft.
+2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch. Open it ready for review, not as a draft.
 3. Note the `url` returned by `open_pr` — you will include it in the `pr` artifact below.
 
 Never merge a pull request: merges belong to the operator.
