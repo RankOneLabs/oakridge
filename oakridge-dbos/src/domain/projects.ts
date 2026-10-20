@@ -13,6 +13,17 @@ export interface ProjectDraft {
   readonly forge_repository: ForgeRepository | null;
   readonly integration_branch: string | null;
 }
+/** Fields supplied by the project form; omitted repository details are read from Git. */
+export interface ProjectWriteInput {
+  readonly name: string;
+  readonly repo_dir: string;
+  readonly forge_repository?: ForgeRepository | null;
+  readonly integration_branch?: string | null;
+}
+export interface ProjectRepositoryIdentity {
+  readonly forge_repository: ForgeRepository;
+  readonly integration_branch: string | null;
+}
 export type ProjectWriteError =
   | { readonly kind: "duplicate_name"; readonly name: string }
   | { readonly kind: "missing"; readonly id: ProjectId };

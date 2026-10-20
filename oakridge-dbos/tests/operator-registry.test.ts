@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 import { installDefinitionApi } from "../src/http/app";
 import { launch, openAuthority, pinSample, sampleWorkflow, type Authority } from "./authority-fixture";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import ts from "typescript";
 
@@ -79,6 +80,31 @@ test("projects are created, listed and edited, with names kept unique", async ()
   const listed = await (await app.request("/api/projects")).json() as { items: { id: string; forge_repository: unknown }[] };
   expect(listed.items).toEqual([expect.objectContaining({ id, forge_repository: project.forge_repository })]);
 }));
+
+test("a project created or updated with only a name and path discovers its GitHub repository", async () => {
+  const repo = mkdtempSync(resolve(tmpdir(), "oakridge-project-"));
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(["git", "-C", repo, ...args], { stderr: "pipe" });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  };
+  try {
+    git("init", "-q");
+    git("remote", "add", "origin", "git@github.com:RankOneLabs/rol_site.git");
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    await withApi(async ({ app }) => {
+      const created = await app.request("/api/projects", json("POST", { name: "roldotcom", repo_dir: repo }));
+      expect(created.status).toBe(201);
+      const saved = await created.json() as { id: string; forge_repository: unknown; integration_branch: string | null };
+      expect({ forge_repository: saved.forge_repository, integration_branch: saved.integration_branch }).toEqual({
+        forge_repository: { provider: "github", owner: "RankOneLabs", name: "rol_site" }, integration_branch: "main",
+      });
+      const updated = await app.request(`/api/projects/${saved.id}`, json("PUT", { name: "roldotcom", repo_dir: repo }));
+      expect((await updated.json() as { forge_repository: unknown }).forge_repository).toEqual(saved.forge_repository);
+    });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test("a workflow with a code worker compiles and pins", async () => withApi(async ({ app }) => {
   expect((await app.request("/api/definitions", json("POST", sampleWorkflow("fan-out")))).status).toBe(201);
