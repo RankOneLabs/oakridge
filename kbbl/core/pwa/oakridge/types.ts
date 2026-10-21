@@ -449,6 +449,7 @@ export interface ArtifactTypeDescriptor {
 export interface ArtifactSource {
   run_id: string;
   label: string | null;
+  producing_stage?: string;
   original_spec?: string | null;
   /** `created_at` of the revision on screen; sibling artifacts are read as they stood then. */
   as_of: string;

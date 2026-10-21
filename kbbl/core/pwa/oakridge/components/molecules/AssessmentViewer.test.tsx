@@ -73,4 +73,14 @@ describe("AssessmentViewer", () => {
     render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: "cm-cli" }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
     expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
   });
+
+  test("renders an integration assessment without cohort artifact warnings", () => {
+    render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: null }}
+      result={{ kind: "missing", cohort_label: null }} cohortLabel="assay" isIntegration />);
+    expect(screen.getByText("Integration assessment")).toBeTruthy();
+    expect(screen.queryByTestId("or-assessment-brief-note")).toBeNull();
+    expect(screen.queryByTestId("or-assessment-result-note")).toBeNull();
+    expect(screen.queryByText("Not one of the brief's criteria.")).toBeNull();
+    expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
+  });
 });

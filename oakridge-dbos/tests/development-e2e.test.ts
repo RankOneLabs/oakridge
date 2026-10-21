@@ -149,6 +149,10 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
           test_evidence: null, recommended_next_actions: [] }, turn.subject());
         break;
       case "integrator":
+        await publish("assessment", { verdict: "pass", findings: [{ criterion: null, status: "met",
+          evidence: "Both cohort changes pass together on the integration branch.", description: "Cross-cohort integration" }],
+          test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
+          recommended_next_actions: [] });
         await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
         break;
       default:
@@ -294,8 +298,12 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     spec: await schemaOf(unitOf("analysis"), "spec"), analysis: await schemaOf(unitOf("analysis"), "analysis"),
     plan: await schemaOf(unitOf("planning"), "plan"),
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
-    assessment: await schemaOf(unitOf("cohort", "a"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
+    assessment: await schemaOf(unitOf("cohort", "a"), "assessment"),
+    integration_assessment: await schemaOf(unitOf("integration"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
   };
+  const integration_assessment = await db.selectFrom("authority.artifact_revision").select("body")
+    .where("run_id", "=", run_id).where("unit_id", "=", unitOf("integration"))
+    .where("artifact", "=", "assessment").orderBy("seq", "desc").executeTakeFirst();
   // A watch polls every second but publishes only a change: no two successive pr_state revisions agree.
   const pr_states = await db.selectFrom("authority.artifact_revision").select(["unit_id", "body"]).where("run_id", "=", run_id)
     .where("artifact", "=", "pr_state").orderBy("created_at").execute();
@@ -314,6 +322,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     admitted: [...admitted].sort(),
     b_built_after_a_merged: (timeline.get("build:b") ?? 0) >= (timeline.get("merge:a") ?? Infinity),
     schemas,
+    integration_assessment: integration_assessment?.body,
     pr_states_change: [unitOf("cohort", "a"), unitOf("cohort", "b"), unitOf("integration")].map((unit) => isChangesOnly(statesOf(unit))),
     merged_cohorts_without_confirmation: [...merged_cohorts_without_confirmation].sort(),
     run_summary: [listed?.title, listed?.repository_keys, !!listed && listed.updated_at >= listed.created_at],
@@ -323,7 +332,11 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
     admitted: ["a", "b"],
     b_built_after_a_merged: true,
-    schemas: BODY_SCHEMAS,
+    schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
+    integration_assessment: { verdict: "pass", findings: [{ criterion: null, status: "met",
+      evidence: "Both cohort changes pass together on the integration branch.", description: "Cross-cohort integration" }],
+    test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
+    recommended_next_actions: [] },
     pr_states_change: [true, true, true],
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],

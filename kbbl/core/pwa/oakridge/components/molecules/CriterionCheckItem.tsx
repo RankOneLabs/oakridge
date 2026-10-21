@@ -8,7 +8,7 @@ import { ExpandableText } from "./ExpandableText";
 export const CRITERION_STATUS_LABEL: Record<CriterionStatus, string> = { met: "met", partial: "partial", not_met: "not met" };
 
 /** One acceptance criterion with the assessor's status and evidence, numbered as the brief numbers it. */
-export function CriterionCheckItem({ check }: { check: CriterionCheck }) {
+export function CriterionCheckItem({ check, showBriefComparison = true }: { check: CriterionCheck; showBriefComparison?: boolean }) {
   const status = selectCheckStatus(check);
   const note = selectCheckNote(check);
   return (
@@ -19,7 +19,7 @@ export function CriterionCheckItem({ check }: { check: CriterionCheck }) {
         <p className="text-sm font-medium text-[var(--text-primary)]">{selectCheckCriterionText(check)}</p>
       </div>
       <div className="flex flex-col gap-1 pl-8">
-        {check.kind === "assessment_only" && <span className="text-xs text-[var(--text-muted)]">Not one of the brief's criteria.</span>}
+        {showBriefComparison && check.kind === "assessment_only" && <span className="text-xs text-[var(--text-muted)]">Not one of the brief's criteria.</span>}
         {check.finding?.evidence && (
           <>
             <div className={artifactLabelClass}>Evidence</div>

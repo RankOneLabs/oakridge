@@ -391,6 +391,7 @@ stages:
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
       final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
+      assessment: { schema: assessment_body }
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
       manual_merge_target: { schema: pr_body }
@@ -401,10 +402,10 @@ stages:
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
         inputs: { repository: input.repository, cohorts: input.cohorts }
         workspace: repository(input.workspace)
-        creates: [pr]
+        creates: [pr, assessment]
       pr_watch: { template: pr_watch }
-      # Independent evidence paths preserve the manual v1 merge fallback when
-      # no PR reader is configured. Periodic copies follow revised inputs.
+      # Independent evidence paths allow manual merge confirmation when no PR
+      # reader is configured. Periodic copies follow revised inputs.
       prepare_manual_merge:
         kind: code
         operation: value.publish
@@ -424,7 +425,7 @@ stages:
         of: pr
         by: operator
         prompt: development/integration-review.md
-        inputs: { repository: input.repository, cohorts: input.cohorts, pr: latest(pr), pr_state: latest(pr_state) }
+        inputs: { repository: input.repository, cohorts: input.cohorts, assessment: latest(assessment), pr: latest(pr), pr_state: latest(pr_state) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the integration change?" } } } }
       merge_confirmation:
         of: manual_merge_target
@@ -439,7 +440,7 @@ stages:
         overrides: { of: pr }
     # The independent evidence paths avoid reading an unobserved PR watch in the
     # manual path; under allow_close_without_merge, an observed close suffices.
-    done_when: approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
+    done_when: published(assessment) and approved(pr) and (approved(manual_merge_target) or (observed_state_current and (latest(observed_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(observed_state).state == "closed_unmerged"))))
     outcome:
       repository_key: input.repository.key
       pr_url: latest(pr).pr_url
