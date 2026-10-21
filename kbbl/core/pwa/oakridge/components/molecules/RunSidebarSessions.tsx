@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
 import { useEndSession } from "../../../hooks/useEndSession";
+import { useRemoveSession } from "../../../hooks/useRemoveSession";
 import { isOpenSessionStatus } from "../../../lib/session";
 import { useStore } from "../../../state/store";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
@@ -86,15 +87,22 @@ interface RunSidebarSessionItemProps {
 
 function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemProps) {
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
   const canEnd = isOpenSessionStatus(status);
   const { mutation, error } = useEndSession(row.session_id);
+  const { mutation: removeMutation, error: removeError } = useRemoveSession(row.session_id);
 
   useEffect(() => {
     if (!confirmEnd) return;
     const timer = setTimeout(() => setConfirmEnd(false), 4000);
     return () => clearTimeout(timer);
   }, [confirmEnd]);
+  useEffect(() => {
+    if (!confirmRemove) return;
+    const timer = setTimeout(() => setConfirmRemove(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmRemove]);
 
   const end = async () => {
     if (mutation.isPending) return;
@@ -104,6 +112,16 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
       // The mutation error is rendered with this row.
     } finally {
       setConfirmEnd(false);
+    }
+  };
+  const remove = async () => {
+    if (removeMutation.isPending) return;
+    try {
+      await removeMutation.mutateAsync();
+    } catch {
+      // The mutation error is rendered with this row.
+    } finally {
+      setConfirmRemove(false);
     }
   };
 
@@ -168,9 +186,30 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           {mutation.isPending ? "…" : confirmEnd ? "Confirm" : "End"}
         </Button>
       )}
+      {status !== null && !canEnd && (
+        <Button variant="secondary"
+          type="button"
+          className="or-run-sidebar__row-end"
+          disabled={removeMutation.isPending}
+          aria-label={confirmRemove ? `Confirm remove ${row.stage_key} ${row.unit_id}` : `Remove ${row.stage_key} ${row.unit_id}`}
+          title="Permanently delete this closed session and its transcript."
+          onClick={() => {
+            if (!confirmRemove) setConfirmRemove(true);
+            else void remove();
+          }}
+          data-testid="or-sidebar-session-remove"
+        >
+          {removeMutation.isPending ? "…" : confirmRemove ? "Confirm" : "Remove"}
+        </Button>
+      )}
       {error && (
         <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
           <span>{error}</span>
+        </div>
+      )}
+      {removeError && (
+        <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
+          <span>{removeError}</span>
         </div>
       )}
     </li>

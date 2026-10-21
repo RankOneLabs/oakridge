@@ -64,10 +64,15 @@ test("End closes a live session without deleting its transcript", async () => {
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1", { method: "DELETE" }));
 });
 
-test("closed sessions offer Resume without an End or Remove action", () => {
+test("closed sessions offer Resume and confirmed Remove", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
   renderRow(makeSnapshot({ status: "ended" }));
 
   expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "End" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  expect(fetchMock).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "confirm" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1?purge=true", { method: "DELETE" }));
 });

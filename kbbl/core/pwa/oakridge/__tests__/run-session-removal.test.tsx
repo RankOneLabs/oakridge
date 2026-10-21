@@ -104,3 +104,14 @@ it("ends a session from the run sidebar without purging its record", async () =>
   await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing", { method: "DELETE" }));
   expect(screen.queryByTestId("or-sidebar-session-remove")).toBeNull();
 });
+
+it("removes a closed session from the run sidebar only after confirmation", async () => {
+  useStore.getState().applySnapshot([{ ...existing, status: "ended" }]);
+  renderRun();
+  const remove = await screen.findByTestId("or-sidebar-session-remove");
+  fireEvent.click(remove);
+  expect(globalThis.fetch).not.toHaveBeenCalledWith("/sessions/existing?purge=true", { method: "DELETE" });
+  fireEvent.click(remove);
+  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing?purge=true", { method: "DELETE" }));
+  expect(screen.queryByTestId("or-sidebar-session-end")).toBeNull();
+});
