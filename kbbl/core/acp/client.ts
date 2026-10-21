@@ -31,9 +31,15 @@ export interface AcpClientHandlers {
   ): Promise<schema.RequestPermissionResponse>;
 }
 
+/** The MCP server supplied by the launcher, using ACP's session setup contract. */
+export function selectMcpServers(gatedReviewUrl: string | undefined): schema.McpServer[] {
+  return gatedReviewUrl ? [{ type: "http", name: "gated-review", url: gatedReviewUrl, headers: [] }] : [];
+}
+
 export class AcpClient {
   private readonly connection: ClientConnection;
   private capabilities: schema.AgentCapabilities = {};
+  private readonly mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL);
 
   constructor(
     private readonly sid: KbblSessionId,
@@ -98,7 +104,7 @@ export class AcpClient {
       () =>
         this.connection.agent.request("session/new", {
           cwd,
-          mcpServers: [],
+          mcpServers: this.mcpServers,
           ...this.additionalDirectoriesField(additionalDirectories),
         }),
     );
@@ -116,7 +122,7 @@ export class AcpClient {
         this.connection.agent.request("session/load", {
           sessionId,
           cwd,
-          mcpServers: [],
+          mcpServers: this.mcpServers,
           ...this.additionalDirectoriesField(additionalDirectories),
         }),
     );

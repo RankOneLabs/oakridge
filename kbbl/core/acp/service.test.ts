@@ -3,7 +3,7 @@
 // service -> registry -> controller -> client -> supervisor path.
 
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -112,6 +112,26 @@ async function makeDirs(): Promise<{ stateDir: string; workdir: string }> {
     workdir: await mkdtemp(join(tmpdir(), "fake-acp-work-")),
   };
 }
+
+test("a configured gated-review server reaches the ACP agent", async () => {
+  const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
+  process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
+  try {
+    const { stateDir, workdir } = await makeDirs();
+    const { service, store } = makeHarness({ stateDir });
+    const ensured = await service.ensureResumableSession("gate-wiring", spec(workdir));
+    if (!ensured.ok) throw new Error("ensure failed");
+    const sid = ensured.value.session.sid;
+    await service.observeInitialTurn(sid, 8000);
+    const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
+    if (!agentSessionId) throw new Error("agent session missing");
+    const servers = JSON.parse(await readFile(join(stateDir, `${agentSessionId}.mcp-servers.json`), "utf8"));
+    expect(servers).toEqual([{ type: "http", name: "gated-review", url: "http://127.0.0.1:3555/mcp", headers: [] }]);
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
+    else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
+  }
+}, 15000);
 
 function spec(workdir: string, prompt = "build the thing"): AcpSessionStartSpec {
   return { initial_prompt: prompt, workdir, runtime: "fake" };

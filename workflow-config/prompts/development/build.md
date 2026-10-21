@@ -20,6 +20,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 3. Follow the brief's decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave tests passing and typecheck clean (the repository's test command, plus its typecheck if it has one).
 5. When all subgoals are committed, push the branch and open a PR (see below), then publish the two artifacts in order.
+6. Keep this task turn open until tests and both publications finish. If a command moves to the background, wait for its result in this turn; do not end the turn merely to wait for a notification.
 
 ## Push branch and open PR
 
