@@ -10,6 +10,9 @@ Integrate the completed cohorts of this repository into one branch based on its 
 
 ## What to publish
 
-Publish the `pr` artifact: the integration pull request's URL, its head branch, a summary, and its review status.
+After integrating the cohorts and running the relevant tests, publish both artifacts before stopping:
+
+1. `assessment`: an `assessment_body` with a `verdict` (`pass`, `pass_with_notes`, or `fail`), findings about whether the completed cohorts work together on the integration branch, optional `test_evidence`, and `recommended_next_actions`. Record failed tests and unresolved conflicts in the findings; use `fail` for a blocking issue. Publish the actual artifact, not only the verdict in the session response.
+2. `pr`: the integration pull request's URL, its head branch, a summary, and its review status. Publish this after the assessment so the operator review has both artifacts.
 
 Route remote git and pull request operations through gated-review.

@@ -12,6 +12,10 @@ Review this repository's integration pull request. Accept it once you are satisf
 
 {{pr}}
 
+## Integration assessment
+
+{{assessment}}
+
 ## What the forge reports
 
 {{pr_state}}

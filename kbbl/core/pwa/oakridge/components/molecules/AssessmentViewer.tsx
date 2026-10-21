@@ -17,6 +17,7 @@ interface Props {
   brief: CohortArtifactLookup<BuildBrief>;
   result: CohortArtifactLookup<BuildResult>;
   cohortLabel: string | null;
+  isIntegration?: boolean;
 }
 
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
@@ -39,27 +40,27 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
   );
 }
 
-export function AssessmentViewer({ assessment, brief, result, cohortLabel }: Props) {
+export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
-  const report = selectCriterionReport(brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
+  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-assessment-viewer">
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={artifactLabelClass}>Assessment</span>
+          <span className={artifactLabelClass}>{isIntegration ? "Integration assessment" : "Assessment"}</span>
           {cohortLabel && <code className="or-code">{cohortLabel}</code>}
           {brief.kind === "found" && <Chip tone="neutral">{brief.value.repository_key}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
         <VerdictBanner verdict={assessment.verdict} tally={report.tally} />
-        {brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
+        {!isIntegration && brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
       </header>
 
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} />)}
+            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
           </ul>
         ) : <p className="text-sm text-[var(--success-fg)]">Every criterion is met.</p>}
       </ArtifactSection>
@@ -75,12 +76,12 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel }: Pro
       <ArtifactSection title="Tests" testId="or-assessment-tests-section">
         {assessment.test_evidence
           ? <TestEvidenceBlock tests={assessment.test_evidence} testId="or-assessment-tests" />
-          : <p className="text-sm text-[var(--text-muted)]">The assessor recorded no test run of its own.</p>}
-        {result.kind === "found" ? (
+          : <p className="text-sm text-[var(--text-muted)]">The {isIntegration ? "integrator" : "assessor"} recorded no test run.</p>}
+        {!isIntegration && (result.kind === "found" ? (
           <p className="text-xs text-[var(--text-muted)]" data-testid="or-assessment-builder-tests">
             The builder reported {result.value.tests.passed} passed and {result.value.tests.failed} failed.
           </p>
-        ) : <CohortArtifactNote lookup={result} artifactName="build result" testId="or-assessment-result-note" />}
+        ) : <CohortArtifactNote lookup={result} artifactName="build result" testId="or-assessment-result-note" />)}
       </ArtifactSection>
 
       {report.met.length > 0 && (
@@ -90,7 +91,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel }: Pro
           </Button>
           {isMetOpen && (
             <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} />)}
+              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
             </ul>
           )}
         </ArtifactSection>
