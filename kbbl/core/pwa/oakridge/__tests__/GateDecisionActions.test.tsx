@@ -7,6 +7,7 @@ import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import type { OperatorUnitView } from "../operator-contracts";
 import type { ParkedGate, RepositoryKey, RunState } from "../types";
+import { compositeId } from "../adapters/core";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
@@ -19,7 +20,7 @@ function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, 
     repository_key: "web" as RepositoryKey,
     artifact_revision_id: revision,
     worktree: null,
-    resume_actions: ["approve", "request_revision"],
+    resume_actions: ["approve", "request_build_changes"],
     pr_url: null,
     run_state: "active",
     actionable: true,
@@ -102,9 +103,9 @@ describe("GateDecisionActions", () => {
       return json({ detail: "try again" }, 500);
     });
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    render(wrapper(client, gate("gate-a", "revision-a")));
+    render(wrapper(client, gate(compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }), "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "First explanation" } });
     fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await screen.findByRole("alert");
@@ -129,9 +130,9 @@ describe("GateDecisionActions", () => {
     const stranded = screen.getByTestId("or-gate-stranded");
     expect(stranded.textContent).toBe("Run cancelled — gate stranded");
     expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("or-decision-request_revision") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("or-decision-request_build_changes") as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     expect(screen.queryByTestId("or-decision-feedback")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -140,7 +141,7 @@ describe("GateDecisionActions", () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const view = render(wrapper(client, gate("gate-a", "revision-a")));
 
-    fireEvent.click(screen.getByTestId("or-decision-request_revision"));
+    fireEvent.click(screen.getByTestId("or-decision-request_build_changes"));
     expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
 
     view.rerender(wrapper(client, gate("gate-a", "revision-a", { actionable: false })));

@@ -33,7 +33,7 @@ const inbox: ReviewInbox = {
   cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "waiting_admission", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
     { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
   items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "waiting_admission", title: "Build API", resume_actions: [], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: "revision-web", gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_revision"], blocked_by: [] }],
+    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_build_changes"], blocked_by: [] }],
 };
 
 const runId = "run-1";
@@ -66,7 +66,7 @@ describe("ReviewInboxView", () => {
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
     expect(screen.getAllByText("Artifact ready for review")).toHaveLength(1);
-    expect(screen.getByTestId("or-decision-request_revision")).toBeTruthy();
+    expect(screen.getByTestId("or-decision-request_build_changes")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/units"))).toHaveLength(1);
   });
 
@@ -81,7 +81,7 @@ describe("ReviewInboxView", () => {
   it("navigates directly to the reviewed artifact and its run", async () => {
     const handlers = renderInbox(inbox);
     fireEvent.click(await screen.findByTestId("or-inbox-artifact-link"));
-    expect(handlers.onSelectArtifact).toHaveBeenCalledWith("revision-web");
+    expect(handlers.onSelectArtifact).toHaveBeenCalledWith(approveTarget);
     fireEvent.click(screen.getAllByTestId("or-inbox-run-link")[0]);
     expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");
   });
@@ -105,7 +105,7 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[1]] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-decision-request_revision"));
+    fireEvent.click(await screen.findByTestId("or-decision-request_build_changes"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Explain the recovery path." } });
@@ -192,14 +192,14 @@ describe("ReviewInboxView", () => {
     const assessment = briefGate("assessment", "Assessment");
     let decided = false;
     const units = [briefA, briefB, assessment].map((item) => ({ ...v2Unit, unit_id: item.unit_id, collection_key: item.unit_id, label: item.title,
-      decisions: v2Unit.decisions.map((decision) => ({ ...decision, submit: { ...decision.submit, target_revision_id: "revision-build" } })) }));
+      decisions: v2Unit.decisions.map((decision) => ({ ...decision, submit: { ...decision.submit, target_revision_id: item.artifact_revision_id } })) }));
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (init?.method === "POST") { decided = true; return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
       if (path.endsWith("/units")) return json(units);
       if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items: (decided ? [briefB, assessment] : [briefA, briefB]).map((item) => ({
         kind: "decision", run_id: runId, unit_id: item.unit_id, key: "approve", label: "Approve", prompt: null,
-        submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: "revision-build" },
+        submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: item.artifact_revision_id },
       })) }] });
       if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
       if (path.includes("/units/")) return json(units.find((unit) => path.endsWith(`/units/${unit.unit_id}`)));
