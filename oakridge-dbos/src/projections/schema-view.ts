@@ -7,7 +7,7 @@ import type { ParsedReviewDecision, ParsedWorkflow, Type } from "../core-client/
  * Tagged contract types become these shapes.
  */
 export interface Schema { readonly key: string; readonly shape: SchemaShape }
-/** The core requires every record field to be present; an `optional(T)` field admits null, not absence. */
+/** A record field with `optional(T)` admits absence or null. */
 export interface SchemaField { readonly key: string; readonly schema: string }
 export type SchemaShape =
   | { readonly kind: "boolean" }

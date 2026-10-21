@@ -305,6 +305,47 @@ fn named_schemas_resolve_through_optional_lists_and_records() {
 }
 
 #[test]
+fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_fields() {
+    let development: Value =
+        serde_json::from_str(include_str!("../../../fixtures/bundles/development.json")).unwrap();
+    let schemas = &development["schemas"];
+    let source: Workflow = serde_json::from_value(serde_json::json!({
+        "workflow": "assessment_schema",
+        "input": "assessment_body",
+        "schemas": {
+            "assessment_body": schemas["assessment_body"],
+            "assessment_finding": schemas["assessment_finding"],
+            "test_evidence": schemas["test_evidence"]
+        },
+        "run": {"units": {}, "outcome": {}},
+        "stages": {}
+    }))
+    .unwrap();
+    let program = compile_workflow(&source, &[], &BTreeMap::new()).unwrap();
+    let body = serde_json::json!({
+        "verdict": "pass_with_notes",
+        "findings": [{"description": "One non-blocking follow-up"}],
+        "recommended_next_actions": []
+    });
+
+    assert!(check_type(&program.input, &body));
+    assert!(check_type(
+        &program.input,
+        &serde_json::json!({"verdict": "pass", "findings": [], "test_evidence": null,
+            "recommended_next_actions": []})
+    ));
+    assert!(!check_type(
+        &program.input,
+        &serde_json::json!({"findings": [], "recommended_next_actions": []})
+    ));
+    assert!(!check_type(
+        &program.input,
+        &serde_json::json!({"verdict": "pass", "findings": [{"status": "unknown"}],
+            "recommended_next_actions": []})
+    ));
+}
+
+#[test]
 fn checked_artifact_and_decision_schemas_contain_resolved_types() {
     let source: Workflow = serde_json::from_value(serde_json::json!({
         "workflow":"aliases", "input":{},
