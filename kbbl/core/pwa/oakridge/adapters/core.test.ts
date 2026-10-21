@@ -31,6 +31,12 @@ describe("v2 development adapters", () => {
     const detail = runSnapshot({ ...run, status: { kind: "cancelled" } }, units);
     expect(detail.ok && detail.value.status).toBe("cancelled");
   });
+  it("keeps an active run stuck while a brief unit has failed", () => {
+    const failedBrief = withUnitFields(cohort, { stage: "brief", attention: { kind: "stalled", detail: "writer failed" } });
+    const detail = runSnapshot({ ...run, status: { kind: "active" } }, [failedBrief]);
+    expect(detail.ok && [detail.value.status, detail.value.is_stuck,
+      runSummary(detail.value, run).is_failed]).toEqual(["running", true, false]);
+  });
   it("rejects malformed unit data at the API boundary", () => {
     expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], submit: { kind: "review" } }] }]).ok).toBe(false);
   });
@@ -270,6 +276,19 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
+  });
+  it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
+    const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {
+      unit_id: `${run.run_id}/briefs/${name}`, unit_key: name, collection_key: name,
+      label: `Brief ${name}`, stage: "brief", decisions: [], artifacts: [],
+    }));
+    const entry: OperatorRunInboxBatchEntry = { run_id: run.run_id, items: briefUnits.flatMap((unit) => [
+      { kind: "decision" as const, run_id: run.run_id, unit_id: unit.unit_id, key: "retry:writer",
+        label: "Retry Writer", submit: { kind: "retry" as const, worker: "writer" }, prompt: null },
+      { kind: "stalled" as const, run_id: run.run_id, unit_id: unit.unit_id, detail: "writer failed" },
+    ]) };
+    const inbox = classifyDevelopmentInbox(entry, briefUnits);
+    expect(inbox.ok && inbox.value.items.map((item) => item.unit_id)).toEqual(["first", "second"]);
   });
   it("keeps the manual merge action as the only inbox row when the optional PR watcher fails", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"

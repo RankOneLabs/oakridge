@@ -257,15 +257,17 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (!grouped.ok) return grouped;
   const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
+  const hasFailedUnit = unitStatuses.includes("failed");
+  const isStuck = rootStatus === "running" && hasFailedUnit;
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
-    : unitStatuses.includes("failed") ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
+    : isStuck ? "running" : hasFailedUnit ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
   return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
     stages: grouped.value, parked_count: unitStatuses.filter((item) => item === "parked").length,
-    updated_at: run.updated_at, is_stuck: status === "failed", epic_profile: null });
+    updated_at: run.updated_at, is_stuck: isStuck, epic_profile: null });
 }
 export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary {
   const completed = detail.stages.filter((stage) => stage.status === "complete").length;
