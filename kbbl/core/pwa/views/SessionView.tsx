@@ -219,7 +219,6 @@ export function SessionView({
             onSend={addPendingSend}
             onSendAccepted={acceptPendingSend}
             onSendFailed={removePendingSend}
-            canStop={true}
             isTurnActive={projection.turnActive}
             onInterruptingChange={setIsInterrupting}
           />

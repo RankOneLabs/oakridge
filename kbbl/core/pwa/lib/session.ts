@@ -1,4 +1,4 @@
-import type { SessionSnapshot } from "../types";
+import type { SessionSnapshot, SessionStatus } from "../types";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 import type { RunDetail, RunSummary } from "../oakridge/types";
 
@@ -28,6 +28,10 @@ export function workdirBasename(p: string): string {
   const parts = trimmed.split(/[\\/]/);
   return parts[parts.length - 1] || trimmed;
 }
+
+/** Whether a session can still accept operator input or be ended. */
+export const isOpenSessionStatus = (status: SessionStatus | null): boolean =>
+  status === "idle" || status === "prompting";
 
 export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): string {
   // Tooltip surface — show full paths (project workdir + worktree path)

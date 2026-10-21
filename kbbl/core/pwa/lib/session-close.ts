@@ -10,10 +10,8 @@ import {
  * Mirrors the failure bodies of `DELETE /sessions/:sid`
  * (core/server/handlers/sessions.ts): every one of them carries `error`, and
  * only the attempt-hold refusal (409) adds `code` and the `hold` that
- * explains it. The distinction is not cosmetic — a hold is the single failure
- * an operator is allowed to override, so it is the only one the UI can offer a
- * way past. Flattening both into a bare message is what made the held session
- * unremovable: the operator saw no reason and had no override.
+ * explains it. A held session cannot be ended from these listings; the server
+ * message names the run and unit that still own it.
  */
 export type SessionCloseRefusal =
   | {
@@ -41,7 +39,7 @@ export function selectSessionCloseRefusal(
   const message =
     typeof fields?.error === "string" && fields.error !== ""
       ? fields.error
-      : `remove session failed: ${status}`;
+      : `session close failed: ${status}`;
   if (fields?.code === SESSION_HELD_CODE && isSessionHold(fields.hold)) {
     return { kind: "held_by_attempt", message, hold: fields.hold };
   }
@@ -66,12 +64,4 @@ export class SessionCloseError extends Error {
 export async function sessionCloseError(res: Response): Promise<SessionCloseError> {
   const body: unknown = await res.json().catch(() => null);
   return new SessionCloseError(selectSessionCloseRefusal(res.status, body));
-}
-
-/**
- * The refusal behind a mutation error, or null when the failure was not a
- * refusal the server described (a dropped connection, say).
- */
-export function refusalOf(error: unknown): SessionCloseRefusal | null {
-  return error instanceof SessionCloseError ? error.refusal : null;
 }

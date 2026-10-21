@@ -868,25 +868,20 @@ body {
 .session-row-li {
   position: relative;
 }
-/* The positioning context for the action buttons is this wrapper, not the
-   li, so a refused-remove message rendered below the row doesn't move the
+/* The positioning context for the action button is this wrapper, not the
+   li, so an end refusal rendered below the row doesn't move the
    centre the buttons are pinned to. */
 .session-row-main {
   position: relative;
 }
-/* Both action buttons (Resume, Remove) are absolutely positioned on the
-   right so they don't sit inside the row's click target. Remove is always
-   rendered; Resume only when ended. Rows reserve space for Remove always,
-   plus extra when Resume is also present. */
+/* End on live sessions and Resume on closed sessions are positioned outside
+   the row's click target. */
 .session-row-li .session-row {
   padding-right: 6.25rem;
 }
-.session-row-li[data-can-resume] .session-row {
-  padding-right: 11rem;
-}
-/* Why a remove didn't happen. In normal flow under the row (not absolutely
+/* Why an end didn't happen. In normal flow under the row (not absolutely
    positioned) so the message can wrap to whatever length the server sent. */
-.session-row-remove-error {
+.session-row-end-error {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -899,7 +894,7 @@ body {
   color: var(--danger-fg);
   font-size: 0.8rem;
 }
-.session-row-remove-error__message {
+.session-row-end-error__message {
   flex: 1 1 12rem;
   min-width: 0;
 }
@@ -1152,41 +1147,7 @@ body {
   cursor: not-allowed;
 }
 
-/* End session is distinct from the primary Send action. */
-.input-bar button.btn-stop {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  padding: 0 0.75rem;
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  min-height: 44px;
-  white-space: nowrap;
-}
-.input-bar button.btn-stop:hover:not(:disabled) {
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-  background: transparent;
-}
-.input-bar button.btn-stop.is-confirming {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-  font-weight: 600;
-}
-.input-bar button.btn-stop:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: transparent;
-}
-
-/* Interrupt: cancels the current turn but leaves the session live. Amber, not
-   red — it's a "stop what you're doing" control, distinct from the red
-   session-killing Stop button next to it. Same specificity bump as btn-stop so
-   it overrides the generic Send-button styling. Shown only mid-turn. */
+/* Interrupt cancels the current turn and leaves the session live. */
 .input-bar button.btn-interrupt {
   background: var(--amber-bg);
   color: var(--amber-fg);
@@ -2456,6 +2417,7 @@ a:focus-visible {
 .or-run-sidebar__row-unit { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 0.6875rem; }
 .or-run-sidebar__row-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; color: var(--text-muted); font-size: 0.6875rem; }
 .or-run-sidebar__row-twin { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0 0.4rem; }
+.or-run-sidebar__row-end { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font-size: 0.75rem; padding: 0 0.5rem; }
 .or-run-sidebar__collapse { margin-top: 0.35rem; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.3rem 0.5rem; }
 
 .or-run-workspace__panes {

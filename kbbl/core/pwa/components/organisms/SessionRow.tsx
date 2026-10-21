@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 
 import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
-import { useRemoveSession } from "../../hooks/useRemoveSession";
+import { useEndSession } from "../../hooks/useEndSession";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
-import { resumeTitle } from "../../lib/session";
+import { isOpenSessionStatus, resumeTitle } from "../../lib/session";
 import { Button } from "../atoms/Button";
 
 export function SessionRow({
@@ -24,39 +24,35 @@ export function SessionRow({
     (snapshot.status === "ended" ||
       snapshot.status === "fenced" ||
       snapshot.status === "failed");
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const { mutation: removeMutation, refusal, error: removeError } = useRemoveSession(snapshot.sid);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const { mutation: endMutation, error: endError } = useEndSession(snapshot.sid);
 
-  // Auto-clear the confirm-pending state after a few seconds so a stray
-  // first tap doesn't leave a primed Remove button waiting indefinitely.
+  // A stray first tap should not leave End armed indefinitely.
   useEffect(() => {
-    if (!confirmRemove) return;
-    const t = setTimeout(() => setConfirmRemove(false), 4000);
+    if (!confirmEnd) return;
+    const t = setTimeout(() => setConfirmEnd(false), 4000);
     return () => clearTimeout(t);
-  }, [confirmRemove]);
+  }, [confirmEnd]);
 
   // The rejection is swallowed because the failure is already rendered from
   // mutation state; letting it escape only produced an unhandled rejection on
   // a path that is in fact handled.
-  async function remove(force: boolean) {
-    if (removeMutation.isPending) return;
+  async function end() {
+    if (endMutation.isPending) return;
     try {
-      await removeMutation.mutateAsync({ force });
+      await endMutation.mutateAsync();
     } catch {
-      // Rendered below via removeMutation.isError.
+      // Rendered below via endMutation.isError.
     } finally {
-      setConfirmRemove(false);
+      setConfirmEnd(false);
     }
   }
 
-  const isOpen =
-    snapshot.status !== "ended" &&
-    snapshot.status !== "fenced" &&
-    snapshot.status !== "failed";
+  const isOpen = isOpenSessionStatus(snapshot.status);
 
   return (
-    <li className="session-row-li" data-can-resume={canResume || undefined}>
-      {/* Anchors the absolutely-positioned Resume/Remove buttons to the row
+    <li className="session-row-li">
+      {/* Anchors the absolutely-positioned Resume/End buttons to the row
           itself, so a refusal rendered underneath doesn't drag them off
           centre. */}
       <div className="session-row-main">
@@ -114,7 +110,7 @@ export function SessionRow({
           <Button
             type="button"
             variant="primary"
-            className="absolute right-[6.25rem] top-1/2 min-h-11 -translate-y-1/2 text-xs!"
+            className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 text-xs!"
             disabled={resumeDisabled}
             title={resumeTitle()}
             onClick={(e) => {
@@ -126,52 +122,26 @@ export function SessionRow({
             Resume
           </Button>
         )}
-        <Button
-          type="button"
-          variant={confirmRemove ? "armed" : "danger"}
-          className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs!"
-          disabled={removeMutation.isPending}
-          title={
-            isOpen
-              ? "Closes the agent session and deletes its record."
-              : "Deletes the session record."
-          }
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!confirmRemove) {
-              setConfirmRemove(true);
-              return;
-            }
-            void remove(false);
-          }}
-        >
-          {removeMutation.isPending
-            ? "removing…"
-            : confirmRemove
-              ? "tap to confirm"
-              : "Remove"}
-        </Button>
+        {isOpen && (
+          <Button
+            type="button"
+            variant={confirmEnd ? "armed" : "secondary"}
+            className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs!"
+            disabled={endMutation.isPending}
+            title="End the session and keep its transcript for review or resume."
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!confirmEnd) setConfirmEnd(true);
+              else void end();
+            }}
+          >
+            {endMutation.isPending ? "ending…" : confirmEnd ? "confirm end" : "End"}
+          </Button>
+        )}
       </div>
-      {removeError && (
-        <div className="session-row-remove-error" role="alert">
-          <span className="session-row-remove-error__message">{removeError}</span>
-          {/* Only a hold is overridable, and only once the operator has read
-              why — which is exactly the authority the server grants ?force=1. */}
-          {refusal?.kind === "held_by_execution" && (
-            <Button
-              type="button"
-              variant="danger-strong"
-              className="min-h-11 shrink-0 whitespace-nowrap text-xs!"
-              disabled={removeMutation.isPending}
-              title="Removes the session anyway, stranding the attempt that is using it."
-              onClick={(e) => {
-                e.stopPropagation();
-                void remove(true);
-              }}
-            >
-              Remove anyway
-            </Button>
-          )}
+      {endError && (
+        <div className="session-row-end-error" role="alert">
+          <span className="session-row-end-error__message">{endError}</span>
         </div>
       )}
     </li>

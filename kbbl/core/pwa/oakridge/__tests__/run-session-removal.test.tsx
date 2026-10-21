@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { RunDetailView } from "../views/RunDetailView";
@@ -93,4 +93,14 @@ it("removes sessions deleted by another client after the page has loaded", async
   await screen.findByTestId("or-run-workspace");
   act(() => { useStore.getState().applySnapshot([]); });
   await waitFor(() => expect(visibleSessions()).toEqual([]));
+});
+
+it("ends a session from the run sidebar without purging its record", async () => {
+  useStore.getState().applySnapshot([existing]);
+  renderRun();
+  const end = await screen.findByTestId("or-sidebar-session-end");
+  fireEvent.click(end);
+  fireEvent.click(end);
+  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing", { method: "DELETE" }));
+  expect(screen.queryByTestId("or-sidebar-session-remove")).toBeNull();
 });

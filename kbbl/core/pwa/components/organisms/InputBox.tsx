@@ -24,7 +24,6 @@ export function InputBox({
   onSend,
   onSendAccepted,
   onSendFailed,
-  canStop,
   isTurnActive,
   onInterruptingChange,
 }: {
@@ -34,16 +33,12 @@ export function InputBox({
   onSend: (text: string, clientMessageId: string) => void;
   onSendAccepted: (clientMessageId: string, receipt: AcceptedInputReceipt) => void;
   onSendFailed: (clientMessageId: string) => void;
-  canStop: boolean;
-  // True while a turn is in flight (the thinking indicator is up). The
-  // Interrupt control is shown only then — it cancels the current turn
-  // (session/cancel) and leaves the session live, distinct from the
-  // always-present Stop button which closes the whole session.
+  // True while a turn is in flight. Interrupt cancels that turn and leaves
+  // the session live; session removal lives in the session listings.
   isTurnActive: boolean;
   onInterruptingChange?: (isInterrupting: boolean) => void;
 }) {
   const [text, setText] = useState("");
-  const [confirmStop, setConfirmStop] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sendMutation = useMutation({
@@ -80,24 +75,6 @@ export function InputBox({
         turnKey: body.turn_key as TurnKey,
         status: body.status,
       } satisfies AcceptedInputReceipt;
-    },
-  });
-
-  const stopMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/sessions/${encodeURIComponent(sid)}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: unknown;
-        } | null;
-        throw new Error(
-          typeof body?.error === "string"
-            ? body.error
-            : `server returned ${res.status}`,
-        );
-      }
     },
   });
 
@@ -169,43 +146,11 @@ export function InputBox({
     }
   }
 
-  async function stop() {
-    if (stopMutation.isPending) return;
-    setError(null);
-    try {
-      await stopMutation.mutateAsync();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "network error");
-    } finally {
-      setConfirmStop(false);
-    }
-  }
-
   return (
     <div className="input-bar" ref={ref}>
       {error && <div className="input-error">error: {error}</div>}
       <div className="input-bar-row">
         {tools}
-        {canStop && (
-          <button
-            type="button"
-            className={`btn-stop ${confirmStop ? "is-confirming" : ""}`}
-            onClick={() => {
-              if (stopMutation.isPending) return;
-              if (confirmStop) {
-                void stop();
-              } else {
-                setConfirmStop(true);
-              }
-            }}
-            onBlur={() => setConfirmStop(false)}
-            disabled={stopMutation.isPending}
-            aria-label="End session"
-            title="End this agent session. Resume from the ended banner to fork a new session with the same context."
-          >
-            {stopMutation.isPending ? "ending…" : confirmStop ? "confirm end" : "End"}
-          </button>
-        )}
         {isTurnActive && (
           <button
             type="button"
