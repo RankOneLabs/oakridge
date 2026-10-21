@@ -327,7 +327,7 @@ stages:
         creates: [build_result, pr]
       assessor:
         kind: agent
-        prompts: { review: development/assess.md }
+        prompts: { review: development/assess.md, revise: development/assess.md }
         inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
         reviews: build_result
@@ -357,11 +357,11 @@ stages:
         prompt: development/assessment-review.md
         inputs: { brief: input.brief, build_result: latest(build_result), pr: latest(pr), assessment: latest(assessment) }
         decisions:
-          set: accept_or_request
-          rename: { request_changes: request_build_changes }
-          overrides:
-            request_changes: { on: build_result, label: Request build changes,
-                               fields: { feedback: "What must the builder change?" } }
+          accept: { effect: approve, label: Accept }
+          request_assessment_changes: { effect: request_changes, label: Revise assessment,
+                                        fields: { feedback: "What must the assessment change?" } }
+          request_build_changes: { effect: request_changes, on: build_result, label: Request build changes,
+                                   fields: { feedback: "What must the builder change?" } }
       merge_confirmation:
         of: pr
         by: operator

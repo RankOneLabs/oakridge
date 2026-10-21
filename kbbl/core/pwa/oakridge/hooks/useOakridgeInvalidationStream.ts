@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { invalidateCachedRunUnits, refreshReviewInboxRun } from "../client";
 import { replaceDevelopmentInboxRun } from "../adapters/inbox";
 import type { OperatorStreamInvalidation } from "../operator-contracts";
-import type { ReviewInbox } from "../types";
+import type { ArtifactDetail, ReviewInbox } from "../types";
 import { subscribeOakridgeStream } from "./useOakridgeRunEventStream";
 
 export function useOakridgeInvalidationStream(isEnabled: boolean): void {
@@ -17,6 +17,8 @@ export function useOakridgeInvalidationStream(isEnabled: boolean): void {
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "sessions"] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "artifact"], predicate: (query) =>
+        (query.state.data as ArtifactDetail | undefined)?.run_id === runId });
       void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });
       const generation = (latestRefresh.get(runId) ?? 0) + 1;
       latestRefresh.set(runId, generation);

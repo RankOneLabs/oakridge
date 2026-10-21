@@ -124,6 +124,8 @@ const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_mer
 export const decisionAction = (decision: OperatorDecisionDefinition): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
+  if (decision.submit.review === "assessment_review" && decision.submit.effect === "request_changes")
+    return decision.submit.decision;
   if (decision.submit.effect === "request_changes") return "request_revision";
   return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
 };
