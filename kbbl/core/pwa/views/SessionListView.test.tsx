@@ -33,6 +33,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     requestedEffort: null,
     endReason: null,
     fencedBy: null,
+    archivedAt: null,
     pendingPermissionCount: 0,
     workflow: null,
     ...overrides,
@@ -79,6 +80,16 @@ function renderList(
 }
 
 describe("SessionListView grouping", () => {
+  test("archived sessions leave the list but remain in the session inventory", () => {
+    const archived = makeSnapshot({ sid: "archived", name: "archived session", status: "ended", archivedAt: "2026-10-21T00:00:00Z" });
+    const visible = makeSnapshot({ sid: "visible", name: "visible session" });
+    const sessions = new Map([[archived.sid, archived], [visible.sid, visible]]);
+    renderList(sessions);
+    expect(screen.queryByText("archived session")).toBeNull();
+    expect(screen.getByText("visible session")).toBeTruthy();
+    expect(sessions.has("archived")).toBe(true);
+  });
+
   test("prefill autostart creates a session from a no-hash URL", async () => {
     history.replaceState(null, "", "/?workdir=%2Ftmp%2Fx&autostart=true");
     const created = makeSnapshot({ sid: "autostart-session", projectWorkdir: "/tmp/x" });

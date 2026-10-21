@@ -3,10 +3,9 @@ import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
 import { useEndSession } from "../../../hooks/useEndSession";
-import { isOpenSessionStatus } from "../../../lib/session";
 import { useStore } from "../../../state/store";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
-import type { RunSidebarSessionRow } from "../../lib/run-overview";
+import { selectRunSidebarSessionVisibility, type RunSidebarSessionRow } from "../../lib/run-overview";
 
 interface RunSidebarSessionsProps {
   rows: readonly RunSidebarSessionRow[];
@@ -38,9 +37,22 @@ export function RunSidebarSessions({
   openSessionIds,
   onOpen,
 }: RunSidebarSessionsProps) {
+  const [showArchived, setShowArchived] = useState(false);
+  const visibility = selectRunSidebarSessionVisibility(rows, showArchived);
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-sessions">
       <h3 className="or-run-sidebar__heading">Sessions</h3>
+      {visibility.archived_count > 0 && (
+        <Button variant="secondary"
+          type="button"
+          className="self-start text-xs!"
+          onClick={() => setShowArchived((current) => !current)}
+          aria-expanded={showArchived}
+          data-testid="or-sidebar-archived-toggle"
+        >
+          {showArchived ? "Hide archived sessions" : `Show all sessions (${visibility.archived_count} archived)`}
+        </Button>
+      )}
       {!isActionStateKnown && (
         <p
           className="or-run-sidebar__empty text-[var(--amber-fg)]"
@@ -64,8 +76,11 @@ export function RunSidebarSessions({
           No sessions yet.
         </p>
       )}
+      {isSessionListKnown && rows.length > 0 && visibility.visible_rows.length === 0 && (
+        <p className="or-run-sidebar__empty">All sessions are archived.</p>
+      )}
       <ul className="or-run-sidebar__list">
-        {rows.map((row) => (
+        {visibility.visible_rows.map((row) => (
           <RunSidebarSessionItem
             key={row.work_order_id}
             row={row}
@@ -87,7 +102,9 @@ interface RunSidebarSessionItemProps {
 function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemProps) {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
-  const canEnd = isOpenSessionStatus(status);
+  const canEnd = status !== null && !row.is_archived;
+  const isTerminal = status === "ended" || status === "fenced" || status === "failed";
+  const actionLabel = isTerminal ? "Hide" : "End and hide";
   const { mutation, error } = useEndSession(row.session_id);
 
   useEffect(() => {
@@ -133,6 +150,11 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
               superseded
             </span>
           )}
+          {row.is_archived && (
+            <span className="text-[var(--text-faint)]" data-testid="or-sidebar-session-archived">
+              archived
+            </span>
+          )}
           {row.requires_operator_action && (
             <span
               className="text-[var(--amber-fg)]"
@@ -157,15 +179,17 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           type="button"
           className="or-run-sidebar__row-end"
           disabled={mutation.isPending}
-          aria-label={confirmEnd ? `Confirm end ${row.stage_key} ${row.unit_id}` : `End ${row.stage_key} ${row.unit_id}`}
-          title="End the session and keep its transcript for review or resume."
+          aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()} ${row.stage_key} ${row.unit_id}` : `${actionLabel} ${row.stage_key} ${row.unit_id}`}
+          title={isTerminal
+            ? "Hide this session while keeping its transcript."
+            : "End and hide this session while keeping its transcript."}
           onClick={() => {
             if (!confirmEnd) setConfirmEnd(true);
             else void end();
           }}
           data-testid="or-sidebar-session-end"
         >
-          {mutation.isPending ? "…" : confirmEnd ? "Confirm" : "End"}
+          {mutation.isPending ? "…" : confirmEnd ? "✓" : "×"}
         </Button>
       )}
       {error && (

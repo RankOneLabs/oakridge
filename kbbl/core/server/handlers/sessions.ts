@@ -557,34 +557,39 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         400,
       );
     }
+    const archives = acp.listSessionArchives();
     return c.json({ sessions: acp.listByArtifact(trimmed)
-      .map((session) => toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid))) });
+      .map((session) => toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid), archives.get(session.sid) ?? null)) });
   });
 
   app.delete("/sessions/:sid", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
     const purge = isTruthyFlag(c.req.query("purge"));
+    const archive = isTruthyFlag(c.req.query("archive"));
+    if (purge && archive) return c.json({ error: "purge and archive cannot be combined" }, 400);
+    const acpSession = acp.getSession(sid);
+    if (!acpSession) return c.json({ error: "unknown session" }, 404);
+    const isTerminal = acpSession.status === "ended" || acpSession.status === "fenced" || acpSession.status === "failed";
     // A close is refused while a running Oakridge attempt still uses this
     // session, unless it is that attempt closing it or an operator who has
     // seen the refusal and asked again.
     const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by"), closed_by: c.req.query("closed_by") });
-    if (authority.kind !== "operator_override") {
+    if (authority.kind !== "operator_override" && !(archive && isTerminal)) {
       const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl, controlToken: oakridgeControlToken }));
       if (refusal) return c.json(refusal, 409);
     }
 
-    const acpSession = acp.getSession(sid);
-    if (acpSession) {
-      const fencedBy = c.req.query("fenced_by");
-      if (purge) {
-        const purged = await acp.purgeSession(sid);
-        if (!purged.ok) {
-          const { status, body: errBody } = errorResponse(purged.error);
-          return c.json(errBody, status);
-        }
-        return c.json({ ok: true, removed: purged.value });
+    const fencedBy = c.req.query("fenced_by");
+    if (purge) {
+      const purged = await acp.purgeSession(sid);
+      if (!purged.ok) {
+        const { status, body: errBody } = errorResponse(purged.error);
+        return c.json(errBody, status);
       }
+      return c.json({ ok: true, removed: purged.value });
+    }
+    if (!archive || !isTerminal) {
       const closed = await acp.closeSession(
         sid,
         fencedBy ? { fenced_by: fencedBy } : undefined,
@@ -593,8 +598,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         const { status, body: errBody } = errorResponse(closed.error);
         return c.json(errBody, status);
       }
-      return c.json({ ok: true });
     }
-    return c.json({ error: "unknown session" }, 404);
+    if (archive) {
+      const archived = acp.archiveSession(sid);
+      if (!archived.ok) {
+        const { status, body: errBody } = errorResponse(archived.error);
+        return c.json(errBody, status);
+      }
+    }
+    return c.json({ ok: true });
   });
 }

@@ -313,3 +313,37 @@ describe("DELETE /sessions/:sid?purge=true", () => {
     expect(existsSync(created.body.worktreePath as string)).toBe(true);
   });
 });
+
+describe("DELETE /sessions/:sid?archive=true", () => {
+  test("ends a live session, persists its archive marker, and retains its transcript", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir, name: "archive-me" });
+    const sid = created.body.sid as string;
+    const row = harness.store.getSession(sid as KbblSessionId);
+    if (!row?.acp_session_id) throw new Error("session has no agent session id");
+    const transcript = join(tmpRoot, "state", `${row.acp_session_id}.jsonl`);
+    expect(existsSync(transcript)).toBe(true);
+
+    const archived = await app.request(`/sessions/${sid}?archive=true`, { method: "DELETE" });
+    expect(archived.status).toBe(200);
+    expect(harness.service.getSession(sid)?.status).toBe("ended");
+    expect(harness.service.listSessionArchives().has(sid as KbblSessionId)).toBe(true);
+    expect(existsSync(transcript)).toBe(true);
+    const listed = await app.request("/sessions");
+    const body = (await listed.json()) as { sessions: Array<{ sid: string; archivedAt: string | null }> };
+    expect(body.sessions.find((session) => session.sid === sid)?.archivedAt).not.toBeNull();
+    const history = await harness.service.loadHistory(sid);
+    expect(history.ok).toBe(true);
+  });
+
+  test("an ended session can be archived without changing its terminal state", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
+    await app.request(`/sessions/${sid}`, { method: "DELETE" });
+    const archived = await app.request(`/sessions/${sid}?archive=true`, { method: "DELETE" });
+    expect(archived.status).toBe(200);
+    expect(harness.service.getSession(sid)?.status).toBe("ended");
+    expect(harness.service.listSessionArchives().has(sid as KbblSessionId)).toBe(true);
+  });
+});

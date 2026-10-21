@@ -8,6 +8,7 @@ import type { SessionSnapshot } from "../../types";
 import type { RunDetail, RunSessionAttempt } from "../types";
 import { writeStoredRunWorkspace } from "../lib/run-workspace-storage";
 import type { Sid } from "../../lib/ids";
+import { EventSourceStub } from "./run-pane-fixtures";
 
 const run: RunDetail = {
   id: "run-removal", title: "Removal regression", repository_keys: [],
@@ -25,10 +26,13 @@ const existing: SessionSnapshot = {
   source: "acp", lastActivityTs: "2026-09-01T00:00:00Z", createdAt: "2026-09-01T00:00:00Z",
   artifactId: null, projectWorkdir: "/repo", worktreePath: "/repo",
   worktreeBranch: null, worktreeBaseRef: null, requestedModel: null,
-  requestedEffort: null, endReason: null, fencedBy: null, pendingPermissionCount: 0, workflow: null,
+  requestedEffort: null, endReason: null, fencedBy: null,
+  archivedAt: null, pendingPermissionCount: 0, workflow: null,
 };
 
 beforeEach(() => {
+  Element.prototype.scrollTo = () => {};
+  vi.stubGlobal("EventSource", EventSourceStub);
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
   useStore.getState().seedSessions([]);
@@ -41,6 +45,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
 });
@@ -99,8 +104,26 @@ it("ends a session from the run sidebar without purging its record", async () =>
   useStore.getState().applySnapshot([existing]);
   renderRun();
   const end = await screen.findByTestId("or-sidebar-session-end");
+  expect(end.textContent).toBe("×");
   fireEvent.click(end);
   fireEvent.click(end);
-  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing", { method: "DELETE" }));
+  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing?archive=true", { method: "DELETE" }));
   expect(screen.queryByTestId("or-sidebar-session-remove")).toBeNull();
+});
+
+it("keeps × on an ended session and hides its row after archiving", async () => {
+  useStore.getState().applySnapshot([{ ...existing, status: "ended" }]);
+  renderRun();
+  const end = await screen.findByTestId("or-sidebar-session-end");
+  fireEvent.click(end);
+  fireEvent.click(end);
+  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing?archive=true", { method: "DELETE" }));
+  await waitFor(() => expect(visibleSessions()).toEqual([]));
+  expect(useStore.getState().sessions.get("existing" as Sid)?.archivedAt).not.toBeNull();
+  fireEvent.click(screen.getByTestId("or-sidebar-archived-toggle"));
+  expect(visibleSessions()).toEqual(["existing"]);
+  expect(screen.getByTestId("or-sidebar-session-archived").textContent).toBe("archived");
+  fireEvent.click(screen.getByTestId("or-sidebar-session"));
+  expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe("existing");
+  expect(screen.getByText("Resume in new session")).toBeTruthy();
 });

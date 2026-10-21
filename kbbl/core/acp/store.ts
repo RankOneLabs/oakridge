@@ -314,6 +314,21 @@ export class AcpSessionStore {
       .map(toAcpSessionRow);
   }
 
+  /** Archive metadata is separate from execution state: archived sessions remain addressable. */
+  archiveSession(sid: KbblSessionId): void {
+    this.db.prepare(
+      "INSERT OR IGNORE INTO acp_session_archives (sid, archived_at) VALUES (?, ?)",
+    ).run(sid, nowIso());
+    this.notifySessionsChanged();
+  }
+
+  listSessionArchives(): Map<KbblSessionId, string> {
+    const rows = this.db.query<{ sid: KbblSessionId; archived_at: string }, []>(
+      "SELECT sid, archived_at FROM acp_session_archives",
+    ).all();
+    return new Map(rows.map((row) => [row.sid, row.archived_at]));
+  }
+
   /**
    * Transfer a deterministic workflow checkout from its terminal owner to a
    * provisioning retry. Selection and both ownership writes share one SQLite

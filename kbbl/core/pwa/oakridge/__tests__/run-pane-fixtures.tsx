@@ -159,6 +159,7 @@ export const snapshotOf = (sid: string): SessionSnapshot => ({
   requestedEffort: null,
   endReason: null,
   fencedBy: null,
+  archivedAt: null,
   pendingPermissionCount: 0,
   workflow: null,
 });

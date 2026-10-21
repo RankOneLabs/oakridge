@@ -36,6 +36,7 @@ export interface PwaSessionSnapshot {
   requestedEffort: string | null;
   endReason: string | null;
   fencedBy: string | null;
+  archivedAt: string | null;
   /** Permission requests currently awaiting an operator answer. */
   pendingPermissionCount: number;
   workflow: PwaSessionWorkflowIdentity | null;
@@ -52,6 +53,7 @@ function toPwaWorkflowIdentity(
 export function toPwaSessionSnapshot(
   snapshot: AcpSessionSnapshot,
   pendingPermissionCount: number,
+  archivedAt: string | null = null,
 ): PwaSessionSnapshot {
   return {
     sid: snapshot.sid,
@@ -70,6 +72,7 @@ export function toPwaSessionSnapshot(
     requestedEffort: snapshot.requested_effort,
     endReason: snapshot.end_reason,
     fencedBy: snapshot.fenced_by,
+    archivedAt,
     pendingPermissionCount,
     workflow: toPwaWorkflowIdentity(snapshot.workflow),
   };

@@ -59,6 +59,15 @@ export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSna
   return [...sessions.values()].sort(compareSessionsByActivity);
 }
 
+/** Archived sessions stay addressable by sid but leave the operator lists. */
+export function selectArchivedSessionIds(sessions: ReadonlyMap<string, SessionSnapshot>): ReadonlySet<string> {
+  return new Set(
+    [...sessions.values()]
+      .filter((session) => session.archivedAt !== null)
+      .map((session) => session.sid),
+  );
+}
+
 export function selectSessionRunTitle(
   runId: string,
   runs: readonly RunSummary[],

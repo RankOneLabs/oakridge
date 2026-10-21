@@ -4,7 +4,7 @@ import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { useEndSession } from "../../hooks/useEndSession";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
-import { isOpenSessionStatus, resumeTitle } from "../../lib/session";
+import { resumeTitle } from "../../lib/session";
 import { Button } from "../atoms/Button";
 
 export function SessionRow({
@@ -48,7 +48,9 @@ export function SessionRow({
     }
   }
 
-  const isOpen = isOpenSessionStatus(snapshot.status);
+  const canEnd = snapshot.source === "acp";
+  const isTerminal = snapshot.status === "ended" || snapshot.status === "fenced" || snapshot.status === "failed";
+  const actionLabel = isTerminal ? "Hide session" : "End and hide session";
 
   return (
     <li className="session-row-li">
@@ -110,7 +112,7 @@ export function SessionRow({
           <Button
             type="button"
             variant="primary"
-            className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 text-xs!"
+            className="absolute right-[6.25rem] top-1/2 min-h-11 -translate-y-1/2 text-xs!"
             disabled={resumeDisabled}
             title={resumeTitle()}
             onClick={(e) => {
@@ -122,20 +124,23 @@ export function SessionRow({
             Resume
           </Button>
         )}
-        {isOpen && (
+        {canEnd && (
           <Button
             type="button"
             variant={confirmEnd ? "armed" : "secondary"}
-            className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2 whitespace-nowrap text-xs!"
+            className="absolute right-3 top-1/2 min-h-11 min-w-11 -translate-y-1/2 whitespace-nowrap text-xs!"
             disabled={endMutation.isPending}
-            title="End the session and keep its transcript for review or resume."
+            aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()}` : actionLabel}
+            title={isTerminal
+              ? "Hide this session while keeping its transcript."
+              : "End and hide this session while keeping its transcript."}
             onClick={(e) => {
               e.stopPropagation();
               if (!confirmEnd) setConfirmEnd(true);
               else void end();
             }}
           >
-            {endMutation.isPending ? "ending…" : confirmEnd ? "confirm end" : "End"}
+            {endMutation.isPending ? "…" : confirmEnd ? "✓" : "×"}
           </Button>
         )}
       </div>
