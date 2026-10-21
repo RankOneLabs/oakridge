@@ -12,7 +12,7 @@ const heldBody = {
 };
 
 describe("selectSessionCloseRefusal", () => {
-  it("reports a hold refusal as overridable", () => {
+  it("reports a held session separately from other rejections", () => {
     expect(selectSessionCloseRefusal(409, heldBody).kind).toBe("held_by_attempt");
   });
 
@@ -34,9 +34,7 @@ describe("selectSessionCloseRefusal", () => {
     });
   });
 
-  // A hold code without a usable hold cannot offer an override — the button
-  // would need the hold to explain what it is abandoning.
-  it("does not treat a hold code with a malformed hold as overridable", () => {
+  it("does not treat a malformed hold as a valid held-session refusal", () => {
     const refusal = selectSessionCloseRefusal(409, {
       error: "session is held",
       code: "session_held_by_attempt",
@@ -46,12 +44,12 @@ describe("selectSessionCloseRefusal", () => {
   });
 
   it("falls back to the status when the body carries no message", () => {
-    expect(selectSessionCloseRefusal(500, null).message).toBe("remove session failed: 500");
+    expect(selectSessionCloseRefusal(500, null).message).toBe("session close failed: 500");
   });
 
   it("falls back to the status when the body is not an object", () => {
     expect(selectSessionCloseRefusal(502, "Bad Gateway").message).toBe(
-      "remove session failed: 502",
+      "session close failed: 502",
     );
   });
 });

@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { SessionSnapshot } from "../../types";
 import type { PwaSessionWorkflowIdentity } from "../../../acp/pwa-wire";
@@ -41,6 +41,8 @@ function renderRow(snapshot: SessionSnapshot) {
   );
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("SessionRow with a workflow identity", () => {
   test("renders the worker in its own element beside the session's name", () => {
     const workflow: PwaSessionWorkflowIdentity = { runId: "run-1", unitId: "run-1/cohort/one", worker: "builder" };
@@ -49,4 +51,23 @@ describe("SessionRow with a workflow identity", () => {
     expect(screen.getByText("builder")).toBeTruthy();
     expect(screen.getByText(SESSION_NAME)).toBeTruthy();
   });
+});
+
+test("End closes a live session without deleting its transcript", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  renderRow(makeSnapshot());
+
+  fireEvent.click(screen.getByRole("button", { name: "End" }));
+  fireEvent.click(screen.getByRole("button", { name: "confirm end" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1", { method: "DELETE" }));
+});
+
+test("closed sessions offer Resume without an End or Remove action", () => {
+  renderRow(makeSnapshot({ status: "ended" }));
+
+  expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "End" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
 });

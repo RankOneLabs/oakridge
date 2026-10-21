@@ -2,7 +2,9 @@ import { Button } from "../../../components/atoms/Button";
 import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
-import { useRemoveSession } from "../../../hooks/useRemoveSession";
+import { useEndSession } from "../../../hooks/useEndSession";
+import { isOpenSessionStatus } from "../../../lib/session";
+import { useStore } from "../../../state/store";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
 import type { RunSidebarSessionRow } from "../../lib/run-overview";
 
@@ -83,23 +85,25 @@ interface RunSidebarSessionItemProps {
 }
 
 function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemProps) {
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const { mutation, refusal, error } = useRemoveSession(row.session_id);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
+  const canEnd = isOpenSessionStatus(status);
+  const { mutation, error } = useEndSession(row.session_id);
 
   useEffect(() => {
-    if (!confirmRemove) return;
-    const timer = setTimeout(() => setConfirmRemove(false), 4000);
+    if (!confirmEnd) return;
+    const timer = setTimeout(() => setConfirmEnd(false), 4000);
     return () => clearTimeout(timer);
-  }, [confirmRemove]);
+  }, [confirmEnd]);
 
-  const remove = async (force: boolean) => {
+  const end = async () => {
     if (mutation.isPending) return;
     try {
-      await mutation.mutateAsync({ force });
+      await mutation.mutateAsync();
     } catch {
-      // The mutation error and any typed refusal are rendered with this row.
+      // The mutation error is rendered with this row.
     } finally {
-      setConfirmRemove(false);
+      setConfirmEnd(false);
     }
   };
 
@@ -148,34 +152,25 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
       >
         ⧉
       </Button>
-      <Button variant="secondary"
-        type="button"
-        className="or-run-sidebar__row-twin"
-        disabled={mutation.isPending}
-        aria-label={confirmRemove ? `Confirm remove ${row.stage_key} ${row.unit_id}` : `Remove ${row.stage_key} ${row.unit_id}`}
-        onClick={() => {
-          if (!confirmRemove) setConfirmRemove(true);
-          else void remove(false);
-        }}
-        data-testid="or-sidebar-session-remove"
-      >
-        {mutation.isPending ? "…" : confirmRemove ? "✓" : "×"}
-      </Button>
+      {canEnd && (
+        <Button variant="secondary"
+          type="button"
+          className="or-run-sidebar__row-end"
+          disabled={mutation.isPending}
+          aria-label={confirmEnd ? `Confirm end ${row.stage_key} ${row.unit_id}` : `End ${row.stage_key} ${row.unit_id}`}
+          title="End the session and keep its transcript for review or resume."
+          onClick={() => {
+            if (!confirmEnd) setConfirmEnd(true);
+            else void end();
+          }}
+          data-testid="or-sidebar-session-end"
+        >
+          {mutation.isPending ? "…" : confirmEnd ? "Confirm" : "End"}
+        </Button>
+      )}
       {error && (
         <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
           <span>{error}</span>
-          {refusal?.kind === "held_by_execution" && (
-            <Button variant="secondary"
-              type="button"
-              className="ml-2 underline disabled:opacity-50"
-              disabled={mutation.isPending}
-              title="Removes the session anyway, abandoning the unit this run is waiting on."
-              onClick={() => void remove(true)}
-              data-testid="or-sidebar-session-remove-force"
-            >
-              Remove anyway
-            </Button>
-          )}
         </div>
       )}
     </li>

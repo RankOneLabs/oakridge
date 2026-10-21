@@ -868,25 +868,20 @@ body {
 .session-row-li {
   position: relative;
 }
-/* The positioning context for the action buttons is this wrapper, not the
-   li, so a refused-remove message rendered below the row doesn't move the
+/* The positioning context for the action button is this wrapper, not the
+   li, so an end refusal rendered below the row doesn't move the
    centre the buttons are pinned to. */
 .session-row-main {
   position: relative;
 }
-/* Both action buttons (Resume, Remove) are absolutely positioned on the
-   right so they don't sit inside the row's click target. Remove is always
-   rendered; Resume only when ended. Rows reserve space for Remove always,
-   plus extra when Resume is also present. */
+/* End on live sessions and Resume on closed sessions are positioned outside
+   the row's click target. */
 .session-row-li .session-row {
   padding-right: 6.25rem;
 }
-.session-row-li[data-can-resume] .session-row {
-  padding-right: 11rem;
-}
-/* Why a remove didn't happen. In normal flow under the row (not absolutely
+/* Why an end didn't happen. In normal flow under the row (not absolutely
    positioned) so the message can wrap to whatever length the server sent. */
-.session-row-remove-error {
+.session-row-end-error {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -899,7 +894,7 @@ body {
   color: var(--danger-fg);
   font-size: 0.8rem;
 }
-.session-row-remove-error__message {
+.session-row-end-error__message {
   flex: 1 1 12rem;
   min-width: 0;
 }
@@ -1092,6 +1087,7 @@ body {
 .session-surface--embedded .top-bar {
   padding-top: 0.5rem;
 }
+.session-surface--embedded .input-bar textarea { min-height: 44px; }
 
 .input-bar {
   /* .bottom-stack is the fixed viewport anchor. Keeping the input itself in
@@ -1104,10 +1100,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  position: relative;
+  container-type: inline-size;
 }
 .input-bar-row {
   display: flex;
   gap: 0.5rem;
+  min-width: 0;
+  align-items: center;
 }
 .input-error {
   color: var(--danger-fg);
@@ -1116,6 +1116,7 @@ body {
 }
 .input-bar textarea {
   flex: 1;
+  min-width: 0;
   background: var(--bg-surface);
   border: 1px solid var(--border-muted);
   border-radius: 8px;
@@ -1129,7 +1130,7 @@ body {
   outline: none;
   border-color: var(--accent-blue);
 }
-.input-bar button {
+.input-bar-row > button {
   padding: 0 1.25rem;
   min-height: 44px;
   background: var(--accent-blue);
@@ -1140,50 +1141,13 @@ body {
   font-weight: 500;
   cursor: pointer;
 }
-.input-bar button:disabled {
+.input-bar-row > button:disabled {
   background: var(--border-muted);
   color: var(--text-fainter);
   cursor: not-allowed;
 }
 
-/* Selector is `.input-bar button.btn-stop` (specificity 0,2,1) so it wins
-   over the generic `.input-bar button` (0,1,1) Send-button styling. Without
-   the bump, the Stop button inherits Send's solid blue and looks like a
-   second Send instead of an outlined danger affordance. */
-.input-bar button.btn-stop {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  padding: 0 0.75rem;
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  min-height: 44px;
-  white-space: nowrap;
-}
-.input-bar button.btn-stop:hover:not(:disabled) {
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-  background: transparent;
-}
-.input-bar button.btn-stop.is-confirming {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-  font-weight: 600;
-}
-.input-bar button.btn-stop:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: transparent;
-}
-
-/* Interrupt: cancels the current turn but leaves the session live. Amber, not
-   red — it's a "stop what you're doing" control, distinct from the red
-   session-killing Stop button next to it. Same specificity bump as btn-stop so
-   it overrides the generic Send-button styling. Shown only mid-turn. */
+/* Interrupt cancels the current turn and leaves the session live. */
 .input-bar button.btn-interrupt {
   background: var(--amber-bg);
   color: var(--amber-fg);
@@ -1204,6 +1168,15 @@ body {
 .input-bar button.btn-interrupt:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@container (max-width: 450px) {
+  .input-bar-row { flex-wrap: wrap; }
+  .input-bar-row textarea {
+    order: 2;
+    flex: 1 1 calc(100% - 5rem);
+  }
+  .input-bar-row > button:last-child { order: 3; }
 }
 
 /* Optimistic user bubble shown immediately on send. Visually echoes the
@@ -1516,6 +1489,36 @@ body {
   overflow-x: visible;
   max-height: 40vh;
   overflow-y: auto;
+}
+
+.skill-rail--composer {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.skill-rail--composer .skill-rail__groups {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 0.5rem;
+  right: 0.5rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 -0.5rem 1.5rem rgb(0 0 0 / 15%);
+}
+
+.skill-rail--composer .skill-rail__error {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 0.5rem;
+  right: 0.5rem;
+  background: var(--bg-surface);
 }
 
 .skill-rail--right {
@@ -2327,7 +2330,7 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
+  padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-surface);
 }
@@ -2336,7 +2339,7 @@ a:focus-visible {
    recognisable without depending on colour alone to carry meaning. */
 .or-run-identity__accent {
   width: 0.25rem;
-  height: 2.25rem;
+  height: 1.75rem;
   border-radius: 999px;
   background: var(--or-run-accent, var(--border-muted));
 }
@@ -2345,8 +2348,35 @@ a:focus-visible {
   display: flex;
   flex: 1;
   min-width: 0;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 0.65rem;
+  overflow: hidden;
 }
+
+.or-run-identity__names > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.or-run-identity__names > h2 { flex: 0 1 auto; }
+.or-run-identity__names > span { flex: 0 1 auto; }
+
+/* Session metadata stays on the same row as connection and usage in a run pane. */
+.or-run-pane-session .top-bar { padding-bottom: 0.35rem; }
+.or-run-pane-session .session-label {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: none;
+}
+.or-run-pane-session .session-label-name { flex: 0 1 auto; }
+.or-run-pane-session .session-label-workdir { flex: 0 1 auto; }
+.or-run-workspace__panes--twin .session-label-model,
+.or-run-workspace__panes--twin .session-label-effort,
+.or-run-workspace__panes--twin .session-label-workdir { display: none; }
 
 .or-run-identity__sidebar-toggle {
   display: none;
@@ -2387,6 +2417,7 @@ a:focus-visible {
 .or-run-sidebar__row-unit { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 0.6875rem; }
 .or-run-sidebar__row-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; color: var(--text-muted); font-size: 0.6875rem; }
 .or-run-sidebar__row-twin { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0 0.4rem; }
+.or-run-sidebar__row-end { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font-size: 0.75rem; padding: 0 0.5rem; }
 .or-run-sidebar__collapse { margin-top: 0.35rem; border: 1px solid var(--border-subtle); border-radius: 0.4rem; background: none; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.3rem 0.5rem; }
 
 .or-run-workspace__panes {
