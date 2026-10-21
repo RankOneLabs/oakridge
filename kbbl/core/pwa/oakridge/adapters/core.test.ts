@@ -110,8 +110,18 @@ describe("v2 development adapters", () => {
   });
   it("maps reviews to gates and change effects to the feedback action", () => {
     const gates = reviewToGates(cohort);
-    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_revision"]);
-    expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_revision");
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_build_changes"]);
+    expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_build_changes");
+  });
+  it("keeps assessment and build revision choices distinct", () => {
+    const buildChange = cohort.decisions.find((decision) => decision.key === "request_build_changes");
+    if (!buildChange || buildChange.submit.kind !== "review") throw new Error("fixture lacks build change decision");
+    const assessmentChange = { ...buildChange, key: "request_assessment_changes", label: "Revise assessment",
+      submit: { ...buildChange.submit, decision: "request_assessment_changes",
+        target_revision_id: cohort.artifacts.find((artifact) => artifact.artifact_key === "assessment")?.latest_revision?.id ?? "" } };
+    const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions, assessmentChange] });
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions)
+      .toEqual(["approve", "request_build_changes", "request_assessment_changes"]);
   });
   it("marks the assessor session as needing the operator when its assessment is published", () => {
     const attempts = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>

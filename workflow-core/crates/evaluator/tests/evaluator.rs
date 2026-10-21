@@ -515,6 +515,66 @@ fn a_review_repeating_its_body_about_a_new_subject_is_a_new_revision() {
 }
 
 #[test]
+fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
+    let mut source: Value = serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
+    source["stages"]["document"]["workers"]["critic"]["prompts"]["revise"] = serde_json::json!("check.md");
+    source["stages"]["document"]["reviews"]["critique_check"] = serde_json::json!({
+        "of": "critique", "by": "operator", "prompt": "check.md",
+        "decisions": {
+            "accept": {"effect": "approve", "label": "Accept"},
+            "request_assessment_changes": {"effect": "request_changes", "label": "Revise assessment", "fields": {"feedback": "What?"}},
+            "request_build_changes": {"effect": "request_changes", "on": "draft", "label": "Request build changes", "fields": {"feedback": "What?"}}
+        }
+    });
+    let prompts = ["review-loop/write.md", "review-loop/revise.md", "review-loop/critique.md", "review-loop/editor.md", "check.md"]
+        .into_iter().map(|path| (path.to_owned(), String::new())).collect();
+    let program = compile_workflow(&serde_json::from_value(source).unwrap(), &[], &prompts).unwrap();
+    let first = step_specs(&program, &snapshot(), &[
+        serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"First","body":"Long"}}),
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+        serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":[]},"subject":"run/document:draft:1"}),
+    ]);
+    assert!(!first.reviews.iter().any(|review| review.review.0 == "critique_check"));
+    let ready = step_specs(&program, &first.snapshot, &[
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
+    ]);
+    assert!(ready.reviews.iter().any(|review| review.review.0 == "critique_check"));
+    let assessment_revision = step_specs(&program, &ready.snapshot, &[
+        serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_assessment_changes","target":"run/document:critique:1","payload":{"feedback":"Fix the cohort reference"}}),
+    ]);
+    let revise = resolved_for(&assessment_revision, "critic");
+    assert_eq!(revise.previous.as_ref().map(|revision| revision.id.0.as_str()), Some("run/document:critique:1"));
+    assert_eq!(revise.feedback, Some(serde_json::json!({"feedback":"Fix the cohort reference"})));
+    assert_eq!(revise.subject.as_ref().map(|revision| revision.id.0.as_str()), Some("run/document:draft:1"));
+    let revised = step_specs(&program, &assessment_revision.snapshot, &[
+        serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Correct cohort"]},"predecessor":"run/document:critique:1","subject":"run/document:draft:1"}),
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
+    ]);
+    assert!(revised.reviews.iter().any(|review| review.review.0 == "critique_check"
+        && review.target.0 == "run/document:critique:2"));
+    let requested = step_specs(&program, &ready.snapshot, &[
+        serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_build_changes","target":"run/document:draft:1","payload":{"feedback":"Rebuild"}}),
+    ]);
+    assert!(!requested.reviews.iter().any(|review| review.review.0 == "critique_check"));
+    let replacing = step_specs(&program, &requested.snapshot, &[
+        serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+        serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"Second","body":"Better"},"predecessor":"run/document:draft:1"}),
+        serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+    ]);
+    assert!(!replacing.reviews.iter().any(|review| review.review.0 == "critique_check"));
+    let stale_accept = step(&program, &replacing.snapshot, &incoming(Event::OperatorDecided {
+        unit: UnitId::from("run/document"), review: SymbolKey::from("critique_check"),
+        decision: SymbolKey::from("accept"), target: RevisionId::from("run/document:critique:1"),
+        payload: serde_json::json!({}),
+    }, "stale-accept"));
+    assert!(stale_accept.is_err());
+}
+
+#[test]
 fn member_outcomes_are_projected_in_key_order() {
     let program = sample("fan-out");
     let trace: Value =

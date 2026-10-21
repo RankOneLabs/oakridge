@@ -18,6 +18,8 @@ function actionLabel(action: string): string {
   switch (action) {
     case "approve": return "Approve artifact";
     case "request_revision": return "Request changes";
+    case "request_assessment_changes": return "Revise assessment";
+    case "request_build_changes": return "Request build changes";
     case "confirm_merged": return "Confirm merge";
     case "pass": return "Pass";
     case "fail": return "Mark failed";
@@ -27,7 +29,9 @@ function actionLabel(action: string): string {
 }
 
 function successMessage(action: string): string {
-  if (action === "request_revision") return "Changes requested. The cohort will return to its build step.";
+  if (action === "request_assessment_changes") return "Assessment changes requested. The assessor will revise its report.";
+  if (action === "request_build_changes") return "Build changes requested. The builder will revise its work.";
+  if (action === "request_revision") return "Changes requested.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
 }
@@ -101,7 +105,8 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       )}
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
-          const needsFeedback = action === "request_revision" || action === "rerun" || action === "reject" || action === "fail";
+          const needsFeedback = action === "request_revision" || action === "request_assessment_changes" || action === "request_build_changes"
+            || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           return (
             <Button
@@ -127,7 +132,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
             onChange={(event) => setFeedback(event.target.value)}
             rows={4}
             autoFocus
-            placeholder="Give the builder specific, actionable feedback."
+            placeholder="Describe the changes needed."
           />
           <div className="or-decision-feedback__buttons">
             <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`} onClick={() => setFeedbackAction(null)}>Cancel</Button>

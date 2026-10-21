@@ -176,7 +176,7 @@ describe("v2 Oakridge client", () => {
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
       : path.endsWith("/units") ? sample.units : cohort);
     await resumeGate("legacy-gate", { idempotency_key: "opaque-1", artifact_revision_id: acceptTarget, gate_step: "artifact_approval",
-      action: "request_revision", operator_comment: "", feedback: "Improve it" });
+      action: "request_build_changes", operator_comment: "", feedback: "Improve it" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(cohort.unit_id)}/reviews/assessment_review/decide`);
     expect(JSON.parse(String(posted?.[1]?.body)).target).toBe(changeTarget);
@@ -185,8 +185,8 @@ describe("v2 Oakridge client", () => {
   it("sends collected feedback to the decision's declared field and target revision", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-3" } : cohort);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
-    await resumeGate(gateId, { idempotency_key: "decide-1", artifact_revision_id: "stale", gate_step: "assessment_review",
-      action: "request_revision", operator_comment: "", feedback: "Fix the API" });
+    await resumeGate(gateId, { idempotency_key: "decide-1", artifact_revision_id: acceptTarget, gate_step: "assessment_review",
+      action: "request_build_changes", operator_comment: "", feedback: "Fix the API" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
       target: changeTarget, payload: { feedback: "Fix the API" } });
@@ -211,11 +211,20 @@ describe("v2 Oakridge client", () => {
   it("submits the v1 approve action as the v2 decision key it maps from, without feedback", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-4" } : cohort);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
-    await resumeGate(gateId, { idempotency_key: "decide-2", artifact_revision_id: "stale", gate_step: "assessment_review",
+    await resumeGate(gateId, { idempotency_key: "decide-2", artifact_revision_id: acceptTarget, gate_step: "assessment_review",
       action: "approve", operator_comment: "", feedback: "" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     const body = JSON.parse(String(decision?.[1]?.body)) as { decision: string; payload: unknown };
     expect([body.decision, body.payload]).toEqual(["accept", {}]);
+  });
+
+  it("refuses a decision when the displayed artifact revision is stale", async () => {
+    const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-ignored" } : cohort);
+    const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "assessment_review" });
+    await expect(resumeGate(gateId, { idempotency_key: "stale-review", artifact_revision_id: "old-assessment",
+      gate_step: "assessment_review", action: "approve", operator_comment: "", feedback: "" }))
+      .rejects.toThrow("review artifact changed; refresh before deciding");
+    expect(fetch.mock.calls.some(([path]) => String(path).endsWith("/decide"))).toBe(false);
   });
 
   it("maps replace_pr by its request_changes effect and submits feedback", async () => {
@@ -224,7 +233,7 @@ describe("v2 Oakridge client", () => {
       submit: { kind: "review", review: "pr_closed", decision: "replace_pr", effect: "request_changes", target_revision_id: "revision-pr" } }] };
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-5" } : replacement);
     const gateId = compositeId({ kind: "gate", runId, unitId: cohort.unit_id, name: "pr_closed" });
-    await resumeGate(gateId, { idempotency_key: "decide-3", artifact_revision_id: "stale", gate_step: "pr_closed",
+    await resumeGate(gateId, { idempotency_key: "decide-3", artifact_revision_id: "revision-pr", gate_step: "pr_closed",
       action: "request_revision", operator_comment: "", feedback: "Open a replacement" });
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-3", decision: "replace_pr",
@@ -238,7 +247,7 @@ describe("v2 Oakridge client", () => {
     if (!mergeDecision || mergeDecision.submit.kind !== "review") throw new Error("captured fixture lacks merge decision target");
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: fixture.run.run_id, event_id: "event-6" } : unit);
     const gateId = compositeId({ kind: "gate", runId: fixture.run.run_id, unitId: unit.unit_id, name: "merge_confirmation" });
-    await resumeGate(gateId, { idempotency_key: "merge-1", artifact_revision_id: "stale", gate_step: "merge_confirmation",
+    await resumeGate(gateId, { idempotency_key: "merge-1", artifact_revision_id: mergeDecision.submit.target_revision_id, gate_step: "merge_confirmation",
       action: "confirm_merged", operator_comment: "", feedback: "" });
     const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     const body = JSON.parse(String(posted?.[1]?.body));

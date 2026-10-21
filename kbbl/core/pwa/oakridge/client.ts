@@ -297,6 +297,17 @@ export async function resumeGate(gateId: string, req: GateResumeRequest): Promis
   const gate = await resolveGateId(gateId, req);
   const path = unitPath(gate.runId, gate.unitId);
   const unit = unwrapAdapter(path, parseUnitView(await oakridgeGet<unknown>(path)));
+  const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
+    || (candidate.run_id === gate.runId && candidate.gate_step === gate.name));
+  const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
+  const currentRevision = currentGate?.artifact_revision_id
+    ? parseCompositeId(currentGate.artifact_revision_id, "artifact") : null;
+  const requestedTarget = requestedRevision.ok
+    ? requestedRevision.value.name.slice(requestedRevision.value.name.indexOf(":") + 1) : req.artifact_revision_id;
+  const currentTarget = currentRevision?.ok
+    ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentGate?.artifact_revision_id;
+  if (!currentTarget || requestedTarget !== currentTarget)
+    throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
   const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === gate.name && decisionAction(candidate) === req.action);
   if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
   if (decision.fields.length > 1 || (decision.fields.length === 1 && decision.fields[0].key !== "feedback"))

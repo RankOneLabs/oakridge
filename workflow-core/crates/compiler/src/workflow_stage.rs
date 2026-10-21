@@ -159,7 +159,7 @@ pub(super) fn compile_stage(
                     if decision.effect == DeclaredDecisionEffect::RequestChanges
                         && !matches!(
                             stage.workers.get(owner),
-                            Some(Worker::Agent { reviews: None, .. })
+                            Some(Worker::Agent { .. })
                         ) =>
                 {
                     state.error(

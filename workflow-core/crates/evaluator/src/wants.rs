@@ -130,14 +130,17 @@ pub fn stage_actions(
                             && r.subject.as_ref() == Some(&subject.id)
                     })
                 });
-                if already {
-                    None
-                } else {
+                if !already {
                     Some((
                         Mode::Review,
                         Cause::ReviewOf {
                             revision: subject.id.clone(),
                         },
+                    ))
+                } else {
+                    changes_requested(state, &unit.id, creates).map(|decision| (
+                        Mode::Revise,
+                        Cause::ChangesRequested { decision: decision.id().clone() },
                     ))
                 }
             }
@@ -232,6 +235,42 @@ pub(super) fn operator_review_is_open(
     holds(when, unit, &without_stale_evidence, context)
 }
 
+/// An operator may review a review-worker's output only after the worker has
+/// finished and the output still describes the latest subject revision.
+/// A request for changes on the subject can start its replacement while the
+/// previous assessment remains published; that assessment must not be
+/// approved during the replacement.
+pub(super) fn reviewed_output_is_current(
+    program: &CheckedWorkflow,
+    state: &StepSnapshot,
+    unit: &UnitState,
+    artifact: &SymbolKey,
+) -> Result<bool, StepError> {
+    let stage = checked_stage(program, unit)?;
+    for worker in &stage.workers {
+        let CheckedWorker::Agent { creates, reviews: Some(subject), .. } = worker else {
+            continue;
+        };
+        if !creates.contains(artifact) {
+            continue;
+        }
+        let Some(output) = latest(state, &unit.id, artifact) else {
+            return Ok(false);
+        };
+        let Some(current_subject) = latest(state, &unit.id, subject) else {
+            return Ok(false);
+        };
+        if is_creator_working(stage, state, &unit.id, artifact)
+            || is_creator_working(stage, state, &unit.id, subject)
+            || changes_requested(state, &unit.id, std::slice::from_ref(subject)).is_some()
+            || output.subject.as_ref() != Some(&current_subject.id)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// The operator reviews of a stage a decision is legal on now, each with its
 /// inputs evaluated against the stepped state (an unresolved read as null).
 pub(super) fn resolve_reviews(
@@ -252,7 +291,8 @@ pub(super) fn resolve_reviews(
         else {
             continue;
         };
-        if !operator_review_is_open(program, state, unit, when.as_ref(), context)? {
+        if !operator_review_is_open(program, state, unit, when.as_ref(), context)?
+            || !reviewed_output_is_current(program, state, unit, of)? {
             continue;
         }
         let Some(target) = latest(state, &unit.id, of) else {
@@ -347,7 +387,7 @@ pub(super) fn resolve_run_worker(
     };
     let subject = match (action.mode, checked) {
         (
-            Mode::Review,
+            Mode::Review | Mode::Revise,
             CheckedWorker::Agent {
                 reviews: Some(of), ..
             },
