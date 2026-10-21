@@ -213,11 +213,9 @@ export function SessionView({
         </>
       <div className="bottom-stack" ref={bottomBarRef}>
         {canInput && (
-          <SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} />
-        )}
-        {canInput && (
           <InputBox
             sid={sid}
+            tools={<SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} position="composer" />}
             onSend={addPendingSend}
             onSendAccepted={acceptPendingSend}
             onSendFailed={removePendingSend}

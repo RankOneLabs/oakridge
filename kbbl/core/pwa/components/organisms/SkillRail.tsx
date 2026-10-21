@@ -65,7 +65,7 @@ export function SkillRail({
   /** Agent-provided slash commands (§16.1), from the session's
    * `commands` UI events — the second rail source next to app skills. */
   commands?: readonly UiAvailableCommand[];
-  position?: "bottom" | "right";
+  position?: "bottom" | "right" | "composer";
 }) {
   const skills = useSkills(sid);
   const invokeMutation = useInvokeSkill(sid);

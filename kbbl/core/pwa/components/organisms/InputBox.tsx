@@ -1,4 +1,4 @@
-import { useState, type Ref } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { randomUuid } from "../../lib/random-uuid";
@@ -20,6 +20,7 @@ class ServerRejection extends Error {
 export function InputBox({
   ref,
   sid,
+  tools,
   onSend,
   onSendAccepted,
   onSendFailed,
@@ -29,6 +30,7 @@ export function InputBox({
 }: {
   ref?: Ref<HTMLDivElement>;
   sid: string;
+  tools?: ReactNode;
   onSend: (text: string, clientMessageId: string) => void;
   onSendAccepted: (clientMessageId: string, receipt: AcceptedInputReceipt) => void;
   onSendFailed: (clientMessageId: string) => void;
@@ -183,6 +185,7 @@ export function InputBox({
     <div className="input-bar" ref={ref}>
       {error && <div className="input-error">error: {error}</div>}
       <div className="input-bar-row">
+        {tools}
         {canStop && (
           <button
             type="button"
@@ -197,9 +200,10 @@ export function InputBox({
             }}
             onBlur={() => setConfirmStop(false)}
             disabled={stopMutation.isPending}
-            title="Stops this agent session. Resume from the ended banner to fork a new session with the same context."
+            aria-label="End session"
+            title="End this agent session. Resume from the ended banner to fork a new session with the same context."
           >
-            {stopMutation.isPending ? "stopping…" : confirmStop ? "confirm" : "Stop"}
+            {stopMutation.isPending ? "ending…" : confirmStop ? "confirm end" : "End"}
           </button>
         )}
         {isTurnActive && (
@@ -208,7 +212,8 @@ export function InputBox({
             className="btn-interrupt"
             onClick={() => void interrupt()}
             disabled={interruptMutation.isPending}
-            title="Cancels the agent's current turn. The session stays live — type your next message to redirect."
+            aria-label="Interrupt current turn"
+            title="Interrupt the current turn. The session stays live so you can redirect it with another message."
           >
             {interruptMutation.isPending ? "interrupting…" : "Interrupt"}
           </button>
