@@ -138,10 +138,14 @@ pub fn stage_actions(
                         },
                     ))
                 } else {
-                    changes_requested(state, &unit.id, creates).map(|decision| (
-                        Mode::Revise,
-                        Cause::ChangesRequested { decision: decision.id().clone() },
-                    ))
+                    changes_requested(state, &unit.id, creates).map(|decision| {
+                        (
+                            Mode::Revise,
+                            Cause::ChangesRequested {
+                                decision: decision.id().clone(),
+                            },
+                        )
+                    })
                 }
             }
             CheckedWorker::Agent {
@@ -248,7 +252,12 @@ pub(super) fn reviewed_output_is_current(
 ) -> Result<bool, StepError> {
     let stage = checked_stage(program, unit)?;
     for worker in &stage.workers {
-        let CheckedWorker::Agent { creates, reviews: Some(subject), .. } = worker else {
+        let CheckedWorker::Agent {
+            creates,
+            reviews: Some(subject),
+            ..
+        } = worker
+        else {
             continue;
         };
         if !creates.contains(artifact) {
@@ -292,7 +301,8 @@ pub(super) fn resolve_reviews(
             continue;
         };
         if !operator_review_is_open(program, state, unit, when.as_ref(), context)?
-            || !reviewed_output_is_current(program, state, unit, of)? {
+            || !reviewed_output_is_current(program, state, unit, of)?
+        {
             continue;
         }
         let Some(target) = latest(state, &unit.id, of) else {

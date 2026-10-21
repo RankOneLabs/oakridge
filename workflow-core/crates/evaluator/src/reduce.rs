@@ -338,7 +338,8 @@ fn reduce_event(
                 .get(&decision.0)
                 .ok_or_else(|| rejected("decision absent"))?;
             if !operator_review_is_open(program, &state, owner, when.as_ref(), context)?
-                || !reviewed_output_is_current(program, &state, owner, of)? {
+                || !reviewed_output_is_current(program, &state, owner, of)?
+            {
                 return Err(rejected("review is not open"));
             }
             if state.decisions.iter().any(|d| {

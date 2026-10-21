@@ -157,10 +157,7 @@ pub(super) fn compile_stage(
                 ),
                 Some(owner)
                     if decision.effect == DeclaredDecisionEffect::RequestChanges
-                        && !matches!(
-                            stage.workers.get(owner),
-                            Some(Worker::Agent { .. })
-                        ) =>
+                        && !matches!(stage.workers.get(owner), Some(Worker::Agent { .. })) =>
                 {
                     state.error(
                         CheckKind::Review,

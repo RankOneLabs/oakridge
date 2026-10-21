@@ -348,11 +348,18 @@ fn a_reviewer_artifact_can_be_revised_when_its_worker_has_a_revise_prompt() {
         "/stages/cohort/reviews/assessment_review/decisions/request_assessment_changes",
         json!({ "effect": "request_changes", "label": "Revise assessment", "fields": {"feedback": "What?"} }),
     );
-    assert_eq!(rejection(&[request_assessment.clone()]), "check 7");
+    assert_eq!(
+        rejection(std::slice::from_ref(&request_assessment)),
+        "check 7"
+    );
     compile(&fixture(&[
         request_assessment,
-        ("/stages/cohort/workers/assessor/prompts/revise", json!("assess.md")),
-    ])).unwrap();
+        (
+            "/stages/cohort/workers/assessor/prompts/revise",
+            json!("assess.md"),
+        ),
+    ]))
+    .unwrap();
     assert_eq!(
         rejection(&[(
             "/stages/cohort/reviews/admission/decisions/reject",
