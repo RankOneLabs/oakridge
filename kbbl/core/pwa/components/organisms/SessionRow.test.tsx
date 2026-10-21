@@ -26,6 +26,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     requestedEffort: null,
     endReason: null,
     fencedBy: null,
+    archivedAt: null,
     pendingPermissionCount: 0,
     workflow: null,
     ...overrides,
@@ -53,21 +54,26 @@ describe("SessionRow with a workflow identity", () => {
   });
 });
 
-test("End closes a live session without deleting its transcript", async () => {
+test("× ends and archives a live session without purging its transcript", async () => {
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   renderRow(makeSnapshot());
 
-  fireEvent.click(screen.getByRole("button", { name: "End" }));
-  fireEvent.click(screen.getByRole("button", { name: "confirm end" }));
+  expect(screen.getByRole("button", { name: "End and hide session" }).textContent).toBe("×");
+  fireEvent.click(screen.getByRole("button", { name: "End and hide session" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm end and hide session" }));
 
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1", { method: "DELETE" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1?archive=true", { method: "DELETE" }));
 });
 
-test("closed sessions offer Resume without an End or Remove action", () => {
+test("ended sessions retain × so they can be hidden without purging", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
   renderRow(makeSnapshot({ status: "ended" }));
 
   expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "End" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Hide session" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm hide session" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/sessions/sid-1?archive=true", { method: "DELETE" }));
   expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
 });

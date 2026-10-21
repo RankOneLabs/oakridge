@@ -236,6 +236,20 @@ export class AcpSessionService {
     return this.deps.store.listSessions().map(toSnapshot);
   }
 
+  listSessionArchives(): Map<KbblSessionId, string> {
+    return this.deps.store.listSessionArchives();
+  }
+
+  archiveSession(sid: string): Result<void, AcpError> {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return err(acpError("session_not_found", "service.archiveSession", `no session ${sid}`, sid as KbblSessionId));
+    if (row.status !== "ended" && row.status !== "fenced" && row.status !== "failed") {
+      return err(acpError("session_busy", "service.archiveSession", `session ${sid} is still active`, row.sid));
+    }
+    this.deps.store.archiveSession(row.sid);
+    return ok(undefined);
+  }
+
   getSession(sid: string): AcpSessionSnapshot | null {
     const row = this.deps.store.getSession(sid as KbblSessionId);
     return row ? toSnapshot(row) : null;

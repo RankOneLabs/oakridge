@@ -37,6 +37,7 @@ const waitingSession = (): SessionSnapshot => ({
   requestedEffort: null,
   endReason: null,
   fencedBy: null,
+    archivedAt: null,
   pendingPermissionCount: 1,
   workflow: null,
 });

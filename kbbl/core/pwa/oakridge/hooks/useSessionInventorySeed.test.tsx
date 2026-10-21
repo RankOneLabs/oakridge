@@ -14,7 +14,7 @@ const existing: SessionSnapshot = {
   lastActivityTs: "2026-09-01T00:00:00Z", createdAt: "2026-09-01T00:00:00Z",
   artifactId: null, projectWorkdir: "/repo", worktreePath: "/repo", worktreeBranch: null,
   worktreeBaseRef: null, requestedModel: null, requestedEffort: null, endReason: null,
-  fencedBy: null, pendingPermissionCount: 0, workflow: null,
+  fencedBy: null, archivedAt: null, pendingPermissionCount: 0, workflow: null,
 };
 const run: RunDetail = { id: "run-reload", title: null, repository_keys: [], workflow_name: "development",
   status: "parked", stages: [], parked_count: 1, updated_at: "2026-09-01T00:00:00Z", is_stuck: false };

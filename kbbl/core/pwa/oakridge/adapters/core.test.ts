@@ -129,7 +129,7 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(cohort);
     if (!gates.ok || attempts.some((attempt) => !attempt.ok)) throw new Error("fixture cohort mapping failed");
     const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: attempts.flatMap((attempt) => attempt.ok ? [attempt.value] : []) },
-      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set(), archivedSessionIds: new Set() }).rows;
     expect(rows.filter((row) => row.requires_operator_action).map((row) => row.stage_key)).toEqual(["assessment"]);
   });
   it("marks the builder session for a cohort merge confirmation", () => {
@@ -142,7 +142,7 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(mergeUnit);
     if (!mapped.ok || !gates.ok) throw new Error("fixture merge mapping failed");
     const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: [mapped.value] },
-      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set(), archivedSessionIds: new Set() }).rows;
     expect(rows[0]?.requires_operator_action).toBe(true);
   });
   it("marks the builder session when a closed pull request needs replacement", () => {
@@ -157,7 +157,7 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(closed);
     if (!mapped.ok || !gates.ok) throw new Error("fixture closed PR mapping failed");
     const rows = selectRunSidebarSessions({ sessions: { kind: "loaded", attempts: [mapped.value] },
-      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set() }).rows;
+      gates: { kind: "loaded", gates: gates.value }, purgedSessionIds: new Set(), archivedSessionIds: new Set() }).rows;
     expect(rows[0]?.requires_operator_action).toBe(true);
   });
   it("keeps an input-revision review target so the frozen decision button can submit", () => {

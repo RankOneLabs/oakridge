@@ -30,6 +30,7 @@ function makeSnapshot(overrides: Partial<PwaSessionSnapshot> = {}): PwaSessionSn
     requestedEffort: null,
     endReason: null,
     fencedBy: null,
+    archivedAt: null,
     pendingPermissionCount: 0,
     workflow: null,
     ...overrides,

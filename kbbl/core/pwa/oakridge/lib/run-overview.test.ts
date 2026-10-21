@@ -261,10 +261,24 @@ describe("an unavailable gate read", () => {
       sessions: { kind: "loaded", attempts: [attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" })] },
       gates: { kind: "unavailable" },
       purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.is_action_state_known).toBe(false);
     expect(view.rows.map((row) => row.requires_operator_action)).toEqual([false]);
+  });
+
+  it("hides archived session rows without losing the recorded attempt numbering", () => {
+    const view = selectRunSidebarSessions({
+      sessions: { kind: "loaded", attempts: [
+        attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
+        attempt({ work_order_id: "wo-2", session_id: "sid-2", unit_id: "c1" }),
+      ] },
+      gates: { kind: "loaded", gates: [] },
+      purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(["sid-1"]),
+    });
+    expect(view.rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
   });
 });
 
@@ -317,6 +331,7 @@ describe("sidebar sessions", () => {
       ] },
       gates: { kind: "loaded", gates: [gate({ id: "gate-1", unit_id: "c2" })] },
       purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.is_action_state_known).toBe(true);
@@ -333,6 +348,7 @@ describe("sidebar sessions", () => {
       ] },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(["sid-1"]),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.rows.map((row) => row.session_id)).toEqual(["sid-2"]);
@@ -358,6 +374,7 @@ describe("sidebar sessions", () => {
       ] },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(["sid-1"]),
+      archivedSessionIds: new Set(),
     });
 
     // The purge took the transcript, not the attempt that produced it — the
@@ -379,6 +396,7 @@ describe("sidebar sessions", () => {
       },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.rows.map((row) => row.work_order_id)).toEqual(["wo-1", "wo-2"]);
@@ -389,6 +407,7 @@ describe("sidebar sessions", () => {
       sessions: { kind: "unavailable" },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.is_session_list_known).toBe(false);
@@ -400,6 +419,7 @@ describe("sidebar sessions", () => {
       sessions: { kind: "loaded", attempts: [] },
       gates: { kind: "loaded", gates: [] },
       purgedSessionIds: new Set(),
+      archivedSessionIds: new Set(),
     });
 
     expect(view.is_session_list_known).toBe(true);

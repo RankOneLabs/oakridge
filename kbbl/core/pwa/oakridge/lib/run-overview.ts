@@ -220,6 +220,8 @@ export interface RunSidebarSessionsInput {
    * a row whose transcript no longer exists.
    */
   readonly purgedSessionIds: ReadonlySet<string>;
+  /** Hidden from navigation, while the transcript remains addressable by sid. */
+  readonly archivedSessionIds: ReadonlySet<string>;
 }
 
 /**
@@ -237,6 +239,7 @@ export const selectRunSidebarSessions = ({
   sessions,
   gates,
   purgedSessionIds,
+  archivedSessionIds,
 }: RunSidebarSessionsInput): RunSidebarSessionsView => {
   const awaitingAction =
     gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
@@ -244,7 +247,7 @@ export const selectRunSidebarSessions = ({
     is_action_state_known: awaitingAction !== null,
     is_session_list_known: sessions.kind === "loaded",
     rows: selectRunSessionRows(attemptsOf(sessions))
-      .filter((row) => !purgedSessionIds.has(row.attempt.session_id))
+      .filter((row) => !purgedSessionIds.has(row.attempt.session_id) && !archivedSessionIds.has(row.attempt.session_id))
       .map((row) => ({
         work_order_id: row.attempt.work_order_id,
         session_id: row.attempt.session_id as Sid,

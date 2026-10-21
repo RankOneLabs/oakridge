@@ -122,25 +122,29 @@ export function SessionListView({
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
   const [orderingTick, setOrderingTick] = useState(0);
+  const visibleSessions = useMemo(
+    () => [...sessions.values()].filter((session) => session.archivedAt === null),
+    [sessions],
+  );
 
   useEffect(() => {
-    const delay = selectNextJustNowExpiryDelay([...sessions.values()], Date.now());
+    const delay = selectNextJustNowExpiryDelay(visibleSessions, Date.now());
     if (delay === null) return;
     const timeout = setTimeout(() => setOrderingTick((tick) => tick + 1), delay);
     return () => clearTimeout(timeout);
-  }, [orderingTick, sessions]);
+  }, [orderingTick, visibleSessions]);
 
   const prefill = useUrlPrefill();
 
   const grouping = useMemo(
     () => groupSessionsByRun(
-      [...sessions.values()],
+      visibleSessions,
       compareSessionsByDisplayedActivity(Date.now()),
     ),
-    [orderingTick, sessions],
+    [orderingTick, visibleSessions],
   );
   const runsQuery = useRuns("all", grouping.runs.length > 0);
-  const totalCount = sessions.size;
+  const totalCount = visibleSessions.length;
 
   const startMutation = useMutation({
     mutationFn: async (body: StartSessionBody): Promise<SessionSnapshot> => {

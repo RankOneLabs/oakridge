@@ -25,6 +25,7 @@ import {
 } from "../../lib/run-workspace";
 import type { ArtifactId, Sid } from "../../../lib/ids";
 import { useStore } from "../../../state/store";
+import { selectArchivedSessionIds } from "../../../lib/session";
 import { RunIdentityHeader } from "../molecules/RunIdentityHeader";
 import { RunPaneChrome } from "../molecules/RunPaneChrome";
 import { ArtifactReview } from "./ArtifactReview";
@@ -116,6 +117,7 @@ export function RunWorkspace({ runId, routePane, onBack }: RunWorkspaceProps) {
     sessions,
     gates,
     purgedSessionIds,
+    archivedSessionIds: selectArchivedSessionIds(inventorySessions),
   });
   const sidebarArtifacts = selectRunArtifacts(run);
   const activity: RunActivityRead = activityQuery.data !== undefined

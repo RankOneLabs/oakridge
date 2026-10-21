@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
 import { useEndSession } from "../../../hooks/useEndSession";
-import { isOpenSessionStatus } from "../../../lib/session";
 import { useStore } from "../../../state/store";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
 import type { RunSidebarSessionRow } from "../../lib/run-overview";
@@ -87,7 +86,9 @@ interface RunSidebarSessionItemProps {
 function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemProps) {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
-  const canEnd = isOpenSessionStatus(status);
+  const canEnd = status !== null;
+  const isTerminal = status === "ended" || status === "fenced" || status === "failed";
+  const actionLabel = isTerminal ? "Hide" : "End and hide";
   const { mutation, error } = useEndSession(row.session_id);
 
   useEffect(() => {
@@ -157,15 +158,17 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           type="button"
           className="or-run-sidebar__row-end"
           disabled={mutation.isPending}
-          aria-label={confirmEnd ? `Confirm end ${row.stage_key} ${row.unit_id}` : `End ${row.stage_key} ${row.unit_id}`}
-          title="End the session and keep its transcript for review or resume."
+          aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()} ${row.stage_key} ${row.unit_id}` : `${actionLabel} ${row.stage_key} ${row.unit_id}`}
+          title={isTerminal
+            ? "Hide this session while keeping its transcript."
+            : "End and hide this session while keeping its transcript."}
           onClick={() => {
             if (!confirmEnd) setConfirmEnd(true);
             else void end();
           }}
           data-testid="or-sidebar-session-end"
         >
-          {mutation.isPending ? "…" : confirmEnd ? "Confirm" : "End"}
+          {mutation.isPending ? "…" : confirmEnd ? "✓" : "×"}
         </Button>
       )}
       {error && (

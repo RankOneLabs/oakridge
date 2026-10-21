@@ -129,7 +129,7 @@ describe("the baseline schema", () => {
     const db = openTestDb();
     const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all().map((row) => row.name);
-    expect(tables).toEqual(["_migrations", "acp_session_summaries", "acp_sessions", "acp_turns"]);
+    expect(tables).toEqual(["_migrations", "acp_session_archives", "acp_session_summaries", "acp_sessions", "acp_turns"]);
     db.close();
   });
 });

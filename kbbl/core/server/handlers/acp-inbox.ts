@@ -18,10 +18,11 @@ const HEARTBEAT_MS = 15_000;
 const COALESCE_MS = 25;
 
 export function listPwaSessions(acp: AcpSessionService): PwaSessionSnapshot[] {
+  const archives = acp.listSessionArchives();
   return acp
     .listSessions()
     .map((session) =>
-      toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid)),
+      toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid), archives.get(session.sid) ?? null),
     )
     .sort(compareSessionsByActivity);
 }
