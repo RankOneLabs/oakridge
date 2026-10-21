@@ -27,11 +27,11 @@ export function parseCompositeId(value: string, expected: CompositeKind): Adapte
 }
 
 const SCHEMA_COMPONENTS: Readonly<Record<string, string>> = {
-  text: "dev-spec-viewer", plan_body: "dev-plan-viewer", brief_body: "dev-build-brief-viewer",
+  analysis_body: "dev-spec-analysis-viewer", text: "dev-spec-viewer", plan_body: "dev-plan-viewer", brief_body: "dev-build-brief-viewer",
   build_body: "dev-build-result-viewer", assessment_body: "dev-assessment-viewer", pr_body: "dev-pr-summary-viewer",
 };
 const SCHEMA_TYPES: Readonly<Record<string, string>> = {
-  text: "dev.spec", plan_body: "dev.plan", brief_body: "dev.build_brief",
+  analysis_body: "dev.spec_analysis", text: "dev.spec", plan_body: "dev.plan", brief_body: "dev.build_brief",
   build_body: "dev.build_result", assessment_body: "dev.assessment", pr_body: "dev.pr_summary",
 };
 /** Keep the prepared repository visible while hiding internal PR watch state. */
@@ -83,7 +83,8 @@ export const revisionToArtifact = (artifact: OperatorArtifactDetail, unit: Opera
     type_id: descriptor.id, component_id: descriptor.component_id,
     capabilities: { ...descriptor.capabilities, reviewable: artifact.is_reviewable, atom_editable: artifact.is_editable },
     anchor_schema: descriptor.anchor_schema,
-    run_id: artifact.run_id, producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
+    run_id: artifact.run_id, original_spec: artifact.original_spec ?? null,
+    producing_stage: unit.stage ?? "", label: unit.collection_key ?? unit.unit_key, revisions });
 };
 
 export interface StatusInput { readonly status: OperatorUnitStatus; readonly attention: OperatorUnitView["attention"]; readonly attempts: readonly OperatorAttemptView[];
@@ -178,9 +179,11 @@ export function attemptToWorkOrder(input: { readonly runId: string; readonly sta
   // units. Naming its sidebar row after the latest unit would imply that the
   // session belongs to that one cohort.
   const sessionUnitId = stage === "brief" && attempt.worker === "writer" ? "shared writer" : unitLabel;
+  const display_label = stage === "analysis" && attempt.worker === "author" ? "Spec analysis"
+    : stage === "analysis" && attempt.worker === "spec_editor" ? "Spec update" : sessionStage;
   return ok({ work_order_id: attempt.id, session_id: attempt.kbbl_session_id,
     stage_instance_id: compositeId({ kind: "stage", runId, unitId: unit.unit_id, name: sessionStage }), stage_key: sessionStage,
-    unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
+    display_label, unit_id: sessionUnitId, reason, work_order_state, created_at: attempt.created_at,
     completed_at: null, executor_health_kind: attempt.failure?.code ?? null, cleanup_state: "not_needed" });
 }
 
@@ -254,15 +257,17 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (!grouped.ok) return grouped;
   const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
+  const hasFailedUnit = unitStatuses.includes("failed");
+  const isStuck = rootStatus === "running" && hasFailedUnit;
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
-    : unitStatuses.includes("failed") ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
+    : isStuck ? "running" : hasFailedUnit ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
   return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
     stages: grouped.value, parked_count: unitStatuses.filter((item) => item === "parked").length,
-    updated_at: run.updated_at, is_stuck: status === "failed", epic_profile: null });
+    updated_at: run.updated_at, is_stuck: isStuck, epic_profile: null });
 }
 export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary {
   const completed = detail.stages.filter((stage) => stage.status === "complete").length;

@@ -25,13 +25,19 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 
 const root = resolve(import.meta.dir, "../..");
 const APPROVED_SPEC = "Approved specification from analysis.";
-const BODY_SCHEMAS = { spec: "text", plan: "plan_body", brief: "brief_body", build_result: "build_body",
+const APPROVED_ANALYSIS = { summary: "Approved analysis for spec update.", source_spec_refs: ["Goal"],
+  findings: [], requirements: [], risks: [], proposed_spec_updates: [
+    { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement." },
+  ] };
+const REVISED_ANALYSIS = { ...APPROVED_ANALYSIS, summary: "Revised analysis for spec update." };
+const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
   readonly integrations: readonly { readonly repository_key: string; readonly pr_url: string; readonly is_merged: boolean }[];
 }
 const VIEWER_COMPONENTS = {
+  "dev-spec-analysis-viewer": "SpecAnalysisViewer",
   "dev-spec-viewer": "SpecViewer",
   "dev-plan-viewer": "PlanViewer",
   "dev-build-brief-viewer": "BuildBriefViewer",
@@ -113,6 +119,10 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
     };
     switch (workerOf(turn)) {
       case "author":
+        await publish("analysis", turn.predecessor("analysis") ? REVISED_ANALYSIS : APPROVED_ANALYSIS);
+        break;
+      case "spec_editor":
+        if (!turn.task.includes("analysis for spec update")) throw new Error("spec editor did not receive the approved analysis");
         await publish("spec", APPROVED_SPEC);
         break;
       case "planner":
@@ -194,7 +204,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
 const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
-const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", plan_review: "accept", brief_review: "accept",
+const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", plan_review: "accept", brief_review: "accept",
   admission: "admit", assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
 const capturedAdapterFixtures = new Set<string>();
 async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
@@ -281,7 +291,8 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const schemaOf = async (unit: string, artifact: string): Promise<string> =>
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
   const schemas = {
-    spec: await schemaOf(unitOf("analysis"), "spec"), plan: await schemaOf(unitOf("planning"), "plan"),
+    spec: await schemaOf(unitOf("analysis"), "spec"), analysis: await schemaOf(unitOf("analysis"), "analysis"),
+    plan: await schemaOf(unitOf("planning"), "plan"),
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
     assessment: await schemaOf(unitOf("cohort", "a"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
   };
@@ -319,6 +330,67 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     brief_sessions: [[2, "ended"]],
   });
 }, 150_000);
+
+test("analysis and revised spec are separately approved before planning", async () => {
+  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
+  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
+  const { digest } = await pinned.json() as { readonly digest: string };
+  const request_id = crypto.randomUUID();
+  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+    title: "Analysis handoff", spec: "Original specification.", admission: false, final_merge_policy: "require_merge",
+    repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
+      forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
+  if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
+  const run_id = launchRunId(request_id);
+  const unit_id = `${run_id}/analysis`;
+  const reviewTarget = async (): Promise<string | null> => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    return unit?.review_prompts.analysis_review?.target ?? null;
+  };
+  const revisionCount = async (artifact: string): Promise<number> => {
+    const rows = await db.selectFrom("authority.artifact_revision").select("id").where("run_id", "=", run_id)
+      .where("unit_id", "=", unit_id).where("artifact", "=", artifact).execute();
+    return rows.length;
+  };
+  const first = await eventually("first analysis review", reviewTarget);
+  expect([await revisionCount("analysis"), await revisionCount("spec")]).toEqual([1, 0]);
+  const change = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "request_changes", target: first, payload: { feedback: "Clarify the finding." } });
+  expect(change.status).toBe(201);
+  const revised = await eventually("revised analysis review", async () => {
+    const target = await reviewTarget();
+    return target && target !== first ? target : null;
+  });
+  expect([await revisionCount("analysis"), await revisionCount("spec")]).toEqual([2, 0]);
+  const accepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "accept", target: revised, payload: {} });
+  expect(accepted.status).toBe(201);
+  await eventually("updated spec publication", async () => await revisionCount("spec") === 1 ? true : null);
+  const specTarget = await eventually("revised spec review", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    return unit?.review_prompts.spec_review?.target ?? null;
+  });
+  const beforeSpecApproval = await db.selectFrom("authority.unit").select("status").where("id", "=", `${run_id}/planning`).executeTakeFirst();
+  expect(beforeSpecApproval?.status.kind).toBe("not_started");
+  const specChange = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "request_changes", target: specTarget, payload: { feedback: "Clarify the approved edit." } });
+  expect(specChange.status).toBe(201);
+  const revisedSpecTarget = await eventually("revised spec review after changes", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    const target = unit?.review_prompts.spec_review?.target;
+    return target && target !== specTarget ? target : null;
+  });
+  expect(await revisionCount("spec")).toBe(2);
+  const specAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "accept", target: revisedSpecTarget, payload: {} });
+  expect(specAccepted.status).toBe(201);
+  const planning = await eventually("planning input", async () => {
+    const unit = await db.selectFrom("authority.unit").select("input").where("id", "=", `${run_id}/planning`).executeTakeFirst();
+    return unit?.input && typeof unit.input === "object" && "spec" in unit.input ? unit.input : null;
+  });
+  expect(planning.spec).toBe(APPROVED_SPEC);
+  await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
+}, 90_000);
 
 test("manual confirmation completes the development run with no PR reader", async () => {
   forge.pulls.clear();

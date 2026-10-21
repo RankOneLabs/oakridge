@@ -32,7 +32,7 @@ const CONTRACT_FIELDS = {
   EventHistory: ["created_at", "event", "id", "ingress_id", "writer"],
   UnitDiagnostics: ["attempts", "effects", "rejected", "unit_id"],
   EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
-  ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "revisions", "run_id", "schema", "status", "unit_id"],
+  ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
   DefinitionSummary: ["archived_at", "bundle", "bundle_id", "digest"],
   PinnedDefinition: ["archived_at", "bundle", "bundle_id", "checked_program", "digest"],
   DefinitionDetail: ["archived_at", "bundle", "bundle_id", "digest", "graph", "workflow"],

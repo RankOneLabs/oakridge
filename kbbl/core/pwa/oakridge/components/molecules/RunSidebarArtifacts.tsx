@@ -14,6 +14,9 @@ interface RunSidebarArtifactsProps {
   onOpen: (artifactId: ArtifactId, slot: RunWorkspaceSlot) => void;
 }
 
+const artifactLabel = (typeId: string): string =>
+  typeId === "dev.spec_analysis" ? "Spec analysis" : typeId === "dev.spec" ? "Revised spec" : typeId;
+
 /**
  * Every artifact the run holds, from `run.stages[].artifacts` — no per-artifact
  * fetch is added. Clicking a row changes the pane rather than navigating away,
@@ -45,7 +48,7 @@ export function RunSidebarArtifacts({ rows, totalCount, filter, onFilterChange, 
               data-artifact-id={row.artifact_id}
             >
               <span className="or-run-sidebar__row-title">
-                {row.type_id}
+                {artifactLabel(row.type_id)}
                 <span className="or-run-sidebar__row-unit">v{row.version}</span>
               </span>
               <span className="or-run-sidebar__row-meta">

@@ -48,9 +48,14 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" };
   });
   const seenReviews = new Set<string>();
+  // A failed attempt yields both a retry decision and a stalled diagnostic.
+  // The retry is the operator's one piece of work for that unit; showing the
+  // diagnostic as another inbox item duplicates the same failed brief.
+  const unitsWithRetry = new Set(entry.items.flatMap((item) => item.kind === "decision" && item.submit.kind === "retry" ? [item.unit_id] : []));
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
+    if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
       && unit.decisions.some((decision) => decision.submit.kind === "review"
         && decision.submit.review === "merge_confirmation" && decision.submit.decision === "confirm_merged");

@@ -1,9 +1,9 @@
-Review the analyst's blocker and warning discussion in the session, then compare the proposed specification with the original. Discuss necessary qualifications and request precise changes until the specification contains the agreed decisions. Accept the proposed specification only when it is ready to be the sole requirements source for planning; do not accept unresolved product decisions.
+Review the published analysis against the specification and repository evidence. Check that `proposed_spec_updates` states each intended spec edit and its reason. Request changes until its findings, proposed resolutions, and proposed edits reflect the decisions you approve. Accept the analysis only when no unresolved product decision blocks updating the specification. This approval authorizes the spec editor to apply the listed changes. Review the published revised specification separately before planning receives it.
 
 ## Original specification
 
 {{original_spec}}
 
-## Proposed specification
+## Analysis
 
-{{spec}}
+{{analysis}}

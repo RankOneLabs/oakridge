@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { ArtifactReviewDescriptor, ArtifactSource } from "./types";
 import { SpecViewer } from "./components/molecules/SpecViewer";
+import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
 import { BuildResultReview } from "./components/organisms/BuildResultReview";
 import { AssessmentReview } from "./components/organisms/AssessmentReview";
@@ -23,6 +24,7 @@ interface RegistryEntry {
 }
 
 const REGISTRY: Record<string, RegistryEntry> = {
+  "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
   "dev-spec-viewer": { Viewer: SpecViewer },
   "dev-plan-viewer": { Viewer: PlanViewer },
   "dev-build-brief-viewer": { Viewer: BuildBriefViewer },

@@ -14,6 +14,7 @@ export const RUN_ARTIFACT_FILTERS: readonly { readonly key: RunArtifactFilter; r
 
 const ARTIFACT_GROUP: Readonly<Record<string, Exclude<RunArtifactFilter, "all">>> = {
   workspace: "prep",
+  "dev.spec_analysis": "prep",
   "dev.spec": "prep",
   "dev.plan": "prep",
   "dev.build_brief": "briefs",

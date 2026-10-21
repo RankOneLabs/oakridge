@@ -185,6 +185,7 @@ export interface RunSidebarSessionRow {
   readonly work_order_id: string;
   readonly session_id: Sid;
   readonly stage_key: string;
+  readonly display_label: string;
   readonly unit_id: string;
   readonly attempt_label: string;
   readonly work_order_state: WorkOrderState;
@@ -248,6 +249,7 @@ export const selectRunSidebarSessions = ({
         work_order_id: row.attempt.work_order_id,
         session_id: row.attempt.session_id as Sid,
         stage_key: row.attempt.stage_key,
+        display_label: row.attempt.display_label ?? row.attempt.stage_key,
         unit_id: row.attempt.unit_id,
         attempt_label: formatAttemptLabel(row),
         work_order_state: row.attempt.work_order_state,

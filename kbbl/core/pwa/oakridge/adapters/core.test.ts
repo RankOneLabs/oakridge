@@ -31,6 +31,12 @@ describe("v2 development adapters", () => {
     const detail = runSnapshot({ ...run, status: { kind: "cancelled" } }, units);
     expect(detail.ok && detail.value.status).toBe("cancelled");
   });
+  it("keeps an active run stuck while a brief unit has failed", () => {
+    const failedBrief = withUnitFields(cohort, { stage: "brief", attention: { kind: "stalled", detail: "writer failed" } });
+    const detail = runSnapshot({ ...run, status: { kind: "active" } }, [failedBrief]);
+    expect(detail.ok && [detail.value.status, detail.value.is_stuck,
+      runSummary(detail.value, run).is_failed]).toEqual(["running", true, false]);
+  });
   it("rejects malformed unit data at the API boundary", () => {
     expect(parseUnitViews([{ ...cohort, decisions: [{ ...cohort.decisions[0], submit: { kind: "review" } }] }]).ok).toBe(false);
   });
@@ -59,6 +65,17 @@ describe("v2 development adapters", () => {
       latest_revision: oldArtifact.latest_revision ? { ...oldArtifact.latest_revision, body: "Revised requirements" } : null };
     const stage = unitToStages([withUnitFields(analysis, { artifacts: [spec] })]);
     expect(stage.ok && stage.value[0]?.artifacts.map((artifact) => artifact.type_id)).toEqual(["dev.spec"]);
+  });
+  it("names the two analysis-stage sessions by the document they produce", () => {
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    const source = cohort.attempts.find((attempt) => attempt.kbbl_session_id);
+    if (!analysis || !source) throw new Error("captured fixture lacks an agent attempt");
+    const labels = ["author", "spec_editor"].map((worker) => {
+      const result = attemptToWorkOrder({ runId: run.run_id, stage: "analysis", unit: analysis,
+        attempt: { ...source, worker, unit_id: analysis.unit_id } });
+      return result.ok ? [result.value.stage_key, result.value.display_label] : null;
+    });
+    expect(labels).toEqual([["analysis", "Spec analysis"], ["analysis", "Spec update"]]);
   });
   it("keeps internal PR observations out of the frozen artifact list", () => {
     const pr = cohort.artifacts.find((artifact) => artifact.artifact_key === "pr");
@@ -146,10 +163,13 @@ describe("v2 development adapters", () => {
     const id = compositeId({ kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" });
     expect(parseCompositeId(id, "artifact")).toEqual({ ok: true, value: { kind: "artifact", runId: run.run_id, unitId: cohort.unit_id, name: "build_result" } });
   });
-  it("maps revisions and dispatches all six supported viewer schemas", () => {
+  it("maps revisions and dispatches the analysis, spec, and implementation viewers", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
-    expect(artifactTypes().map((type) => type.component_id)).toHaveLength(6);
+    expect(artifactTypes().map((type) => type.component_id)).toEqual([
+      "dev-spec-analysis-viewer", "dev-spec-viewer", "dev-plan-viewer", "dev-build-brief-viewer",
+      "dev-build-result-viewer", "dev-assessment-viewer", "dev-pr-summary-viewer",
+    ]);
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
@@ -256,6 +276,19 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
+  });
+  it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
+    const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {
+      unit_id: `${run.run_id}/briefs/${name}`, unit_key: name, collection_key: name,
+      label: `Brief ${name}`, stage: "brief", decisions: [], artifacts: [],
+    }));
+    const entry: OperatorRunInboxBatchEntry = { run_id: run.run_id, items: briefUnits.flatMap((unit) => [
+      { kind: "decision" as const, run_id: run.run_id, unit_id: unit.unit_id, key: "retry:writer",
+        label: "Retry Writer", submit: { kind: "retry" as const, worker: "writer" }, prompt: null },
+      { kind: "stalled" as const, run_id: run.run_id, unit_id: unit.unit_id, detail: "writer failed" },
+    ]) };
+    const inbox = classifyDevelopmentInbox(entry, briefUnits);
+    expect(inbox.ok && inbox.value.items.map((item) => item.unit_id)).toEqual(["first", "second"]);
   });
   it("keeps the manual merge action as the only inbox row when the optional PR watcher fails", () => {
     const mergeUnit = (cohortMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.decisions.some((decision) => decision.submit.kind === "review"
