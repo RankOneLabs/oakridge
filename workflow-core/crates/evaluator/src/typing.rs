@@ -2,9 +2,10 @@ use super::*;
 pub fn check_type(ty: &CheckedType, value: &Value) -> bool {
     match ty {
         CheckedType::Record { fields } => value.as_object().is_some_and(|object| {
-            fields
-                .iter()
-                .all(|(key, ty)| object.get(key).is_some_and(|v| check_type(ty, v)))
+            fields.iter().all(|(key, ty)| match object.get(key) {
+                Some(value) => check_type(ty, value),
+                None => matches!(ty, CheckedType::Optional { .. }),
+            })
         }),
         CheckedType::Text | CheckedType::RepoPath => value.is_string(),
         CheckedType::Ident => value.as_str().is_some_and(is_ident),
