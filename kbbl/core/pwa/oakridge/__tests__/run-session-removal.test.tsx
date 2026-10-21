@@ -8,6 +8,7 @@ import type { SessionSnapshot } from "../../types";
 import type { RunDetail, RunSessionAttempt } from "../types";
 import { writeStoredRunWorkspace } from "../lib/run-workspace-storage";
 import type { Sid } from "../../lib/ids";
+import { EventSourceStub } from "./run-pane-fixtures";
 
 const run: RunDetail = {
   id: "run-removal", title: "Removal regression", repository_keys: [],
@@ -30,6 +31,8 @@ const existing: SessionSnapshot = {
 };
 
 beforeEach(() => {
+  Element.prototype.scrollTo = () => {};
+  vi.stubGlobal("EventSource", EventSourceStub);
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
   useStore.getState().seedSessions([]);
@@ -42,6 +45,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
 });
@@ -116,4 +120,10 @@ it("keeps × on an ended session and hides its row after archiving", async () =>
   await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/sessions/existing?archive=true", { method: "DELETE" }));
   await waitFor(() => expect(visibleSessions()).toEqual([]));
   expect(useStore.getState().sessions.get("existing" as Sid)?.archivedAt).not.toBeNull();
+  fireEvent.click(screen.getByTestId("or-sidebar-archived-toggle"));
+  expect(visibleSessions()).toEqual(["existing"]);
+  expect(screen.getByTestId("or-sidebar-session-archived").textContent).toBe("archived");
+  fireEvent.click(screen.getByTestId("or-sidebar-session"));
+  expect(screen.getByTestId("or-run-pane-session").getAttribute("data-session-id")).toBe("existing");
+  expect(screen.getByText("Resume in new session")).toBeTruthy();
 });

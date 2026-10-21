@@ -7,6 +7,7 @@ import {
   selectRunGatesRead,
   selectRunOverview,
   selectRunSidebarSessions,
+  selectRunSidebarSessionVisibility,
   selectUnitsAwaitingAction,
   unitActionKeyOf,
   type RunOverview,
@@ -268,7 +269,7 @@ describe("an unavailable gate read", () => {
     expect(view.rows.map((row) => row.requires_operator_action)).toEqual([false]);
   });
 
-  it("hides archived session rows without losing the recorded attempt numbering", () => {
+  it("offers archived session rows on demand without losing attempt numbering", () => {
     const view = selectRunSidebarSessions({
       sessions: { kind: "loaded", attempts: [
         attempt({ work_order_id: "wo-1", session_id: "sid-1", unit_id: "c1" }),
@@ -278,7 +279,9 @@ describe("an unavailable gate read", () => {
       purgedSessionIds: new Set(),
       archivedSessionIds: new Set(["sid-1"]),
     });
-    expect(view.rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
+    expect(selectRunSidebarSessionVisibility(view.rows, false).visible_rows.map((row) => row.attempt_label)).toEqual(["attempt 2 of 2"]);
+    expect(selectRunSidebarSessionVisibility(view.rows, true).visible_rows.map((row) => row.attempt_label)).toEqual(["attempt 1 of 2", "attempt 2 of 2"]);
+    expect(selectRunSidebarSessionVisibility(view.rows, false).archived_count).toBe(1);
   });
 });
 
