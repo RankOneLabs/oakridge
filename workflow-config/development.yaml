@@ -16,6 +16,7 @@ input:
   title: text
   spec: text
   repositories: list(repository)
+  primary_repository_key: ident
   admission: boolean
   final_merge_policy: final_merge_policy
 schemas:
@@ -149,13 +150,16 @@ run:
       input: { repository: each }
     analysis:
       stage: analysis
-      input: { spec: input.spec, repositories: input.repositories, workspaces: "map(prepare, prepare.outcome)" }
+      input:
+        spec: input.spec
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
     planning:
       stage: planning
       input:
         spec: analysis.outcome.spec
         repositories: input.repositories
-        workspaces: "map(prepare, prepare.outcome)"
+        repository_key: input.primary_repository_key
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
     briefs:
       for_each: planning.outcome.plan.cohorts
       key: each.id
@@ -164,6 +168,7 @@ run:
       input:
         cohort: each
         spec: analysis.outcome.spec
+        workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
     implementation:
       for_each: "map(briefs, briefs.outcome.brief)"
       key: each.cohort_id
@@ -205,7 +210,7 @@ stages:
     outcome: { key: input.repository.key, workspace: latest(workspace) }
 
   analysis:
-    input: { spec: text, repositories: list(repository), workspaces: list(prepared) }
+    input: { spec: text, workspace: workspace }
     artifacts:
       analysis: { schema: analysis_body }
       spec: { schema: text }
@@ -213,13 +218,15 @@ stages:
       author:
         kind: agent
         prompts: { initial: development/analysis.md, revise: development/analysis-revise.md }
-        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces }
+        inputs: { spec: input.spec }
+        workspace: repository(input.workspace)
         creates: [analysis]
       spec_editor:
         kind: agent
         when: approved(analysis)
         prompts: { initial: development/analysis-to-spec.md, revise: development/analysis-to-spec-revise.md }
         inputs: { original_spec: input.spec, approved_analysis: latest(analysis) }
+        workspace: repository(input.workspace)
         creates: [spec]
     reviews:
       analysis_review:
@@ -238,7 +245,7 @@ stages:
     outcome: { spec: latest(spec) }
 
   planning:
-    input: { spec: text, repositories: list(repository), workspaces: list(prepared) }
+    input: { spec: text, repositories: list(repository), repository_key: ident, workspace: workspace }
     artifacts:
       plan:
         schema: plan_body
@@ -253,7 +260,8 @@ stages:
       planner:
         kind: agent
         prompts: { initial: development/plan.md, revise: development/plan-revise.md }
-        inputs: { spec: input.spec, repositories: input.repositories, workspaces: input.workspaces }
+        inputs: { spec: input.spec, repository_key: input.repository_key }
+        workspace: repository(input.workspace)
         creates: [plan]
     reviews:
       plan_review:
@@ -266,7 +274,7 @@ stages:
     outcome: { plan: latest(plan) }
 
   brief:
-    input: { cohort: plan_cohort, spec: text }
+    input: { cohort: plan_cohort, spec: text, workspace: workspace }
     artifacts:
       brief:
         schema: brief_body
@@ -283,6 +291,7 @@ stages:
         session: shared
         prompts: { initial: development/brief.md, revise: development/brief-revise.md }
         inputs: { cohort: input.cohort, spec: input.spec }
+        workspace: repository(input.workspace)
         creates: [brief]
     reviews:
       brief_review:

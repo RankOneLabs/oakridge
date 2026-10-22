@@ -12,7 +12,7 @@ import { selectCollectionKey } from "../src/projections/unit-label";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { scratchDatabase } from "./authority-fixture";
-import { addLocalOrigin } from "./local-origin";
+import { addLocalOrigin, advanceOrigin } from "./local-origin";
 import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTurn } from "./stub-kbbl";
 
 /**
@@ -169,6 +169,7 @@ let server: ReturnType<typeof Bun.serve>;
 let composition: Awaited<ReturnType<typeof createProductionComposition>>;
 let base_url: string;
 let repository: string;
+let remote_base_head: string;
 const forge = new StubForge();
 const operationServices = { git: new BunGitCommandRunner(), pull_requests: forge.reader as PullRequestReader | null };
 const timeline = new Map<string, number>();
@@ -182,7 +183,8 @@ beforeAll(async () => {
   const git = (...args: string[]) => Bun.spawn(["git", "-C", repository, ...args]).exited;
   await git("init", "-q", "-b", "main");
   await git("-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
-  await addLocalOrigin(repository, "git@github.com:oakridge-e2e/app.git", ["develop"]);
+  const origin = await addLocalOrigin(repository, "git@github.com:oakridge-e2e/app.git", ["develop"]);
+  remote_base_head = await advanceOrigin(origin, "develop");
   stub = startStubKbbl(developmentAgents(forge, timeline));
   let handler: (request: Request) => Response | Promise<Response> = () => new Response("starting", { status: 503 });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => handler(request) });
@@ -274,7 +276,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Two cohorts", spec: "Build the thing in two parts.", admission: true, final_merge_policy: "require_merge",
+    title: "Two cohorts", spec: "Build the thing in two parts.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -304,6 +306,10 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const integration_assessment = await db.selectFrom("authority.artifact_revision").select("body")
     .where("run_id", "=", run_id).where("unit_id", "=", unitOf("integration"))
     .where("artifact", "=", "assessment").orderBy("seq", "desc").executeTakeFirst();
+  const prepared_workspace = await db.selectFrom("authority.artifact_revision").select("body")
+    .where("run_id", "=", run_id).where("unit_id", "=", unitOf("prepare"))
+    .where("artifact", "=", "workspace").orderBy("seq", "desc").executeTakeFirst();
+  const local_head = await new Response(Bun.spawn(["git", "-C", repository, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text();
   // A watch polls every second but publishes only a change: no two successive pr_state revisions agree.
   const pr_states = await db.selectFrom("authority.artifact_revision").select(["unit_id", "body"]).where("run_id", "=", run_id)
     .where("artifact", "=", "pr_state").orderBy("created_at").execute();
@@ -315,6 +321,15 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     readonly repository_keys: readonly string[]; readonly created_at: string; readonly updated_at: string }[] }).items.find((item) => item.run_id === run_id);
   const brief_sessions = [...stub.sessions.values()].filter((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
     && session.spec.initial_prompt.includes("worker `writer`"));
+  const early_session_workspaces = ["author", "spec_editor", "planner", "writer"].map((worker) => {
+    const sessions = stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
+      && session.spec.initial_prompt.includes(`worker \`${worker}\``));
+    return sessions.map((session) => [session.spec.workdir, session.spec.worktree?.base_ref]);
+  });
+  const analysis_and_plan_prompts_omit_checkout = ["author", "planner"].every((worker) =>
+    stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
+      && session.spec.initial_prompt.includes(`worker \`${worker}\``))
+      .every((session) => session.inputs.every((input) => !input.text.includes(repository))));
   await eventually("brief session closed after both reviews", async () => brief_sessions.length === 1 && brief_sessions[0]?.status === "ended");
   expect({
     cohorts: outcome.cohorts.map((cohort) => cohort.cohort_id),
@@ -327,6 +342,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     merged_cohorts_without_confirmation: [...merged_cohorts_without_confirmation].sort(),
     run_summary: [listed?.title, listed?.repository_keys, !!listed && listed.updated_at >= listed.created_at],
     brief_sessions: brief_sessions.map((session) => [session.inputs.length, session.status]),
+    early_session_workspaces,
+    analysis_and_plan_prompts_omit_checkout,
+    prepared_head_vs_checkout: [(prepared_workspace?.body as { readonly head?: string } | undefined)?.head, remote_base_head !== local_head.trim()],
   }).toEqual({
     cohorts: ["a", "b"],
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
@@ -341,6 +359,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],
     brief_sessions: [[2, "ended"]],
+    early_session_workspaces: ["author", "spec_editor", "planner", "writer"].map(() => [[repository, "origin/develop"]]),
+    analysis_and_plan_prompts_omit_checkout: true,
+    prepared_head_vs_checkout: [remote_base_head, true],
   });
 }, 150_000);
 
@@ -350,7 +371,7 @@ test("analysis and revised spec are separately approved before planning", async 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Analysis handoff", spec: "Original specification.", admission: false, final_merge_policy: "require_merge",
+    title: "Analysis handoff", spec: "Original specification.", admission: false, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -413,7 +434,7 @@ test("manual confirmation completes the development run with no PR reader", asyn
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Confirm PRs", spec: "Confirm both PR stages.", admission: true, final_merge_policy: "require_merge",
+    title: "Confirm PRs", spec: "Confirm both PR stages.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -483,7 +504,7 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace cohort PR", spec: "Require the current cohort PR.", admission: true, final_merge_policy: "require_merge",
+    title: "Replace cohort PR", spec: "Require the current cohort PR.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -541,7 +562,7 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace closed PR", spec: "Require a merged integration PR.", admission: true, final_merge_policy: "require_merge",
+    title: "Replace closed PR", spec: "Require a merged integration PR.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -619,7 +640,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace merged integration PR", spec: "Do not reuse an old merge.", admission: true, final_merge_policy: "require_merge",
+    title: "Replace merged integration PR", spec: "Do not reuse an old merge.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -681,7 +702,7 @@ test("allow_close_without_merge completes on an observed close without claiming 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Allow closed PR", spec: "Complete after an unmerged close.", admission: true, final_merge_policy: "allow_close_without_merge",
+    title: "Allow closed PR", spec: "Complete after an unmerged close.", admission: true, final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);

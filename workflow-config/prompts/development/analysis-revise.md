@@ -11,11 +11,3 @@ Discuss the operator's feedback, revise the `analysis` artifact, including its `
 ## Specification
 
 {{spec}}
-
-## Repositories
-
-{{repositories}}
-
-## Prepared workspaces
-
-{{workspaces}}

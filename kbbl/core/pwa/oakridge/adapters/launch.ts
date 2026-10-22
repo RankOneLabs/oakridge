@@ -12,12 +12,14 @@ interface DevelopmentInput {
   readonly title: string;
   readonly spec: string;
   readonly repositories: readonly DevelopmentRepository[];
+  readonly primary_repository_key: string;
   readonly admission: boolean;
   readonly final_merge_policy: "require_merge" | "allow_close_without_merge";
 }
 
 /** Maps the development input and validates session choices against the pinned definition. */
 export function developmentLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
+  if (body.context.repositories.length !== 1) return fail("create run", "Development runs require exactly one repository");
   const repositories: DevelopmentRepository[] = [];
   for (const repository of body.context.repositories) {
     const configured = body.epic_profile.repositories.find((item) => item.repository_key === repository.key);
@@ -42,6 +44,7 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
   // The frozen launch form has no admission option. Its Brief approval is the
   // operator's go-ahead; the first eligible cohort starts from that outcome.
   const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
+    primary_repository_key: repositories[0].key,
     admission: false, final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
   return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input,
     config: { sessions: body.context.session_settings } });

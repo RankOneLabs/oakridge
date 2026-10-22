@@ -1,27 +1,12 @@
-Plan the implementation from the approved specification and the prepared repositories.
+Plan the implementation from the approved specification and the repository in the current directory.
 
 ## Specification
 
 {{spec}}
 
-## Repositories
-
-{{repositories}}
-
-{{workspaces}}
-
-Each cohort must operate in exactly one repository and must set
-`repository_key` to a key from the repositories above. Dependencies may cross
-repositories.
-
-Repository topology is guaranteed before planning begins: the run's base
-branch (each repository's `forge.build_base`) has already been prepared on
-origin from that repository's final base (`forge.final_base`, typically
-`main`). The prepare stage owns that guarantee, and the supplied branch values
-are authoritative. Do not create, rebase, reset, or otherwise repair a branch
-from this planner session. If the supplied topology does not look like the
-above, record a blocking risk instead of planning around stale or unknown
-ancestry.
+Set every cohort's `repository_key` to `{{repository_key}}`. The run's base
+branch has already been prepared on origin. Do not create, rebase, reset, or
+repair it from this planner session.
 
 ## Cohort sizing and review
 
@@ -58,7 +43,7 @@ Functional isolation alone is not a reason to create another cohort.
 Publish the `plan` artifact. Split the work into cohorts, each with:
 
 - a stable `id`: an identifier with no `/` or `\`, unique in the plan
-- the `repository_key` of the repository it changes: one of the repository keys above
+- `repository_key`: the key supplied above
 - `depends_on`: the ids of the cohorts that must merge before it starts, with no cycle
 - its title, scope, files in scope, decisions and acceptance criteria
 

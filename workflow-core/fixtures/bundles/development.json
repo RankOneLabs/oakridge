@@ -4,6 +4,7 @@
     "title": "text",
     "spec": "text",
     "repositories": "list(repository)",
+    "primary_repository_key": "ident",
     "admission": "boolean",
     "final_merge_policy": "final_merge_policy"
   },
@@ -223,8 +224,7 @@
         "stage": "analysis",
         "input": {
           "spec": "input.spec",
-          "repositories": "input.repositories",
-          "workspaces": "map(prepare, prepare.outcome)"
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "planning": {
@@ -232,7 +232,8 @@
         "input": {
           "spec": "analysis.outcome.spec",
           "repositories": "input.repositories",
-          "workspaces": "map(prepare, prepare.outcome)"
+          "repository_key": "input.primary_repository_key",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "briefs": {
@@ -242,7 +243,8 @@
         "pool": "writers",
         "input": {
           "cohort": "each",
-          "spec": "analysis.outcome.spec"
+          "spec": "analysis.outcome.spec",
+          "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
         }
       },
       "implementation": {
@@ -309,8 +311,7 @@
     "analysis": {
       "input": {
         "spec": "text",
-        "repositories": "list(repository)",
-        "workspaces": "list(prepared)"
+        "workspace": "workspace"
       },
       "artifacts": {
         "analysis": {
@@ -328,10 +329,9 @@
             "revise": "development/analysis-revise.md"
           },
           "inputs": {
-            "spec": "input.spec",
-            "repositories": "input.repositories",
-            "workspaces": "input.workspaces"
+            "spec": "input.spec"
           },
+          "workspace": "repository(input.workspace)",
           "creates": [
             "analysis"
           ]
@@ -347,6 +347,7 @@
             "original_spec": "input.spec",
             "approved_analysis": "latest(analysis)"
           },
+          "workspace": "repository(input.workspace)",
           "creates": [
             "spec"
           ]
@@ -395,7 +396,8 @@
       "input": {
         "spec": "text",
         "repositories": "list(repository)",
-        "workspaces": "list(prepared)"
+        "repository_key": "ident",
+        "workspace": "workspace"
       },
       "artifacts": {
         "plan": {
@@ -425,9 +427,9 @@
           },
           "inputs": {
             "spec": "input.spec",
-            "repositories": "input.repositories",
-            "workspaces": "input.workspaces"
+            "repository_key": "input.repository_key"
           },
+          "workspace": "repository(input.workspace)",
           "creates": [
             "plan"
           ]
@@ -462,7 +464,8 @@
     "brief": {
       "input": {
         "cohort": "plan_cohort",
-        "spec": "text"
+        "spec": "text",
+        "workspace": "workspace"
       },
       "artifacts": {
         "brief": {
@@ -495,6 +498,7 @@
             "cohort": "input.cohort",
             "spec": "input.spec"
           },
+          "workspace": "repository(input.workspace)",
           "creates": [
             "brief"
           ]

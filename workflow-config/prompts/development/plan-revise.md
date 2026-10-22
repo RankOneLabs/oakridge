@@ -12,10 +12,6 @@ Revise your implementation plan.
 
 {{spec}}
 
-## Repositories
+Set every cohort's `repository_key` to `{{repository_key}}`.
 
-{{repositories}}
-
-{{workspaces}}
-
-Publish the revised `plan` artifact with every field. Every cohort names one of the repository keys, cohort ids are unique, and `depends_on` names other cohorts without a cycle.
+Publish the revised `plan` artifact with every field. Cohort ids are unique, and `depends_on` names other cohorts without a cycle.
