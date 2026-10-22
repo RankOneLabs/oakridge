@@ -21,6 +21,7 @@ import type {
   ArtifactTypeDescriptor,
   GateResumeRequest,
   GateResumeResponse,
+  MergeStatus,
   CollabThread,
   ReviewItem,
   PostThreadRequest,
@@ -318,6 +319,11 @@ export async function resumeGate(gateId: string, req: GateResumeRequest): Promis
   await decide(gate.runId, gate.unitId, gate.name, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
   invalidateCachedRunUnits(gate.runId);
   return { gate_id: gateId, resumed: true };
+}
+
+/** Read the forge at click time for the current PR of a cohort or integration unit. */
+export function fetchMergeStatus(runId: string, unitId: string): Promise<MergeStatus> {
+  return oakridgeGet<MergeStatus>(`${unitPath(runId, unitId)}/merge-status`);
 }
 
 export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRequest): Promise<CohortPullRequestResponse> {

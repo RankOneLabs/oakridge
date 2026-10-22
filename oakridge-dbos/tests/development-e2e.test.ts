@@ -441,6 +441,18 @@ test("manual confirmation completes the development run with no PR reader", asyn
   expect({ observed: !!unseen, manual_target: before.submit.target_revision_id?.includes(":manual_merge_target:") })
     .toEqual({ observed: false, manual_target: true });
 
+  const live_status = await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/merge-status`);
+  const status_body = await live_status.json() as { readonly kind: string; readonly detail?: string };
+  expect({ status: live_status.status, kind: status_body.kind, reader_unavailable: status_body.detail?.includes("no pull request reader") })
+    .toEqual({ status: 200, kind: "unavailable", reader_unavailable: true });
+
+  operationServices.pull_requests = forge.reader;
+  try {
+    const open_status = await api("GET", `/api/runs/${segment(run_id)}/units/${segment(integration.id)}/merge-status`);
+    expect({ status: open_status.status, body: await open_status.json() }).toEqual({ status: 200,
+      body: { kind: "not_merged", pr_url: pullUrl(3), state: "open" } });
+  } finally { operationServices.pull_requests = null; }
+
   forge.merge("integration");
 
   const completed = await eventually("the confirmed run to finish", async () => {

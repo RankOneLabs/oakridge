@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { PROVIDER_ERROR_CODES } from "../src/effects/provider-catalog";
-import { observePullRequest, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
+import { observePullRequest, selectDevelopmentMergeQuery, selectPullRequestRef, type PullRequestWatchQuery } from "../src/operations/pull-request-observe";
 import { GithubPullRequestReader } from "../src/runtime/github-pull-requests";
 
 const query: PullRequestWatchQuery = { owner: "RankOneLabs", name: "oakridge", head_owner: "RankOneLabs",
@@ -25,6 +25,18 @@ const forgeReturning = (payload: unknown) => {
 };
 
 const refFor = (pr_url: string) => selectPullRequestRef({ ...query, pr_url });
+
+test("merge confirmation checks the current PR against the unit's intended base", () => {
+  const input = { repository: { forge: { owner: "RankOneLabs", name: "oakridge", build_base: "develop", final_base: "main" } },
+    workspace: { push_remote_owner: "RankOneLabs" } };
+  const pr = { pr_url: query.pr_url, branch: "cohort/foundation" };
+  expect([selectDevelopmentMergeQuery("cohort", input, pr), selectDevelopmentMergeQuery("integration", input, pr)])
+    .toEqual([{ ok: true, value: { ...query, base_branch: "develop" } }, { ok: true, value: { ...query, base_branch: "main" } }]);
+});
+
+test("merge confirmation refuses a missing current PR identity", () => {
+  expect(selectDevelopmentMergeQuery("cohort", {}, null).ok).toBe(false);
+});
 
 test("a pull request url names its number in the query's repository", () => {
   expect(refFor("https://github.com/RankOneLabs/oakridge/pull/440"))

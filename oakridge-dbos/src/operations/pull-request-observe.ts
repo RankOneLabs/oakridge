@@ -21,6 +21,33 @@ export interface PullRequestWatchQuery {
 export interface PullRequestObserveInput { readonly query: PullRequestWatchQuery }
 export type PullRequestObserveOutput = PullRequestObservation;
 
+/** The cohort/integration unit input and PR artifact published by development.yaml. */
+interface DevelopmentMergeInput {
+  readonly repository: { readonly forge: { readonly owner: string; readonly name: string;
+    readonly build_base: string; readonly final_base: string } };
+  readonly workspace: { readonly push_remote_owner: string };
+}
+interface PublishedPullRequest { readonly pr_url: string; readonly branch: string }
+
+function isDevelopmentMergeInput(value: unknown): value is DevelopmentMergeInput {
+  if (!isFields(value) || !isFields(value.repository) || !isFields(value.repository.forge) || !isFields(value.workspace)) return false;
+  const forge = value.repository.forge;
+  return [forge.owner, forge.name, forge.build_base, forge.final_base, value.workspace.push_remote_owner].every(isNonEmptyString);
+}
+const isPublishedPullRequest = (value: unknown): value is PublishedPullRequest =>
+  isFields(value) && isNonEmptyString(value.pr_url) && isNonEmptyString(value.branch);
+
+/** Recreate the PR watch query from the same recorded unit input and current PR. */
+export function selectDevelopmentMergeQuery(stage: string, unit_input: unknown, pr_body: unknown): Result<PullRequestWatchQuery, string> {
+  if (stage !== "cohort" && stage !== "integration") return err(`unit stage ${stage} does not confirm PR merges`);
+  if (!isDevelopmentMergeInput(unit_input) || !isPublishedPullRequest(pr_body))
+    return err("merge confirmation has no complete unit input or PR");
+  return ok({ owner: unit_input.repository.forge.owner, name: unit_input.repository.forge.name,
+    head_owner: unit_input.workspace.push_remote_owner, head_branch: pr_body.branch,
+    base_branch: stage === "cohort" ? unit_input.repository.forge.build_base : unit_input.repository.forge.final_base,
+    pr_url: pr_body.pr_url });
+}
+
 export function decodePullRequestObserveInput(value: unknown): PullRequestObserveInput | null {
   if (!isFields(value) || !isFields(value.query)) return null;
   const { owner, name, head_owner, head_branch, base_branch, pr_url } = value.query;
