@@ -1,6 +1,6 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -55,6 +55,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   const items: ReviewInboxItem[] = entry.items.flatMap((item) => {
     const unit = byId.get(item.unit_id);
     if (!unit) return [];
+    if (item.kind === "decision" && item.submit.kind === "review"
+      && !isDisplayedReviewDecision(item.submit.review, item.submit.decision)) return [];
     if (item.kind === "stalled" && unitsWithRetry.has(item.unit_id)) return [];
     const isManualMergeAvailable = deriveStatus(statusInputOf(unit)).stage === "parked"
       && unit.decisions.some((decision) => decision.submit.kind === "review"
@@ -74,7 +76,9 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const artifact = target ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) : null;
     const gate = review ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: review }) : null;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage ?? "$root" });
-    const actions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review).map(decisionAction) : [];
+    const actions = review ? unit.decisions.filter((candidate) => candidate.submit.kind === "review"
+      && candidate.submit.review === review
+      && isDisplayedReviewDecision(candidate.submit.review, candidate.submit.decision)).map(decisionAction) : [];
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),

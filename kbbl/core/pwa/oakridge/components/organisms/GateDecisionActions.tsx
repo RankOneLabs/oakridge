@@ -107,7 +107,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
     setMergeStatus(null);
     setIsCheckingMerge(true);
     try {
-      const status = await fetchMergeStatus(gate.run_id, gate.unit_id);
+      const status = await fetchMergeStatus(gate.id);
       if (!isActive.current) return;
       if (status.kind === "merged") submit("confirm_merged");
       else setMergeStatus(status);

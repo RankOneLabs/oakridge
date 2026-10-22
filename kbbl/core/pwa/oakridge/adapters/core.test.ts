@@ -108,12 +108,11 @@ describe("v2 development adapters", () => {
     expect([stages.ok && stages.value[0]?.status, unit?.status, unit?.admission_required,
       unit?.admitted, unit?.admission_eligible]).toEqual(["parked", "pending", true, false, true]);
   });
-  it("maps reviews to gates and change effects to the feedback action", () => {
+  it("omits the retired build-change action from pinned assessment reviews", () => {
     const gates = reviewToGates(cohort);
-    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve", "request_build_changes"]);
-    expect(decisionAction(cohort.decisions.find((decision) => decision.key === "request_build_changes")!)).toBe("request_build_changes");
+    expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve"]);
   });
-  it("keeps assessment and build revision choices distinct", () => {
+  it("keeps assessment revision available on pinned reviews", () => {
     const buildChange = cohort.decisions.find((decision) => decision.key === "request_build_changes");
     if (!buildChange || buildChange.submit.kind !== "review") throw new Error("fixture lacks build change decision");
     const assessmentChange = { ...buildChange, key: "request_assessment_changes", label: "Revise assessment",
@@ -121,7 +120,7 @@ describe("v2 development adapters", () => {
         target_revision_id: cohort.artifacts.find((artifact) => artifact.artifact_key === "assessment")?.latest_revision?.id ?? "" } };
     const gates = reviewToGates({ ...cohort, decisions: [...cohort.decisions, assessmentChange] });
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions)
-      .toEqual(["approve", "request_build_changes", "request_assessment_changes"]);
+      .toEqual(["approve", "request_assessment_changes"]);
   });
   it("marks the assessor session as needing the operator when its assessment is published", () => {
     const attempts = cohort.attempts.filter((attempt) => attempt.kbbl_session_id).map((attempt) =>
@@ -286,6 +285,7 @@ describe("v2 development adapters", () => {
     const inbox = classifyDevelopmentInbox(sample.inbox as unknown as { run_id: string; items: readonly import("../operator-contracts").OperatorInboxItem[] }, units);
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
+    expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
   });
   it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
     const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {

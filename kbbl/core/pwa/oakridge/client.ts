@@ -322,8 +322,9 @@ export async function resumeGate(gateId: string, req: GateResumeRequest): Promis
 }
 
 /** Read the forge at click time for the current PR of a cohort or integration unit. */
-export function fetchMergeStatus(runId: string, unitId: string): Promise<MergeStatus> {
-  return oakridgeGet<MergeStatus>(`${unitPath(runId, unitId)}/merge-status`);
+export function fetchMergeStatus(gateId: string): Promise<MergeStatus> {
+  const gate = unwrapAdapter(gateId, parseCompositeId(gateId, "gate"));
+  return oakridgeGet<MergeStatus>(`${unitPath(gate.runId, gate.unitId)}/merge-status`);
 }
 
 export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRequest): Promise<CohortPullRequestResponse> {

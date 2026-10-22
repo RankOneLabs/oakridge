@@ -121,6 +121,9 @@ export function deriveStatus(input: StatusInput): { readonly run: RunStatus; rea
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
 /** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
 const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
+/** Older pinned runs may still declare this removed assessment action. */
+export const isDisplayedReviewDecision = (review: string, decision: string): boolean =>
+  review !== "assessment_review" || decision !== "request_build_changes";
 export const decisionAction = (decision: OperatorDecisionDefinition): string => {
   if (decision.submit.kind === "retry") return "rerun";
   if (decision.submit.kind === "cancel") return "fail";
@@ -130,7 +133,8 @@ export const decisionAction = (decision: OperatorDecisionDefinition): string => 
   return V1_APPROVE_ACTIONS.has(decision.submit.decision) ? decision.submit.decision : "approve";
 };
 export const reviewDecisions = (unit: OperatorUnitView): GateDecision[] => unit.decisions
-  .filter((decision) => decision.submit.kind === "review")
+  .filter((decision) => decision.submit.kind === "review"
+    && isDisplayedReviewDecision(decision.submit.review, decision.submit.decision))
   .map((decision) => ({ action: decisionAction(decision), decision }));
 /** The frozen sidebar matches gates to sessions by stage and unit label. The
  * development cohort runs builder and assessor in separate sessions on one
@@ -148,6 +152,7 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
   const byReview = new Map<string, OperatorDecisionDefinition[]>();
   for (const decision of unit.decisions) {
     if (decision.submit.kind !== "review") continue;
+    if (!isDisplayedReviewDecision(decision.submit.review, decision.submit.decision)) continue;
     byReview.set(decision.submit.review, [...(byReview.get(decision.submit.review) ?? []), decision]);
   }
   return ok([...byReview].map(([review, decisions]) => {

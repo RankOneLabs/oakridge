@@ -14,9 +14,11 @@ const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
 const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
 if (!capturedCohort) throw new Error("captured fixture lacks an assessment review");
 const approveDecision = capturedCohort.decisions.find((decision) => decision.key === "accept");
-const changeDecision = capturedCohort.decisions.find((decision) => decision.key === "request_build_changes");
+const legacyBuildChange = capturedCohort.decisions.find((decision) => decision.key === "request_build_changes");
 const approveTarget = approveDecision?.submit.kind === "review" ? approveDecision.submit.target_revision_id : null;
-const changeTarget = changeDecision?.submit.kind === "review" ? changeDecision.submit.target_revision_id : null;
+if (!legacyBuildChange || legacyBuildChange.submit.kind !== "review") throw new Error("captured fixture lacks legacy assessment decision");
+const assessmentChange = { ...legacyBuildChange, key: "request_assessment_changes", label: "Request assessment changes",
+  submit: { ...legacyBuildChange.submit, decision: "request_assessment_changes", target_revision_id: approveTarget ?? "" } };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -33,11 +35,11 @@ const inbox: ReviewInbox = {
   cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "waiting_admission", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
     { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
   items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "waiting_admission", title: "Build API", resume_actions: [], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_build_changes"], blocked_by: [] }],
+    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
 };
 
 const runId = "run-1";
-const v2Unit = { ...capturedCohort, run_id: runId };
+const v2Unit = { ...capturedCohort, run_id: runId, decisions: [...capturedCohort.decisions, assessmentChange] };
 const v2Run = { ...sample.run, run_id: runId };
 function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], afterDecision?: () => void) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -66,7 +68,8 @@ describe("ReviewInboxView", () => {
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
     expect(screen.getAllByText("Artifact ready for review")).toHaveLength(1);
-    expect(screen.getByTestId("or-decision-request_build_changes")).toBeTruthy();
+    expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
+    expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/units"))).toHaveLength(1);
   });
 
@@ -105,14 +108,14 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[1]] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-decision-request_build_changes"));
+    fireEvent.click(await screen.findByTestId("or-decision-request_assessment_changes"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Explain the recovery path." } });
     fireEvent.click(send);
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "request_build_changes", target: changeTarget, payload: { feedback: "Explain the recovery path." } });
+    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "request_assessment_changes", target: approveTarget, payload: { feedback: "Explain the recovery path." } });
   });
 
   it("shows blockers without offering admission", async () => {

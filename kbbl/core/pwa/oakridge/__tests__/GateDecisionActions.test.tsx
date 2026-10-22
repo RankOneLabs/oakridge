@@ -67,11 +67,12 @@ const mergeGates = reviewToGates(confirmedMergeUnit);
 if (!mergeGates.ok) throw new Error("captured merge review could not be mapped");
 const mergeGate = mergeGates.value.find((candidate) => candidate.gate_step === "merge_confirmation");
 if (!mergeGate) throw new Error("captured fixture lacks a merge gate");
+const expectedMergeStatusPath = `/oakridge/api/api/runs/${encodeURIComponent(mergeGate.run_id)}/units/${encodeURIComponent(confirmedMergeUnit.unit_id)}/merge-status`;
 
 function mockMerge(status: unknown, post: (init?: RequestInit) => Promise<Response>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path.endsWith("/merge-status")) return json(status);
+    if (path === expectedMergeStatusPath) return json(status);
     if (init?.method === "POST") return post(init);
     if (path.endsWith(`/units/${encodeURIComponent(confirmedMergeUnit.unit_id)}`)) return json(confirmedMergeUnit);
     throw new Error(`unexpected merge request ${path}`);

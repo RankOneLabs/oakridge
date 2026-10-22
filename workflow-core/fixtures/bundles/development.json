@@ -665,14 +665,6 @@
               "fields": {
                 "feedback": "What must the assessment change?"
               }
-            },
-            "request_build_changes": {
-              "effect": "request_changes",
-              "on": "build_result",
-              "label": "Request build changes",
-              "fields": {
-                "feedback": "What must the builder change?"
-              }
             }
           }
         },
