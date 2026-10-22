@@ -53,17 +53,17 @@ describe("selectRunAttentionCounts", () => {
   });
 });
 
-it("keeps scalar admission and gate identities separate across stages", () => {
+it("keeps cohort identities separate across stages", () => {
   const gate = inboxItem("gate", "run-a", "actionable");
   gate.unit_id = "0";
-  const admission = { ...gate, stage_instance_id: "stage-2", kind: "admission" as const };
+  const other = { ...gate, stage_instance_id: "stage-2" };
   const cohorts = new Map([
     [selectReviewCohortKey(gate), "gate stage"],
-    [selectReviewCohortKey(admission), "admission stage"],
+    [selectReviewCohortKey(other), "other stage"],
   ]);
 
-  expect([cohorts.get(selectReviewCohortKey(gate)), cohorts.get(selectReviewCohortKey(admission))])
-    .toEqual(["gate stage", "admission stage"]);
+  expect([cohorts.get(selectReviewCohortKey(gate)), cohorts.get(selectReviewCohortKey(other))])
+    .toEqual(["gate stage", "other stage"]);
 });
 
 it("names the run, stage and artifact of attention work", () => {

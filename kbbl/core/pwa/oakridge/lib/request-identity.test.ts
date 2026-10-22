@@ -41,9 +41,4 @@ describe("request identity", () => {
     expect(changed.idempotency_key).toBe("launch-2");
   });
 
-  it("keys admission retries by stage and unit, so two units never share a key", () => {
-    const foundation = selectRequestIdentity(null, "stage-1:foundation", () => "admit-1");
-    const web = selectRequestIdentity(null, "stage-1:web", () => "admit-2");
-    expect(foundation.idempotency_key).not.toBe(web.idempotency_key);
-  });
 });

@@ -34,7 +34,6 @@ import type {
   EpicWorkflowProfile,
   FinalPullRequestResponse,
   RepositoryKey,
-  AdmitStageUnitResponse,
   EpicProfileId,
   WorkflowRunId,
   RunSessionAttempt,
@@ -271,18 +270,6 @@ export async function refreshReviewInboxRun(runId: string, current: ReviewInbox)
   const runTitle = [...current.items, ...current.cohorts].find((work) => work.run_id === runId)?.run_title ?? null;
   const slice = unwrapAdapter(path, classifyDevelopmentInbox({ run_id: runId, items: page.items }, await readUnits(runId), runTitle));
   return replaceDevelopmentInboxRun(current, runId, slice);
-}
-
-export async function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
-  const stage = unwrapAdapter(stageId, parseCompositeId(stageId, "stage"));
-  const unit = (await readUnits(stage.runId)).find((candidate) => candidate.stage === stage.name
-    && (candidate.collection_key === unitId || candidate.unit_key === unitId));
-  if (!unit) throw new Error(`oakridge ${stageId}: unit ${unitId} not found`);
-  const admit = unit.decisions.find((decision) => decision.submit.kind === "review" && decision.submit.review === "admission");
-  if (!admit || admit.submit.kind !== "review") throw new Error(`oakridge ${stageId}: admission decision unavailable`);
-  await decide(stage.runId, unit.unit_id, admit.submit.review, admit.submit.decision, admit.submit.target_revision_id, {}, idempotencyKey);
-  invalidateCachedRunUnits(stage.runId);
-  return { stage_instance_id: stageId, unit_id: unitId, admitted: true };
 }
 
 export async function fetchArtifact(id: string): Promise<ArtifactDetail> {

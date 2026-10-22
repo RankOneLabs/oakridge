@@ -4,7 +4,7 @@ import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
-import { admitStageUnit, cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
+import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
@@ -115,7 +115,7 @@ describe("v2 Oakridge client", () => {
         builder: { harness: "codex", model: "gpt-6-sol", effort: null } } } } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort(),
+    expect([result.id, body.request_id, body.digest, Object.hasOwn(body.input, "admission"), Object.keys(body.config.sessions).sort(),
       body.config.sessions.cohort.assessor, body.config.sessions.cohort.builder]).toEqual([
       runId, "launch-1", sample.run.definition_digest, false,
       ["analysis", "brief", "cohort", "integration", "planning"],
@@ -190,22 +190,6 @@ describe("v2 Oakridge client", () => {
     const decision = fetch.mock.calls.find(([path]) => String(path).endsWith("/decide"));
     expect(JSON.parse(String(decision?.[1]?.body))).toEqual({ request_id: "decide-1", decision: "request_build_changes",
       target: changeTarget, payload: { feedback: "Fix the API" } });
-  });
-
-  it("admits a cohort at the review and revision named by its unit view", async () => {
-    const admission = { key: "admit", label: "Admit", payload_schema: null, fields: [],
-      submit: { kind: "review", review: "admission", decision: "admit", effect: "approve",
-        target_revision_id: "brief-revision-1" } };
-    const unit = { ...cohort, decisions: [admission] };
-    const briefWithSameKey = { ...cohort, stage: "brief", unit_id: `${runId}/briefs/${cohort.collection_key}`,
-      decisions: [], artifacts: [], attempts: [] };
-    const fetch = calls((path) => path.endsWith("/units") ? [briefWithSameKey, unit]
-      : { kind: "committed", run_id: runId, event_id: "event-admit" });
-    const stageId = compositeId({ kind: "stage", runId, unitId: `${runId}/implementation/another-cohort`, name: "cohort" });
-    const result = await admitStageUnit(stageId, cohort.collection_key!, "admit-1");
-    const post = fetch.mock.calls.find(([path]) => String(path).endsWith("/reviews/admission/decide"));
-    expect([result.admitted, JSON.parse(String(post?.[1]?.body))]).toEqual([true,
-      { request_id: "admit-1", decision: "admit", target: "brief-revision-1", payload: {} }]);
   });
 
   it("submits the v1 approve action as the v2 decision key it maps from, without feedback", async () => {

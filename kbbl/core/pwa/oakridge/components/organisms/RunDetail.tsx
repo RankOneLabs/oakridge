@@ -5,7 +5,6 @@ import { useRetryStuck } from "../../hooks/useRetryStuck";
 import { useArchiveRun } from "../../hooks/useArchiveRun";
 import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
-import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import { useReviewInbox } from "../../hooks/useReviewInbox";
 import { hasOpenPullRequestMergeWait } from "../../lib/run-overview";
@@ -61,7 +60,6 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
   const archiveMutation = useArchiveRun(runId);
   const unarchiveMutation = useUnarchiveRun(runId);
   const deleteMutation = useDeleteRun(runId);
-  const admitMutation = useAdmitStageUnit(runId);
   const confirmMergeMutation = useConfirmCohortMerged(runId);
   const reviewInboxQuery = useReviewInbox();
 
@@ -203,13 +201,6 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                         unit={unit}
                         unitArtifacts={unitArtifacts}
                         onSelectArtifact={onSelectArtifact}
-                        onAdmit={(unitId) => void admitMutation.mutate({ stageId: stage.stage_instance_id, unitId })}
-                        admitting={admitMutation.isPending && admitMutation.variables?.stageId === stage.stage_instance_id && admitMutation.variables.unitId === unit.unit_id}
-                        admissionError={admitMutation.isError
-                          && admitMutation.variables?.stageId === stage.stage_instance_id
-                          && admitMutation.variables.unitId === unit.unit_id
-                          ? (admitMutation.error instanceof Error ? admitMutation.error.message : "Admission failed")
-                          : undefined}
                         onRetry={(unitId) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId })}
                         retrying={retryMutation.isPending
                           && retryMutation.variables?.stageInstanceId === stage.stage_instance_id

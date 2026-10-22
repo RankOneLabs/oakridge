@@ -6,7 +6,7 @@
 #   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:
 #                   builder, assessor reviewing the build, operator reviewing the assessment,
-#                   the PR observed until merged (D4); admission optional (D7);
+#                   the PR observed until merged (D4);
 #                   a closed, unmerged PR requests build changes (D5)
 #   integration     one integration PR per repository with cohorts, into its final base (D6)
 #
@@ -17,7 +17,6 @@ input:
   spec: text
   repositories: list(repository)
   primary_repository_key: ident
-  admission: boolean
   final_merge_policy: final_merge_policy
 schemas:
   final_merge_policy: enum(require_merge, allow_close_without_merge)
@@ -179,7 +178,6 @@ run:
         brief: each
         repository: "require(lookup(input.repositories, key, each.repository_key))"
         workspace: "require(lookup(map(prepare, prepare.outcome), key, each.repository_key)).workspace"
-        admission: input.admission
     integration:
       for_each: "filter(input.repositories, contains(map(implementation, implementation.outcome.repository_key), item.key))"
       key: each.key
@@ -304,7 +302,7 @@ stages:
     outcome: { brief: latest(brief) }
 
   cohort:
-    input: { brief: brief_body, repository: repository, workspace: workspace, admission: boolean }
+    input: { brief: brief_body, repository: repository, workspace: workspace }
     let:
       brief_value: input.brief
       watch_base: input.repository.forge.build_base
@@ -314,22 +312,14 @@ stages:
       closed_pr: pr_state_current and latest(pr_state).state == "closed_unmerged"
       merged_pr: observed_state_current and latest(observed_state).state == "merged"
     artifacts:
-      brief: { schema: brief_body }
       build_result: { schema: build_body }
       pr: { schema: pr_body }
       assessment: { schema: assessment_body }
       pr_state: { schema: pr_status }
       observed_state: { schema: pr_status }
     workers:
-      # The accepted brief, published into the cohort so the operator can admit it (D7).
-      publish_brief:
-        kind: code
-        operation: value.publish
-        inputs: { value: input.brief }
-        creates: [brief]
       builder:
         kind: agent
-        when: approved(brief) or not input.admission
         prompts: { initial: development/build.md, revise: development/build-revise.md }
         inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
         workspace: repository(input.workspace)
@@ -352,14 +342,6 @@ stages:
         every: 2m
         creates: [observed_state]
     reviews:
-      admission:
-        of: brief
-        by: operator
-        when: input.admission
-        prompt: development/admission.md
-        inputs: { brief: latest(brief) }
-        decisions:
-          admit: { effect: approve, label: Admit }
       assessment_review:
         of: assessment
         by: operator

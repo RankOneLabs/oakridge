@@ -13,7 +13,6 @@ interface DevelopmentInput {
   readonly spec: string;
   readonly repositories: readonly DevelopmentRepository[];
   readonly primary_repository_key: string;
-  readonly admission: boolean;
   readonly final_merge_policy: "require_merge" | "allow_close_without_merge";
 }
 
@@ -41,11 +40,10 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
       if (!declaredKeys.has(JSON.stringify([stage, worker]))) return fail("create run", `unknown agent worker ${stage} · ${worker}`);
     }
   }
-  // The frozen launch form has no admission option. Its Brief approval is the
-  // operator's go-ahead; the first eligible cohort starts from that outcome.
+  // Brief approval is the operator's go-ahead.
   const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
     primary_repository_key: repositories[0].key,
-    admission: false, final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
+    final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
   return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input,
     config: { sessions: body.context.session_settings } });
 }
