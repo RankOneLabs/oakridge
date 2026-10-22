@@ -125,34 +125,10 @@ jobs:
   kbbl-browser-tests:
     name: kbbl browser tests (Chromium)
     runs-on: ubuntu-latest
-    # The decide scenario serves the authority's own API over a scratch database.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: oakridge
-          POSTGRES_PASSWORD: oakridge
-          POSTGRES_DB: oakridge
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      OAKRIDGE_TEST_DATABASE_URL: postgres://oakridge:oakridge@127.0.0.1:5432/oakridge
+    # Both browser tests serve fixture responses with Bun.serve and need neither
+    # the database nor the WASM core.
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.93.1
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: workflow-core
-      - run: cargo build --locked --target wasm32-unknown-unknown -p workflow-evaluator
-        working-directory: workflow-core
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: cd kbbl && bunx playwright install --with-deps chromium
