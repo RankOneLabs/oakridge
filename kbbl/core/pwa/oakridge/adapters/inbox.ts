@@ -5,7 +5,7 @@ import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStat
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
   "analysis:analysis_review": "artifact_gate", "planning:plan_review": "artifact_gate", "brief:brief_review": "artifact_gate",
-  "cohort:admission": "admission", "cohort:assessment_review": "artifact_gate", "cohort:merge_confirmation": "merge_confirmation",
+  "cohort:assessment_review": "artifact_gate", "cohort:merge_confirmation": "merge_confirmation",
   "integration:integration_review": "artifact_gate", "integration:merge_confirmation": "merge_confirmation",
   "cohort:pr_closed": "gate_decision", "integration:pr_closed": "gate_decision",
 };
@@ -21,7 +21,6 @@ function classify(item: OperatorInboxItem, unit: OperatorUnitView): ReviewInboxI
 function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]): CohortLifecycle {
   if (unit.status.kind === "done") return "complete";
   if (deriveStatus(statusInputOf(unit)).stage === "failed") return "failed";
-  if (items.some((item) => item.kind === "decision" && item.submit.kind === "review" && item.submit.review === "admission")) return "waiting_admission";
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review" && item.submit.review.includes("merge"))) return "merge_confirmation";
   if (items.some((item) => item.kind === "decision" && item.submit.kind === "review")) return "artifact_review";
   return unit.stage === "integration" ? "github_review" : "building";
@@ -40,9 +39,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     return { id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
       title: unit.label, run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
         assessment_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "assessment" && !!candidate.latest_revision) },
-      admission: { required: unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission"),
-        admitted: !unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "admission"),
-        eligible: true, blocked_by: [] }, artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
+      artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: developmentPullRequestUrl(unit),
       updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" };

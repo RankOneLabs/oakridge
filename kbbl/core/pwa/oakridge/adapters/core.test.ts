@@ -96,18 +96,6 @@ describe("v2 development adapters", () => {
       ["builder", cohort.collection_key, 1, 1], ["assessment", cohort.collection_key, 1, 1],
     ]);
   });
-  it("exposes a pending admission control in the frozen stage row while the run remains parked", () => {
-    const original = cohort.decisions.find((decision) => decision.submit.kind === "review");
-    const briefRevision = cohort.artifacts.find((artifact) => artifact.artifact_key === "brief")?.latest_revision;
-    if (!original || original.submit.kind !== "review" || !briefRevision) throw new Error("fixture lacks cohort review and brief");
-    const awaiting = withUnitFields(cohort, { attention: { kind: "waiting", reason: "awaiting admission review" },
-      decisions: [{ ...original, key: "admit", submit: { ...original.submit, review: "admission", decision: "admit",
-        effect: "approve", target_revision_id: briefRevision.id } }] });
-    const stages = unitToStages([awaiting]);
-    const unit = stages.ok ? stages.value[0]?.units?.[0] : null;
-    expect([stages.ok && stages.value[0]?.status, unit?.status, unit?.admission_required,
-      unit?.admitted, unit?.admission_eligible]).toEqual(["parked", "pending", true, false, true]);
-  });
   it("omits the retired build-change action from pinned assessment reviews", () => {
     const gates = reviewToGates(cohort);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve"]);
@@ -164,7 +152,7 @@ describe("v2 development adapters", () => {
     if (!accept || accept.submit.kind !== "review") throw new Error("captured fixture lacks an accept review");
     const target = `${cohort.unit_id}:input:1`;
     const inputReview = withUnitFields(cohort, { artifacts: [], decisions: [{ ...accept,
-      submit: { ...accept.submit, review: "admission", target_revision_id: target } }] });
+      submit: { ...accept.submit, review: "assessment_review", target_revision_id: target } }] });
     const gates = reviewToGates(inputReview);
     expect(gates.ok && gates.value[0]?.artifact_revision_id).toBe(target);
   });

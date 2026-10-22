@@ -16,11 +16,6 @@ interface DevelopmentInput {
   readonly final_merge_policy: "require_merge" | "allow_close_without_merge";
 }
 
-/** Previously pinned definitions still require the retired admission field. */
-const requiresAdmissionInput = (definition: OperatorDefinitionDetail): boolean =>
-  definition.workflow.input !== null && typeof definition.workflow.input === "object"
-    && Object.hasOwn(definition.workflow.input, "admission");
-
 /** Maps the development input and validates session choices against the pinned definition. */
 export function developmentLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
   if (body.context.repositories.length !== 1) return fail("create run", "Development runs require exactly one repository");
@@ -45,12 +40,10 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
       if (!declaredKeys.has(JSON.stringify([stage, worker]))) return fail("create run", `unknown agent worker ${stage} · ${worker}`);
     }
   }
-  // Brief approval is the operator's go-ahead for new definitions. Older
-  // pinned definitions still require admission=false in their launch input.
+  // Brief approval is the operator's go-ahead.
   const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
     primary_repository_key: repositories[0].key,
     final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
-  const launchInput = requiresAdmissionInput(definition) ? { ...input, admission: false } : input;
-  return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input: launchInput,
+  return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input,
     config: { sessions: body.context.session_settings } });
 }

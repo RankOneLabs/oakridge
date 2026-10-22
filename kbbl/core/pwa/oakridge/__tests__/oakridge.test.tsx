@@ -292,7 +292,7 @@ describe("RunDetail stage list", () => {
     expect((await screen.findByTestId("or-run-detail-error")).getAttribute("role")).toBe("alert");
   });
 
-  it("keeps full cohort briefs out of the stage list while rendering admission controls", async () => {
+  it("keeps full cohort briefs out of the stage list", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       stages: [{
@@ -310,17 +310,13 @@ describe("RunDetail stage list", () => {
           worktree: null,
           status: "pending",
           gate: null,
-          admission_required: true,
-          admitted: false,
-          admission_eligible: true,
-          admission_blocked_by: [],
           params: buildBriefParams({
             title: "Build the cohort UI",
             goal: "Operator workflow",
             next_action: "Expose the materialized cohort brief.",
             files_in_scope: ["kbbl/core/pwa/oakridge"],
             decisions_made: [{ decision: "Reuse the run table", rationale: "Avoids a second table" }],
-            acceptance_criteria: ["Admission is explicit"],
+            acceptance_criteria: ["Review is explicit"],
             depends_on: ["spec"],
             repository_key: "oakridge" as RepositoryKey,
           }),
@@ -341,11 +337,10 @@ describe("RunDetail stage list", () => {
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.queryByText("Operator workflow")).toBeNull();
     expect(screen.queryByText("kbbl/core/pwa/oakridge")).toBeNull();
-    expect(screen.queryByText("Admission is explicit")).toBeNull();
-    expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
+    expect(screen.queryByText("Review is explicit")).toBeNull();
   });
 
-  it("shows the exact dependencies blocking build admission", async () => {
+  it("shows cohort dependencies", async () => {
     const buildUnit = {
       unit_id: "cohort-b",
       repository_key: null,
@@ -353,10 +348,6 @@ describe("RunDetail stage list", () => {
       worktree: null,
       status: "pending" as const,
       gate: null,
-      admission_required: true,
-      admitted: false,
-      admission_eligible: false,
-      admission_blocked_by: ["cohort-a", "schema-review"],
       params: buildBriefParams({ title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] }),
     };
     const detail: RunDetail = {
@@ -370,8 +361,7 @@ describe("RunDetail stage list", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
     wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
 
-    expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
-    expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
+    expect((await screen.findByTestId("or-dependencies")).textContent).toContain("cohort-a");
   });
 
   it("retries a failed build unit without restarting the run", async () => {

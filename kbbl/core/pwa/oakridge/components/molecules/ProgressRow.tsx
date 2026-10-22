@@ -3,7 +3,6 @@ import { selectAttentionContext } from "../../lib/run-attention";
 import type { CohortLifecycle, CohortLifecycleSummary } from "../../types";
 
 const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
-  waiting_admission: "Brief approved · queued automatically",
   building: "Building",
   artifact_review: "Waiting for your review",
   revision_requested: "Changes requested",
@@ -18,9 +17,6 @@ const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
 function lifecycleLabel(cohort: CohortLifecycleSummary): string {
   if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
     return "Merged · complete";
-  }
-  if (cohort.lifecycle === "waiting_admission" && cohort.admission.required && !cohort.admission.admitted) {
-    return cohort.admission.eligible ? "Brief approved · awaiting admission" : "Brief approved · waiting on dependencies";
   }
   return LIFECYCLE_LABELS[cohort.lifecycle];
 }

@@ -57,7 +57,6 @@ export function runActivityEvents(runId: string, histories: readonly UnitActivit
         return [{ id: entry.id, occurred_at: entry.created_at, operation: "slot_released" as const,
           payload: { ...base, output_name: event.artifact } }];
       case "operator_decided": {
-        if (event.review === "admission") return [];
         const artifact = unit.artifacts.find((candidate) => candidate.latest_revision?.id === event.target);
         return [{ id: entry.id, occurred_at: entry.created_at, operation: "gate_decided" as const,
           payload: { ...base, stage_instance_id: base.stage_instance_id ?? unit.unit_id,

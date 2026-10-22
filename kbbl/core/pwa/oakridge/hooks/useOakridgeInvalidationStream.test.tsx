@@ -47,7 +47,6 @@ test("normal run events refresh the inbox and an older response cannot overwrite
   const newer: ReviewInbox = { cohorts: [{ id: "new-review", run_id: "run-1", workflow_name: "development",
     stage_instance_id: "stage", stage_name: "cohort", unit_id: "unit", lifecycle: "merge_confirmation",
     completion: { build_complete: true, assessment_complete: true },
-    admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
     updated_at: "2026-10-16T00:00:00Z" }], items: [] };
   await act(async () => { pending.resolutions[1]?.(newer); await Promise.resolve(); });
   await act(async () => { pending.resolutions[0]?.(older); await Promise.resolve(); });

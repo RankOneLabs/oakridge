@@ -234,12 +234,6 @@ export type FinalPullRequestResponse = {
   };
 }[FinalPullRequestOutcome];
 
-export interface AdmitStageUnitResponse {
-  stage_instance_id: string;
-  unit_id: string;
-  admitted: boolean;
-}
-
 export interface CreateRunRequest {
   workflow_def_id: string;
   project_id: string | null;
@@ -301,10 +295,6 @@ export interface StageUnit {
   base_sha?: string | null;
   status: StageStatus;
   gate: string | null;
-  admission_required?: boolean;
-  admitted?: boolean;
-  admission_eligible?: boolean;
-  admission_blocked_by?: string[];
 }
 
 /**
@@ -530,7 +520,6 @@ export interface CohortPullRequestResponse {
 }
 
 export type CohortLifecycle =
-  | "waiting_admission"
   | "building"
   | "artifact_review"
   | "revision_requested"
@@ -546,13 +535,6 @@ export interface CohortCompletion {
   assessment_complete: boolean;
 }
 
-export interface CohortAdmission {
-  required: boolean;
-  admitted: boolean;
-  eligible: boolean;
-  blocked_by: string[];
-}
-
 export interface CohortLifecycleSummary {
   id: string;
   run_id: string;
@@ -565,7 +547,6 @@ export interface CohortLifecycleSummary {
   run_title?: string | null;
   lifecycle: CohortLifecycle;
   completion: CohortCompletion;
-  admission: CohortAdmission;
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
   gate_id?: string | null;
@@ -576,7 +557,6 @@ export interface CohortLifecycleSummary {
 }
 
 export type ReviewInboxItemKind =
-  | "admission"
   | "artifact_gate"
   | "merge_confirmation"
   | "cohort_blocked"

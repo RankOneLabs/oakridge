@@ -32,10 +32,9 @@ function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact 
 }
 
 const inbox: ReviewInbox = {
-  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "waiting_admission", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
-    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "waiting_admission", title: "Build API", resume_actions: [], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
+  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "building", completion: { build_complete: false, assessment_complete: false }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
+    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
+  items: [{ id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
 };
 
 const runId = "run-1";
@@ -75,10 +74,9 @@ describe("ReviewInboxView", () => {
 
   it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
-    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
-    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
+    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(1);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
-    expect(screen.getByTestId("or-inbox-admit-btn")).toBeTruthy();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -106,7 +104,7 @@ describe("ReviewInboxView", () => {
   it("requires and submits actionable feedback when requesting changes", async () => {
     const fetchMock = v2InboxFetch([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[1]] });
+    client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[0]] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-decision-request_assessment_changes"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
@@ -118,25 +116,14 @@ describe("ReviewInboxView", () => {
     expect(JSON.parse(String(request.body))).toMatchObject({ decision: "request_assessment_changes", target: approveTarget, payload: { feedback: "Explain the recovery path." } });
   });
 
-  it("shows blockers without offering admission", async () => {
+  it("shows blockers", async () => {
     renderInbox({ cohorts: [], items: [{ ...inbox.items[0], kind: "cohort_blocked", state: "blocked", blocked_by: ["database"] }] });
     expect((await screen.findByTestId("or-review-inbox-blocked")).textContent).toContain("database");
-    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
-  });
-
-  it("keeps automatic workflows action-free while naming their queued state", async () => {
-    const automatic = {
-      ...inbox.cohorts[0],
-      admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
-    };
-    renderInbox({ cohorts: [automatic], items: [inbox.items[0]] });
-    expect(await screen.findByText("Brief approved · queued automatically")).toBeTruthy();
-    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
   it("names every lifecycle state in operator language", async () => {
-    const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
-    const labels = ["Brief approved · awaiting admission", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
+    const states: CohortLifecycle[] = ["building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
+    const labels = ["Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({
@@ -157,7 +144,7 @@ describe("ReviewInboxView", () => {
     renderInbox({
       cohorts: [],
       items: [{
-        ...inbox.items[1],
+        ...inbox.items[0],
         id: "merge-web",
         kind: "merge_confirmation",
         lifecycle: "merge_confirmation",
@@ -181,14 +168,14 @@ describe("ReviewInboxView", () => {
         updated_at: "2026-08-08T00:00:00Z",
       },
     };
-    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "pull_request_mismatch", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
+    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[0], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "pull_request_mismatch", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
     expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
     expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
   });
 
   it("keeps a decided item in place so newly arrived work never slides under the pointer", async () => {
-    const briefGate = (id: string, title: string) => ({ ...inbox.items[1], id: `${runId}:${id}:approve`, unit_id: id, title,
+    const briefGate = (id: string, title: string) => ({ ...inbox.items[0], id: `${runId}:${id}:approve`, unit_id: id, title,
       gate_id: compositeId({ kind: "gate", runId, unitId: id, name: "assessment_review" }), artifact_revision_id: `revision-${id}` });
     const briefA = briefGate("brief-a", "Brief A");
     const briefB = briefGate("brief-b", "Brief B");
