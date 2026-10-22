@@ -98,6 +98,17 @@ test("a run with no workflow yet starts generation zero", async () => {
   } finally { list.mockRestore(); starts.restore(); }
 });
 
+test("an errored run starts a clean generation from authority instead of replaying failed steps", async () => {
+  const list = runWorkflows("run:run-1", "run:run-1:2");
+  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "ERROR", applicationVersion: DBOS.applicationVersion }) as never);
+  const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
+  const starts = recordStarts();
+  try {
+    await ensureRunWorkflow("run-1");
+    expect({ starts: starts.calls, forks: fork.mock.calls.length }).toEqual({ starts: [[{ workflowID: "run:run-1:3" }], ["run-1"]], forks: 0 });
+  } finally { list.mockRestore(); status.mockRestore(); fork.mockRestore(); starts.restore(); }
+});
+
 test("wake addresses the current generation", async () => {
   const list = runWorkflows("run:run-1", "run:run-1:2");
   const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "PENDING" }) as never);
@@ -123,18 +134,6 @@ for (const scenario of ["fork committed before crash", "concurrent fork"] as con
     } finally { status.mockRestore(); fork.mockRestore(); }
   });
 }
-
-test("ERROR recovery refuses a successor belonging to a different predecessor", async () => {
-  const list = runWorkflows("run:run-1");
-  const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async (id) =>
-    (id === "run:run-1" ? { status: "ERROR" } : { forkedFrom: "another-run" }) as never);
-  const steps = spyOn(DBOS, "listWorkflowSteps").mockImplementation(async () => [] as never);
-  const fork = spyOn(DBOS, "forkWorkflow").mockImplementation(async () => ({} as never));
-  try {
-    await expect(ensureRunWorkflow("run-1")).rejects.toThrow("is not a fork");
-    expect(fork).not.toHaveBeenCalled();
-  } finally { list.mockRestore(); status.mockRestore(); steps.mockRestore(); fork.mockRestore(); }
-});
 
 test("reconciling a parked successor resumes its workflow", async () => {
   const status = spyOn(DBOS, "getWorkflowStatus").mockImplementation(async () => ({ status: "CANCELLED", forkedFrom: "run:run-1" }) as never);

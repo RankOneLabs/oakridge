@@ -623,13 +623,6 @@ export async function ensureRunRecoveryFork(input: RunRecoveryFork): Promise<voi
   }
 }
 
-async function recoverErroredRun(run_id: string, generation: number): Promise<void> {
-  const id = runWorkflowId(run_id, generation);
-  const steps = await DBOS.listWorkflowSteps(id) ?? [];
-  await ensureRunRecoveryFork({ workflow_id: id, successor_id: runWorkflowId(run_id, generation + 1),
-    start_step: forkStartStep(steps), application_version: DBOS.applicationVersion });
-}
-
 /**
  * End an owed start that no carrier will finish. An unclaimed intent never
  * reached the provider and fails outright; any other may have a live
@@ -740,7 +733,14 @@ export async function ensureRunWorkflow(run_id: string): Promise<void> {
   }
   if (existing?.status === "PENDING" || existing?.status === "ENQUEUED") return;
   if (existing?.status === "CANCELLED") { await DBOS.resumeWorkflow(id); return; }
-  if (existing?.status === "ERROR") { await recoverErroredRun(run_id, generation); return; }
+  // The authority rows are the source of truth for a run. A fork replays the
+  // failed workflow's recorded steps, but a caught boundary error can change
+  // the next step (sleep versus advance) and make that replay nondeterministic.
+  // Start a clean generation and reconstruct pending work from the authority.
+  if (existing?.status === "ERROR") {
+    await DBOS.startWorkflow(runWorkflow, { workflowID: successor })(run_id);
+    return;
+  }
   if (existing?.status === "SUCCESS" && (await listRunsNeedingWork(current().db, { run_id })).length === 0) return;
   await DBOS.startWorkflow(runWorkflow, { workflowID: existing ? successor : id })(run_id);
 }
