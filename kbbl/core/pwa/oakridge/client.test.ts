@@ -115,13 +115,24 @@ describe("v2 Oakridge client", () => {
         builder: { harness: "codex", model: "gpt-6-sol", effort: null } } } } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, body.input.admission, Object.keys(body.config.sessions).sort(),
+    expect([result.id, body.request_id, body.digest, Object.hasOwn(body.input, "admission"), Object.keys(body.config.sessions).sort(),
       body.config.sessions.cohort.assessor, body.config.sessions.cohort.builder]).toEqual([
       runId, "launch-1", sample.run.definition_digest, false,
       ["analysis", "brief", "cohort", "integration", "planning"],
       { harness: "claude-code", model: "sonnet", effort: null },
       { harness: "codex", model: "gpt-6-sol", effort: null },
     ]);
+  });
+
+  it("supplies admission=false when launching an older definition that requires it", async () => {
+    const legacyDefinition = { ...definition, workflow: { ...definition.workflow, input: { admission: "boolean" } } };
+    const fetch = calls((path) => path.includes("/api/definitions/") ? legacyDefinition
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-legacy" }
+      : path.includes("/units") ? sample.units : sample.run);
+    await createRun(createRunRequest(), "launch-legacy");
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    const body = JSON.parse(String(launch?.[1]?.body));
+    expect(body.input.admission).toBe(false);
   });
 
   it("accepts settings for an agent declared through a worker template", async () => {

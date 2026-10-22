@@ -20,7 +20,7 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
  * production composition with `workflow-config/development.yaml` pinned as
  * written, except that its PR watches poll every second, against a stub kbbl
  * whose agents publish through the publish route and a stub forge. Two
- * cohorts, `b` depending on `a`, with admission on.
+ * cohorts, `b` depending on `a`, with the builder starting after brief approval.
  */
 
 const root = resolve(import.meta.dir, "../..");
@@ -211,7 +211,7 @@ const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
 const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", plan_review: "accept", brief_review: "accept",
-  admission: "admit", assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
+  assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
 const capturedAdapterFixtures = new Set<string>();
 async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
   if (process.env.OAKRIDGE_CAPTURE_ADAPTER_FIXTURE !== "1" || capturedAdapterFixtures.has(name)) return;
@@ -224,7 +224,7 @@ async function captureAdapterFixture(run_id: string, name: string): Promise<void
 }
 
 /** Decide every review awaiting the operator once; merge a cohort's PR once its assessment is accepted. */
-async function operate(run_id: string, decided: Set<string>, admitted: string[], confirmation: "none" | "cohort" | "all" = "none",
+async function operate(run_id: string, decided: Set<string>, confirmation: "none" | "cohort" | "all" = "none",
   accept_integration = true, merged_cohorts_without_confirmation?: Set<string>, accept_assessment = true): Promise<void> {
   const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage", "review_prompts", "collection_key"]).where("run_id", "=", run_id).execute())
     .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
@@ -263,7 +263,6 @@ async function operate(run_id: string, decided: Set<string>, admitted: string[],
         { request_id: crypto.randomUUID(), decision, target, payload: {} });
       if (response.status !== 201) throw new Error(`${review} on ${unit.id} refused: ${await response.text()}`);
       decided.add(key);
-      if (review === "admission") { admitted.push(unit.collection_key ?? ""); timeline.set(`admit:${unit.collection_key}`, Date.now()); }
       if (review === "assessment_review" && confirmation === "none") { forge.merge(`cohort-${unit.collection_key}`); timeline.set(`merge:${unit.collection_key}`, Date.now()); }
       if (review === "integration_review" && confirmation === "none") forge.merge("integration");
     }
@@ -276,17 +275,16 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Two cohorts", spec: "Build the thing in two parts.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Two cohorts", spec: "Build the thing in two parts.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
 
   const decided = new Set<string>();
-  const admitted: string[] = [];
   const merged_cohorts_without_confirmation = new Set<string>();
   const run = await eventually("the run to finish", async () => {
-    await operate(run_id, decided, admitted, "none", true, merged_cohorts_without_confirmation);
+    await operate(run_id, decided, "none", true, merged_cohorts_without_confirmation);
     const row = await db.selectFrom("authority.unit").select("status").where("run_id", "=", run_id).where("id", "=", run_id).executeTakeFirstOrThrow();
     return row.status.kind === "done" ? row.status : null;
   }, 120_000);
@@ -294,6 +292,17 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   const units = (await db.selectFrom("authority.unit").select(["id", "parent_id", "declaration", "stage", "collection_key"]).where("run_id", "=", run_id).execute())
     .map((unit) => ({ ...unit, collection_key: selectCollectionKey(unit) }));
   const unitOf = (stage: string, member?: string) => units.find((unit) => unit.stage === stage && (member === undefined || unit.collection_key === member))?.id ?? "";
+  const brief_revisions = await db.selectFrom("authority.artifact_revision").select(["unit_id", "body"])
+    .where("run_id", "=", run_id).where("artifact", "=", "brief").execute();
+  const cohort_inputs = await db.selectFrom("authority.unit").select(["id", "input"])
+    .where("run_id", "=", run_id).where("stage", "=", "cohort").execute();
+  const brief_flow = ["a", "b"].map((member) => {
+    const revision = brief_revisions.find((item) => item.unit_id === unitOf("brief", member));
+    const cohort_input = cohort_inputs.find((item) => item.id === unitOf("cohort", member));
+    return { has_one_original: brief_revisions.filter((item) => item.unit_id === unitOf("brief", member)).length === 1,
+      has_no_cohort_copy: brief_revisions.every((item) => item.unit_id !== unitOf("cohort", member)),
+      is_passed_to_cohort: JSON.stringify((cohort_input?.input as { readonly brief?: unknown } | undefined)?.brief) === JSON.stringify(revision?.body) };
+  });
   const schemaOf = async (unit: string, artifact: string): Promise<string> =>
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
   const schemas = {
@@ -333,8 +342,8 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
   await eventually("brief session closed after both reviews", async () => brief_sessions.length === 1 && brief_sessions[0]?.status === "ended");
   expect({
     cohorts: outcome.cohorts.map((cohort) => cohort.cohort_id),
+    brief_flow,
     integrations: outcome.integrations,
-    admitted: [...admitted].sort(),
     b_built_after_a_merged: (timeline.get("build:b") ?? 0) >= (timeline.get("merge:a") ?? Infinity),
     schemas,
     integration_assessment: integration_assessment?.body,
@@ -347,8 +356,8 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     prepared_head_vs_checkout: [(prepared_workspace?.body as { readonly head?: string } | undefined)?.head, remote_base_head !== local_head.trim()],
   }).toEqual({
     cohorts: ["a", "b"],
+    brief_flow: ["a", "b"].map(() => ({ has_one_original: true, has_no_cohort_copy: true, is_passed_to_cohort: true })),
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
-    admitted: ["a", "b"],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
     integration_assessment: { verdict: "pass", findings: [{ criterion: null, status: "met",
@@ -371,7 +380,7 @@ test("analysis and revised spec are separately approved before planning", async 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Analysis handoff", spec: "Original specification.", admission: false, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Analysis handoff", spec: "Original specification.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
@@ -434,15 +443,14 @@ test("manual confirmation completes the development run with no PR reader", asyn
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Confirm PRs", spec: "Confirm both PR stages.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Confirm PRs", spec: "Confirm both PR stages.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
-  const admitted: string[] = [];
   const integration = await eventually("integration PR to publish", async () => {
-    await operate(run_id, decided, admitted, "cohort", false);
+    await operate(run_id, decided, "cohort", false);
     const unit = await db.selectFrom("authority.unit").select(["id", "status"]).where("run_id", "=", run_id)
       .where("stage", "=", "integration").executeTakeFirst();
     if (!unit) return null;
@@ -477,7 +485,7 @@ test("manual confirmation completes the development run with no PR reader", asyn
   forge.merge("integration");
 
   const completed = await eventually("the confirmed run to finish", async () => {
-    await operate(run_id, decided, admitted, "all");
+    await operate(run_id, decided, "all");
     const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
     return root.status.kind === "done" ? root.status : null;
   }, 120_000);
@@ -504,15 +512,14 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace cohort PR", spec: "Require the current cohort PR.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Replace cohort PR", spec: "Require the current cohort PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
-  const admitted: string[] = [];
   const cohort = await eventually("cohort PR to be observed open", async () => {
-    await operate(run_id, decided, admitted, "none", false, undefined, false);
+    await operate(run_id, decided, "none", false, undefined, false);
     const unit = await db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id)
       .where("stage", "=", "cohort").where("collection_key", "=", "a").executeTakeFirst();
     if (!unit) return null;
@@ -562,15 +569,14 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace closed PR", spec: "Require a merged integration PR.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Replace closed PR", spec: "Require a merged integration PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
-  const admitted: string[] = [];
   const integration = await eventually("integration PR to be observed open", async () => {
-    await operate(run_id, decided, admitted, "none", false);
+    await operate(run_id, decided, "none", false);
     const unit = await db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id)
       .where("stage", "=", "integration").executeTakeFirst();
     if (!unit) return null;
@@ -640,15 +646,14 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Replace merged integration PR", spec: "Do not reuse an old merge.", admission: true, final_merge_policy: "require_merge", primary_repository_key: "app",
+    title: "Replace merged integration PR", spec: "Do not reuse an old merge.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
-  const admitted: string[] = [];
   const integration = await eventually("integration PR to publish", async () => {
-    await operate(run_id, decided, admitted, "cohort", false);
+    await operate(run_id, decided, "cohort", false);
     const unit = await db.selectFrom("authority.unit").select("id").where("run_id", "=", run_id)
       .where("stage", "=", "integration").executeTakeFirst();
     if (!unit) return null;
@@ -677,7 +682,7 @@ test("an old integration PR merge cannot complete a replacement PR", async () =>
   }, 120_000);
   expect(replacement).toBe(true);
   await eventually("replacement integration review", async () => {
-    await operate(run_id, decided, admitted, "cohort");
+    await operate(run_id, decided, "cohort");
     const decision = await db.selectFrom("authority.review_decision").select("id").where("run_id", "=", run_id)
       .where("unit_id", "=", integration.id).where("review", "=", "integration_review")
       .where("decision", "=", "accept").executeTakeFirst();
@@ -702,20 +707,19 @@ test("allow_close_without_merge completes on an observed close without claiming 
   const { digest } = await pinned.json() as { readonly digest: string };
   const request_id = crypto.randomUUID();
   const launched = await api("POST", "/api/runs", { request_id, digest, input: {
-    title: "Allow closed PR", spec: "Complete after an unmerged close.", admission: true, final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
+    title: "Allow closed PR", spec: "Complete after an unmerged close.", final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   const run_id = launchRunId(request_id);
   const decided = new Set<string>();
-  const admitted: string[] = [];
   await eventually("integration PR to publish", async () => {
-    await operate(run_id, decided, admitted, "cohort", false);
+    await operate(run_id, decided, "cohort", false);
     return forge.pulls.has(PULL_NUMBERS.integration) ? true : null;
   }, 120_000);
   forge.close("integration");
   const completed = await eventually("closed PR to complete the run", async () => {
-    await operate(run_id, decided, admitted, "cohort");
+    await operate(run_id, decided, "cohort");
     const root = await db.selectFrom("authority.unit").select("status").where("id", "=", run_id).executeTakeFirstOrThrow();
     return root.status.kind === "done" ? root.status : null;
   }, 120_000);
