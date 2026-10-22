@@ -4,6 +4,7 @@ import { selectDevelopmentMergeQuery } from "../operations/pull-request-observe"
 import { OPERATION_KEYS } from "../operations/registry";
 import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
+import { readMergeStatusSource } from "../storage/read-store";
 import { errorResponse, MissingEntityError } from "./errors";
 
 /** The live PR status shown before an operator confirms a merge. */
@@ -23,13 +24,9 @@ export function installMergeStatus(app: Hono, deps: { readonly db: Database; rea
   app.get("/api/runs/:run_id/units/:unit_id/merge-status", async (c) => {
     const run_id = c.req.param("run_id"), unit_id = c.req.param("unit_id");
     try {
-      const unit = await deps.db.selectFrom("authority.unit").select(["stage", "input"])
-        .where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
-      if (!unit) return errorResponse(new MissingEntityError("unit not found"));
-      const pr = await deps.db.selectFrom("authority.artifact_revision").select("body")
-        .where("run_id", "=", run_id).where("unit_id", "=", unit_id).where("artifact", "=", "pr")
-        .orderBy("seq", "desc").executeTakeFirst();
-      const query = selectDevelopmentMergeQuery(unit.stage ?? "", unit.input, pr?.body ?? null);
+      const source = await readMergeStatusSource(deps.db, { run_id, unit_id });
+      if (!source) return errorResponse(new MissingEntityError("unit not found"));
+      const query = selectDevelopmentMergeQuery(source.stage ?? "", source.input, source.pr_body);
       if (!query.ok) return c.json({ kind: "unavailable", detail: query.error } satisfies MergeStatusView);
       if (!deps.operations) return c.json({ kind: "unavailable", detail: "PR status reader is not configured" } satisfies MergeStatusView);
       const result = await deps.operations.run({ operation: OPERATION_KEYS.pull_request_observe, inputs: { query: query.value } },

@@ -169,6 +169,24 @@ export async function readRun(db: Kysely<DB>, run_id: string): Promise<RunRead |
   return consistent(db, (trx) => runRead(trx, run_id));
 }
 
+/** The current PR and resolved unit input needed to check a manual merge confirmation. */
+export interface MergeStatusSource {
+  readonly stage: UnitRecord["stage"];
+  readonly input: UnitRecord["input"];
+  readonly pr_body: ArtifactRevisionRecord["body"] | null;
+}
+export async function readMergeStatusSource(db: Kysely<DB>, location: UnitLocation): Promise<MergeStatusSource | null> {
+  return consistent(db, async (trx) => {
+    const unit = await trx.selectFrom("authority.unit").select(["stage", "input"])
+      .where("run_id", "=", location.run_id).where("id", "=", location.unit_id).executeTakeFirst();
+    if (!unit) return null;
+    const pr = await trx.selectFrom("authority.artifact_revision").select("body")
+      .where("run_id", "=", location.run_id).where("unit_id", "=", location.unit_id).where("artifact", "=", "pr")
+      .orderBy("seq", "desc").executeTakeFirst();
+    return { stage: unit.stage, input: unit.input, pr_body: pr?.body ?? null };
+  });
+}
+
 /** The inbox projection for one run without loading revision bodies or launch input. */
 export async function readRunSummary(db: Kysely<DB>, run_id: string): Promise<RunSummaryRead | null> {
   return consistent(db, async (trx) => (await runSummaryReads(trx, [run_id]))[0] ?? null);
