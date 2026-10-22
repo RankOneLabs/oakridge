@@ -657,7 +657,7 @@
             },
             "request_assessment_changes": {
               "effect": "request_changes",
-              "label": "Revise assessment",
+              "label": "Request assessment changes",
               "fields": {
                 "feedback": "What must the assessment change?"
               }

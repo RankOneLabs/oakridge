@@ -358,7 +358,7 @@ stages:
         inputs: { brief: input.brief, build_result: latest(build_result), pr: latest(pr), assessment: latest(assessment) }
         decisions:
           accept: { effect: approve, label: Accept }
-          request_assessment_changes: { effect: request_changes, label: Revise assessment,
+          request_assessment_changes: { effect: request_changes, label: Request assessment changes,
                                         fields: { feedback: "What must the assessment change?" } }
           request_build_changes: { effect: request_changes, on: build_result, label: Request build changes,
                                    fields: { feedback: "What must the builder change?" } }

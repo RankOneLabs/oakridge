@@ -18,7 +18,7 @@ function actionLabel(action: string): string {
   switch (action) {
     case "approve": return "Approve artifact";
     case "request_revision": return "Request changes";
-    case "request_assessment_changes": return "Revise assessment";
+    case "request_assessment_changes": return "Request assessment changes";
     case "request_build_changes": return "Request build changes";
     case "confirm_merged": return "Confirm merge";
     case "pass": return "Pass";
