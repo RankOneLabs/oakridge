@@ -31,12 +31,12 @@ export function PrimaryNav({ activeSurface, attentionCount, onNavigate, theme, o
       <Button
         variant="secondary"
         size="xsmall"
-        className="app-surface-nav__theme min-h-11"
+        className="app-surface-nav__theme min-h-11 w-11 text-base!"
         onClick={onToggleTheme}
         title={toggleLabel}
         aria-label={toggleLabel}
       >
-        {theme === "dark" ? "LIGHT" : "DARK"}
+        {theme === "dark" ? "☀" : "☾"}
       </Button>
     </nav>
   );
