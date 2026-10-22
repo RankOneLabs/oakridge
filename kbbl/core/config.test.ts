@@ -56,24 +56,6 @@ describe("sessions.worktree_dir_name validation", () => {
   });
 });
 
-describe("sessions.default_allowlist", () => {
-  test("defaults to read-only tools plus Bash when omitted", () => {
-    const r = KbblConfigSchema.parse({});
-    expect(r.sessions.default_allowlist).toEqual(["Read", "Glob", "Grep", "Bash"]);
-  });
-
-  test("an explicit list overrides the default (incl. empty = require approval for everything)", () => {
-    expect(
-      KbblConfigSchema.parse({ sessions: { default_allowlist: [] } }).sessions
-        .default_allowlist,
-    ).toEqual([]);
-    expect(
-      KbblConfigSchema.parse({ sessions: { default_allowlist: ["Read"] } }).sessions
-        .default_allowlist,
-    ).toEqual(["Read"]);
-  });
-});
-
 describe("skills.confirm", () => {
   test("defaults to mutating gated-review MCP tools", () => {
     const r = KbblConfigSchema.parse({});
@@ -87,5 +69,15 @@ describe("skills.confirm", () => {
   test("an explicit list overrides the default", () => {
     const r = KbblConfigSchema.parse({ skills: { confirm: ["deploy"] } });
     expect(r.skills.confirm).toEqual(["deploy"]);
+  });
+});
+
+describe("acp.default_agent", () => {
+  test("defaults to claude-code when omitted", () => {
+    expect(KbblConfigSchema.parse({}).acp.default_agent).toBe("claude-code");
+  });
+
+  test("a removed top-level block fails the strict schema", () => {
+    expect(KbblConfigSchema.safeParse({ runtime: { default: "codex" } }).success).toBe(false);
   });
 });

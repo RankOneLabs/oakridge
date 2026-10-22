@@ -16,7 +16,6 @@ import { join } from "node:path";
 import { Hono } from "hono";
 
 import { mountSessionsRoutes } from "./sessions";
-import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
 import { acpError, err, type AcpFailureCode } from "../../acp/types";
 
@@ -50,7 +49,6 @@ const ensureAgainst = async (code: AcpFailureCode, detail: string) => {
   const app = new Hono();
   mountSessionsRoutes(app, {
     acp,
-    manager: {} as unknown as SessionManager,
     defaultWorkdir: repoDir,
   });
   return app.fetch(new Request("http://kbbl/sessions/resumable/build-1", {

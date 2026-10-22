@@ -2,9 +2,10 @@ import { Button } from "../../../components/atoms/Button";
 import { useEffect, useState } from "react";
 
 import type { Sid } from "../../../lib/ids";
-import { useRemoveSession } from "../../../hooks/useRemoveSession";
+import { useEndSession } from "../../../hooks/useEndSession";
+import { useStore } from "../../../state/store";
 import type { RunWorkspaceSlot } from "../../lib/run-workspace";
-import type { RunSidebarSessionRow } from "../../lib/run-overview";
+import { selectRunSidebarSessionVisibility, type RunSidebarSessionRow } from "../../lib/run-overview";
 
 interface RunSidebarSessionsProps {
   rows: readonly RunSidebarSessionRow[];
@@ -36,9 +37,22 @@ export function RunSidebarSessions({
   openSessionIds,
   onOpen,
 }: RunSidebarSessionsProps) {
+  const [showArchived, setShowArchived] = useState(false);
+  const visibility = selectRunSidebarSessionVisibility(rows, showArchived);
   return (
     <section className="or-run-sidebar__section" data-testid="or-sidebar-sessions">
       <h3 className="or-run-sidebar__heading">Sessions</h3>
+      {visibility.archived_count > 0 && (
+        <Button variant="secondary"
+          type="button"
+          className="self-start text-xs!"
+          onClick={() => setShowArchived((current) => !current)}
+          aria-expanded={showArchived}
+          data-testid="or-sidebar-archived-toggle"
+        >
+          {showArchived ? "Hide archived sessions" : `Show all sessions (${visibility.archived_count} archived)`}
+        </Button>
+      )}
       {!isActionStateKnown && (
         <p
           className="or-run-sidebar__empty text-[var(--amber-fg)]"
@@ -62,8 +76,11 @@ export function RunSidebarSessions({
           No sessions yet.
         </p>
       )}
+      {isSessionListKnown && rows.length > 0 && visibility.visible_rows.length === 0 && (
+        <p className="or-run-sidebar__empty">All sessions are archived.</p>
+      )}
       <ul className="or-run-sidebar__list">
-        {rows.map((row) => (
+        {visibility.visible_rows.map((row) => (
           <RunSidebarSessionItem
             key={row.work_order_id}
             row={row}
@@ -83,23 +100,27 @@ interface RunSidebarSessionItemProps {
 }
 
 function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemProps) {
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const { mutation, refusal, error } = useRemoveSession(row.session_id);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const status = useStore((state) => state.sessions.get(row.session_id)?.status ?? null);
+  const canEnd = status !== null && !row.is_archived;
+  const isTerminal = status === "ended" || status === "fenced" || status === "failed";
+  const actionLabel = isTerminal ? "Hide" : "End and hide";
+  const { mutation, error } = useEndSession(row.session_id);
 
   useEffect(() => {
-    if (!confirmRemove) return;
-    const timer = setTimeout(() => setConfirmRemove(false), 4000);
+    if (!confirmEnd) return;
+    const timer = setTimeout(() => setConfirmEnd(false), 4000);
     return () => clearTimeout(timer);
-  }, [confirmRemove]);
+  }, [confirmEnd]);
 
-  const remove = async (force: boolean) => {
+  const end = async () => {
     if (mutation.isPending) return;
     try {
-      await mutation.mutateAsync({ force });
+      await mutation.mutateAsync();
     } catch {
-      // The mutation error and any typed refusal are rendered with this row.
+      // The mutation error is rendered with this row.
     } finally {
-      setConfirmRemove(false);
+      setConfirmEnd(false);
     }
   };
 
@@ -114,7 +135,7 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
         data-current={row.is_current}
       >
         <span className="or-run-sidebar__row-title">
-          {row.stage_key}
+          {row.display_label}
           <span className="or-run-sidebar__row-unit">{row.unit_id}</span>
         </span>
         <span className="or-run-sidebar__row-meta">
@@ -127,6 +148,11 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           ) : (
             <span className="text-[var(--text-faint)]" data-testid="or-sidebar-session-superseded">
               superseded
+            </span>
+          )}
+          {row.is_archived && (
+            <span className="text-[var(--text-faint)]" data-testid="or-sidebar-session-archived">
+              archived
             </span>
           )}
           {row.requires_operator_action && (
@@ -148,34 +174,29 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
       >
         ⧉
       </Button>
-      <Button variant="secondary"
-        type="button"
-        className="or-run-sidebar__row-twin"
-        disabled={mutation.isPending}
-        aria-label={confirmRemove ? `Confirm remove ${row.stage_key} ${row.unit_id}` : `Remove ${row.stage_key} ${row.unit_id}`}
-        onClick={() => {
-          if (!confirmRemove) setConfirmRemove(true);
-          else void remove(false);
-        }}
-        data-testid="or-sidebar-session-remove"
-      >
-        {mutation.isPending ? "…" : confirmRemove ? "✓" : "×"}
-      </Button>
+      {canEnd && (
+        <Button variant="secondary"
+          type="button"
+          className="or-run-sidebar__row-end"
+          disabled={mutation.isPending}
+          aria-label={confirmEnd ? `Confirm ${actionLabel.toLowerCase()} ${row.stage_key} ${row.unit_id}` : `${actionLabel} ${row.stage_key} ${row.unit_id}`}
+          title={isTerminal
+            ? "Hide this session while keeping its transcript."
+            : "End and hide this session while keeping its transcript."}
+          onClick={() => {
+            if (!confirmEnd) setConfirmEnd(true);
+            else void end();
+          }}
+          data-testid="or-sidebar-session-end"
+        >
+          {mutation.isPending ? "…" : confirmEnd ? "✓" : (
+            <span className="text-xl leading-none" aria-hidden="true">×</span>
+          )}
+        </Button>
+      )}
       {error && (
         <div className="basis-full px-2 pb-2 text-xs text-red-500" role="alert">
           <span>{error}</span>
-          {refusal?.kind === "held_by_execution" && (
-            <Button variant="secondary"
-              type="button"
-              className="ml-2 underline disabled:opacity-50"
-              disabled={mutation.isPending}
-              title="Removes the session anyway, abandoning the unit this run is waiting on."
-              onClick={() => void remove(true)}
-              data-testid="or-sidebar-session-remove-force"
-            >
-              Remove anyway
-            </Button>
-          )}
         </div>
       )}
     </li>

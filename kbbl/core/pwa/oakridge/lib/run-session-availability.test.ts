@@ -13,7 +13,8 @@ const legacy: SessionSnapshot = {
   source: "legacy_archive", lastActivityTs: "2026-09-01T00:00:00Z", createdAt: "2026-09-01T00:00:00Z",
   artifactId: null, projectWorkdir: "/repo", worktreePath: "/repo",
   worktreeBranch: null, worktreeBaseRef: null, requestedModel: null,
-  requestedEffort: null, endReason: null, fencedBy: null, pendingPermissionCount: 0, workflow: null,
+  requestedEffort: null, endReason: null, fencedBy: null,
+  archivedAt: null, pendingPermissionCount: 0, workflow: null,
 };
 const run: RunDetail = {
   id: "run", title: "Archive inventory", repository_keys: [],

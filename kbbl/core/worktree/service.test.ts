@@ -226,14 +226,14 @@ describe("GitWorktreeProvider.resolve", () => {
     expect(child.value.project_workdir).toBe(repoDir);
   });
 
-  test("inheriting from an unknown (legacy) session fails with a clear reason", async () => {
+  test("inheriting from an unknown session fails with a clear reason", async () => {
     const resolved = await provider.resolve(
       SID,
       spec({ inherit_worktree_from: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" }),
     );
     expect(!resolved.ok && resolved.error.code).toBe("worktree_failed");
     if (resolved.ok) return;
-    expect(resolved.error.detail).toContain("legacy sessions cannot be inherited");
+    expect(resolved.error.detail).toContain("is not a known session");
   });
 
   test("remove deletes the worktree and leaves the source repo alone", async () => {

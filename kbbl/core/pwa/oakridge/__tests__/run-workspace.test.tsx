@@ -8,6 +8,8 @@ import { ArtifactWorkspaceRedirectView } from "../views/ArtifactWorkspaceRedirec
 import { SessionWorkspaceRedirectView } from "../views/SessionWorkspaceRedirectView";
 import { runWorkspaceStorageKey } from "../lib/run-workspace-storage";
 import { EventSourceStub } from "./run-pane-fixtures";
+import { invalidateCachedRunUnits } from "../client";
+import sample from "../__fixtures__/v2-adapter-sample.json";
 import type { ArtifactId, Sid } from "../../lib/ids";
 import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
 
@@ -18,8 +20,15 @@ import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+let failedRead: "sessions" | "gates" | null = null;
 function wrap(ui: ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  for (const run of [RUN, { ...RUN, id: "run-2" }]) {
+    client.setQueryData(["oakridge", "run", run.id], run);
+    if (failedRead !== "sessions") client.setQueryData(["oakridge", "run", run.id, "sessions"], SESSIONS);
+    if (failedRead !== "gates") client.setQueryData(["oakridge", "run", run.id, "gates"], GATES);
+  }
+  client.setQueryData(["oakridge", "artifact", "art-plan"], { id: "art-plan", run_id: "run-1", type_id: "dev.plan", revisions: [] });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
@@ -116,20 +125,23 @@ const makeFetch = (run: RunDetail = RUN): FetchHandler =>
   });
 
 /** Every read answers except the one named, which 500s the way a down backend does. */
-const makeFetchWithout = (failingPath: string): FetchHandler =>
-  vi.fn(async (input: RequestInfo | URL) => {
+const makeFetchWithout = (failingPath: string): FetchHandler => {
+  failedRead = failingPath === "/sessions" ? "sessions" : "gates";
+  return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes(failingPath)) return json({ error: "backend unavailable" }, 500);
+    if (url.endsWith("/units")) return json({ error: "backend unavailable" }, 500);
     if (url.includes("/gates")) return json(GATES);
     if (url.includes("/sessions")) return json(SESSIONS);
     if (url.includes("/runs/")) return json(RUN);
     return json([]);
   });
+};
 
 const renderWorkspace = (runId = "run-1") =>
   wrap(<RunDetailView runId={runId} routePane={null} onBack={() => {}} />);
 
 beforeEach(() => {
+  failedRead = null;
   vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch());
   localStorage.clear();
   // The redirect cases write the hash; reset it so no test inherits another's URL.
@@ -138,6 +150,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  invalidateCachedRunUnits(null);
+  failedRead = null;
   localStorage.clear();
 });
 
@@ -185,6 +199,18 @@ describe("the run route", () => {
 });
 
 describe("opening a pane from the sidebar", () => {
+  it("filters artifact rows and restores them when All is selected", async () => {
+    renderWorkspace();
+    const filter = await screen.findByTestId("or-sidebar-artifact-filter");
+    expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
+
+    fireEvent.change(filter, { target: { value: "build_results" } });
+    expect(screen.getAllByTestId("or-sidebar-artifact").map((row) => row.getAttribute("data-artifact-id"))).toEqual(["art-build"]);
+
+    fireEvent.change(filter, { target: { value: "all" } });
+    expect(screen.getAllByTestId("or-sidebar-artifact")).toHaveLength(2);
+  });
+
   it("changes the pane rather than navigating away", async () => {
     renderWorkspace();
     const hashBefore = window.location.hash;
@@ -264,15 +290,16 @@ describe("legacy deep links converge on the workspace URL", () => {
   });
 
   it("resolves a session to its run and replaces the hash", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      json({
-        run_id: "run-1",
-        stage_instance_id: "si-build",
-        stage_key: "build",
-        unit_id: "c1",
-        work_order_id: "wo-1",
-      }),
-    );
+    const source = sample.units.find((unit) => unit.attempts.some((attempt) => attempt.kbbl_session_id));
+    if (!source) throw new Error("captured fixture lacks a session attempt");
+    const unit = { ...source, run_id: "run-1", attempts: source.attempts.map((attempt) =>
+      attempt.kbbl_session_id ? { ...attempt, kbbl_session_id: "sid-c1" } : attempt) };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/runs?")) return json({ items: [{ ...sample.run, run_id: "run-1" }], next_cursor: null });
+      if (url.endsWith("/units")) return json([unit]);
+      throw new Error(`unexpected v2 request ${url}`);
+    });
 
     wrap(<SessionWorkspaceRedirectView sessionId={"sid-c1" as Sid} onBack={() => {}} />);
 
@@ -280,7 +307,7 @@ describe("legacy deep links converge on the workspace URL", () => {
   });
 
   it("shows a not-found state for a session that belongs to no run", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ error: "not found" }, 404));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ items: [], next_cursor: null }));
 
     wrap(<SessionWorkspaceRedirectView sessionId={"sid-orphan" as Sid} onBack={() => {}} />);
 
@@ -364,17 +391,19 @@ describe("a read the workspace cannot complete", () => {
     );
     vi.stubGlobal("EventSource", EventSourceStub);
     let sessionsAnswer = false;
+    const source = sample.units.find((unit) => unit.attempts.some((attempt) => attempt.kbbl_session_id));
+    if (!source) throw new Error("captured fixture lacks a session attempt");
+    const recoveredUnit = { ...source, run_id: "run-1", attempts: source.attempts.map((attempt) =>
+      attempt.kbbl_session_id ? { ...attempt, kbbl_session_id: "sid-c1" } : attempt) };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/gates")) return json(GATES);
-      if (url.includes("/sessions")) {
-        return sessionsAnswer ? json(SESSIONS) : json({ error: "backend unavailable" }, 500);
-      }
-      if (url.includes("/runs/")) return json(RUN);
+      if (url.endsWith("/units")) return sessionsAnswer ? json([recoveredUnit]) : json({ error: "backend unavailable" }, 500);
       return json([]);
     });
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(["oakridge", "run", "run-1"], RUN);
+    client.setQueryData(["oakridge", "run", "run-1", "gates"], GATES);
     render(
       <QueryClientProvider client={client}>
         <RunDetailView runId="run-1" routePane={null} onBack={() => {}} />

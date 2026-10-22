@@ -1,0 +1,213 @@
+//! Protocol numbers must survive JSON round trips through JavaScript without rounding.
+use schemars::{Schema, SchemaGenerator};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+
+pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+pub const MIN_SAFE_INTEGER: i64 = -MAX_SAFE_INTEGER;
+const RANGE_ERROR: &str = "integer exceeds JavaScript-safe wire range";
+
+macro_rules! bounded_integer {
+    ($module:ident, $type:ty, $min:expr, $max:expr) => {
+        pub mod $module {
+            use super::*;
+            fn valid(value: $type) -> bool {
+                ($min as i128..=($max as i128)).contains(&(value as i128))
+            }
+            pub fn serialize<S: Serializer>(value: &$type, serializer: S) -> Result<S::Ok, S::Error> {
+                if !valid(*value) {
+                    return Err(serde::ser::Error::custom(RANGE_ERROR));
+                }
+                value.serialize(serializer)
+            }
+            pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<$type, D::Error> {
+                let value = <$type>::deserialize(decoder)?;
+                if !valid(value) {
+                    return Err(serde::de::Error::custom(RANGE_ERROR));
+                }
+                Ok(value)
+            }
+            pub fn schema(_: &mut SchemaGenerator) -> Schema {
+                schemars::json_schema!({
+                    "type": "integer", "minimum": $min, "maximum": $max
+                })
+            }
+        }
+    };
+}
+bounded_integer!(signed, i64, MIN_SAFE_INTEGER, MAX_SAFE_INTEGER);
+bounded_integer!(unsigned, u64, 0, MAX_SAFE_INTEGER);
+bounded_integer!(index, usize, 0, MAX_SAFE_INTEGER);
+bounded_integer!(word, u32, 0, u32::MAX);
+
+/// Source literals retain JSON syntax, but cannot smuggle wide numbers into compiled responses.
+pub fn validate_json(value: &Value) -> Result<(), &'static str> {
+    match value {
+        Value::Number(number) => {
+            let valid = if let Some(value) = number.as_i64() {
+                (MIN_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+            } else if let Some(value) = number.as_u64() {
+                value <= MAX_SAFE_INTEGER as u64
+            } else {
+                number
+                    .as_f64()
+                    .is_some_and(|value| value.abs() <= MAX_SAFE_INTEGER as f64)
+            };
+            if valid {
+                Ok(())
+            } else {
+                Err(RANGE_ERROR)
+            }
+        }
+        Value::Array(values) => values.iter().try_for_each(validate_json),
+        Value::Object(values) => values.values().try_for_each(validate_json),
+        _ => Ok(()),
+    }
+}
+pub mod word_map {
+    use super::*;
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer>(
+        value: &BTreeMap<String, u32>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        decoder: D,
+    ) -> Result<BTreeMap<String, u32>, D::Error> {
+        BTreeMap::<String, u32>::deserialize(decoder)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 0, "maximum": u32::MAX}
+        })
+    }
+}
+pub mod optional_signed {
+    use super::*;
+    fn valid(value: i64) -> bool {
+        (MIN_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+    }
+    pub fn serialize<S: Serializer>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error> {
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::ser::Error::custom(RANGE_ERROR));
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<i64>, D::Error> {
+        let value = Option::<i64>::deserialize(decoder)?;
+        if value.is_some_and(|inner| !valid(inner)) {
+            return Err(serde::de::Error::custom(RANGE_ERROR));
+        }
+        Ok(value)
+    }
+    pub fn schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "type": ["integer", "null"],
+            "minimum": MIN_SAFE_INTEGER,
+            "maximum": MAX_SAFE_INTEGER
+        })
+    }
+}
+pub mod json {
+    use super::*;
+    pub fn serialize<S: Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {
+        validate_json(value).map_err(serde::ser::Error::custom)?;
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Value, D::Error> {
+        let value = Value::deserialize(decoder)?;
+        validate_json(&value).map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
+pub mod optional_json {
+    use super::*;
+    pub fn serialize<S: Serializer>(
+        value: &Option<Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if let Some(value) = value {
+            validate_json(value).map_err(serde::ser::Error::custom)?;
+        }
+        value.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<Value>, D::Error> {
+        let value = Option::<Value>::deserialize(decoder)?;
+        if let Some(value) = &value {
+            validate_json(value).map_err(serde::de::Error::custom)?;
+        }
+        Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ActionKey, AttemptState, AttemptStatus, Cause, Mode, UnitId, WorkerKey};
+
+    #[test]
+    fn optional_unit_input_rejects_wide_wire_numbers() {
+        let input = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
+        assert!(
+            super::optional_json::serialize(&Some(input), serde_json::value::Serializer).is_err()
+        );
+    }
+
+    fn attempt(seq: u32) -> AttemptState {
+        AttemptState {
+            action_id: ActionKey::from("action"),
+            seq,
+            unit: UnitId::from("run/unit"),
+            worker: WorkerKey::from("worker"),
+            mode: Mode::Initial,
+            cause: Cause::Missing,
+            status: AttemptStatus::Running,
+            kbbl_session_id: None,
+        }
+    }
+
+    #[test]
+    fn attempt_sequence_round_trips() {
+        let state = attempt(3);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<AttemptState>(&bytes).unwrap().seq,
+            3
+        );
+    }
+
+    #[test]
+    fn a_state_value_cannot_smuggle_a_wide_number() {
+        let wide = serde_json::json!({"nested": [MAX_SAFE_INTEGER + 1]});
+        let status = crate::UnitStatus::Done {
+            outcome: wide.clone(),
+        };
+        assert!(serde_json::to_vec(&status).is_err());
+        assert!(serde_json::from_value::<crate::UnitStatus>(
+            serde_json::json!({"kind": "done", "outcome": wide})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn every_generated_integer_schema_is_bounded_for_javascript() {
+        fn check(value: &Value) {
+            match value {
+                Value::Object(object) => {
+                    if object.get("type").and_then(Value::as_str) == Some("integer") {
+                        assert!(object["minimum"].as_i64().unwrap() >= MIN_SAFE_INTEGER);
+                        assert!(object["maximum"].as_u64().unwrap() <= MAX_SAFE_INTEGER as u64);
+                    }
+                    object.values().for_each(check);
+                }
+                Value::Array(values) => values.iter().for_each(check),
+                _ => {}
+            }
+        }
+        check(&serde_json::to_value(schemars::schema_for!(crate::protocol::Request)).unwrap());
+        check(&serde_json::to_value(schemars::schema_for!(crate::protocol::Response)).unwrap());
+    }
+}

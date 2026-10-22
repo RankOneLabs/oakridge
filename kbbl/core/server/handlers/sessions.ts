@@ -2,24 +2,69 @@ import type { Hono } from "hono";
 import { isAbsolute, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
-import { MAX_ARTIFACT_ID_LENGTH, type ArtifactId } from "../../session/types";
-import type { SessionManager } from "../../session/session-manager";
+/**
+ * Hard cap on `artifactId` length, enforced at POST /sessions and
+ * GET /artifacts/:artifactId/sessions.
+ */
+const MAX_ARTIFACT_ID_LENGTH = 200;
 import type { AcpSessionService } from "../../acp/session-service";
-import type { AcpError, AcpSessionStartSpec, AcpSessionWorkflowIdentity } from "../../acp/types";
-import {
-  toLegacySnapshot,
-  toLegacyStatus,
-  toTerminalBody,
-} from "../../acp/legacy-wire";
-import {
-  archivedLegacyToPwaSnapshot,
-  toPwaSessionSnapshot,
-} from "../../acp/pwa-wire";
-import { compareSessionsByActivity } from "../../acp/pwa-session-order";
+import type { AcpError, AcpSessionSnapshot, AcpSessionStartSpec, AcpSessionStatus, AcpSessionWorkflowIdentity, TerminalObservation } from "../../acp/types";
+import { toPwaSessionSnapshot } from "../../acp/pwa-wire";
+import type { ResumableEnd, ResumableEnsureRequest, ResumableEnsureResponse, ResumablePendingBody, ResumableSessionSnapshot, ResumableSessionStatus, ResumableTerminalBody, ResumableWorkflowIdentity } from "../../acp/resumable-wire";
 import { buildResumeContext } from "../../acp/resume-context";
 import { listPwaSessions } from "./acp-inbox";
 import { isValidSid } from "./acp-per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
+
+// HTTP response projections for the resumable ACP session API (acp/resumable-wire.ts).
+function toResumableStatus(status: AcpSessionStatus): ResumableSessionStatus {
+  switch (status) {
+    case "provisioning":
+      return "starting";
+    case "idle":
+    case "prompting":
+    // An unknown session's turn outcome is uncertain, but the session
+    // itself is still attached: reporting "ended" would make the executor
+    // read an outcome before observation says so.
+    case "unknown":
+      return "live";
+    case "ended":
+    case "fenced":
+    case "failed":
+      return "ended";
+  }
+}
+
+function toResumableSnapshot(snapshot: AcpSessionSnapshot): ResumableSessionSnapshot {
+  return {
+    sid: snapshot.sid,
+    name: snapshot.name,
+    status: toResumableStatus(snapshot.status),
+    createdAt: snapshot.created_at,
+    lastActivityTs: snapshot.last_activity_at,
+    runtimeId: snapshot.agent_profile,
+    model: snapshot.requested_model,
+    effort: snapshot.requested_effort,
+    artifactId: snapshot.artifact_id,
+    projectWorkdir: snapshot.project_workdir,
+    worktreePath: snapshot.worktree_path,
+    worktreeBranch: snapshot.worktree_branch,
+    worktreeBaseRef: snapshot.worktree_base_ref,
+  };
+}
+
+/** A session closed by an operator or by the attempt that holds it ended by closing; anything else that did not succeed failed. */
+function toResumableEnd(observation: Exclude<TerminalObservation, { kind: "pending" }>): ResumableEnd {
+  if (observation.kind === "succeeded") return { kind: "succeeded" };
+  const session = observation.session;
+  if (session.status === "fenced" || session.end_reason === "user_closed" || session.end_reason === "fenced") return { kind: "closed" };
+  return { kind: "failed", code: observation.failure_code, detail: observation.failure_detail };
+}
+
+/** §11.2 terminal-route body for a non-pending observation. */
+function toTerminalBody(observation: Exclude<TerminalObservation, { kind: "pending" }>): ResumableTerminalBody {
+  return { session: toResumableSnapshot(observation.session), end: toResumableEnd(observation) };
+}
 
 /**
  * Validates a workdir string for POST /sessions and optional server startup
@@ -156,10 +201,9 @@ export function validateWorktreeSubdir(subdir: string): string | null {
 }
 
 /**
- * Parses the optional `workflow` member of a resumable ensure body (step 2's
- * kbbl adapter sends these member names verbatim; they are written once
- * here). Absence is not an error — most sessions carry no workflow
- * identity — it maps to a null result.
+ * Parses the optional `workflow` member of a resumable ensure body: the run,
+ * unit and worker of the Oakridge attempt the session serves. Absence is not
+ * an error (most sessions carry no workflow identity); it maps to null.
  */
 export function parseWorkflowIdentity(
   raw: unknown,
@@ -168,67 +212,16 @@ export function parseWorkflowIdentity(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { error: "workflow must be an object" };
   }
-  const value = raw as {
-    workflow_run_id?: unknown;
-    stage_instance_id?: unknown;
-    unit_id?: unknown;
-    operator_role?: unknown;
-    cohort_title?: unknown;
-    repository_key?: unknown;
-  };
-  const requiredField = (field: unknown, name: string): string | null => {
-    if (typeof field !== "string" || field.trim() === "") {
-      return `workflow.${name} must be a non-empty string`;
-    }
-    if (field.trim().length > 200) {
-      return `workflow.${name} must be at most 200 characters`;
-    }
-    return null;
-  };
-  const runIdError = requiredField(value.workflow_run_id, "workflow_run_id");
-  if (runIdError) return { error: runIdError };
-  const stageInstanceError = requiredField(value.stage_instance_id, "stage_instance_id");
-  if (stageInstanceError) return { error: stageInstanceError };
-  const unitIdError = requiredField(value.unit_id, "unit_id");
-  if (unitIdError) return { error: unitIdError };
-
-  const optionalField = (
-    field: unknown,
-    name: string,
-    maxLength: number,
-  ): { value: string | null } | { error: string } => {
-    if (field === undefined) return { value: null };
-    if (typeof field !== "string") return { error: `workflow.${name} must be a string` };
-    const trimmed = field.trim();
-    if (trimmed.length > maxLength) {
-      return { error: `workflow.${name} must be at most ${maxLength} characters` };
-    }
-    return { value: trimmed.length > 0 ? trimmed : null };
-  };
-  const operatorRole = optionalField(value.operator_role, "operator_role", 200);
-  if ("error" in operatorRole) return operatorRole;
-  const cohortTitle = optionalField(value.cohort_title, "cohort_title", 300);
-  if ("error" in cohortTitle) return cohortTitle;
-  const repositoryKey = optionalField(value.repository_key, "repository_key", 200);
-  if ("error" in repositoryKey) return repositoryKey;
-
-  return {
-    value: {
-      workflow_run_id: (value.workflow_run_id as string).trim(),
-      stage_instance_id: (value.stage_instance_id as string).trim(),
-      unit_id: (value.unit_id as string).trim(),
-      operator_role: operatorRole.value,
-      cohort_title: cohortTitle.value,
-      repository_key: repositoryKey.value,
-    },
-  };
+  const value = raw as { readonly [Field in keyof ResumableWorkflowIdentity]?: unknown };
+  const fields = { run_id: value.run_id, unit_id: value.unit_id, worker: value.worker };
+  for (const [name, field] of Object.entries(fields)) {
+    if (typeof field !== "string" || field.trim() === "") return { error: `workflow.${name} must be a non-empty string` };
+    if (field.trim().length > 200) return { error: `workflow.${name} must be at most 200 characters` };
+  }
+  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim() } };
 }
 
-/**
- * Map a service-layer AcpError onto the HTTP status the legacy routes used
- * for the equivalent failure, with the ACP code carried in the body so a
- * follow-up DBOS change can consume it (§22.10).
- */
+/** A service-layer AcpError as an HTTP status, with the ACP code carried in the body. */
 function errorResponse(error: AcpError): {
   status: 400 | 404 | 409 | 422 | 503;
   body: { error: string; code: string; detail: string };
@@ -259,19 +252,16 @@ function errorResponse(error: AcpError): {
 export interface SessionsRouteDeps {
   /** ACP session service — the production backend for every session route. */
   acp: AcpSessionService;
-  /**
-   * Read-only legacy manager for pre-cutover sessions: archived snapshot
-   * listing and legacy purge. Never creates or spawns anything.
-   */
-  manager: SessionManager;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
   /**
-   * Oakridge base URL, used to ask whether a session is still held by a live
-   * execution before honouring a close. Absent when Oakridge is not configured,
+   * Oakridge base URL, used to ask whether a running attempt still holds a
+   * session before honouring a close. Absent when Oakridge is not configured,
    * in which case no session is ever held.
    */
   oakridgeBaseUrl?: string;
+  /** Sent on the session-hold lookup, an operator route of the Oakridge backend. */
+  oakridgeControlToken?: string;
 }
 
 /**
@@ -280,7 +270,7 @@ export interface SessionsRouteDeps {
  * session service.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { acp, manager, defaultWorkdir, oakridgeBaseUrl } = deps;
+  const { acp, defaultWorkdir, oakridgeBaseUrl, oakridgeControlToken } = deps;
 
   app.put("/sessions/resumable/:sessionKey", async (c) => {
     const rawKey = c.req.param("sessionKey").trim();
@@ -292,11 +282,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       return c.json({ error: "invalid json" }, 400);
     }
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return c.json({ error: "json body must be an object" }, 400);
-    const body = raw as {
-      initial_prompt?: unknown; workdir?: unknown; name?: unknown; artifact_id?: unknown;
-      runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown; inherit_worktree_from?: unknown;
-      workflow?: unknown;
-    };
+    const body = raw as { readonly [Field in keyof ResumableEnsureRequest]?: unknown };
     if (typeof body.initial_prompt !== "string" || body.initial_prompt.trim() === "") return c.json({ error: "initial_prompt must be a non-empty string" }, 400);
     if (typeof body.workdir !== "string") return c.json({ error: "workdir must be a string" }, 400);
     const workdirError = await validateWorkdir(body.workdir);
@@ -309,7 +295,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let worktree: AcpSessionStartSpec["worktree"];
     if (body.worktree !== undefined) {
       if (typeof body.worktree !== "object" || body.worktree === null || Array.isArray(body.worktree)) return c.json({ error: "worktree must be an object" }, 400);
-      const value = body.worktree as { branch_name?: unknown; worktree_subdir?: unknown; base_ref?: unknown };
+      const value = body.worktree as { readonly [Field in keyof NonNullable<ResumableEnsureRequest["worktree"]>]?: unknown };
       if (typeof value.branch_name !== "string" || typeof value.worktree_subdir !== "string" || (value.base_ref !== undefined && typeof value.base_ref !== "string")) return c.json({ error: "worktree fields are invalid" }, 400);
       const branchErr = validateGitRefName(value.branch_name, "worktree.branch_name");
       if (branchErr) return c.json({ error: branchErr }, 400);
@@ -336,25 +322,28 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       ...(worktree ? { worktree } : {}),
       ...(inheritWorktreeFrom ? { inherit_worktree_from: inheritWorktreeFrom } : {}),
     };
-    const ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
+    let ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
+    if (ensured.ok && (ensured.value.session.status === "ended" || ensured.value.session.status === "failed" || ensured.value.session.status === "fenced")
+      && c.req.header("x-oakridge-collaboration-resume") === "true") {
+      const revived = await acp.reviveResumable(rawKey);
+      ensured = revived.ok ? { ok: true, value: { kind: "existing", session: revived.value } } : revived;
+    }
     if (!ensured.ok) {
       const { status, body: errBody } = errorResponse(ensured.error);
       return c.json(errBody, status);
     }
     const snapshot = ensured.value.session;
-    // Legacy kinds: a fresh session "started" (201); an existing live one
+    // A fresh session "started" (201); an existing live one
     // "attached"; an existing dead one "terminal" — the caller proceeds
     // straight to terminal observation.
     const kind =
       ensured.value.kind === "created"
         ? "started"
-        : toLegacyStatus(snapshot.status) === "ended"
+        : toResumableStatus(snapshot.status) === "ended"
           ? "terminal"
           : "attached";
-    return c.json(
-      { kind, session: toLegacySnapshot(snapshot) },
-      kind === "started" ? 201 : 200,
-    );
+    const response: ResumableEnsureResponse = { kind, session: toResumableSnapshot(snapshot) };
+    return c.json(response, kind === "started" ? 201 : 200);
   });
 
   // Escape hatch for a key whose session can no longer make progress
@@ -366,7 +355,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (rawKey.length === 0 || rawKey.length > 300) return c.json({ error: "session key must be 1-300 characters" }, 400);
     const result = await acp.advanceResumable(rawKey);
     if (result.kind === "not_found") return c.json({ error: "session key has never been claimed" }, 404);
-    return c.json({ kind: "advanced", session: toLegacySnapshot(result.session) });
+    return c.json({ kind: "advanced", session: toResumableSnapshot(result.session) });
   });
 
   // Bounded long-poll (§11.2). `wait_ms` is capped well under the server's
@@ -382,10 +371,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       return c.json(errBody, status);
     }
     if (observed.value.kind === "pending") {
-      return c.json(
-        { pending: true, session: toLegacySnapshot(observed.value.session) },
-        202,
-      );
+      const pending: ResumablePendingBody = { pending: true, session: toResumableSnapshot(observed.value.session) };
+      return c.json(pending, 202);
     }
     return c.json(toTerminalBody(observed.value));
   });
@@ -406,20 +393,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     return c.json({ accepted: true, delivery_key: delivered.value.turn_key, status: delivered.value.status });
   });
 
-  app.get("/sessions", async (c) => {
-    const acpSessions = listPwaSessions(acp);
-    const include = c.req.query("include");
-    if (include !== "archived") return c.json({ sessions: acpSessions });
-    // Pre-cutover sessions live as JSONL; keep them listed (closed, not
-    // viewable) until the legacy machinery is deleted. Ordered newest
-    // first by lastActivityTs so the PWA can render without a second sort.
-    const archived = await manager.listArchivedSnapshots();
-    const legacy = [...manager.listSnapshots(), ...archived].map(
-      archivedLegacyToPwaSnapshot,
-    );
-    const merged = [...acpSessions, ...legacy].sort(compareSessionsByActivity);
-    return c.json({ sessions: merged });
-  });
+  app.get("/sessions", (c) => c.json({ sessions: listPwaSessions(acp) }));
 
   app.post("/sessions", async (c) => {
     let raw: unknown = null;
@@ -440,26 +414,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       model?: unknown;
       effort?: unknown;
       runtime?: unknown;
-      agent_profile?: unknown;
       worktree?: unknown;
     };
 
-    // `runtime` remains the wire alias for `agent_profile` during the
-    // migration (§14.2); both are accepted, conflicts rejected.
+    // `runtime` names the agent profile (§14.2).
     if (parsed.runtime !== undefined && typeof parsed.runtime !== "string") {
       return c.json({ error: "runtime must be a string" }, 400);
     }
-    if (parsed.agent_profile !== undefined && typeof parsed.agent_profile !== "string") {
-      return c.json({ error: "agent_profile must be a string" }, 400);
-    }
-    if (
-      typeof parsed.runtime === "string" &&
-      typeof parsed.agent_profile === "string" &&
-      parsed.runtime !== parsed.agent_profile
-    ) {
-      return c.json({ error: "runtime and agent_profile conflict" }, 400);
-    }
-    const profileId = (parsed.agent_profile ?? parsed.runtime) as string | undefined;
+    const profileId = parsed.runtime;
 
     let name: string | undefined;
     if (parsed.name !== undefined) {
@@ -595,41 +557,39 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         400,
       );
     }
-    const acpSessions = acp
-      .listByArtifact(trimmed)
-      .map((session) =>
-        toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid)),
-      );
-    const legacy = manager
-      .listByArtifact(trimmed as ArtifactId)
-      .map(archivedLegacyToPwaSnapshot);
-    return c.json({ sessions: [...acpSessions, ...legacy] });
+    const archives = acp.listSessionArchives();
+    return c.json({ sessions: acp.listByArtifact(trimmed)
+      .map((session) => toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid), archives.get(session.sid) ?? null)) });
   });
 
   app.delete("/sessions/:sid", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
     const purge = isTruthyFlag(c.req.query("purge"));
-    // A close is refused while a live execution still depends on this session
-    // — unless it is that execution fencing itself, or an operator who has
+    const archive = isTruthyFlag(c.req.query("archive"));
+    if (purge && archive) return c.json({ error: "purge and archive cannot be combined" }, 400);
+    const acpSession = acp.getSession(sid);
+    if (!acpSession) return c.json({ error: "unknown session" }, 404);
+    const isTerminal = acpSession.status === "ended" || acpSession.status === "fenced" || acpSession.status === "failed";
+    // A close is refused while a running Oakridge attempt still uses this
+    // session, unless it is that attempt closing it or an operator who has
     // seen the refusal and asked again.
-    const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by") });
-    if (authority.kind !== "operator_override") {
-      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl }));
+    const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by"), closed_by: c.req.query("closed_by") });
+    if (authority.kind !== "operator_override" && !(archive && isTerminal)) {
+      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl, controlToken: oakridgeControlToken }));
       if (refusal) return c.json(refusal, 409);
     }
 
-    const acpSession = acp.getSession(sid);
-    if (acpSession) {
-      const fencedBy = c.req.query("fenced_by");
-      if (purge) {
-        const purged = await acp.purgeSession(sid);
-        if (!purged.ok) {
-          const { status, body: errBody } = errorResponse(purged.error);
-          return c.json(errBody, status);
-        }
-        return c.json({ ok: true, removed: purged.value });
+    const fencedBy = c.req.query("fenced_by");
+    if (purge) {
+      const purged = await acp.purgeSession(sid);
+      if (!purged.ok) {
+        const { status, body: errBody } = errorResponse(purged.error);
+        return c.json(errBody, status);
       }
+      return c.json({ ok: true, removed: purged.value });
+    }
+    if (!archive || !isTerminal) {
       const closed = await acp.closeSession(
         sid,
         fencedBy ? { fenced_by: fencedBy } : undefined,
@@ -638,15 +598,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         const { status, body: errBody } = errorResponse(closed.error);
         return c.json(errBody, status);
       }
-      return c.json({ ok: true });
     }
-
-    // Legacy fallback: archived pre-cutover sessions still support purge.
-    if (purge) {
-      const removed = await manager.remove(sid);
-      if (!removed) return c.json({ error: "unknown session" }, 404);
-      return c.json({ ok: true, removed: true });
+    if (archive) {
+      const archived = acp.archiveSession(sid);
+      if (!archived.ok) {
+        const { status, body: errBody } = errorResponse(archived.error);
+        return c.json(errBody, status);
+      }
     }
-    return c.json({ error: "unknown session" }, 404);
+    return c.json({ ok: true });
   });
 }

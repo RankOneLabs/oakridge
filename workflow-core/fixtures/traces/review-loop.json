@@ -1,0 +1,194 @@
+{
+  "sample": "review-loop",
+  "rows": [
+    {
+      "events": [
+        {
+          "op": "launch",
+          "input": {
+            "topic": "Oakridge"
+          }
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      },
+      "new_workers": [
+        "run/document:writer"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "started",
+          "unit": "run/document",
+          "worker": "writer"
+        },
+        {
+          "op": "publish",
+          "unit": "run/document",
+          "worker": "writer",
+          "artifact": "draft",
+          "body": {
+            "title": "First",
+            "body": "Long"
+          }
+        },
+        {
+          "op": "ended",
+          "unit": "run/document",
+          "worker": "writer",
+          "result": "succeeded"
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      },
+      "new_workers": [
+        "run/document:critic"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "publish",
+          "unit": "run/document",
+          "worker": "critic",
+          "artifact": "critique",
+          "subject": "run/document:draft:1",
+          "body": {
+            "notes": [
+              "shorten"
+            ]
+          }
+        },
+        {
+          "op": "ended",
+          "unit": "run/document",
+          "worker": "critic",
+          "result": "succeeded"
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      }
+    },
+    {
+      "events": [
+        {
+          "op": "decide",
+          "unit": "run/document",
+          "review": "editor",
+          "decision": "request_changes",
+          "target": "run/document:draft:1",
+          "payload": {
+            "feedback": "shorter"
+          }
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      },
+      "new_workers": [
+        "run/document:writer"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "publish",
+          "unit": "run/document",
+          "worker": "writer",
+          "artifact": "draft",
+          "predecessor": "run/document:draft:1",
+          "body": {
+            "title": "Second",
+            "body": ""
+          }
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      }
+    },
+    {
+      "events": [
+        {
+          "op": "ended",
+          "unit": "run/document",
+          "worker": "writer",
+          "result": "failed"
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      },
+      "new_workers": [
+        "run/document:critic"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "retry",
+          "unit": "run/document",
+          "worker": "writer"
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      },
+      "new_workers": [
+        "run/document:writer"
+      ]
+    },
+    {
+      "events": [
+        {
+          "op": "publish",
+          "unit": "run/document",
+          "worker": "writer",
+          "artifact": "draft",
+          "predecessor": "run/document:draft:2",
+          "body": {
+            "title": "Third",
+            "body": "Short"
+          }
+        },
+        {
+          "op": "publish",
+          "unit": "run/document",
+          "worker": "critic",
+          "artifact": "critique",
+          "predecessor": "run/document:critique:1",
+          "subject": "run/document:draft:3",
+          "body": {
+            "notes": [
+              "good"
+            ]
+          }
+        }
+      ],
+      "status": {
+        "run/document": "active"
+      }
+    },
+    {
+      "events": [
+        {
+          "op": "decide",
+          "unit": "run/document",
+          "review": "editor",
+          "decision": "approve",
+          "target": "run/document:draft:3",
+          "payload": {}
+        }
+      ],
+      "status": {
+        "run/document": "done",
+        "run": "done"
+      }
+    }
+  ],
+  "section_9_delta": "Row 2 ends the writer's first attempt before the critic is wanted: a reviewer waits for its subject's creator to finish (V3), so the critic's review of draft 1 starts only then. Row 3 ends the critic before the later Revise attempt; the published section 9 row omits these WorkerEnded events, leaving the original writer live and conflicting with C7 one-live-attempt semantics. Row 6 wants the critic once the failed revise has ended."
+}

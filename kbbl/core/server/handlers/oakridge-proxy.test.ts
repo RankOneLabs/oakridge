@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
-import { mountOakridgeProxyRoutes } from "./oakridge-proxy";
+import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./oakridge-proxy";
+import { HTTP_ROUTES } from "../../../../oakridge-dbos/src/http/routes";
+import { browserWriteMiddleware, browserWritePolicy } from "../../../../oakridge-dbos/src/http/browser-write-policy";
+import { controlTokenMiddleware } from "../../../../oakridge-dbos/src/http/control-auth";
+import sample from "../../pwa/oakridge/__fixtures__/v2-adapter-sample.json";
 
 const originalFetch = globalThis.fetch;
 
@@ -10,6 +14,141 @@ afterEach(() => {
 });
 
 describe("oakridge proxy", () => {
+  test("serves frozen run Activity from authenticated v2 unit histories", async () => {
+    const runId = sample.run.run_id;
+    const unit = sample.units.find((candidate) => candidate.stage === "prepare");
+    if (!unit) throw new Error("captured fixture lacks a prepare unit");
+    const calls: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      expect((init?.headers as Headers).get("authorization")).toBe("Bearer core-secret");
+      if (path.endsWith("/units")) return Response.json([unit]);
+      return Response.json({ unit_id: unit.unit_id, next_cursor: null, events: [{
+        id: "event-1", ingress_id: null, writer: { kind: "engine" },
+        created_at: "2026-10-15T22:08:48.000Z",
+        event: { kind: "revision_published", unit: unit.unit_id, artifact: "workspace", body: {} },
+      }] });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", browserControlToken: "browser-secret", coreControlToken: "core-secret" });
+    const path = `/oakridge/api/run_events?limit=500&run_id=${encodeURIComponent(runId)}`;
+    expect((await app.request(path)).status).toBe(401);
+    const response = await app.request(path, { headers: { authorization: "Bearer browser-secret" } });
+    expect(response.status).toBe(200);
+    const events = await response.json() as { sequence: string; operation: string; payload: { run_id: string } }[];
+    expect(events.map((event) => [event.sequence, event.operation, event.payload.run_id])).toEqual([["1", "slot_released", runId]]);
+    expect(calls).toEqual([`/api/runs/${runId}/units`, `/api/runs/${runId}/units/${encodeURIComponent(unit.unit_id)}/history`]);
+  });
+
+  test("the direct and proxy paths reject every table write with non-JSON content or an unlisted origin", async () => {
+    const direct = new Hono();
+    direct.use("*", browserWriteMiddleware(browserWritePolicy(["https://operator.example"])));
+    direct.use("*", controlTokenMiddleware("shared-token"));
+    direct.all("*", (c) => c.json({ accepted: true }));
+    const proxy = new Hono();
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"],
+      browserControlToken: "shared-token", coreControlToken: "shared-token" });
+    for (const route of HTTP_ROUTES.filter((item) => item.method !== "GET")) {
+      const path = route.path.replace(/:[^/]+/g, "id");
+      for (const [headers, status] of [
+        [new Headers({ "content-type": "text/plain", authorization: "Bearer shared-token" }), 415],
+        [new Headers({ "content-type": "application/json", origin: "http://127.0.0.1:5173", authorization: "Bearer shared-token" }), 403],
+      ] as const) {
+        const options = { method: route.method, headers, body: "{}" };
+        expect((await direct.request(path, options)).status).toBe(status);
+        expect((await proxy.request(`/oakridge/api${path}`, options)).status).toBe(status);
+      }
+    }
+    const authorized = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer shared-token" }, body: "{}" };
+    expect((await direct.request("/api/runs", authorized)).status).toBe(200);
+    expect((await direct.request("/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...authorized, headers: { ...authorized.headers, authorization: "Bearer wrong" } })).status).toBe(401);
+  });
+
+  test("a control cookie authenticates the PWA on both paths and stays off the upstream wire", async () => {
+    const policy = browserWritePolicy(["https://operator.example"]);
+    const direct = new Hono();
+    direct.use("*", browserWriteMiddleware(policy));
+    direct.use("*", controlTokenMiddleware("shared-token", policy));
+    direct.all("*", (c) => c.json({ accepted: true }));
+    let upstream_authorization: string | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      upstream_authorization = (init?.headers as Headers).get("authorization");
+      expect((init?.headers as Headers).get("cookie")).toBeNull();
+      return Response.json({ accepted: true });
+    }) as typeof fetch;
+    const proxy = new Hono();
+    mountOakridgeProxyRoutes(proxy, { baseUrl: "http://oakridge.test", browserControlToken: "shared-token",
+      coreControlToken: "shared-token", allowedOrigins: ["https://operator.example"] });
+    const request = { method: "POST", headers: { "content-type": "application/json", origin: "https://operator.example",
+      cookie: "kbbl_ctrl=shared-token" }, body: "{}" };
+    expect((await direct.request("/api/runs", request)).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/api/runs", request)).status).toBe(200);
+    expect(String(upstream_authorization)).toBe("Bearer shared-token");
+    expect((await direct.request("/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await proxy.request("/oakridge/api/api/runs", { headers: { cookie: "kbbl_ctrl=shared-token" } })).status).toBe(200);
+    expect((await direct.request("/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } })).status).toBe(403);
+    const no_origin = { ...request, headers: { "content-type": "application/json", cookie: "kbbl_ctrl=shared-token" } };
+    expect((await direct.request("/api/runs", no_origin)).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", no_origin)).status).toBe(401);
+    expect((await direct.request("/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+    expect((await proxy.request("/oakridge/api/api/runs", { ...request, headers: { ...request.headers, cookie: "kbbl_ctrl=wrong" } })).status).toBe(401);
+  });
+  test("serves the operator refresh interval so it is settable without a PWA rebuild", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", fallbackRefreshMs: 5_000 });
+    expect(await (await app.request("/oakridge/config")).json()).toEqual({
+      available: true, core_url: "http://oakridge.test", fallback_refresh_ms: 5_000 });
+  });
+
+  test("states no interval when none is configured, leaving the PWA default in place", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    expect(await (await app.request("/oakridge/config")).json()).toEqual({ available: true, core_url: "http://oakridge.test" });
+  });
+
+  test("an unset refresh interval is absent, not a value", () => {
+    expect([parseFallbackRefreshMs(undefined), parseFallbackRefreshMs("  ")]).toEqual([undefined, undefined]);
+  });
+
+  test("a configured refresh interval parses to its millisecond value", () => {
+    expect(parseFallbackRefreshMs("5000")).toBe(5_000);
+  });
+
+  test("the largest timer delay is still accepted", () => {
+    expect(parseFallbackRefreshMs("2147483647")).toBe(2_147_483_647);
+  });
+
+  test.each(["soon", "0", "-1", "2147483648", "1e12"])("a refresh interval of %s fails the boot rather than being ignored", (raw) => {
+    expect(() => parseFallbackRefreshMs(raw)).toThrow(/OAKRIDGE_FALLBACK_REFRESH_MS/);
+  });
+
+  test("preserves a durable ingress receipt and the upstream status", async () => {
+    let target = "";
+    globalThis.fetch = (async (input, init) => {
+      target = String(input);
+      expect(init?.method).toBe("POST");
+      return Response.json({ kind: "committed", run_id: "run-1", event_id: "event-1" }, { status: 202 });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/runs/run-1/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect({ target, status: response.status, body: await response.json() }).toEqual({
+      target: "http://oakridge.test/runs/run-1/cancel", status: 202,
+      body: { kind: "committed", run_id: "run-1", event_id: "event-1" },
+    });
+  });
+
+  test("preserves an unsupported upstream ingress failure", async () => {
+    globalThis.fetch = (async () => Response.json({ error: "unsupported_ingress" }, { status: 501 })) as unknown as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/unsupported", { method: "POST", body: "{}" });
+    expect({ status: response.status, body: await response.json() }).toEqual({ status: 501, body: { error: "unsupported_ingress" } });
+  });
+
   test("bounds upstream fetches with an abort signal", async () => {
     let signal: AbortSignal | undefined;
     globalThis.fetch = (async (_input, init) => {
@@ -28,7 +167,7 @@ describe("oakridge proxy", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
   });
 
-  test("injects core control token as Bearer on write requests", async () => {
+  test("requires kbbl's own control token on operator requests, then presents the core token upstream", async () => {
     const captured = { authHeader: null as string | null };
     globalThis.fetch = (async (_input, init) => {
       const headers = init?.headers as Headers | undefined;
@@ -42,11 +181,84 @@ describe("oakridge proxy", () => {
     const app = new Hono();
     mountOakridgeProxyRoutes(app, {
       baseUrl: "http://oakridge.test",
+      browserControlToken: "kbbl-token",
       coreControlToken: "core-secret",
     });
 
-    await app.request("/oakridge/api/workflow_runs", { method: "POST", body: "{}" });
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer kbbl-token" }, body: "{}" });
     expect(captured.authHeader).toBe("Bearer core-secret");
+  });
+
+  // The documented OAKRIDGE_CORE_CONTROL_TOKEN override makes kbbl's browser
+  // credential and the upstream's credential two different strings. Checking
+  // the browser against the upstream token rejected every proxied operator
+  // request; a single shared token in every other case hides that entirely.
+  test("a differing core token override leaves the PWA's own credential working on operator reads and writes", async () => {
+    const forwarded: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Headers;
+      expect(headers.get("cookie")).toBeNull();
+      forwarded.push(headers.get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", allowedOrigins: ["https://operator.example"],
+      browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+    const cookie = { cookie: "kbbl_ctrl=kbbl-token" };
+    expect((await app.request("/oakridge/api/api/runs", { headers: cookie })).status).toBe(200);
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", body: "{}",
+      headers: { ...cookie, "content-type": "application/json", origin: "https://operator.example" } })).status).toBe(200);
+    // Every upstream hop carries the core token, never kbbl's.
+    expect(forwarded).toEqual(["Bearer core-secret", "Bearer core-secret"]);
+    // The upstream credential is not a browser credential: presenting it fails.
+    expect((await app.request("/oakridge/api/api/runs", { method: "POST", body: "{}",
+      headers: { "content-type": "application/json", origin: "https://operator.example", authorization: "Bearer core-secret" } })).status).toBe(401);
+  });
+
+  // Presenting the core token for a caller kbbl cannot check would let any
+  // local process act as the operator.
+  test("a core token without a browser token refuses operator routes rather than present it for any caller", async () => {
+    const forwarded: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      forwarded.push((init?.headers as Headers).get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", coreControlToken: "core-secret" });
+    const statuses = [
+      (await app.request("/oakridge/api/api/runs")).status,
+      (await app.request("/oakridge/api/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status,
+      (await app.request("/oakridge/api/health")).status,
+    ];
+    expect({ statuses, forwarded }).toEqual({ statuses: [401, 401, 200], forwarded: [null] });
+  });
+
+  test("table operator routes forward the supplied control token", async () => {
+    const received: (string | null)[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      received.push((init?.headers as Headers).get("authorization"));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test", browserControlToken: "kbbl-token", coreControlToken: "core-secret" });
+    for (const route of HTTP_ROUTES) {
+      const path = route.path.replace(/:[^/]+/g, "id");
+      await app.request(`/oakridge/api${path}`, { method: route.method,
+        headers: { authorization: route.authority === "operator" ? "Bearer kbbl-token" : "", "content-type": "application/json" },
+        body: route.method === "GET" ? undefined : "{}" });
+    }
+    // Operator routes carry the injected core token; everything else reaches the
+    // upstream with no Authorization at all, the browser's header having been
+    // stripped rather than passed through.
+    expect(received).toEqual(HTTP_ROUTES.map((route) => route.authority === "operator" ? "Bearer core-secret" : null));
+  });
+
+  test("a two MiB request returns a typed 413 before proxy buffering", async () => {
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+    const response = await app.request("/oakridge/api/runs", { method: "POST", body: "x".repeat(2 * 1024 * 1024) });
+    expect({ status: response.status, body: await response.json() }).toEqual({ status: 413, body: { kind: "oversized_payload", limit: 1_048_576 } });
   });
 
   test("does not inject core token on GET requests", async () => {
@@ -85,11 +297,15 @@ describe("oakridge proxy", () => {
     // No coreControlToken — we just verify the browser header is stripped.
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
 
-    await app.request("/oakridge/api/runs", {
+    // A JSON content type is required, or the write policy rejects this with a
+    // 415 before any fetch and the assertion below passes without the proxy
+    // having forwarded anything at all.
+    const response = await app.request("/oakridge/api/runs", {
       method: "POST",
-      headers: { authorization: "Bearer browser-token" },
+      headers: { authorization: "Bearer browser-token", "content-type": "application/json" },
       body: "{}",
     });
+    expect(response.status).toBe(200);
     expect(captured.authHeader).toBeNull();
   });
 

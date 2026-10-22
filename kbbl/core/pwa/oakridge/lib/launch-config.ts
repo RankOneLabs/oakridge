@@ -1,7 +1,6 @@
 import type { RuntimeId } from "../../../runtime-interface";
 import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime } from "../../../runtime";
-import type { RuntimeDescriptor } from "../../types";
-import type { RuntimeModelSelection } from "../../types";
+import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 import type { Result } from "../../lib/result";
 import type { CreateRunContext, EpicProfileConfig, FinalMergePolicy, RepositoryInput } from "../types";
 import type { ValidatedRepositoryInput } from "../repository-inputs";
@@ -12,8 +11,7 @@ export interface BuildRunExecutionContextInput {
   readonly base_branch: string;
   readonly repositories: RepositoryInput[];
   readonly oakridge_url: string;
-  readonly planner: RuntimeModelSelection;
-  readonly worker: RuntimeModelSelection;
+  readonly session_settings: CreateRunContext["session_settings"];
 }
 
 export interface BuildRunExecutionContextError {
@@ -34,12 +32,7 @@ export function buildRunExecutionContext(input: BuildRunExecutionContextInput): 
       repositories: input.repositories,
       worktree_path: worktreePath,
       oakridge_url: input.oakridge_url,
-      planner_runtime: input.planner.runtime,
-      planner_model: input.planner.model,
-      planner_effort: input.planner.effort ?? null,
-      worker_runtime: input.worker.runtime,
-      worker_model: input.worker.model,
-      worker_effort: input.worker.effort ?? null,
+      session_settings: input.session_settings,
     },
   };
 }

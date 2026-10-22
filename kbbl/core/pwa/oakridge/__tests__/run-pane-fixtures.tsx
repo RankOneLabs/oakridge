@@ -34,7 +34,13 @@ export class EventSourceStub {
 }
 
 export function wrap(ui: ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
+  client.setQueryData(["oakridge", "run", RUN.id], RUN);
+  client.setQueryData(["oakridge", "run", RUN.id, "sessions"], SESSIONS);
+  client.setQueryData(["oakridge", "run", RUN.id, "gates"], GATES);
+  client.setQueryData(["oakridge", "artifact", ARTIFACT.id], ARTIFACT);
+  client.setQueryData(["oakridge", "artifact", ARTIFACT.id, "threads"], []);
+  client.setQueryData(["oakridge", "artifact", ARTIFACT.id, "review_items"], REVIEW_ITEMS);
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
@@ -153,6 +159,7 @@ export const snapshotOf = (sid: string): SessionSnapshot => ({
   requestedEffort: null,
   endReason: null,
   fencedBy: null,
+  archivedAt: null,
   pendingPermissionCount: 0,
   workflow: null,
 });

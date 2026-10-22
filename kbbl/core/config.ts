@@ -10,29 +10,9 @@ import { z } from "zod";
 // the same reason. Defaults live on each leaf field, so an absent block
 // or absent field both resolve to the documented default.
 
-const CompactSchema = z
-  .object({
-    soft_threshold_tokens: z.number().int().positive().default(30000),
-    hard_threshold_tokens: z.number().int().positive().default(70000),
-    compact_call_timeout_seconds: z.number().positive().default(90),
-    max_consecutive_failures_before_force: z
-      .number()
-      .int()
-      .positive()
-      .default(3),
-  })
-  .strict();
-
-const RetentionSchema = z
-  .object({
-    session_events_full_days: z.number().int().positive().default(14),
-  })
-  .strict();
-
 // Per-session git worktree isolation is mandatory: every kbbl-spawned
 // session runs in its own checkout + branch so concurrent sessions can't
 // race on a shared cwd or contaminate the operator's toplevel branch.
-// SessionManager rejects spawn when the workdir isn't a git repo.
 //
 // worktree_dir_name is a single dir-name component, NOT a path: it's
 // joined onto dataDir to form `<dataDir>/<worktree_dir_name>`. Empty
@@ -55,42 +35,6 @@ const SessionsSchema = z
         "worktree_dir_name must be a simple name (no '.', '/', '\\', or '..')",
       )
       .default("worktrees"),
-    // Tools auto-approved from the start of every freshly created session, so
-    // the operator isn't prompted for each one. Seeded onto the session's
-    // allowlist at create() (persisted as tool_allowlisted events). Default is
-    // read-only tools plus Bash; Edit/Write deliberately still prompt. Set to
-    // [] to require approval for everything.
-    default_allowlist: z
-      .array(z.string().min(1))
-      .default(["Read", "Glob", "Grep", "Bash"]),
-  })
-  .strict();
-
-const CodexRuntimeSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    bin: z.string().default("codex"),
-    // null/absent means "derive from dataDir" (server.ts fills it in).
-    // Non-null values must be one of the forms parseListenUrl accepts.
-    listen: z
-      .string()
-      .refine(
-        (s) =>
-          s === "stdio://" ||
-          s.startsWith("unix://") ||
-          s.startsWith("ws://") ||
-          s.startsWith("wss://"),
-        'runtime.codex.listen must be "stdio://", "unix://<path>", "ws://<addr>", or "wss://<addr>"',
-      )
-      .nullable()
-      .optional(),
-  })
-  .strict();
-
-const RuntimeSchema = z
-  .object({
-    default: z.enum(["claude-code", "codex"]).default("claude-code"),
-    codex: CodexRuntimeSchema.prefault({}),
   })
   .strict();
 
@@ -126,6 +70,7 @@ const AcpEnvPolicySchema = z
   .object({
     inherit: z.boolean().default(true),
     include: z.array(z.string().min(1)).nullable().optional(),
+    // A name ending in `*` excludes every variable with that prefix.
     exclude: z.array(z.string().min(1)).default([]),
     set: z.record(z.string(), z.string()).default({}),
   })
@@ -150,10 +95,7 @@ const AcpAgentSchema = z
 
 const AcpSchema = z
   .object({
-    // No schema default on purpose: "unset" and "explicitly claude-code"
-    // must stay distinguishable so the one-release runtime.default alias
-    // in server.ts never overrides an explicit operator choice.
-    default_agent: z.string().min(1).optional(),
+    default_agent: z.string().min(1).default("claude-code"),
     agents: z.record(z.string().min(1), AcpAgentSchema).default({}),
     graceful_kill_ms: z.number().int().positive().default(3000),
     hard_kill_ms: z.number().int().positive().default(5000),
@@ -169,33 +111,13 @@ export const KbblConfigSchema = z
     // defaults flow through. .default({}) wouldn't work here because in
     // Zod 4 .default takes the OUTPUT type, and {} is not a valid output
     // for these blocks (output has all defaulted keys present).
-    compact: CompactSchema.prefault({}),
-    retention: RetentionSchema.prefault({}),
     sessions: SessionsSchema.prefault({}),
-    runtime: RuntimeSchema.prefault({}),
     skills: SkillsSchema.prefault({}),
     acp: AcpSchema.prefault({}),
   })
   .strict();
 
 export type KbblConfig = z.infer<typeof KbblConfigSchema>;
-
-// === Cross-field invariants ===
-//
-// Zod can't natively express "soft < hard" without either a refinement on
-// the parent (which then loses access to the resolved values cleanly) or
-// a post-parse check. Doing it post-parse keeps the schema simple and
-// matches how loadConfig wants to surface errors anyway (one consolidated
-// message with the file path).
-function checkInvariants(cfg: KbblConfig, path: string): void {
-  const { soft_threshold_tokens: soft, hard_threshold_tokens: hard } =
-    cfg.compact;
-  if (soft >= hard) {
-    throw new Error(
-      `kbbl config: ${path}: compact.soft_threshold_tokens (${soft}) must be < compact.hard_threshold_tokens (${hard})`,
-    );
-  }
-}
 
 // === Loader ===
 //
@@ -221,9 +143,7 @@ export function loadConfig(path: string): KbblConfig {
       "code" in err &&
       (err as { code: string }).code === "ENOENT"
     ) {
-      const cfg = KbblConfigSchema.parse({});
-      checkInvariants(cfg, path);
-      return cfg;
+      return KbblConfigSchema.parse({});
     }
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`kbbl config: ${path}: failed to read file: ${msg}`);
@@ -249,6 +169,5 @@ export function loadConfig(path: string): KbblConfig {
       `kbbl config: ${path}: schema validation failed:\n${formatted}`,
     );
   }
-  checkInvariants(result.data, path);
   return result.data;
 }

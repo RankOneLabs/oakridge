@@ -2,36 +2,23 @@
  * The close guard, exercised through the real route.
  *
  * `session-hold.test.ts` covers the decision in isolation; this covers the
- * wiring, which is where the deadlock actually lived. Both halves were
- * individually correct — kbbl refused closes that would abandon a live unit,
- * and Oakridge fenced its agents by closing their sessions — but Oakridge's
- * fence arrived as an unqualified DELETE, so the guard refused the owner's own
- * teardown. The run could not be cancelled while it was active, and it stayed
- * active because its session would not close.
- *
- * The `fenced_by` query parameter is the contract between the two packages;
- * `oakridge-dbos/tests/kbbl-adapter.test.ts` pins the other end of it.
+ * wiring. Oakridge stops its own attempts by closing their sessions through
+ * this route, naming the attempt's action (`fenced_by` for a fresh session,
+ * `closed_by` for a resumed one), so the guard must let the holder through
+ * while still refusing anyone else. `oakridge-dbos/tests/kbbl-adapter.test.ts`
+ * pins the other end of that contract.
  */
 import { afterEach, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { mountSessionsRoutes } from "./sessions";
-import type { SessionManager } from "../../session/session-manager";
 import type { AcpSessionService } from "../../acp/session-service";
 import { ok, type FenceContext } from "../../acp/types";
 
 const SID = "db26174d-21e2-40f4-af40-fc359c4e9604";
-const HOLDER = "012c6027-4a21-4ec4-aadd-244ebf3236a9:0";
+const HOLDER = "3f1c0b9a7e2d4c5b";
 
-const hold = {
-  session_id: SID,
-  execution_id: HOLDER,
-  execution_workflow_id: "oakridge-run:9e868912:attempt:initial:stage:spec_analyzer:unit:0",
-  run_id: "9e868912-4944-4687-8316-0c2f6470bc3c",
-  stage_instance_id: "012c6027-4a21-4ec4-aadd-244ebf3236a9",
-  stage_key: "spec_analyzer",
-  unit_id: "0",
-};
+const hold = { session_id: SID, run_id: "run-9e868912", unit_id: "run-9e868912/analysis", worker: "analyst", action_id: HOLDER };
 
 interface Closed {
   readonly aborted: string[];
@@ -66,33 +53,29 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
 
   const oakridge = new Hono();
   oakridge.get("/session_holds/:sid", (c) =>
-    c.req.param("sid") === SID ? c.json({ held: true, hold }) : c.json({ held: false, hold: null }));
+    c.req.param("sid") === SID ? c.json({ hold }) : c.json({ hold: null }));
   const oakridgeServer = Bun.serve({ port: 0, fetch: oakridge.fetch });
   stubs.push(oakridgeServer);
 
   const app = new Hono();
   mountSessionsRoutes(app, {
     acp,
-    manager: {} as unknown as SessionManager,
     defaultWorkdir: "/tmp/kbbl-test",
     oakridgeBaseUrl: `http://127.0.0.1:${oakridgeServer.port}`,
   });
   return { app, closed };
 };
 
-test("an operator close is refused while a live unit still depends on the session", async () => {
+test("an operator close is refused while a running attempt still uses the session", async () => {
   const { app, closed } = guardedApp();
   const response = await app.fetch(new Request(`http://kbbl/sessions/${SID}`, { method: "DELETE" }));
   expect(response.status).toBe(409);
-  expect(await response.json()).toMatchObject({ code: "session_held_by_execution" });
+  expect(await response.json()).toMatchObject({ code: "session_held_by_attempt" });
   expect(closed.aborted).toEqual([]);
 });
 
-/**
- * The regression. Oakridge cancelling a run reaches its agent through this
- * route; if the guard refuses, the run is uncancellable.
- */
-test("the execution holding the session may fence it, and the session actually closes", async () => {
+/** Oakridge stopping a fresh session's attempt reaches the agent through this route; a refusal would leave the run unstoppable. */
+test("the attempt holding the session may fence it, and the session actually closes", async () => {
   const { app, closed } = guardedApp();
   const response = await app.fetch(
     new Request(`http://kbbl/sessions/${SID}?fenced_by=${encodeURIComponent(HOLDER)}`, { method: "DELETE" }));
@@ -103,10 +86,10 @@ test("the execution holding the session may fence it, and the session actually c
   expect(closed.fences).toEqual([{ fenced_by: HOLDER }]);
 });
 
-test("one execution may not fence the session another execution holds", async () => {
+test("one attempt may not fence the session another attempt holds", async () => {
   const { app, closed } = guardedApp();
   const response = await app.fetch(
-    new Request(`http://kbbl/sessions/${SID}?fenced_by=some-other-stage%3A3`, { method: "DELETE" }));
+    new Request(`http://kbbl/sessions/${SID}?fenced_by=some-other-action`, { method: "DELETE" }));
   expect(response.status).toBe(409);
   expect(closed.aborted).toEqual([]);
 });
@@ -118,7 +101,16 @@ test("an operator who has seen the refusal can still force the close", async () 
   expect(closed.aborted).toEqual([SID]);
 });
 
-test("a session no execution holds closes without a marker", async () => {
+test("the attempt holding a resumed session may close it without fencing it", async () => {
+  const { app, closed } = guardedApp();
+  const response = await app.fetch(
+    new Request(`http://kbbl/sessions/${SID}?closed_by=${encodeURIComponent(HOLDER)}`, { method: "DELETE" }));
+  expect(response.status).toBe(200);
+  expect(closed.aborted).toEqual([SID]);
+  expect(closed.fences).toEqual([undefined]);
+});
+
+test("a session no attempt holds closes without a marker", async () => {
   const { app, closed } = guardedApp();
   const free = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   const response = await app.fetch(new Request(`http://kbbl/sessions/${free}`, { method: "DELETE" }));

@@ -20,6 +20,7 @@ const snapshot = (pendingPermissionCount: number): SessionSnapshot => ({
   requestedEffort: null,
   endReason: null,
   fencedBy: null,
+    archivedAt: null,
   pendingPermissionCount,
   workflow: null,
 });

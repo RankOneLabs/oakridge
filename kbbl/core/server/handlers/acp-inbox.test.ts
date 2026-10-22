@@ -132,7 +132,6 @@ describe("GET /inbox (ACP)", () => {
       const snapshot = frame.sessions[0]!;
       expect(snapshot.name).toBe("inbox-one");
       expect(snapshot.agentProfile).toBe("claude-code");
-      expect(snapshot.source).toBe("acp");
       expect(snapshot.status).toBe("idle");
       expect(snapshot.pendingPermissionCount).toBe(0);
       expect("acp_session_id" in snapshot).toBe(false);

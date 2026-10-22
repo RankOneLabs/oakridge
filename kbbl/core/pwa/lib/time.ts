@@ -37,15 +37,6 @@ export function formatExactTime(iso: string): string {
   return exactTimeFormatter.format(t);
 }
 
-// Returns ms-since-epoch for an ISO timestamp, or null if Date.parse fails.
-// Stream events flow from the network and a malformed ts would otherwise
-// poison the elapsed-timer math (NaN propagates through arithmetic and
-// nullish-coalescing to never-render NaN).
-export function parseIsoMs(s: string): number | null {
-  const ms = Date.parse(s);
-  return Number.isFinite(ms) ? ms : null;
-}
-
 export function formatElapsedSeconds(s: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);

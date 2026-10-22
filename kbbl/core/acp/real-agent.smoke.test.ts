@@ -27,6 +27,8 @@ import type { AcpUiEvent, TurnKey } from "./types";
 
 const REAL_AGENT = process.env.KBBL_ACP_REAL_AGENT ?? "";
 const realTest = REAL_AGENT === "claude-code" || REAL_AGENT === "codex" ? test : test.skip;
+if (REAL_AGENT !== "claude-code" && REAL_AGENT !== "codex")
+  console.warn("SKIP: real-agent ACP smoke gate (codex and claude-code); run test:acp:codex:real and test:acp:claude:real explicitly.");
 
 const cleanups: Array<() => Promise<void> | void> = [];
 const agentText = (events: readonly AcpUiEvent[]): string => events

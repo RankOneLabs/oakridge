@@ -11,7 +11,6 @@ import { Hono } from "hono";
 
 import { mountSessionsRoutes, parseWorkflowIdentity } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
-import type { SessionManager } from "../../session/session-manager";
 import type { PwaSessionSnapshot } from "../../acp/pwa-wire";
 
 let tmpRoot: string;
@@ -24,16 +23,10 @@ const git = async (cwd: string, ...args: string[]): Promise<void> => {
   if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
 };
 
-const stubManager = {
-  listSnapshots: () => [],
-  listArchivedSnapshots: async () => [],
-  listByArtifact: () => [],
-  remove: async () => false,
-} as unknown as SessionManager;
 
 function makeApp(): Hono {
   const app = new Hono();
-  mountSessionsRoutes(app, { acp: harness.service, manager: stubManager, defaultWorkdir: repoDir });
+  mountSessionsRoutes(app, { acp: harness.service, defaultWorkdir: repoDir });
   return app;
 }
 
@@ -51,14 +44,7 @@ async function getSessions(app: Hono): Promise<PwaSessionSnapshot[]> {
   return body.sessions;
 }
 
-const WORKFLOW = {
-  workflow_run_id: "run-1",
-  stage_instance_id: "stage-1",
-  unit_id: "cohort-a",
-  operator_role: "build",
-  cohort_title: "Targets spec contract",
-  repository_key: "pipefitter",
-};
+const WORKFLOW = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
 
 beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-workflow-identity-test-"));
@@ -87,14 +73,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
 
     const sessions = await getSessions(app);
     expect(sessions).toHaveLength(1);
-    expect(sessions[0]?.workflow).toEqual({
-      runId: "run-1",
-      stageInstanceId: "stage-1",
-      unitId: "cohort-a",
-      operatorRole: "build",
-      cohortTitle: "Targets spec contract",
-      repositoryKey: "pipefitter",
-    });
+    expect(sessions[0]?.workflow).toEqual({ runId: "run-1", unitId: "run-1/cohort/a", worker: "builder" });
   });
 
   test("no workflow member succeeds with a null workflow", async () => {
@@ -111,7 +90,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
     const res = await ensureResumable(app, "build-3", {});
     expect(res.status).toBe(200);
     const sessions = await getSessions(app);
-    expect(sessions[0]?.workflow?.cohortTitle).toBe("Targets spec contract");
+    expect(sessions[0]?.workflow?.worker).toBe("builder");
   });
 
   test("re-ensuring a key claimed without an identity backfills the supplied one", async () => {
@@ -120,18 +99,18 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
     const res = await ensureResumable(app, "build-4", { workflow: WORKFLOW });
     expect(res.status).toBe(200);
     const sessions = await getSessions(app);
-    expect(sessions[0]?.workflow?.unitId).toBe("cohort-a");
+    expect(sessions[0]?.workflow?.unitId).toBe("run-1/cohort/a");
   });
 
   test("re-ensuring with a differing identity over a stored non-null one attaches unchanged, no error", async () => {
     const app = makeApp();
     await ensureResumable(app, "build-5", { workflow: WORKFLOW });
     const res = await ensureResumable(app, "build-5", {
-      workflow: { ...WORKFLOW, cohort_title: "A different title" },
+      workflow: { ...WORKFLOW, worker: "assessor" },
     });
     expect(res.status).toBe(200);
     const sessions = await getSessions(app);
-    expect(sessions[0]?.workflow?.cohortTitle).toBe("Targets spec contract");
+    expect(sessions[0]?.workflow?.worker).toBe("builder");
   });
 
   test("a malformed workflow (missing unit_id) is a 400", async () => {
@@ -143,7 +122,7 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
 
   test("a malformed workflow (non-string member) is a 400", async () => {
     const app = makeApp();
-    const res = await ensureResumable(app, "build-7", { workflow: { ...WORKFLOW, operator_role: 5 } });
+    const res = await ensureResumable(app, "build-7", { workflow: { ...WORKFLOW, worker: 5 } });
     expect(res.status).toBe(400);
   });
 });
@@ -153,17 +132,10 @@ describe("parseWorkflowIdentity", () => {
     expect(parseWorkflowIdentity(undefined)).toEqual({ value: null });
   });
 
-  test("empty optional members normalize to null", () => {
-    const result = parseWorkflowIdentity({
-      workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
-      operator_role: "", cohort_title: "", repository_key: "",
-    });
-    expect(result).toEqual({
-      value: {
-        workflow_run_id: "run-1", stage_instance_id: "stage-1", unit_id: "unit-1",
-        operator_role: null, cohort_title: null, repository_key: null,
-      },
-    });
+  test("the run, unit and worker are trimmed and required", () => {
+    expect([parseWorkflowIdentity({ run_id: " run-1 ", unit_id: "unit-1", worker: "builder" }),
+      parseWorkflowIdentity({ run_id: "run-1", unit_id: "unit-1", worker: "" })]).toEqual([
+      { value: { run_id: "run-1", unit_id: "unit-1", worker: "builder" } }, { error: "workflow.worker must be a non-empty string" }]);
   });
 
   test("a non-object workflow is rejected", () => {

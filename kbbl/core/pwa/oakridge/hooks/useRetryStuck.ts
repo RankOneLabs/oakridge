@@ -11,6 +11,11 @@ export function useRetryStuck(runId: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ stageInstanceId, unitId }: RetryUnitTarget) => retryRunUnit(stageInstanceId, unitId),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] }); },
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "run", runId, "sessions"] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] });
+    },
   });
 }

@@ -1,36 +1,22 @@
 # kbbl
 
 Browser operator surface for CLI coding agents: direct sessions, live transcripts,
-permission requests, and the Oakridge v2 workflow UI. A Bun + Hono server hosts
+permission requests, and the Oakridge workflow UI. A Bun + Hono server hosts
 the React PWA and manages agents through ACP (Agent Client Protocol).
 
-## Ownership and retired functionality
+## Ownership
 
 Workflow orchestration runs in [oakridge-dbos](../oakridge-dbos/README.md);
 definitions and prompts live in [workflow-config](../workflow-config/README.md).
-The kbbl v1 Projects/spec/plan/brief UI, dispatcher, review API, and prompts are
-retired. V2 launch presets use the DBOS project registry through
-`/oakridge/api/projects`. The separate legacy kbbl `/projects` registry
-remains available, along with shared session and v2 review components.
-
-Existing SQLite history and migrations are retained. Retirement does not delete
-stored projects, artifacts, or sessions. Archived pre-ACP JSONL sessions remain
-available for read-only viewing; they are not the current execution backend.
+Projects are registered there too (`/oakridge/api/projects`). kbbl's SQLite
+ledger holds only ACP sessions, their turns and terminal summaries; a session a
+workflow runs carries its `run_id`, `unit_id` and `worker`.
 
 ## Quick start
 
-From the repository root, start the complete workflow stack:
-
-```bash
-bun install
-bun run oakridge
-```
-
-Open <http://127.0.0.1:8788/#oakridge>. See the
-[v2 operator runbook](../docs/oakridge-v2-runbook.md) for PostgreSQL, upgrades,
-recovery, and workflow lifecycle.
-
-For standalone sessions without DBOS:
+For the workflow backend and operator PWA together, run
+`./scripts/oakridge-start` from the repository root. To start kbbl independently
+for direct agent sessions, run:
 
 ```bash
 ./kbbl/scripts/kbbl-start /absolute/path/to/repository
@@ -44,8 +30,7 @@ create additional sessions in the PWA instead.
 ## Agent profiles
 
 Both built-in ACP profiles are enabled: `claude-code` (the default) and `codex`.
-Their installed agent packages are launched over ACP; kbbl no longer drives
-the old stream-JSON/PreToolUse-hook or direct Codex app-server adapters.
+Their installed agent packages are launched over ACP.
 
 Configure `acp.default_agent` and profile overrides under `acp.agents` in the
 git-ignored `kbbl/config.json`. A missing file uses schema defaults. For example:
@@ -58,10 +43,8 @@ git-ignored `kbbl/config.json`. A missing file uses schema defaults. For example
 }
 ```
 
-The old `runtime.default` is a compatibility fallback when `acp.default_agent`
-is absent. Other old runtime settings are ignored; `runtime.codex.enabled`
-does not control the ACP profile. The checked-in `config.example.json` still
-contains legacy settings, so do not use its runtime block to configure ACP.
+`acp.default_agent` defaults to `claude-code`. The config schema is strict: an
+unknown block or field fails startup. `config.example.json` shows the shape.
 
 Profile definitions and configuration validation are in
 [default-profiles.ts](core/acp/default-profiles.ts),
@@ -86,34 +69,32 @@ interrupting a turn is distinct from closing or fencing its session.
 `resume_from` on direct session creation inherits the parent's worktree and
 runtime selection into a new session; it is not a promise to fork conversation
 history. Continuing an existing resumable session uses its stable identity and
-agent history. Pre-ACP archives are read-only.
-
-The old automatic compaction/handoff pipeline and YOLO/hook endpoints are not
-part of the active ACP API. A retained handoff reader serves historical files;
-retained compaction config fields do not enable automatic ACP compaction.
+agent history.
 
 ### Delegated Oakridge sessions
 
-DBOS uses `PUT /sessions/resumable/:sessionKey` with a stable work-order key
-and initial prompt. Further workflow input uses delivery-keyed requests.
-Cleanup closes or fences the executor only after its work order is completed
-(required outputs released) or abandoned. Artifact emission or the end of the
-initial turn alone is not approval and does not trigger cleanup.
-
-See the [runbook's recovery section](../docs/oakridge-v2-runbook.md#restart-and-recovery)
-before changing application versions or attempting recovery.
+The DBOS executor starts an attempt's session with
+`PUT /sessions/resumable/:sessionKey`, keyed by the attempt and carrying the
+initial prompt and the workflow identity `{run_id, unit_id, worker}`. Further
+input uses delivery-keyed requests. When the attempt ends, the executor closes
+the session with `?closed_by=<action_id>`, or fences it with
+`?fenced_by=<action_id>` when the worker runs fresh sessions. While an attempt
+is running, `GET /oakridge/api/session_holds/:sid` names it, and kbbl refuses
+to close the held session unless the close names that attempt or the operator
+repeats it with `?force=1`.
 
 ## API overview
 
 Current route contracts live in [sessions.ts](core/server/handlers/sessions.ts)
 and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
 
-- `GET /sessions` — list ACP sessions; `?include=archived` also includes legacy history.
+- `GET /sessions` — list ACP sessions.
 - `POST /sessions` — create a session; accepts `workdir`, `name`,
-  `agent_profile` (or `runtime` alias), `model`, `effort`, `artifact_id`,
+  `runtime` (the agent profile), `model`, `effort`, `artifact_id`,
   and optional `resume_from` or `worktree`. Returns a snapshot with `sid`.
-- `DELETE /sessions/:sid` — close; `?fenced_by=...` fences;
-  `?purge=true` requests permanent removal subject to handler guards.
+- `DELETE /sessions/:sid` — close; `?closed_by=...` or `?fenced_by=...` names
+  the attempt that closes it; `?purge=true` requests permanent removal subject
+  to handler guards.
 - `GET /sessions/:sid/history` — projected history, expiry, and open turns.
 - `GET /sessions/:sid/stream` — ACP UI events over SSE.
 - `POST /sessions/:sid/input` — `{ text, client_message_id? }`.
@@ -121,7 +102,7 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
 - `POST /sessions/:sid/cancel` — interrupt the current turn.
 - `POST /sessions/:sid/config` — `{ config_id, value }`.
 - `GET /artifacts/:artifactId/sessions` — sessions with a correlation tag.
-- `GET /inbox` — session-list SSE; `POST /inbox/workspace-events` ingests workspace events.
+- `GET /inbox` — session-list SSE.
 - `GET /live?topic=...` — combines `/inbox`, `/oakridge/api/events`, and selected
   `/sessions/:sid/stream` topics into one SSE connection per browser page.
   Each `live` event carries `{ topic, frame: { event, data, id? } }`; the original
@@ -136,9 +117,6 @@ and [acp-per-sid.ts](core/server/handlers/acp-per-sid.ts).
   history without receiving another stream's id.
 - `GET /config` — defaults and available runtime descriptors.
 - `GET /directories?path=<absolute-path>` — directory picker.
-- `GET /:sid/handoff` — historical compaction handoff.
-- `/projects` — retained legacy kbbl project registry, not the v2 registry.
-- `/oakridge/api/projects` — DBOS project registry used by v2 launch presets.
 - `/oakridge/api/*` — same-origin DBOS proxy.
 
 Executor integration additionally uses resumable ensure, initial-turn observation,
@@ -154,15 +132,29 @@ export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
 ./kbbl/scripts/kbbl-start --host=0.0.0.0
 ```
 
-The browser exchanges the token for an HttpOnly cookie. Non-loopback writes
-require control authentication. For trusted-network development only,
-`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` permits an unauthenticated bind.
-This is not a public-internet deployment configuration.
+The PWA asks for the token once and exchanges it for an HttpOnly cookie.
+With `OAKRIDGE_CONTROL_TOKEN` set, every write and every proxied Oakridge
+operator route requires it, on any bind, loopback included: otherwise any
+local process, an agent among them, could act as the operator through the
+proxy. Without a token, a loopback bind runs open. For trusted-network
+development only, `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` permits an
+unauthenticated non-loopback bind. This is not a public-internet deployment
+configuration.
 
-`OAKRIDGE_CORE_BASE_URL` points to DBOS despite its retained name.
+`OAKRIDGE_CORE_BASE_URL` points to the oakridge-dbos backend.
 `OAKRIDGE_CORE_CONTROL_TOKEN` overrides the upstream token, otherwise
-`OAKRIDGE_CONTROL_TOKEN` is used. Browser authorization is stripped before
-proxying. Agent permission decisions are separate from HTTP control authentication.
+`OAKRIDGE_CONTROL_TOKEN` is used. With an upstream token but no
+`OAKRIDGE_CONTROL_TOKEN`, the proxy has no browser credential to check and
+refuses every operator route. Browser authorization is stripped before
+proxying. The oakridge-dbos executor presents kbbl's token on its session
+calls (`KBBL_CONTROL_TOKEN`, or `OAKRIDGE_CONTROL_TOKEN`). Agent permission decisions are separate from HTTP control authentication.
+
+`OAKRIDGE_FALLBACK_REFRESH_MS` sets the operator surface's fallback refresh
+interval without a PWA rebuild; it is served from `/oakridge/config` and takes
+precedence over the bundle's `VITE_OAKRIDGE_FALLBACK_REFRESH_MS` default.
+That precedence holds only at or above the PWA's 1,000 ms minimum: the server
+accepts any positive value, but a served interval below the minimum is ignored
+by the PWA, which falls back to the bundle default and then to 30,000 ms.
 
 ## Development and layout
 
@@ -181,13 +173,13 @@ on port 5173; production assets are built into `core/pwa/dist/`.
 
 - `core/acp/` — profiles, process supervision, sessions, turn ledger, ACP projections.
 - `core/server/` — HTTP handlers, control auth, and DBOS proxy.
-- `core/db/` — SQLite connection, retained migrations, project registry.
+- `core/db/` — SQLite connection and the ledger's baseline migration.
 - `core/worktree/` — worktree provisioning and ownership.
-- `core/session/` — retained legacy archive compatibility.
+- `core/session/` — session holds, git worktree helpers, keyed serialization.
 - `core/pwa/hooks/useAcpSession.ts` — ACP history and stream lifecycle.
 - `core/pwa/views/` and `core/pwa/components/` — session UI.
-- `core/pwa/oakridge/` — v2 workflow UI.
-- `core/pwa/review/` — shared DAG and collaboration components used by v2.
+- `core/pwa/oakridge/` — workflow UI.
+- `core/pwa/review/` — shared DAG and collaboration components.
 
 The [ACP compatibility report](docs/acp-compatibility.md) records the dated
 agent-selection spike, not current dependency versions or an operator setup guide.

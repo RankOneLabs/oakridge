@@ -6,16 +6,27 @@ import { ReviewInboxView } from "../views/ReviewInboxView";
 import { parseRepositoryKey } from "../repository-inputs";
 import type { ReviewInbox } from "../types";
 import type { CohortLifecycle } from "../types";
+import sample from "../__fixtures__/v2-adapter-sample.json";
+import type { OperatorUnitView } from "../operator-contracts";
+import { compositeId } from "../adapters/core";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
+const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
+if (!capturedCohort) throw new Error("captured fixture lacks an assessment review");
+const approveDecision = capturedCohort.decisions.find((decision) => decision.key === "accept");
+const legacyBuildChange = capturedCohort.decisions.find((decision) => decision.key === "request_build_changes");
+const approveTarget = approveDecision?.submit.kind === "review" ? approveDecision.submit.target_revision_id : null;
+if (!legacyBuildChange || legacyBuildChange.submit.kind !== "review") throw new Error("captured fixture lacks legacy assessment decision");
+const assessmentChange = { ...legacyBuildChange, key: "request_assessment_changes", label: "Request assessment changes",
+  submit: { ...legacyBuildChange.submit, decision: "request_assessment_changes", target_revision_id: approveTarget ?? "" } };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
 function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact = vi.fn()) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(data));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  client.setQueryData(["oakridge", "review-inbox"], data);
   render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={onSelectRun} onSelectArtifact={onSelectArtifact} /></QueryClientProvider>);
   return { onSelectRun, onSelectArtifact };
 }
@@ -24,12 +35,44 @@ const inbox: ReviewInbox = {
   cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "waiting_admission", completion: { build_complete: false, assessment_complete: false }, admission: { required: true, admitted: false, eligible: true, blocked_by: [] }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
     { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, admission: { required: true, admitted: true, eligible: true, blocked_by: [] }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
   items: [{ id: "admit-api", kind: "admission", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", lifecycle: "waiting_admission", title: "Build API", resume_actions: [], blocked_by: [] },
-    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: "revision-web", gate_id: "stage-build:web", resume_actions: ["approve", "request_revision"], blocked_by: [] }],
+    { id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
 };
+
+const runId = "run-1";
+const v2Unit = { ...capturedCohort, run_id: runId, decisions: [...capturedCohort.decisions, assessmentChange] };
+const v2Run = { ...sample.run, run_id: runId };
+function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], afterDecision?: () => void) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { afterDecision?.(); return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
+    if (path.endsWith(`/units/${encodeURIComponent(v2Unit.unit_id)}`)) return json(v2Unit);
+    if (path.endsWith("/units")) return json([v2Unit]);
+    if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items }] });
+    if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
+    return json({ items: [] });
+  });
+}
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("ReviewInboxView", () => {
+  it("renders the v2 run-inboxes response through the client and adapter", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.includes("/api/runs?")) return json({ items: [sample.run], next_cursor: null });
+      if (path.includes("/run-inboxes")) return json({ items: [sample.inbox] });
+      if (path.endsWith("/units")) return json(sample.units);
+      throw new Error(`unexpected v2 request: ${path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
+    expect(screen.getAllByText("Artifact ready for review")).toHaveLength(1);
+    expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
+    expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/units"))).toHaveLength(1);
+  });
+
   it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
@@ -41,49 +84,38 @@ describe("ReviewInboxView", () => {
   it("navigates directly to the reviewed artifact and its run", async () => {
     const handlers = renderInbox(inbox);
     fireEvent.click(await screen.findByTestId("or-inbox-artifact-link"));
-    expect(handlers.onSelectArtifact).toHaveBeenCalledWith("revision-web");
+    expect(handlers.onSelectArtifact).toHaveBeenCalledWith(approveTarget);
     fireEvent.click(screen.getAllByTestId("or-inbox-run-link")[0]);
     expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");
   });
 
   it("advances an artifact gate directly from the inbox", async () => {
     let resumed = false;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      if (init?.method === "POST") {
-        resumed = true;
-        return json({ gate_id: "stage-build:web", resumed: true });
-      }
-      return json(resumed
-        ? { ...inbox, items: inbox.items.filter((item) => item.id !== "review-web") }
-        : inbox);
-    });
+    const fetchMock = v2InboxFetch([], () => { resumed = true; });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    client.setQueryData(["oakridge", "review-inbox"], inbox);
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-decision-approve"));
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes("/gates/stage-build%3Aweb/resume"))).toBe(true));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes(`/units/${encodeURIComponent(v2Unit.unit_id)}/reviews/assessment_review/decide`))).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({ action: "approve", operator_comment: "Approve artifact", feedback: "" });
+    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "accept", target: approveTarget, payload: {} });
     await waitFor(() => expect(screen.queryByTestId("or-decision-approve")).toBeNull());
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST").length).toBeGreaterThanOrEqual(2);
+    expect(resumed).toBe(true);
   });
 
   it("requires and submits actionable feedback when requesting changes", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST"
-      ? json({ gate_id: "stage-build:web", resumed: true })
-      : json({
-      cohorts: [],
-      items: [inbox.items[1]],
-    }));
+    const fetchMock = v2InboxFetch([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [inbox.items[1]] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-decision-request_revision"));
+    fireEvent.click(await screen.findByTestId("or-decision-request_assessment_changes"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Explain the recovery path." } });
     fireEvent.click(send);
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({ action: "request_revision", feedback: "Explain the recovery path." });
+    expect(JSON.parse(String(request.body))).toMatchObject({ decision: "request_assessment_changes", target: approveTarget, payload: { feedback: "Explain the recovery path." } });
   });
 
   it("shows blockers without offering admission", async () => {
@@ -156,25 +188,34 @@ describe("ReviewInboxView", () => {
   });
 
   it("keeps a decided item in place so newly arrived work never slides under the pointer", async () => {
-    const briefGate = (id: string, title: string) => ({ ...inbox.items[1], id, unit_id: id, title, gate_id: id, artifact_revision_id: `revision-${id}` });
+    const briefGate = (id: string, title: string) => ({ ...inbox.items[1], id: `${runId}:${id}:approve`, unit_id: id, title,
+      gate_id: compositeId({ kind: "gate", runId, unitId: id, name: "assessment_review" }), artifact_revision_id: `revision-${id}` });
     const briefA = briefGate("brief-a", "Brief A");
     const briefB = briefGate("brief-b", "Brief B");
     const assessment = briefGate("assessment", "Assessment");
     let decided = false;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      if (init?.method === "POST") {
-        decided = true;
-        return json({ gate_id: "brief-a", resumed: true });
-      }
-      return json({ cohorts: [], items: decided ? [assessment, briefB] : [briefA, briefB] });
+    const units = [briefA, briefB, assessment].map((item) => ({ ...v2Unit, unit_id: item.unit_id, collection_key: item.unit_id, label: item.title,
+      decisions: v2Unit.decisions.map((decision) => ({ ...decision, submit: { ...decision.submit, target_revision_id: item.artifact_revision_id } })) }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (init?.method === "POST") { decided = true; return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
+      if (path.endsWith("/units")) return json(units);
+      if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items: (decided ? [briefB, assessment] : [briefA, briefB]).map((item) => ({
+        kind: "decision", run_id: runId, unit_id: item.unit_id, key: "approve", label: "Approve", prompt: null,
+        submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: item.artifact_revision_id },
+      })) }] });
+      if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
+      if (path.includes("/units/")) return json(units.find((unit) => path.endsWith(`/units/${unit.unit_id}`)));
+      return json({ items: [] });
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [briefA, briefB] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click((await screen.findAllByTestId("or-decision-approve"))[0]);
     await screen.findByTestId("or-review-inbox-settled-item");
     const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
       .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
-    expect(rows).toEqual(["settled:Brief A", "live:Brief B", "live:Assessment"]);
+    expect(rows).toEqual(["settled:brief-a", "live:brief-b", "live:assessment"]);
   });
 
   it("shows automatic merged completion from durable reconciliation", async () => {
