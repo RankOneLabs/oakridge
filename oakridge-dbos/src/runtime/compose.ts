@@ -72,7 +72,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     await DBOS.launch();
     await resumeActiveRuns(db);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
-    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access });
+    const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
     return { app, application_version, async close() {
       try { await sweep.stop(); await parkRunningWorkflows(); }

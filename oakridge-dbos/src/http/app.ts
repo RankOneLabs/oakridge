@@ -4,6 +4,7 @@ import type { CoreClient } from "../core-client/client";
 import { compileWorkflow } from "../core-client/client";
 import type { Workflow } from "../core-client/core-types";
 import type { RunId } from "../domain/primitives";
+import type { OperationRunner } from "../operations/runner";
 import { selectDefinitionSummary } from "../projections/definition-view";
 import { redactingReadResponses } from "../projections/serialization-view";
 import { readWorkflowPrompts } from "../runtime/prompt-files";
@@ -17,6 +18,7 @@ import { classifiedRoutesMiddleware, controlTokenMiddleware, loopbackHostMiddlew
 import { errorResponse, fault, InvalidPayloadError, MalformedRequestError, MissingEntityError, requestBody } from "./errors";
 import { installEventStream } from "./events";
 import { installIngress } from "./ingress";
+import { installMergeStatus } from "./merge-status";
 import { installProjectApi } from "./projects";
 import { installReadModels } from "./read-models";
 
@@ -32,6 +34,7 @@ export interface HttpAppDependencies extends Omit<DefinitionApiDependencies, "is
   /** A token every operator route demands, or none: a loopback bind (open to loopback-addressed requests only) or an explicitly insecure one. */
   readonly access: ServedControlPlaneAccess;
   readonly write_policy: BrowserWritePolicy;
+  readonly operations?: OperationRunner | null;
 }
 export const httpBodyLimit = () => bodyLimit({ maxSize: 1_048_576,
   onError: (context) => context.json({ kind: "oversized_payload", limit: 1_048_576 }, 413) });
@@ -66,6 +69,7 @@ export function createHttpApp(deps: HttpAppDependencies): Hono {
   app.use("*", browserWriteMiddleware(deps.write_policy));
   if (control_token !== null) app.use("*", controlTokenMiddleware(control_token, deps.write_policy));
   installDefinitionApi(app, { ...deps, is_operator_request: operatorCredentialCheck(control_token, deps.write_policy) });
+  installMergeStatus(app, { db: deps.db, operations: deps.operations ?? null });
   installEventStream(app, { db: deps.db });
   app.get("/health", (context) => context.json({ status: "ok", application_version: deps.application_version, core: deps.core.health }));
   app.delete("/runs/:run_id", async (context) => {

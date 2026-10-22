@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "../../hooks/useResumeGate";
-import type { ParkedGate } from "../../types";
+import type { MergeStatus, ParkedGate } from "../../types";
+import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 
@@ -36,6 +37,12 @@ function successMessage(action: string): string {
   return "Decision recorded. The cohort can continue.";
 }
 
+function mergeWarning(status: Exclude<MergeStatus, { readonly kind: "merged" }>): string {
+  if (status.kind === "unavailable") return `Could not verify the PR merge: ${status.detail}`;
+  return status.state === "open" ? "The PR is still open according to the live status."
+    : "The PR is closed without a merge according to the live status.";
+}
+
 export function GateDecisionActions(props: GateDecisionActionsProps) {
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
@@ -45,6 +52,9 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [completedAction, setCompletedAction] = useState<string | null>(null);
+  const [completedWithOverride, setCompletedWithOverride] = useState(false);
+  const [isCheckingMerge, setIsCheckingMerge] = useState(false);
+  const [mergeStatus, setMergeStatus] = useState<Exclude<MergeStatus, { readonly kind: "merged" }> | null>(null);
   const requestKeys = useRef(new Map<string, string>());
   const isActive = useRef(true);
   // A gate stays listed whatever its run's state (spec §1 rule 9); it is only
@@ -57,7 +67,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
     return () => { isActive.current = false; };
   }, []);
 
-  const submit = (action: string, decisionFeedback?: string) => {
+  const submit = (action: string, decisionFeedback?: string, isOverride = false) => {
     const decisionRevisionId = artifactRevisionId ?? gate.artifact_revision_id;
     if (!decisionRevisionId) return;
     const feedbackValue = decisionFeedback?.trim() ?? "";
@@ -86,14 +96,32 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       onSuccess: () => {
         if (!isActive.current) return;
         setCompletedAction(action);
+        setCompletedWithOverride(isOverride);
         setFeedbackAction(null);
         onComplete?.();
       },
     });
   };
 
+  const checkAndConfirmMerge = async () => {
+    setMergeStatus(null);
+    setIsCheckingMerge(true);
+    try {
+      const status = await fetchMergeStatus(gate.run_id, gate.unit_id);
+      if (!isActive.current) return;
+      if (status.kind === "merged") submit("confirm_merged");
+      else setMergeStatus(status);
+    } catch (cause) {
+      if (isActive.current) setMergeStatus({ kind: "unavailable", detail: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      if (isActive.current) setIsCheckingMerge(false);
+    }
+  };
+
   if (completedAction) {
-    return <div className="or-decision-success" role="status" data-testid="or-decision-success">{successMessage(completedAction)}</div>;
+    return <div className="or-decision-success" role="status" data-testid="or-decision-success">
+      {completedWithOverride ? "Merge confirmation recorded with an operator override. The run can continue." : successMessage(completedAction)}
+    </div>;
   }
 
   return (
@@ -113,15 +141,30 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
               key={action}
               variant={isPrimary ? "primary" : "secondary"}
               className={`${decisionButtonClass} ${isPrimary ? "text-white!" : "text-[var(--text-primary)]!"}`}
-              disabled={mutation.isPending || disabled}
-              onClick={() => needsFeedback ? setFeedbackAction(action) : submit(action)}
+              disabled={mutation.isPending || isCheckingMerge || disabled}
+              onClick={() => needsFeedback ? setFeedbackAction(action) : action === "confirm_merged" ? void checkAndConfirmMerge() : submit(action)}
               data-testid={`or-decision-${action}`}
             >
-              {mutation.isPending && mutation.variables?.action === action ? "Saving…" : (actionLabels[action] ?? actionLabel(action))}
+              {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
+                ? "Saving…" : (actionLabels[action] ?? actionLabel(action))}
             </Button>
           );
         })}
       </div>
+
+      {mergeStatus && !disabled && (
+        <div className="or-decision-feedback" role="alert" data-testid="or-merge-warning">
+          <p>{mergeWarning(mergeStatus)}</p>
+          {gate.pr_url && <p>Pull request: <a href={gate.pr_url} target="_blank" rel="noopener noreferrer">{gate.pr_url}</a></p>}
+          <p>Confirm anyway only if you have verified the intended PR merged.</p>
+          <div className="or-decision-feedback__buttons">
+            <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`}
+              onClick={() => setMergeStatus(null)}>Cancel</Button>
+            <Button variant="danger" className={`${decisionButtonClass} border-transparent! bg-[var(--danger-fg)]! text-white!`}
+              disabled={mutation.isPending} onClick={() => submit("confirm_merged", undefined, true)}>Confirm anyway</Button>
+          </div>
+        </div>
+      )}
 
       {feedbackAction && !disabled && (
         <div className="or-decision-feedback" data-testid="or-decision-feedback">

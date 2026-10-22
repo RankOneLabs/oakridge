@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GateDecisionActions } from "../components/organisms/GateDecisionActions";
 import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
+import mergeFixture from "../__fixtures__/v2-cohort-merge.json";
 import type { OperatorUnitView } from "../operator-contracts";
 import type { ParkedGate, RepositoryKey, RunState } from "../types";
-import { compositeId } from "../adapters/core";
+import { compositeId, reviewToGates } from "../adapters/core";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {
   return {
@@ -58,7 +59,63 @@ function mockV2(units: readonly ReturnType<typeof unitFor>[], post: (init?: Requ
   });
 }
 
+const mergeUnit = (mergeFixture.units as unknown as OperatorUnitView[]).find((unit) =>
+  unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "merge_confirmation"));
+if (!mergeUnit) throw new Error("captured fixture lacks a merge confirmation");
+const confirmedMergeUnit: OperatorUnitView = mergeUnit;
+const mergeGates = reviewToGates(confirmedMergeUnit);
+if (!mergeGates.ok) throw new Error("captured merge review could not be mapped");
+const mergeGate = mergeGates.value.find((candidate) => candidate.gate_step === "merge_confirmation");
+if (!mergeGate) throw new Error("captured fixture lacks a merge gate");
+
+function mockMerge(status: unknown, post: (init?: RequestInit) => Promise<Response>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.endsWith("/merge-status")) return json(status);
+    if (init?.method === "POST") return post(init);
+    if (path.endsWith(`/units/${encodeURIComponent(confirmedMergeUnit.unit_id)}`)) return json(confirmedMergeUnit);
+    throw new Error(`unexpected merge request ${path}`);
+  });
+}
+
 describe("GateDecisionActions", () => {
+  it("checks the live PR and warns before allowing an override for an open PR", async () => {
+    const fetchMock = mockMerge({ kind: "not_merged", pr_url: mergeGate.pr_url, state: "open" }, async () =>
+      json({ kind: "committed", run_id: mergeGate.run_id, event_id: "decided" }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, mergeGate));
+
+    fireEvent.click(screen.getByTestId("or-decision-confirm_merged"));
+    expect((await screen.findByTestId("or-merge-warning")).textContent).toContain("still open");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm anyway" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    expect(screen.getByTestId("or-decision-success").textContent).toContain("operator override");
+  });
+
+  it("confirms directly when the live PR status is merged", async () => {
+    const fetchMock = mockMerge({ kind: "merged", pr_url: mergeGate.pr_url, merged_at: "2026-10-21T00:00:00Z" }, async () =>
+      json({ kind: "committed", run_id: mergeGate.run_id, event_id: "decided" }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, mergeGate));
+
+    fireEvent.click(screen.getByTestId("or-decision-confirm_merged"));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    expect(screen.queryByTestId("or-merge-warning")).toBeNull();
+  });
+
+  it("warns and keeps manual override available when the PR reader is unavailable", async () => {
+    const fetchMock = mockMerge({ kind: "unavailable", detail: "reader down" }, async () =>
+      json({ kind: "committed", run_id: mergeGate.run_id, event_id: "decided" }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, mergeGate));
+
+    fireEvent.click(screen.getByTestId("or-decision-confirm_merged"));
+    expect((await screen.findByTestId("or-merge-warning")).textContent).toContain("reader down");
+    expect(screen.getByRole("button", { name: "Confirm anyway" })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("submits the latest edited artifact revision", async () => {
     let requestBody: { target: string } | undefined;
     mockV2([unitFor("unit-a", "revision-edited")], async (init) => {

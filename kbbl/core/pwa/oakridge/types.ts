@@ -501,6 +501,12 @@ export interface GateResumeResponse {
   resumed: boolean;
 }
 
+/** Live PR observation returned by the merge-status operator endpoint. */
+export type MergeStatus =
+  | { readonly kind: "merged"; readonly pr_url: string; readonly merged_at: string | null }
+  | { readonly kind: "not_merged"; readonly pr_url: string; readonly state: "open" | "closed_unmerged" }
+  | { readonly kind: "unavailable"; readonly detail: string };
+
 /**
  * The operator confirming a cohort's pull request merged, when Oakridge cannot
  * see the repository for itself. Mirrors the `operator_confirmation` half of
