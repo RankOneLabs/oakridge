@@ -189,7 +189,9 @@ function RunSidebarSessionItem({ row, isOpen, onOpen }: RunSidebarSessionItemPro
           }}
           data-testid="or-sidebar-session-end"
         >
-          {mutation.isPending ? "…" : confirmEnd ? "✓" : "×"}
+          {mutation.isPending ? "…" : confirmEnd ? "✓" : (
+            <span className="text-xl leading-none" aria-hidden="true">×</span>
+          )}
         </Button>
       )}
       {error && (

@@ -140,7 +140,9 @@ export function SessionRow({
               else void end();
             }}
           >
-            {endMutation.isPending ? "…" : confirmEnd ? "✓" : "×"}
+            {endMutation.isPending ? "…" : confirmEnd ? "✓" : (
+              <span className="text-xl leading-none" aria-hidden="true">×</span>
+            )}
           </Button>
         )}
       </div>
