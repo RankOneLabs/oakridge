@@ -595,7 +595,8 @@
         "assessor": {
           "kind": "agent",
           "prompts": {
-            "review": "development/assess.md"
+            "review": "development/assess.md",
+            "revise": "development/assess.md"
           },
           "inputs": {
             "brief": "brief_value",
@@ -653,6 +654,13 @@
             "accept": {
               "effect": "approve",
               "label": "Accept"
+            },
+            "request_assessment_changes": {
+              "effect": "request_changes",
+              "label": "Request assessment changes",
+              "fields": {
+                "feedback": "What must the assessment change?"
+              }
             },
             "request_build_changes": {
               "effect": "request_changes",
