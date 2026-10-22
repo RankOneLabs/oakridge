@@ -18,12 +18,12 @@ function renderNav(theme: "dark" | "light", onToggleTheme = () => {}) {
 describe("PrimaryNav theme toggle", () => {
   test("offers light mode while dark", () => {
     renderNav("dark");
-    expect(screen.getByRole("button", { name: "Switch to light mode" }).textContent).toBe("LIGHT");
+    expect(screen.getByRole("button", { name: "Switch to light mode" }).textContent).toBe("☀");
   });
 
   test("offers dark mode while light", () => {
     renderNav("light");
-    expect(screen.getByRole("button", { name: "Switch to dark mode" }).textContent).toBe("DARK");
+    expect(screen.getByRole("button", { name: "Switch to dark mode" }).textContent).toBe("☾");
   });
 
   test("calls onToggleTheme when clicked", () => {
