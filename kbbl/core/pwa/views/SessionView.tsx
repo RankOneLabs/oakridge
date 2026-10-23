@@ -53,8 +53,6 @@ export function SessionView({
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
 
-  const isLegacyArchive = snapshot?.source === "legacy_archive";
-  // A pre-ACP archived session has no ACP stream — don't open one.
   const {
     events,
     streamStatus,
@@ -64,7 +62,7 @@ export function SessionView({
     streamError,
     openTurns,
     historyLoaded,
-  } = useAcpSession(sid, !isLegacyArchive);
+  } = useAcpSession(sid);
 
   const projection = useMemo(() => projectTimeline(events), [events]);
   const focusedPermissionRef = useRef<string | null>(null);
@@ -109,7 +107,7 @@ export function SessionView({
   const operatorState = selectOperatorExecutionState({
     sessionStatus,
     streamStatus,
-    historyLoaded: isLegacyArchive || historyLoaded,
+    historyLoaded,
     pendingSends,
     isTurnActive: projection.turnActive,
     hasOpenPermission: projection.openPermissions.length > 0,
@@ -139,7 +137,7 @@ export function SessionView({
     layout,
   });
 
-  const canInput = snapshot !== null && !isLegacyArchive && !sessionClosed;
+  const canInput = snapshot !== null && !sessionClosed;
 
   // Anchoring is a scoped class rather than an inline style object: the bar's
   // viewport-fixed rules and the sticky override both belong to the stylesheet
@@ -158,14 +156,6 @@ export function SessionView({
         usage={projection.usage}
         chrome={chrome}
       />
-      {isLegacyArchive ? (
-        <div className="session-ended-banner">
-          <div className="session-ended-text">
-            Pre-ACP archived session · transcript no longer viewable since the
-            ACP cutover
-          </div>
-        </div>
-      ) : (
         <>
           {canInput && (
             <SessionConfigBar
@@ -221,23 +211,19 @@ export function SessionView({
             />
           )}
         </>
-      )}
       <div className="bottom-stack" ref={bottomBarRef}>
-        {canInput && (
-          <SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} />
-        )}
         {canInput && (
           <InputBox
             sid={sid}
+            tools={<SkillRail sid={sid} snapshot={snapshot} commands={projection.commands} position="composer" />}
             onSend={addPendingSend}
             onSendAccepted={acceptPendingSend}
             onSendFailed={removePendingSend}
-            canStop={true}
             isTurnActive={projection.turnActive}
             onInterruptingChange={setIsInterrupting}
           />
         )}
-        {!canInput && !isLegacyArchive && sessionClosed && (
+        {!canInput && sessionClosed && (
           <EndedBanner sid={sid} onResume={onResume} />
         )}
       </div>

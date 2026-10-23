@@ -50,9 +50,6 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
-  onAdmit: (unitId: string) => void;
-  admitting: boolean;
-  admissionError?: string;
   onRetry: (unitId: string) => void;
   retrying: boolean;
   retryError?: string;
@@ -64,11 +61,9 @@ interface RunUnitRowProps {
   };
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
-  const blockedBy = unit.admission_blocked_by ?? [];
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onRetry, retrying, retryError, canRetry, confirmMerge }: RunUnitRowProps) {
   const brief = selectCohortBrief(unit);
   const dependencies = brief?.depends_on ?? [];
-  const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
     <Fragment>
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
@@ -82,7 +77,6 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
         {unit.gate && <Chip tone="warning">{unit.gate}</Chip>}
-        {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
         {canRetry && <Button size="xsmall" variant="danger" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</Button>}
         {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
         {confirmMerge && (
@@ -102,37 +96,12 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
-    {(dependencies.length > 0 || needsAdmission) && (
+    {dependencies.length > 0 && (
       <tr data-testid="or-cohort-detail-row">
         <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
-          <div className="flex flex-col gap-3">
-            {dependencies.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="or-dependency-status">
-                <span className="font-semibold uppercase text-[var(--text-muted)]">Dependency status</span>
-                {dependencies.map((dependency) => {
-                  const isBlocked = blockedBy.includes(dependency);
-                  return (
-                    <Chip key={dependency} tone={isBlocked ? "warning" : "success"}>
-                      {dependency}: {isBlocked ? "waiting" : "complete"}
-                    </Chip>
-                  );
-                })}
-              </div>
-            )}
-            {needsAdmission && (
-              <div className="flex flex-wrap items-center gap-3" data-testid="or-unit-admission">
-                {blockedBy.length > 0 || unit.admission_eligible !== true ? (
-                  <div className="text-sm text-amber-500" data-testid="or-admission-blocked">
-                    Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
-                  </div>
-                ) : (
-                  <Button size="medium" variant="accent-outline" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
-                    {admitting ? "Admitting…" : "Admit build"}
-                  </Button>
-                )}
-                {admissionError && <span role="alert" className="text-sm text-red-500">{admissionError}</span>}
-              </div>
-            )}
+          <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="or-dependencies">
+            <span className="font-semibold uppercase text-[var(--text-muted)]">Dependencies</span>
+            {dependencies.map((dependency) => <Chip key={dependency} tone="neutral">{dependency}</Chip>)}
           </div>
         </td>
       </tr>

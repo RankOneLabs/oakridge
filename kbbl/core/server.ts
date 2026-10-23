@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, type KbblConfig } from "./config";
 import { resolveStartupAuthPolicy, type AuthPolicy } from "./server/auth";
-import { SessionManager } from "./session/session-manager";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
 import { loadAgentProfiles } from "./acp/agent-profile";
@@ -90,10 +89,6 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 const kbblRoot = join(moduleDir, "..");
 const dataDir = values.dataDir ?? join(kbblRoot, "data");
 const pwaDistDir = join(moduleDir, "pwa", "dist");
-const sessionsDir = join(dataDir, "sessions");
-await mkdir(sessionsDir, { recursive: true });
-const handoffsDir = join(dataDir, "handoffs");
-await mkdir(handoffsDir, { recursive: true });
 
 // === sqlite db ===
 const dbPath = join(dataDir, "kbbl.db");
@@ -165,12 +160,6 @@ if (workdir !== null && (await isGitRepo(workdir))) {
 // describe how to launch each ACP agent binary; the service owns session
 // lifecycle over the shared SQLite store.
 
-if (config.runtime.codex.enabled || config.runtime.default !== "claude-code") {
-  console.error(
-    "kbbl: config `runtime.*` is deprecated — provider sessions now run through ACP. " +
-      "Configure agents under `acp.agents` / `acp.default_agent`; the old block is ignored except runtime.default as a default-agent alias.",
-  );
-}
 const acpProfiles = loadAgentProfiles(config.acp, builtinAgentProfiles(kbblRoot));
 const acpStore = new AcpSessionStore(db);
 const acpSupervisor = new AcpProcessSupervisor({
@@ -182,10 +171,6 @@ const acpWorktrees = new GitWorktreeProvider({
   worktreesRoot: worktreesDir,
   store: acpStore,
 });
-// One-release alias (§20.2): an explicit acp.default_agent always wins —
-// including an explicit "claude-code". Only when the key is absent does
-// the legacy runtime.default apply (it defaults to claude-code itself).
-const defaultAgent = config.acp.default_agent ?? config.runtime.default;
 const acpService = new AcpSessionService({
   store: acpStore,
   controllers: acpControllers,
@@ -193,7 +178,7 @@ const acpService = new AcpSessionService({
   supervisor: acpSupervisor,
   worktrees: acpWorktrees,
   config: {
-    default_agent: defaultAgent,
+    default_agent: config.acp.default_agent,
     graceful_kill_ms: config.acp.graceful_kill_ms,
     idle_child_ttl_ms: config.acp.idle_child_ttl_ms,
     live_event_buffer: config.acp.live_event_buffer,
@@ -205,13 +190,6 @@ const idleReaper = setInterval(() => {
 }, 60_000);
 idleReaper.unref?.();
 
-// === legacy manager (read-only) ===
-// Pre-cutover sessions live as JSONL transcripts. The manager only
-// lists/serves those archives and lets an operator purge one; it spawns
-// nothing.
-
-const manager = new SessionManager({ sessionsDir });
-
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
@@ -219,17 +197,19 @@ const coreControlToken =
   process.env.OAKRIDGE_CORE_CONTROL_TOKEN?.trim() ||
   process.env.OAKRIDGE_CONTROL_TOKEN?.trim() ||
   undefined;
+if (coreControlToken && authPolicy.mode !== "token") {
+  console.error(
+    "kbbl: WARNING: OAKRIDGE_CORE_CONTROL_TOKEN is set without OAKRIDGE_CONTROL_TOKEN, so the Oakridge proxy has no browser " +
+    "credential to check and refuses every operator route. Set OAKRIDGE_CONTROL_TOKEN.",
+  );
+}
 
 const app = createApp({
-  manager,
   acp: acpService,
   defaultWorkdir: workdir,
-  handoffsDir,
   pwaDistDir,
   getBunServer: () => bunServer,
   config,
-  configPath,
-  db,
   authPolicy,
   coreControlToken,
 });

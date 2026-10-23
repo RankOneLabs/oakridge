@@ -175,12 +175,6 @@ describe("useAcpSession", () => {
     await waitFor(() => expect(result.current.streamError).toBe("history load failed"));
   });
 
-  it("does not open a stream when disabled (pre-ACP archived sessions)", () => {
-    const { result } = renderHook(() => useAcpSession(SID, false));
-    expect(MockEventSource.instances).toHaveLength(0);
-    expect(result.current.streamStatus).toBe("disconnected");
-  });
-
   it("rebuilds a CLOSED stream when the page returns to the foreground", () => {
     renderHook(() => useAcpSession(SID));
     expect(MockEventSource.instances).toHaveLength(1);

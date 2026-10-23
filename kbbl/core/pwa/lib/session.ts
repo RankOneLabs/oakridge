@@ -1,4 +1,4 @@
-import type { SessionSnapshot } from "../types";
+import type { SessionSnapshot, SessionStatus } from "../types";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
 import type { RunDetail, RunSummary } from "../oakridge/types";
 
@@ -19,12 +19,6 @@ export function generateSlug(): string {
   return `${a}-${n}-${num}`;
 }
 
-export function toPositiveSafeInt(raw: string | null): number | null {
-  if (raw === null || !/^[1-9][0-9]*$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) ? n : null;
-}
-
 export function workdirBasename(p: string): string {
   if (!p) return "";
   // Split on both POSIX and Windows separators so a path coming from a
@@ -34,6 +28,10 @@ export function workdirBasename(p: string): string {
   const parts = trimmed.split(/[\\/]/);
   return parts[parts.length - 1] || trimmed;
 }
+
+/** Whether a session can still accept operator input or be ended. */
+export const isOpenSessionStatus = (status: SessionStatus | null): boolean =>
+  status === "idle" || status === "prompting";
 
 export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): string {
   // Tooltip surface — show full paths (project workdir + worktree path)
@@ -54,24 +52,20 @@ export function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): strin
   return lines.join("\n");
 }
 
-/**
- * A cohort session's row label once it has a workflow identity: role and
- * unit id, with none of the stage-instance uuid the raw `session_name`
- * template embeds. The operator role is also rendered as its own element
- * beside this label — the two are complementary, not duplicates: the badge
- * is a quick visual scan target, this is the identifying text.
- */
-export function selectSessionCohortLabel(
-  workflow: NonNullable<SessionSnapshot["workflow"]>,
-): string {
-  return `${workflow.operatorRole ?? "session"}-${workflow.unitId}`;
-}
-
 export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSnapshot[] {
   // Sort by last activity, newest first. Pending-approval sessions don't
   // float — the pending badge is visible enough, and operators told us
   // they'd rather preserve predictable chronological order.
   return [...sessions.values()].sort(compareSessionsByActivity);
+}
+
+/** Archived sessions stay addressable by sid but leave the operator lists. */
+export function selectArchivedSessionIds(sessions: ReadonlyMap<string, SessionSnapshot>): ReadonlySet<string> {
+  return new Set(
+    [...sessions.values()]
+      .filter((session) => session.archivedAt !== null)
+      .map((session) => session.sid),
+  );
 }
 
 export function selectSessionRunTitle(
@@ -82,10 +76,10 @@ export function selectSessionRunTitle(
 }
 
 export function selectSessionStageName(
-  stageInstanceId: string,
+  unitId: string,
   run: RunDetail | undefined,
 ): string | null {
-  return run?.stages.find((stage) => stage.stage_instance_id === stageInstanceId)?.name
+  return run?.stages.find((stage) => stage.stage_instance_id === unitId)?.name
     ?? null;
 }
 

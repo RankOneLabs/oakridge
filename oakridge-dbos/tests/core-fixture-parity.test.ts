@@ -1,0 +1,80 @@
+import { expect, spyOn, test } from "bun:test";
+import { CoreClient, MAX_SNAPSHOT_BYTES } from "../src/core-client/client";
+import type { StepSnapshot, Workflow } from "../src/core-client/core-types";
+
+const workflow = {
+  workflow: "simple", input: {},
+  run: { units: { document: { stage: "document", input: {} } }, outcome: { draft: "document.outcome.draft" } },
+  stages: { document: { input: {}, artifacts: { draft: { schema: "text" } },
+    workers: { writer: { kind: "agent", prompts: { initial: "write.md" }, inputs: {}, creates: ["draft"] } },
+    done_when: "approved(draft)", outcome: { draft: "latest(draft)" } } },
+} as Workflow;
+
+test("compile runs in process without spawning a child", async () => {
+  const spawn = spyOn(Bun, "spawn");
+  try {
+    const started = CoreClient.start();
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const compiled = await started.value.request("compile", { workflow, prompts: { "write.md": "write" } });
+    expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled", value: { stages: ["document"], workflow: {
+      input: { kind: "record", fields: {} }, stages: { document: { artifacts: { draft: { schema: { kind: "text" } } } } },
+    } } } });
+    expect(spawn).not.toHaveBeenCalled();
+    started.value.close();
+  } finally { spawn.mockRestore(); }
+});
+
+test("step evaluates a workflow compiled by the same WASM instance", async () => {
+  const started = CoreClient.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  try {
+    const compiled = await started.value.request("compile", { workflow, prompts: { "write.md": "write" } });
+    expect(compiled).toMatchObject({ ok: true, value: { kind: "compiled" } });
+    if (!compiled.ok || compiled.value.kind !== "compiled") return;
+    const snapshot: StepSnapshot = {
+      run: { id: "run", root: "run" },
+      units: [], attempts: [], revisions: [], decisions: [], retry_events: [],
+    };
+    const stepped = await started.value.request("step", {
+      workflow_digest: compiled.value.value.digest,
+      snapshot,
+      incoming: { event: { kind: "launched", input: {} }, writer: { kind: "engine" }, ingress_id: "launch-1" },
+    });
+    expect(stepped.ok && stepped.value.kind).toBe("stepped");
+    if (stepped.ok && stepped.value.kind === "stepped") {
+      expect(stepped.value.value.snapshot.units.find((unit) => unit.id === "run"))
+        .toMatchObject({ status: { kind: "active" }, input: {} });
+    }
+  } finally { started.value.close(); }
+});
+
+test("an oversized in-process snapshot has a clear error", async () => {
+  const started = CoreClient.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const snapshot = { body: "x".repeat(MAX_SNAPSHOT_BYTES + 1) } as unknown as StepSnapshot;
+  const result = await started.value.request("step", { workflow_digest: "unused", snapshot,
+    incoming: { kind: "start", value: {} } as never });
+  expect(result).toMatchObject({ ok: false, error: { kind: "transport",
+    detail: { kind: "oversized_payload", detail: expect.stringContaining("snapshot is") } } });
+  started.value.close();
+});
+
+test("a core that trapped is replaced, so later requests still run", async () => {
+  const started = CoreClient.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const client = started.value;
+  const compile = () => client.request("compile", { workflow, prompts: { "write.md": "write" } });
+  // Trap inside the core's state borrow, as a panic or stack overflow would:
+  // an input that runs past linear memory.
+  const { core } = client as unknown as { core: { memory: WebAssembly.Memory; core_process(pointer: number, length: number): number } };
+  expect(() => core.core_process(core.memory.buffer.byteLength, 64)).toThrow();
+  expect(await compile()).toMatchObject({ ok: false, error: { kind: "transport",
+    detail: { kind: "malformed_request", detail: expect.stringContaining("core invocation failed") } } });
+  expect(client.health.restart_count).toBe(1);
+  expect(await compile()).toMatchObject({ ok: true, value: { kind: "compiled" } });
+  client.close();
+});

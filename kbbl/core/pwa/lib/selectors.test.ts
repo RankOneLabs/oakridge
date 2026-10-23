@@ -27,6 +27,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     requestedEffort: null,
     endReason: null,
     fencedBy: null,
+    archivedAt: null,
     pendingPermissionCount: 0,
     workflow: null,
     ...overrides,

@@ -11,17 +11,17 @@ import { RUNTIME_EFFORTS, RUNTIME_MODELS } from "../../runtime";
 const claudeRuntime: RuntimeDescriptor = {
   id: "claude-code",
   label: "Claude Code",
-  supportsCompaction: true,
   models: [...RUNTIME_MODELS["claude-code"]],
   efforts: [...RUNTIME_EFFORTS["claude-code"]],
+  supportsCompaction: true,
 };
 
 const codexRuntime: RuntimeDescriptor = {
   id: "codex",
   label: "Codex",
-  supportsCompaction: false,
   models: [...RUNTIME_MODELS.codex],
   efforts: [...RUNTIME_EFFORTS.codex],
+  supportsCompaction: false,
 };
 
 class MemoryStorage {

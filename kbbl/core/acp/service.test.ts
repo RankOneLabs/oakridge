@@ -3,7 +3,7 @@
 // service -> registry -> controller -> client -> supervisor path.
 
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -112,6 +112,26 @@ async function makeDirs(): Promise<{ stateDir: string; workdir: string }> {
     workdir: await mkdtemp(join(tmpdir(), "fake-acp-work-")),
   };
 }
+
+test("a configured gated-review server reaches the ACP agent", async () => {
+  const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
+  process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
+  try {
+    const { stateDir, workdir } = await makeDirs();
+    const { service, store } = makeHarness({ stateDir });
+    const ensured = await service.ensureResumableSession("gate-wiring", spec(workdir));
+    if (!ensured.ok) throw new Error("ensure failed");
+    const sid = ensured.value.session.sid;
+    await service.observeInitialTurn(sid, 8000);
+    const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
+    if (!agentSessionId) throw new Error("agent session missing");
+    const servers = JSON.parse(await readFile(join(stateDir, `${agentSessionId}.mcp-servers.json`), "utf8"));
+    expect(servers).toEqual([{ type: "http", name: "gated-review", url: "http://127.0.0.1:3555/mcp", headers: [] }]);
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
+    else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
+  }
+}, 15000);
 
 function spec(workdir: string, prompt = "build the thing"): AcpSessionStartSpec {
   return { initial_prompt: prompt, workdir, runtime: "fake" };
@@ -287,6 +307,26 @@ test("same delivery key with a different body conflicts", async () => {
   await service.sendInput(sid, "one body", { delivery_key: "delivery-1" });
   const conflict = await service.sendInput(sid, "another body", { delivery_key: "delivery-1" });
   expect(!conflict.ok && conflict.error.code).toBe("delivery_key_conflict");
+}, 15000);
+
+test("collaboration revives an ended resumable session with its sid and transcript", async () => {
+  const { stateDir, workdir } = await makeDirs();
+  const { service, store } = makeHarness({ stateDir });
+  const ensured = await service.ensureResumableSession("key-review", spec(workdir, "remember the first turn"));
+  if (!ensured.ok) throw new Error("ensure failed");
+  const sid = ensured.value.session.sid;
+  await service.observeInitialTurn(sid, 8000);
+  await service.closeSession(sid);
+  expect(store.getSession(sid as KbblSessionId)?.status).toBe("ended");
+
+  const revived = await service.reviveResumable("key-review");
+  expect(revived.ok && revived.value.sid).toBe(sid);
+  const history = await service.loadHistory(sid);
+  expect(history.ok && history.value.events.some((event) =>
+    event.kind === "user_message" && event.content.some((part) => part.type === "text" && part.text === "remember the first turn"))).toBe(true);
+  const sent = await service.sendInput(sid, "review this", { delivery_key: "collaboration:review" });
+  expect(sent.ok).toBe(true);
+  expect(store.getTurn(sid as KbblSessionId, "initial:key-review" as TurnKey)?.status).toBe("succeeded");
 }, 15000);
 
 test("operator input to a busy session is accepted durably and dispatched afterwards", async () => {
@@ -784,7 +824,7 @@ test("an agent without loadSession is rejected for a load-requiring profile", as
   expect(observed.ok && observed.value.kind).toBe("failed");
 }, 15000);
 
-test("process exit during a prompt yields unknown/failure, never success", async () => {
+test("process exit during a prompt reports a lost initial turn as terminal without retrying it", async () => {
   const { stateDir, workdir } = await makeDirs();
   const { service, registry, store } = makeHarness({
     stateDir,
@@ -799,8 +839,6 @@ test("process exit during a prompt yields unknown/failure, never success", async
   expect(observed.ok).toBe(true);
   if (!observed.ok) return;
   expect(observed.value.kind).toBe("failed");
-  if (observed.value.kind !== "failed") return;
-  expect(observed.value.failure_code).toBe("acp_transport_lost");
   expect(store.getTurn(sid as KbblSessionId, "initial:key-1" as TurnKey)?.status).toBe(
     "unknown",
   );

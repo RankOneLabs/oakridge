@@ -10,6 +10,7 @@ type SetSelection = (value: RuntimeModelSelection | ((current: RuntimeModelSelec
 
 interface RoleModelPickerProps {
   role: ModelRole;
+  label?: string;
   selection: RuntimeModelSelection;
   setSelection: SetSelection;
   setRuntimeTouched: (isTouched: boolean) => void;
@@ -18,8 +19,8 @@ interface RoleModelPickerProps {
   isPending: boolean;
 }
 
-export function RoleModelPicker({ role, selection, setSelection, setRuntimeTouched, runtimeDescriptors, defaultRuntimeId, isPending }: RoleModelPickerProps) {
-  const roleLabel = role === "planner" ? "Planner" : "Worker";
+export function RoleModelPicker({ role, label, selection, setSelection, setRuntimeTouched, runtimeDescriptors, defaultRuntimeId, isPending }: RoleModelPickerProps) {
+  const roleLabel = label ?? (role === "planner" ? "Planner" : "Worker");
   const runtime = runtimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime);
   return (
     <section className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">

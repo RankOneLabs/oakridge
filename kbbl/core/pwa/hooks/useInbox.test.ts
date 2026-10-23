@@ -140,6 +140,7 @@ describe("useInbox EventSource revival and parse guards", () => {
       requestedEffort: null,
       endReason: null,
       fencedBy: null,
+    archivedAt: null,
       pendingPermissionCount: 0,
     };
 
@@ -177,6 +178,7 @@ describe("useInbox EventSource revival and parse guards", () => {
       requestedEffort: null,
       endReason: null,
       fencedBy: null,
+    archivedAt: null,
       pendingPermissionCount: 1,
     };
 
@@ -210,6 +212,7 @@ describe("useInbox EventSource revival and parse guards", () => {
       requestedEffort: null,
       endReason: null,
       fencedBy: null,
+    archivedAt: null,
       pendingPermissionCount: 0,
     } as const;
     const first = { ...base, sid: "sid-first", lastActivityTs: "2026-01-01T00:00:03.000Z" };

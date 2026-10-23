@@ -9,8 +9,14 @@ import type { ArtifactDetail, ParkedGate } from "../types";
 // Split out of oakridge.test.tsx when the chrome union landed: the review
 // organism now has two hosts, and its cases outgrew the shared file.
 
-function wrap(ui: ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+function wrap(ui: ReactElement, artifact: ArtifactDetail | null = ARTIFACT_FIXTURE, gates: ParkedGate[] = []) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
+  if (artifact) {
+    client.setQueryData(["oakridge", "artifact", artifact.id], artifact);
+    client.setQueryData(["oakridge", "run", artifact.run_id, "gates"], gates);
+    client.setQueryData(["oakridge", "artifact", artifact.id, "threads"], []);
+    client.setQueryData(["oakridge", "artifact", artifact.id, "review_items"], []);
+  }
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
@@ -98,7 +104,7 @@ describe("ArtifactReview", () => {
       if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
       return json(described);
     });
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" />, described, [{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
@@ -122,13 +128,13 @@ describe("ArtifactReview", () => {
       }
       return json(artifact);
     });
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" />, artifact, [{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-2" }]);
 
     await screen.findByTestId("or-artifact-type");
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
     fireEvent.click(screen.getByTestId("or-rev-tab-0"));
     expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
-    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(true);
+    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(false);
   });
 
   it("renders configured plan scope and risks", async () => {
@@ -158,7 +164,7 @@ describe("ArtifactReview", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       String(input).includes("/gates") ? json([]) : json(plan));
-    wrap(<ArtifactReview artifactId="art-1" />);
+    wrap(<ArtifactReview artifactId="art-1" />, plan);
 
     expect(await screen.findByText("Scope")).toBeTruthy();
     expect(screen.getByText("migration")).toBeTruthy();
@@ -167,7 +173,7 @@ describe("ArtifactReview", () => {
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactReview artifactId="bad-id" />);
+    wrap(<ArtifactReview artifactId="bad-id" />, null);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });

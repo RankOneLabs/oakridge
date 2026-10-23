@@ -1,0 +1,38 @@
+workflow: review_loop
+input: { topic: text }
+run:
+  units:
+    document: { stage: document, input: { topic: input.topic } }
+  outcome: { draft: document.outcome.draft }
+stages:
+  document:
+    input: { topic: text }
+    let: { topic_value: input.topic }
+    artifacts:
+      draft:
+        schema: { title: text, body: text }
+        validate: [{ check: "len(draft.body) > 0", message: "body is empty" }]
+      critique: { schema: { notes: list(text) } }
+    workers:
+      writer:
+        kind: agent
+        prompts: { initial: review-loop/write.md, revise: review-loop/revise.md }
+        inputs: { topic: topic_value, critique: latest(critique) }
+        creates: [draft]
+      critic:
+        kind: agent
+        prompts: { review: review-loop/critique.md }
+        reviews: draft
+        creates: [critique]
+        inputs: {}
+    reviews:
+      editor:
+        of: draft
+        by: operator
+        prompt: review-loop/editor.md
+        inputs: { topic: input.topic, draft: latest(draft), critique: latest(critique) }
+        decisions:
+          approve: { effect: approve, label: Approve }
+          request_changes: { effect: request_changes, label: Request changes, fields: { feedback: "What needs to change?" } }
+    done_when: approved(draft)
+    outcome: { draft: latest(draft) }

@@ -77,6 +77,18 @@ export function SpecAnalysisViewer({ body }: ViewerProps) {
 
       <BlockerCallout blockers={view.blockers} />
 
+      <ArtifactSection title={`Proposed spec updates (${view.proposed_spec_updates.length})`} testId="or-spec-updates">
+        {view.proposed_spec_updates.length > 0
+          ? <ol className="divide-y divide-[var(--border-subtle)]">
+            {view.proposed_spec_updates.map((update, index) => <li key={`${index}-${update.section}`} className="py-2">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">{update.section}</h3>
+              <p className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{update.change}</p>
+              <p className="text-xs text-[var(--text-muted)]">Why: {update.reason}</p>
+            </li>)}
+          </ol>
+          : <p className="text-sm text-[var(--text-muted)]">No changes to the specification proposed.</p>}
+      </ArtifactSection>
+
       <ArtifactSection title={`Risks (${view.risks.length})`} testId="or-spec-risks">
         {view.risks.length > 0
           ? view.risks.map((risk, index) => <RiskCard key={`${index}-${risk.description}`} description={risk.description} mitigation={risk.mitigation} />)

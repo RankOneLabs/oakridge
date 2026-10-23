@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
 
 import { useStore } from "../state/store";
 import type { SessionSnapshot } from "../types";
@@ -10,16 +9,13 @@ interface SessionsListResponse {
   sessions: SessionSnapshot[];
 }
 
-// Mounts the inbox subscription: a one-shot seed query for the full list
-// (archived pre-ACP sessions included) and a logical /inbox subscription
-// on the page's shared feed whose `snapshot` frames replace the ACP list in the
+// Mounts the inbox subscription: a logical /inbox subscription on the page's
+// shared feed whose `snapshot` frames replace the session list in the
 // Zustand store wholesale. The server pushes a fresh snapshot on every
 // session change — there are no deltas to fold, and a reconnect needs no
 // replay reasoning because the next frame is always authoritative.
 //
-// Live data flows SSE → store, NOT through React Query. The seed query
-// uses staleTime=Infinity / refetchOnMount=false because the SSE channel
-// keeps the ACP half fresh and the archived half never changes.
+// Live data flows SSE → store, NOT through React Query.
 //
 // Foreground revival: when the browser backgrounds the PWA (e.g. tablet
 // sleep) the EventSource can enter CLOSED state permanently. On
@@ -28,7 +24,6 @@ interface SessionsListResponse {
 // source is the browser's own retry/backoff: we leave it alone to avoid
 // resetting that backoff and hammering the server.
 export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): void {
-  const seedSessions = useStore((s) => s.seedSessions);
   const applySnapshot = useStore((s) => s.applySnapshot);
   const setInboxStatus = useStore((s) => s.setInboxStatus);
 
@@ -38,22 +33,6 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
   // always-fresh-callback pattern.
   const onSessionRemovedRef = useRef(opts.onSessionRemoved);
   onSessionRemovedRef.current = opts.onSessionRemoved;
-
-  const seed = useQuery({
-    queryKey: ["sessions", "archived"],
-    queryFn: async (): Promise<SessionsListResponse> => {
-      const res = await fetch("/sessions?include=archived");
-      if (!res.ok) throw new Error(`sessions: ${res.status}`);
-      return (await res.json()) as SessionsListResponse;
-    },
-    staleTime: Infinity,
-    refetchOnMount: false,
-  });
-
-  useEffect(() => {
-    if (!seed.data) return;
-    seedSessions(seed.data.sessions);
-  }, [seed.data, seedSessions]);
 
   useEffect(() => {
     let current: LiveSubscription | null = null;

@@ -1,4 +1,10 @@
 {
+  // Editor workspace references. Authoritative checks: bun run typecheck (two independent packages).
+  "files": [],
+  "references": [
+    { "path": "./kbbl" },
+    { "path": "./oakridge-dbos" }
+  ],
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -16,24 +22,8 @@
     "types": ["bun"],
     "typeRoots": [
       "./kbbl/node_modules/@types",
-      "./lbc-dashboard/node_modules/@types",
       "./node_modules/@types"
     ],
     "lib": ["ESNext", "DOM"]
-  },
-  "include": [
-    "kbbl/core/**/*.ts",
-    "kbbl/core/**/*.tsx",
-    "kbbl/adapters/**/*.ts",
-    "kbbl/scripts/**/*.ts",
-    "lbc-dashboard/**/*.ts",
-    "lbc-dashboard/**/*.tsx",
-    "oakridge-dbos/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "kbbl/core/pwa/dist",
-    "kbbl/data",
-    "lbc-dashboard/pwa/dist"
-  ]
+  }
 }

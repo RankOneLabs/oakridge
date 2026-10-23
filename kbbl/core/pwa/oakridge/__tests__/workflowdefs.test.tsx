@@ -13,11 +13,13 @@ import type { WorkflowDefFull } from "../types";
 // ──────────────────────────────────────────────────────────────────────────────
 
 function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
 }
 
-function wrap(ui: ReactElement) {
+function wrap(ui: ReactElement, seed: { definitions?: WorkflowDefFull[]; definition?: WorkflowDefFull } = {}) {
   const client = makeClient();
+  if (seed.definitions) client.setQueryData(["oakridge", "workflow_defs", false], seed.definitions);
+  if (seed.definition) client.setQueryData(["oakridge", "workflow_def", seed.definition.id], seed.definition);
   return { client, ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>) };
 }
 
@@ -86,14 +88,14 @@ describe("WorkflowDefListView", () => {
 
   it("renders a row for each def", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE, DEF_WITH_STAGES]));
-    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />, { definitions: [DEF_FIXTURE, DEF_WITH_STAGES] });
     const rows = await screen.findAllByTestId("or-def-row");
     expect(rows).toHaveLength(2);
   });
 
   it("shows empty state when no defs exist", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />, { definitions: [] });
     expect(await screen.findByTestId("or-def-list-empty")).toBeTruthy();
   });
 
@@ -106,7 +108,7 @@ describe("WorkflowDefListView", () => {
   it("calls onNew when New Definition button is clicked", async () => {
     const onNew = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<WorkflowDefListView onNew={onNew} onSelect={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={onNew} onSelect={() => {}} onClone={() => {}} />, { definitions: [] });
     await screen.findByTestId("or-def-list-empty");
     fireEvent.click(screen.getByTestId("or-def-new-btn"));
     expect(onNew).toHaveBeenCalled();
@@ -115,7 +117,7 @@ describe("WorkflowDefListView", () => {
   it("calls onClone with the def when clone button is clicked", async () => {
     const onClone = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
-    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={onClone} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={onClone} />, { definitions: [DEF_FIXTURE] });
     const cloneBtn = await screen.findByTestId("or-def-clone-btn");
     fireEvent.click(cloneBtn);
     expect(onClone).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
@@ -124,7 +126,7 @@ describe("WorkflowDefListView", () => {
   it("opens a definition when its name is clicked", async () => {
     const onSelect = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
-    wrap(<WorkflowDefListView onNew={() => {}} onSelect={onSelect} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={onSelect} onClone={() => {}} />, { definitions: [DEF_FIXTURE] });
     fireEvent.click(await screen.findByTestId("or-def-view-btn"));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
   });
@@ -133,7 +135,7 @@ describe("WorkflowDefListView", () => {
 describe("WorkflowDefDetailView", () => {
   it("shows stages, slots, connections, and expandable configuration", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(DEF_WITH_STAGES));
-    wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />, { definition: DEF_WITH_STAGES });
 
     expect(await screen.findByTestId("or-def-detail")).toBeTruthy();
     expect(screen.getAllByTestId("or-def-stage")).toHaveLength(1);
@@ -200,7 +202,7 @@ describe("WorkflowDefEditor", () => {
 
   it("populates form from clone source and bumps version", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def: DEF_WITH_STAGES }));
-    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />, { definition: DEF_WITH_STAGES });
     // editor appears (not loading state) once data loads
     expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
     // version field should show original + 1
@@ -218,7 +220,7 @@ describe("WorkflowDefEditor", () => {
       graph: { ...DEF_WITH_STAGES.graph, stages: { build: { ...build, config: { ...build.config, slot_bindings: { SPEC: { from: "literal", value: "x" } } } } } },
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def }));
-    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />, { definition: def });
     const keyInput = await screen.findByLabelText("Slot binding key");
     fireEvent.change(keyInput, { target: { value: "SPECS" } });
     expect(screen.getByLabelText("Slot binding key")).toBe(keyInput);

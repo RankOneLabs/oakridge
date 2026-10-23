@@ -185,12 +185,14 @@ export interface RunSidebarSessionRow {
   readonly work_order_id: string;
   readonly session_id: Sid;
   readonly stage_key: string;
+  readonly display_label: string;
   readonly unit_id: string;
   readonly attempt_label: string;
   readonly work_order_state: WorkOrderState;
   /** Whether this attempt is what its unit currently is, rather than a superseded one. */
   readonly is_current: boolean;
   readonly requires_operator_action: boolean;
+  readonly is_archived: boolean;
 }
 
 /**
@@ -210,6 +212,21 @@ export interface RunSidebarSessionsView {
   readonly is_session_list_known: boolean;
 }
 
+export interface RunSidebarSessionVisibility {
+  readonly archived_count: number;
+  readonly visible_rows: readonly RunSidebarSessionRow[];
+}
+
+export function selectRunSidebarSessionVisibility(
+  rows: readonly RunSidebarSessionRow[],
+  showArchived: boolean,
+): RunSidebarSessionVisibility {
+  return {
+    archived_count: rows.filter((row) => row.is_archived).length,
+    visible_rows: showArchived ? rows : rows.filter((row) => !row.is_archived),
+  };
+}
+
 export interface RunSidebarSessionsInput {
   readonly sessions: RunSessionsRead;
   readonly gates: RunGatesRead;
@@ -219,6 +236,8 @@ export interface RunSidebarSessionsInput {
    * a row whose transcript no longer exists.
    */
   readonly purgedSessionIds: ReadonlySet<string>;
+  /** Hidden from navigation, while the transcript remains addressable by sid. */
+  readonly archivedSessionIds: ReadonlySet<string>;
 }
 
 /**
@@ -230,12 +249,14 @@ export interface RunSidebarSessionsInput {
  * what can be opened, and a row that refuses to open says nothing the operator
  * can act on. The filter runs *after* numbering so a surviving row still reads
  * "attempt 2 of 2" — the attempt history is a durable record, and a purge
- * removes the transcript, not the attempt that produced it.
+ * removes the transcript, not the attempt that produced it. Archived sessions
+ * remain in the rows so the operator can reveal and resume them.
  */
 export const selectRunSidebarSessions = ({
   sessions,
   gates,
   purgedSessionIds,
+  archivedSessionIds,
 }: RunSidebarSessionsInput): RunSidebarSessionsView => {
   const awaitingAction =
     gates.kind === "loaded" ? selectUnitsAwaitingAction(gates.gates) : null;
@@ -248,10 +269,12 @@ export const selectRunSidebarSessions = ({
         work_order_id: row.attempt.work_order_id,
         session_id: row.attempt.session_id as Sid,
         stage_key: row.attempt.stage_key,
+        display_label: row.attempt.display_label ?? row.attempt.stage_key,
         unit_id: row.attempt.unit_id,
         attempt_label: formatAttemptLabel(row),
         work_order_state: row.attempt.work_order_state,
         is_current: row.is_current,
+        is_archived: archivedSessionIds.has(row.attempt.session_id),
         requires_operator_action:
           row.is_current &&
           awaitingAction !== null &&

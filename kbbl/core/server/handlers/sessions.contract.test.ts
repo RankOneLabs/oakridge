@@ -19,7 +19,6 @@ import { validateGitRefName, validateWorktreeSubdir } from "./sessions";
 
 import { mountSessionsRoutes } from "./sessions";
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
-import type { SessionManager } from "../../session/session-manager";
 
 let tmpRoot: string;
 let repoDir: string;
@@ -41,19 +40,11 @@ async function gitInitRepo(dir: string): Promise<void> {
   }
 }
 
-/** The read-only legacy manager slice these routes still consult. */
-const stubManager = {
-  listSnapshots: () => [],
-  listArchivedSnapshots: async () => [],
-  listByArtifact: () => [],
-  remove: async () => false,
-} as unknown as SessionManager;
 
 function makeApp(defaultWorkdir: string | null = null): Hono {
   const app = new Hono();
   mountSessionsRoutes(app, {
     acp: harness.service,
-    manager: stubManager,
     defaultWorkdir,
   });
   return app;
@@ -84,6 +75,25 @@ afterEach(async () => {
   await harness.service.shutdown();
   rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+test("collaboration ensure revives an ended session in place", async () => {
+  const app = makeApp(repoDir);
+  const body = JSON.stringify({ initial_prompt: "remember the first turn", workdir: repoDir, runtime: "fake" });
+  const url = "/sessions/resumable/key-review";
+  const first = await app.request(url, { method: "PUT", headers: { "content-type": "application/json" }, body });
+  expect(first.status).toBe(201);
+  const initial = await first.json() as { session: { sid: string } };
+  await harness.service.observeInitialTurn(initial.session.sid, 8000);
+  await harness.service.closeSession(initial.session.sid);
+  expect(harness.store.getSession(initial.session.sid as import("../../acp/types").KbblSessionId)?.status).toBe("ended");
+
+  const resumed = await app.request(url, { method: "PUT", headers: {
+    "content-type": "application/json", "x-oakridge-collaboration-resume": "true",
+  }, body });
+  expect(resumed.status).toBe(200);
+  expect(await resumed.json()).toMatchObject({ kind: "attached", session: { sid: initial.session.sid, status: "live" } });
+  expect(String(harness.store.getByResumableKey("key-review" as import("../../acp/types").ResumableKey)?.sid)).toBe(initial.session.sid);
+}, 15000);
 
 describe("POST /sessions create-session contract", () => {
   test("no model override (omitted field) is accepted; snapshot model is null", async () => {
@@ -145,21 +155,11 @@ describe("POST /sessions create-session contract", () => {
     );
   });
 
-  test("agent_profile is accepted as the preferred alias for runtime (§14.2)", async () => {
+  test("runtime selects the agent profile (§14.2)", async () => {
     const app = makeApp(repoDir);
-    const res = await postSessions(app, { workdir: repoDir, agent_profile: "codex" });
+    const res = await postSessions(app, { workdir: repoDir, runtime: "codex" });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { agentProfile: string }).agentProfile).toBe("codex");
-  });
-
-  test("conflicting runtime and agent_profile are rejected", async () => {
-    const app = makeApp(repoDir);
-    const res = await postSessions(app, {
-      workdir: repoDir,
-      runtime: "claude-code",
-      agent_profile: "codex",
-    });
-    expect(res.status).toBe(400);
   });
 
   test("an effort the agent's thought_level option resolves is accepted", async () => {

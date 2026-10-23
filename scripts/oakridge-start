@@ -8,6 +8,26 @@ fi
 
 OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBOS_ROOT="$OAKRIDGE_ROOT/oakridge-dbos"
+DEFAULT_CORE_WASM="$OAKRIDGE_ROOT/workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm"
+CORE_WASM="${OAKRIDGE_CORE_WASM:-$DEFAULT_CORE_WASM}"
+# Rebuild the default module on start so the engine version matches its source.
+if [ -z "${OAKRIDGE_CORE_WASM:-}" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    echo "oakridge: building workflow WASM"
+    cargo build --locked --target wasm32-unknown-unknown --manifest-path "$OAKRIDGE_ROOT/workflow-core/Cargo.toml" -p workflow-evaluator
+  else
+    # Never start the default module unverified: it may predate workflow-core/.
+    CORE_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$OAKRIDGE_ROOT/workflow-core/rust-toolchain.toml")"
+    echo "oakridge: Rust toolchain (cargo) is missing; install the pinned toolchain with: rustup toolchain install $CORE_TOOLCHAIN" >&2
+    echo "oakridge: then build workflow WASM with: cargo build --locked --target wasm32-unknown-unknown --manifest-path workflow-core/Cargo.toml -p workflow-evaluator" >&2
+    echo "oakridge: or set OAKRIDGE_CORE_WASM to a module built from this tree" >&2
+    exit 1
+  fi
+fi
+if [ ! -f "$CORE_WASM" ]; then
+  echo "oakridge: workflow WASM is missing at $CORE_WASM" >&2
+  exit 1
+fi
 DBOS_HOST="${OAKRIDGE_DBOS_HOST:-127.0.0.1}"
 DBOS_PORT="${OAKRIDGE_DBOS_PORT:-8790}"
 DBOS_URL_HOST="$DBOS_HOST"
@@ -17,6 +37,9 @@ fi
 DBOS_URL="http://${DBOS_URL_HOST}:${DBOS_PORT}"
 POSTGRES_CONTAINER="${OAKRIDGE_POSTGRES_CONTAINER:-oakridge-postgres}"
 POSTGRES_PORT="${OAKRIDGE_POSTGRES_PORT:-54329}"
+# The data volume follows the container, so a second container never opens
+# another one's data directory. The default container keeps its historical volume.
+POSTGRES_VOLUME="${OAKRIDGE_POSTGRES_VOLUME:-${POSTGRES_CONTAINER}-data}"
 POSTGRES_IMAGE="${OAKRIDGE_POSTGRES_IMAGE:-postgres:16}"
 
 KBBL_DISPLAY_HOST="127.0.0.1"
@@ -81,7 +104,7 @@ start_managed_postgres() {
       --env POSTGRES_USER=oakridge \
       --env POSTGRES_PASSWORD=oakridge \
       --env POSTGRES_DB=oakridge \
-      --volume oakridge-postgres-data:/var/lib/postgresql/data \
+      --volume "${POSTGRES_VOLUME}:/var/lib/postgresql/data" \
       "$POSTGRES_IMAGE" >/dev/null
   fi
 
@@ -98,7 +121,10 @@ if [ -z "${DBOS_SYSTEM_DATABASE_URL:-}" ]; then
   start_managed_postgres
   DBOS_SYSTEM_DATABASE_URL="postgres://oakridge:oakridge@127.0.0.1:${POSTGRES_PORT}/oakridge"
 fi
-DBOS_APPLICATION_VERSION="${DBOS_APPLICATION_VERSION:-$(git -C "$OAKRIDGE_ROOT" rev-parse HEAD)}"
+# DBOS_APPLICATION_VERSION is the engine digest unless the operator pins it; a git SHA
+# here would park every in-flight run on each deploy, whatever changed.
+if [ -n "${DBOS_APPLICATION_VERSION:-}" ]; then export DBOS_APPLICATION_VERSION; fi
+if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
 dbos_pid=""
 kbbl_pid=""
@@ -116,16 +142,14 @@ stop_from_signal() {
 trap stop_from_signal INT TERM
 trap stop_services EXIT
 
-echo "oakridge: applying domain migrations"
-(cd "$DBOS_ROOT" && DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" bun run migrate)
-
-echo "oakridge: starting DBOS backend at $DBOS_URL (application $DBOS_APPLICATION_VERSION)"
+echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
   cd "$DBOS_ROOT"
   DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" \
-    DBOS_APPLICATION_VERSION="$DBOS_APPLICATION_VERSION" \
+    OAKRIDGE_PROMPT_ROOT="${OAKRIDGE_PROMPT_ROOT:-$OAKRIDGE_ROOT}" \
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
     OAKRIDGE_DBOS_HOST="$DBOS_HOST" \
+    OAKRIDGE_CORE_WASM="$CORE_WASM" \
     PORT="$DBOS_PORT" \
     bun run start
 ) &

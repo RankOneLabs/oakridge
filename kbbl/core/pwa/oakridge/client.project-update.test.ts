@@ -32,7 +32,7 @@ describe("updateProject", () => {
 
     const result = await updateProject(command);
 
-    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/projects/${projectId}`, detail: "repository not found" } });
+    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/api/projects/${projectId}`, detail: "repository not found" } });
   });
 
   it("returns malformed successful responses as parsing failures", async () => {
@@ -40,6 +40,6 @@ describe("updateProject", () => {
 
     const result = await updateProject(command);
 
-    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/projects/${projectId}`, detail: expect.any(String) } });
+    expect(result).toEqual({ ok: false, error: { operation: "update project", path: `/api/projects/${projectId}`, detail: expect.any(String) } });
   });
 });

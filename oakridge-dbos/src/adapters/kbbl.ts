@@ -1,352 +1,172 @@
-import { ExecutorStartRejectedError, type ExecutionRequest, type ExecutorAdapter, type ExecutorObservationAttempt, type ExecutorTerminalObservation, type ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, ExecutorOperationId, JsonValue } from "../domain/primitives";
+import type { ProviderResult } from "../effects/provider";
+import type { ResumableEnsureRequest, ResumableEnsureResponse, ResumableInputRequest, ResumableSessionStatus } from "../../../kbbl/core/acp/resumable-wire";
 
 /**
- * How long kbbl may hold one observation request open. Well under kbbl's own
- * 255s socket deadline, so a poll always returns an answer rather than being
- * severed mid-flight and burning the step's retry budget.
+ * kbbl's resumable session routes (§11 of the kbbl contract), as the agent
+ * provider uses them. Every call is idempotent by its key: an ensure by
+ * session key, an input by delivery key. Transport failures and 5xx answers
+ * are uncertain or transient; any other refusal is permanent.
  */
-const DEFAULT_OBSERVE_WAIT_MS = 25_000;
+
+/**
+ * The header that lets an ensure revive an ended session under its key
+ * (part 1 §7.2). Without it kbbl answers `terminal` for an ended session, and
+ * a revise delivered to it has nothing live to reach.
+ */
+export const REVIVE_HEADER = "x-oakridge-collaboration-resume";
 
 /**
  * How long a session may report no activity at all before it is called dead.
  *
- * Not a cap on how long an agent may work — `lastActivityTs` moves on every
- * event a session produces, so a busy agent never approaches this. It bounds
- * the case with no other bound: a session that started, never took its first
- * turn, and will therefore never end. kbbl answers "not terminal" for such a
- * session forever, truthfully, and before this the observer believed it
- * forever.
- *
- * Generous on purpose. A tool call that runs for a long time without emitting
- * anything — a full test suite, a slow build — is silent from the outside, and
- * killing that would be a worse failure than the stall this prevents.
+ * Not a cap on how long an agent may work: `lastActivityTs` moves on every
+ * event a session produces, so a busy agent never approaches it. It bounds a
+ * session that will never take its turn, which kbbl truthfully reports as not
+ * finished forever. Generous on purpose, because a long silent tool call (a
+ * full test suite, a slow build) looks the same from outside.
  */
-const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
-
-const terminal = (observation: ExecutorTerminalObservation): ExecutorObservationAttempt => ({ kind: "terminal", observation });
-
-/**
- * The structured failure kbbl attaches to a terminal body when a session
- * ended badly (`toTerminalBody` in kbbl/core/acp/legacy-wire.ts). It is the
- * only place the actual reason survives: the exit code is always 1, so
- * without this a provisioning failure, a killed child, and a failed prompt
- * are indistinguishable to an operator reading the run record.
- */
-interface KbblTerminalFailure {
-  readonly code: string;
-  readonly detail: string;
-}
-
-/** Reads kbbl's `failure` sidecar off a terminal body; null when absent. */
-function parseTerminalFailure(raw: unknown): KbblTerminalFailure | null {
-  if (typeof raw !== "object" || raw === null || !("failure" in raw)) return null;
-  const failure = (raw as { failure: unknown }).failure;
-  if (typeof failure !== "object" || failure === null) return null;
-  const { code, detail } = failure as { code?: unknown; detail?: unknown };
-  if (typeof code !== "string" || code === "") return null;
-  return { code, detail: typeof detail === "string" && detail !== "" ? detail : code };
-}
-
-interface KbblResolvedSessionIdentity {
-  readonly run_id: string;
-  readonly stage_instance_id: string;
-  readonly unit_id: string;
-  readonly operator_role: string | null;
-  readonly cohort_title: string | null;
-  readonly repository_key: string | null;
-}
-
-interface KbblResolvedConfig {
-  readonly runtime: "claude-code" | "codex";
-  readonly rendered_prompt: string;
-  readonly workdir: string;
-  readonly session_name: string;
-  readonly model: string | null;
-  readonly effort: string | null;
-  readonly artifact_id: string | null;
-  readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
-  readonly publication: { readonly base_url: string; readonly work_order_id: string; readonly capability: string } | null;
-  readonly session_identity: KbblResolvedSessionIdentity;
-}
-
-interface KbblSessionSummary {
-  readonly sid: string;
-  readonly status: "starting" | "live" | "compacting" | "ended";
-  readonly endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
-  readonly worktreeBaseRef: string | null;
-}
-
-interface EnsureSessionResponse {
-  readonly kind: "attached" | "started" | "terminal";
-  readonly session: KbblSessionSummary;
-}
+export const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-
-const isObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } => typeof value === "object" && value !== null && !Array.isArray(value);
-
-const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
-  if (!isObject(value)) throw new Error("kbbl resolved config must be an object");
-  const runtime = value.runtime;
-  const renderedPrompt = value.rendered_prompt;
-  const workdir = value.workdir;
-  const sessionName = value.session_name;
-  if ((runtime !== "claude-code" && runtime !== "codex") || typeof renderedPrompt !== "string" || typeof workdir !== "string" || typeof sessionName !== "string") {
-    throw new Error("kbbl resolved config is missing required fields");
-  }
-  const model = typeof value.model === "string" ? value.model : null;
-  const effort = typeof value.effort === "string" ? value.effort : null;
-  const artifactId = typeof value.artifact_id === "string" ? value.artifact_id : null;
-  const rawWorktree = value.worktree;
-  let worktree: KbblResolvedConfig["worktree"] = null;
-  if (rawWorktree !== undefined) {
-    if (!isObject(rawWorktree) || typeof rawWorktree.branchName !== "string" || typeof rawWorktree.worktreeSubdir !== "string"
-      || (rawWorktree.baseRef !== undefined && typeof rawWorktree.baseRef !== "string")) throw new Error("kbbl resolved worktree config is invalid");
-    worktree = { branchName: rawWorktree.branchName, worktreeSubdir: rawWorktree.worktreeSubdir,
-      ...(typeof rawWorktree.baseRef === "string" ? { baseRef: rawWorktree.baseRef } : {}) };
-  }
-  const rawPublication = value.publication;
-  const publication = isObject(rawPublication) && typeof rawPublication.base_url === "string" && typeof rawPublication.work_order_id === "string" && typeof rawPublication.capability === "string"
-    ? { base_url: rawPublication.base_url, work_order_id: rawPublication.work_order_id, capability: rawPublication.capability } : null;
-  const session_identity = parseSessionIdentity(value.session_identity);
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree, publication, session_identity };
-};
-
-/**
- * Every v2 delegated session now carries a `session_identity` (§2 of this
- * cohort) — a resolved config missing it is a hard parse error, not a
- * silently omitted member, since forwarding it is the whole point of this
- * adapter change.
- */
-const parseSessionIdentity = (value: JsonValue): KbblResolvedSessionIdentity => {
-  if (!isObject(value)) throw new Error("kbbl resolved config is missing session_identity");
-  const { run_id, stage_instance_id, unit_id, operator_role, cohort_title, repository_key } = value;
-  if (typeof run_id !== "string" || run_id.length === 0
-    || typeof stage_instance_id !== "string" || stage_instance_id.length === 0
-    || typeof unit_id !== "string" || unit_id.length === 0) {
-    throw new Error("kbbl resolved config session_identity is missing required fields");
-  }
-  return {
-    run_id, stage_instance_id, unit_id,
-    operator_role: typeof operator_role === "string" ? operator_role : null,
-    cohort_title: typeof cohort_title === "string" ? cohort_title : null,
-    repository_key: typeof repository_key === "string" ? repository_key : null,
-  };
-};
-
-/**
- * The outputs this work order owes, named the way the emit route addresses
- * them. `expected_artifacts.unit_id` carries a collection member's key (the
- * request's own `unit_id` marks a scalar), so a retry that owes one member of
- * a collection tells the agent to emit that member and nothing else.
- */
-const expectedOutputLines = (request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string =>
-  request.expected_artifacts.map((expected) => expected.unit_id === request.unit_id
-    ? `- ${expected.output_name}`
-    : `- ${expected.output_name} (Output-Collection-Key: ${expected.unit_id})`).join("\n");
-
-const publicationInstructions = (config: KbblResolvedConfig, request: Pick<ExecutionRequest, "unit_id" | "expected_artifacts">): string => {
-  if (!config.publication) return "";
-  const owed = request.expected_artifacts.length > 0
-    ? `\n\nPublish exactly these outputs and no others:\n${expectedOutputLines(request)}\n`
-    : "";
-  return `\n\n## Oakridge v2 artifact publication\n\nUse this run-owned endpoint instead of any stage/execution emit URL shown earlier:\n\nPUT ${config.publication.base_url.replace(/\/$/, "")}/work-orders/${config.publication.work_order_id}/emit/<output-name>\nWork-Order-Capability: ${config.publication.capability}\nIdempotency-Key: <stable key for this output payload>\nContent-Type: application/json\n\nFor a collection member, also send Output-Collection-Key. A successful executor exit does not satisfy the unit; publish every required output.\n${owed}`;
-};
-
-const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
-  if (typeof value !== "object" || value === null || !("kind" in value) || !("session" in value)) throw new Error("invalid kbbl ensure-session response");
-  const kind = value.kind;
-  const session = value.session;
-  if ((kind !== "attached" && kind !== "started" && kind !== "terminal") || typeof session !== "object" || session === null || !("sid" in session) || typeof session.sid !== "string" || !("status" in session)) {
-    throw new Error("invalid kbbl ensure-session response");
-  }
-  const status = session.status;
-  if (status !== "starting" && status !== "live" && status !== "compacting" && status !== "ended") throw new Error("invalid kbbl session status");
-  const endReason = "endReason" in session && (session.endReason === "user_closed" || session.endReason === "subprocess_exited" || session.endReason === "compacted") ? session.endReason : null;
-  const worktreeBaseRef = "worktreeBaseRef" in session && typeof session.worktreeBaseRef === "string" ? session.worktreeBaseRef : null;
-  return { kind, session: { sid: session.sid, status, endReason, worktreeBaseRef } };
-};
-
-/** Oakridge branch bases always mean the freshly observed remote branch. */
-export const selectRemoteWorktreeBase = (baseRef: string): string => {
-  if (baseRef.startsWith("origin/") || /^[0-9a-f]{40}$/.test(baseRef)) return baseRef;
-  return `origin/${baseRef}`;
-};
-
-export interface KbblExecutorAdapterOptions {
+export interface KbblClientOptions {
   readonly base_url: string;
-  readonly executor_function_identity: string;
-  readonly observe_wait_ms?: number;
-  /** Silence after which a session is failed rather than polled forever. */
-  readonly max_silent_ms?: number;
-  /** Injectable clock, so a test can prove the bound without waiting it out. */
-  readonly now?: () => number;
+  /** kbbl's control token, sent as Bearer on every call; null when kbbl runs without one. */
+  readonly control_token?: string | null;
   readonly fetch?: FetchLike;
 }
 
-/**
- * How long a pending session has been silent, or null when kbbl did not say.
- *
- * Absent or unparseable activity is deliberately *not* treated as silence: an
- * older kbbl that omits the field would otherwise have every one of its
- * sessions failed at the first poll.
- */
-export const silentDurationMs = (pending: JsonValue, now: number): number | null => {
-  if (!isObject(pending)) return null;
-  const session = pending.session;
-  if (!isObject(session)) return null;
-  const lastActivity = session.lastActivityTs;
-  if (typeof lastActivity !== "string") return null;
-  const observedAt = Date.parse(lastActivity);
-  if (Number.isNaN(observedAt)) return null;
-  return Math.max(0, now - observedAt);
-};
+/** The part of a resumable session snapshot the provider reads. */
+export interface KbblSession {
+  readonly sid: string;
+  readonly status: ResumableSessionStatus;
+  readonly last_activity_ts: string | null;
+}
+export interface EnsuredSession { readonly kind: ResumableEnsureResponse["kind"]; readonly session: KbblSession }
+/** A delivered input's turn, as kbbl's keyed receipt reports it. */
+export type TurnStatus = "accepted" | "prompting" | "succeeded" | "cancelled" | "failed" | "unknown";
+export interface TurnReceipt { readonly status: TurnStatus }
+/** A session as its terminal route reports it: still on its first turn, or ended with a reason. */
+export type SessionReading =
+  | { readonly kind: "pending"; readonly session: KbblSession }
+  | { readonly kind: "ended"; readonly session: KbblSession; readonly end: SessionEnd };
+export type SessionEnd =
+  | { readonly kind: "succeeded" }
+  | { readonly kind: "closed" }
+  | { readonly kind: "failed"; readonly code: string; readonly detail: string };
+
+type Fields = { readonly [key: string]: unknown };
+const isFields = (value: unknown): value is Fields => typeof value === "object" && value !== null && !Array.isArray(value);
+const SESSION_STATUSES: readonly ResumableSessionStatus[] = ["starting", "live", "ended"];
+const TURN_STATUSES = ["accepted", "prompting", "succeeded", "cancelled", "failed", "unknown"] as const;
+
+function parseSession(value: unknown): KbblSession | null {
+  if (!isFields(value) || typeof value.sid !== "string") return null;
+  const status = SESSION_STATUSES.find((candidate) => candidate === value.status);
+  if (!status) return null;
+  return { sid: value.sid, status, last_activity_ts: typeof value.lastActivityTs === "string" ? value.lastActivityTs : null };
+}
 
 /**
- * The kbbl session one attempt owns. Keying on the attempt rather than the
- * execution is what lets a rerun start a fresh agent: the execution id is
- * shared by every attempt, so a rerun keyed on it resolved to the session that
- * had already died and re-failed immediately. The application version stays in
- * the key so a session never spans a backend version change.
+ * How a terminal body says the session ended. Any non-empty failure code is
+ * kept, so a code a newer kbbl adds still reaches the attempt.
  */
-const sessionKeyFor = (operation_id: ExecutorOperationId, executor_function_identity: string): string =>
-  `${operation_id}:${executor_function_identity}`;
+function parseEnd(raw: unknown): SessionEnd | null {
+  if (!isFields(raw)) return null;
+  if (raw.kind === "succeeded") return { kind: "succeeded" };
+  if (raw.kind === "closed") return { kind: "closed" };
+  if (raw.kind !== "failed" || typeof raw.code !== "string" || raw.code === "") return null;
+  return { kind: "failed", code: raw.code, detail: typeof raw.detail === "string" && raw.detail !== "" ? raw.detail : raw.code };
+}
 
-const sessionIdOf = (external_reference: ExternalExecutionReference, execution_id: ExecutionId): string => {
-  if (external_reference.kind !== "kbbl_session") throw new Error(`execution ${execution_id} has no kbbl session reference`);
-  return external_reference.session_id;
-};
+/** The attempt closing its own session, and whether the session ends for good. */
+export interface SessionCloser { readonly action_id: string; readonly is_fence: boolean }
 
-export class KbblExecutorAdapter implements ExecutorAdapter {
-  readonly executor_type = "delegated_session";
+export class KbblClient {
   private readonly fetch: FetchLike;
-
-  constructor(private readonly options: KbblExecutorAdapterOptions) {
+  private readonly base_url: string;
+  private readonly authorization: { readonly authorization: string } | null;
+  constructor(options: KbblClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch;
+    this.base_url = options.base_url.replace(/\/+$/, "");
+    this.authorization = options.control_token ? { authorization: `Bearer ${options.control_token}` } : null;
+  }
+  /** A request's headers with kbbl's credential, when one is configured: kbbl refuses an unauthenticated write. */
+  private headers(headers: { readonly [name: string]: string } = {}): { readonly [name: string]: string } {
+    return this.authorization ? { ...headers, ...this.authorization } : headers;
   }
 
-  async start_or_attach(request: ExecutionRequest, operation_id: ExecutorOperationId): Promise<ExternalExecutionReference> {
-    let config: KbblResolvedConfig;
-    try {
-      config = parseResolvedConfig(request.resolved_config);
-    } catch (error) {
-      throw new ExecutorStartRejectedError(error instanceof Error ? error.message : String(error));
+  /** One HTTP call; transport failures are uncertain, 5xx/408/429 transient, other refusals permanent. */
+  private async call<Value>(operation: string, url: string, init: RequestInit, read: (response: Response) => Promise<Value | null>,
+    signal: AbortSignal | undefined): Promise<ProviderResult<Value>> {
+    let response: Response;
+    try { response = await this.fetch(url, { ...init, ...(signal ? { signal } : {}) }); }
+    catch (error) { return { kind: "uncertain", detail: `kbbl ${operation}: ${String(error)}` }; }
+    if (!response.ok && response.status !== 202) {
+      const body = await response.text().catch(() => "");
+      const detail = `kbbl ${operation} failed (${response.status}): ${body}`;
+      let refusal: unknown = null;
+      try { refusal = JSON.parse(body); } catch { /* Non-JSON refusals have no domain code. */ }
+      const code = response.status === 409 && isFields(refusal) && typeof refusal.code === "string"
+        ? refusal.code : "kbbl_refused";
+      return response.status >= 500 || response.status === 408 || response.status === 429
+        ? { kind: "transiently_unavailable", detail } : { kind: "permanently_rejected", code, detail };
     }
-    const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
-      ? request.workspace_source.external_reference.session_id : null;
-    // Definition-time validation should have caught this; failing here keeps the
-    // message actionable instead of surfacing as an opaque kbbl 400.
-    if (config.worktree && inheritedSessionId) {
-      throw new ExecutorStartRejectedError(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
-    }
-    const sessionKey = sessionKeyFor(operation_id, this.options.executor_function_identity);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        initial_prompt: config.rendered_prompt + publicationInstructions(config, request),
-        workdir: config.workdir,
-        name: config.session_name,
-        runtime: config.runtime,
-        ...(config.model ? { model: config.model } : {}),
-        ...(config.effort ? { effort: config.effort } : {}),
-        ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
-        ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
-          ...(config.worktree.baseRef ? { base_ref: selectRemoteWorktreeBase(config.worktree.baseRef) } : {}) } } : {}),
-        ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
-        workflow: {
-          workflow_run_id: config.session_identity.run_id,
-          stage_instance_id: config.session_identity.stage_instance_id,
-          unit_id: config.session_identity.unit_id,
-          ...(config.session_identity.operator_role ? { operator_role: config.session_identity.operator_role } : {}),
-          ...(config.session_identity.cohort_title ? { cohort_title: config.session_identity.cohort_title } : {}),
-          ...(config.session_identity.repository_key ? { repository_key: config.session_identity.repository_key } : {}),
-        },
-      }),
-    });
-    if (!response.ok) throw new ExecutorStartRejectedError(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
-    const ensured = parseEnsureResponse(await response.json());
-    return { kind: "kbbl_session", session_id: ensured.session.sid,
-      ...(ensured.session.worktreeBaseRef ? { worktree_base_sha: ensured.session.worktreeBaseRef } : {}) };
+    let value: Value | null;
+    try { value = await read(response); } catch (error) { return { kind: "uncertain", detail: `kbbl ${operation}: ${String(error)}` }; }
+    return value === null ? { kind: "uncertain", detail: `kbbl ${operation} returned an unreadable body` } : { kind: "acknowledged", value };
   }
 
-  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
-    // Reported as a failure rather than thrown, unlike `cancel_or_fence` below.
-    // This is the only path by which a unit can ever be reported terminal, and
-    // it runs inside a retrying step: throwing exhausts the retries, kills the
-    // terminal observer, and leaves the execution waiting on a message that can
-    // now never arrive — a silent stall an operator has to go hunting for.
-    // A named failure code parks the unit for rerun and says what happened.
-    if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
-    const sessionId = external_reference.session_id;
-    const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
-    const response = await this.fetch(url);
-    if (response.status === 202) {
-      // A session that never takes its first turn ends no other way: kbbl keeps
-      // answering "not terminal", correctly, and the unit waits on a state that
-      // cannot arrive. Bounding the silence is what turns that into a failure
-      // an operator can see and rerun, rather than a run that looks alive.
-      //
-      // Stateless by construction: `lastActivityTs` is an absolute time from
-      // kbbl, so nothing has to be carried between polls. That matters because
-      // each observation is its own checkpointed step, and a counter held in
-      // memory would reset on recovery — the case this is meant to catch.
-      const silentFor = silentDurationMs(await response.json().catch(() => null) as JsonValue, (this.options.now ?? Date.now)());
-      const limit = this.options.max_silent_ms ?? DEFAULT_MAX_SILENT_MS;
-      if (silentFor !== null && silentFor > limit) {
-        return terminal({ kind: "failed", code: "executor_silent_timeout",
-          detail: `kbbl session ${sessionId} reported no activity for ${Math.round(silentFor / 1000)}s (limit ${Math.round(limit / 1000)}s)` });
-      }
-      return { kind: "pending" };
-    }
-    if (!response.ok) return terminal({ kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` });
-    const raw = await response.json();
-    if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {
-      return terminal({ kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" });
-    }
-    if (raw.session.endReason === "user_closed") return terminal({ kind: "cancelled", detail: "kbbl session was closed" });
-    const exitCode = "exit_code" in raw && typeof raw.exit_code === "number" ? raw.exit_code : null;
-    // Success must be positively established. A session whose exit code kbbl
-    // cannot report — it crashed before writing one, or predates exit-code
-    // reconstruction — is reported as failed, not assumed clean: treating an
-    // unknown code as success strands the execution waiting for artifacts a
-    // dead runtime will never emit, with nothing visible to the operator.
-    if (exitCode === null) return terminal({ kind: "failed", code: "exit_unknown", detail: `kbbl session ${sessionId} ended without a recorded exit code` });
-    if (exitCode !== 0) {
-      // Every kbbl failure exits 1, so the exit code says nothing an operator
-      // can act on. When kbbl names the failure, that name is the observation:
-      // "requested_model_unsupported" is a config fix, "kbbl_restart" is a
-      // rerun. `executor_exit_nonzero` stays the honest answer only when kbbl
-      // sends no structured failure at all.
-      const failure = parseTerminalFailure(raw);
-      if (failure) return terminal({ kind: "failed", code: failure.code, detail: `kbbl session ${sessionId} failed: ${failure.detail}` });
-      return terminal({ kind: "failed", code: "executor_exit_nonzero", detail: `kbbl runtime exited with code ${exitCode}` });
-    }
-    return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
+  /** PUT /sessions/resumable/:key, reviving an ended session under the key. The same key and spec reach the same session. */
+  ensure(session_key: string, body: ResumableEnsureRequest, signal?: AbortSignal): Promise<ProviderResult<EnsuredSession>> {
+    return this.call("ensure", `${this.base_url}/sessions/resumable/${encodeURIComponent(session_key)}`, {
+      method: "PUT", headers: this.headers({ "content-type": "application/json", [REVIVE_HEADER]: "true" }), body: JSON.stringify(body),
+    }, async (response) => {
+      const raw: unknown = await response.json();
+      if (!isFields(raw) || (raw.kind !== "attached" && raw.kind !== "started" && raw.kind !== "terminal")) return null;
+      const session = parseSession(raw.session);
+      return session ? { kind: raw.kind, session } : null;
+    }, signal);
   }
 
-  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void> {
-    // `none` is the honest answer for an execution that never reached an
-    // executor; anything else means the reference was lost, which must fail
-    // loudly rather than leave a live agent running unfenced.
-    if (external_reference.kind === "none") return;
-    const sessionId = sessionIdOf(external_reference, execution_id);
-    // Identify the fence as coming from the execution that holds the session.
-    // kbbl refuses closes that would abandon a live unit, and that guard must
-    // not fire on the owner's own teardown: a cancelled run reaches its agent
-    // through exactly this call, so an unqualified DELETE deadlocks the run
-    // against itself — uncancellable because it is still active.
-    const url = `${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
-    const response = await this.fetch(url, { method: "DELETE" });
-    if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
+  /**
+   * PUT /sessions/resumable/:sid/input/:delivery_key. A repeat with the same
+   * text returns the first delivery's receipt, so this is also how the
+   * delivered turn is observed.
+   */
+  deliver(sid: string, delivery_key: string, text: string, signal?: AbortSignal): Promise<ProviderResult<TurnReceipt>> {
+    return this.call("input", `${this.base_url}/sessions/resumable/${encodeURIComponent(sid)}/input/${encodeURIComponent(delivery_key)}`, {
+      method: "PUT", headers: this.headers({ "content-type": "application/json" }), body: JSON.stringify({ text } satisfies ResumableInputRequest),
+    }, async (response) => {
+      const raw: unknown = await response.json();
+      const status = isFields(raw) ? TURN_STATUSES.find((candidate) => candidate === raw.status) : undefined;
+      return status ? { status } : null;
+    }, signal);
   }
 
-  async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
-    const sessionId = sessionIdOf(external_reference, execution_id);
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
-    });
-    if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
+  /** GET /sessions/resumable/:sid/terminal without waiting: the session's activity, and how it ended if it has. */
+  read(sid: string, signal?: AbortSignal): Promise<ProviderResult<SessionReading>> {
+    return this.call("read", `${this.base_url}/sessions/resumable/${encodeURIComponent(sid)}/terminal?wait_ms=0`, { method: "GET", headers: this.headers() }, async (response) => {
+      const raw: unknown = await response.json();
+      if (!isFields(raw)) return null;
+      const session = parseSession(raw.session);
+      if (!session) return null;
+      if (response.status === 202) return { kind: "pending", session };
+      const end = parseEnd(raw.end);
+      return end ? { kind: "ended", session, end } : null;
+    }, signal);
+  }
+
+  /**
+   * DELETE /sessions/:sid, as the attempt that holds the session, so kbbl's
+   * hold guard lets it through. A fence ends the session for good; otherwise
+   * it stays revivable under its key. An unknown session is already stopped.
+   */
+  async close(sid: string, closer: SessionCloser, signal?: AbortSignal): Promise<ProviderResult<{ readonly stopped: true }>> {
+    const query = `?${closer.is_fence ? "fenced_by" : "closed_by"}=${encodeURIComponent(closer.action_id)}`;
+    let response: Response;
+    try { response = await this.fetch(`${this.base_url}/sessions/${encodeURIComponent(sid)}${query}`, { method: "DELETE", headers: this.headers(), ...(signal ? { signal } : {}) }); }
+    catch (error) { return { kind: "uncertain", detail: `kbbl close: ${String(error)}` }; }
+    if (response.ok || response.status === 404) return { kind: "acknowledged", value: { stopped: true } };
+    const detail = `kbbl close failed (${response.status}): ${await response.text().catch(() => "")}`;
+    return response.status >= 500 ? { kind: "transiently_unavailable", detail } : { kind: "permanently_rejected", code: "kbbl_refused", detail };
   }
 }

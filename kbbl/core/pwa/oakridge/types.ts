@@ -46,9 +46,14 @@ export interface WorkflowDefSummary {
   graph?: WorkflowGraph;
 }
 
-// Each role ships runtime, model, and effort together. A model is only valid
-// against the runtime it was chosen from, so sending a model without its runtime
-// is what let a codex planner model reach a claude-code-pinned stage.
+/** One agent worker's launch choice, mirroring OperatorSessionSettings. */
+export interface LaunchSessionSettings {
+  readonly harness: RuntimeId;
+  readonly model: string;
+  readonly effort: string | null;
+}
+
+// Each declared agent worker receives its own runtime, model and effort.
 export interface CreateRunContext {
   brief_notes: string;
   /** The one branch this run builds on. Every build unit's PR targets it. */
@@ -57,12 +62,7 @@ export interface CreateRunContext {
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
   oakridge_url: string;
-  planner_runtime: RuntimeId;
-  planner_model: string;
-  planner_effort: string | null;
-  worker_runtime: RuntimeId;
-  worker_model: string;
-  worker_effort: string | null;
+  session_settings: Readonly<{ [stage: string]: Readonly<{ [worker: string]: LaunchSessionSettings }> }>;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
@@ -234,12 +234,6 @@ export type FinalPullRequestResponse = {
   };
 }[FinalPullRequestOutcome];
 
-export interface AdmitStageUnitResponse {
-  stage_instance_id: string;
-  unit_id: string;
-  admitted: boolean;
-}
-
 export interface CreateRunRequest {
   workflow_def_id: string;
   project_id: string | null;
@@ -301,10 +295,6 @@ export interface StageUnit {
   base_sha?: string | null;
   status: StageStatus;
   gate: string | null;
-  admission_required?: boolean;
-  admitted?: boolean;
-  admission_eligible?: boolean;
-  admission_blocked_by?: string[];
 }
 
 /**
@@ -369,6 +359,8 @@ export interface RunSessionAttempt {
   session_id: string;
   stage_instance_id: string;
   stage_key: string;
+  /** Human-readable worker role; the stage key still identifies the gate. */
+  display_label?: string;
   unit_id: string;
   reason: WorkOrderReason;
   work_order_state: WorkOrderState;
@@ -447,6 +439,8 @@ export interface ArtifactTypeDescriptor {
 export interface ArtifactSource {
   run_id: string;
   label: string | null;
+  producing_stage?: string;
+  original_spec?: string | null;
   /** `created_at` of the revision on screen; sibling artifacts are read as they stood then. */
   as_of: string;
 }
@@ -459,6 +453,7 @@ export interface ArtifactDetail {
   anchor_schema: string[] | null;
   review?: ArtifactReviewDescriptor | null;
   run_id: string;
+  original_spec?: string | null;
   producing_stage: string;
   label?: string | null;
   revisions: ArtifactRevision[];
@@ -496,6 +491,12 @@ export interface GateResumeResponse {
   resumed: boolean;
 }
 
+/** Live PR observation returned by the merge-status operator endpoint. */
+export type MergeStatus =
+  | { readonly kind: "merged"; readonly pr_url: string; readonly merged_at: string | null }
+  | { readonly kind: "not_merged"; readonly pr_url: string; readonly state: "open" | "closed_unmerged" }
+  | { readonly kind: "unavailable"; readonly detail: string };
+
 /**
  * The operator confirming a cohort's pull request merged, when Oakridge cannot
  * see the repository for itself. Mirrors the `operator_confirmation` half of
@@ -519,7 +520,6 @@ export interface CohortPullRequestResponse {
 }
 
 export type CohortLifecycle =
-  | "waiting_admission"
   | "building"
   | "artifact_review"
   | "revision_requested"
@@ -535,13 +535,6 @@ export interface CohortCompletion {
   assessment_complete: boolean;
 }
 
-export interface CohortAdmission {
-  required: boolean;
-  admitted: boolean;
-  eligible: boolean;
-  blocked_by: string[];
-}
-
 export interface CohortLifecycleSummary {
   id: string;
   run_id: string;
@@ -551,9 +544,9 @@ export interface CohortLifecycleSummary {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   title?: string | null;
+  run_title?: string | null;
   lifecycle: CohortLifecycle;
   completion: CohortCompletion;
-  admission: CohortAdmission;
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
   gate_id?: string | null;
@@ -564,7 +557,6 @@ export interface CohortLifecycleSummary {
 }
 
 export type ReviewInboxItemKind =
-  | "admission"
   | "artifact_gate"
   | "merge_confirmation"
   | "cohort_blocked"
@@ -587,6 +579,8 @@ export interface ReviewInboxItem {
   repository_key?: RepositoryKey | null;
   lifecycle: CohortLifecycle;
   title?: string | null;
+  run_title?: string | null;
+  artifact_key?: string | null;
   artifact_revision_id?: string | null;
   artifact_url?: string | null;
   gate_id?: string | null;

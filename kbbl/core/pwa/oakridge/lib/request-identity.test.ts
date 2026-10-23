@@ -7,8 +7,8 @@ const launchRequest = (notes: string): CreateRunRequest => ({
   workflow_def_id: "definition-1", project_id: null,
   context: {
     brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo", integration_branch: "main" }], worktree_path: "/repo",
-    base_branch: "epic/x", oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
-    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
+    base_branch: "epic/x", oakridge_url: "http://oakridge",
+    session_settings: { cohort: { builder: { harness: "claude-code", model: "sonnet", effort: null } } },
   },
   epic_profile: {
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",
@@ -41,9 +41,4 @@ describe("request identity", () => {
     expect(changed.idempotency_key).toBe("launch-2");
   });
 
-  it("keys admission retries by stage and unit, so two units never share a key", () => {
-    const foundation = selectRequestIdentity(null, "stage-1:foundation", () => "admit-1");
-    const web = selectRequestIdentity(null, "stage-1:web", () => "admit-2");
-    expect(foundation.idempotency_key).not.toBe(web.idempotency_key);
-  });
 });

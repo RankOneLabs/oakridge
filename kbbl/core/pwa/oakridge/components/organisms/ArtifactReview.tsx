@@ -203,7 +203,9 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
             <Viewer
               body={revision.body}
               descriptor={artifact.review}
-              source={{ run_id: artifact.run_id, label: artifact.label ?? null, as_of: revision.created_at }}
+              source={{ run_id: artifact.run_id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
+                as_of: revision.created_at,
+                original_spec: artifact.original_spec ?? null }}
               edit={caps?.atom_editable ? {
                 enabled: revIdx === revisions.length - 1,
                 isPending: atomEdit.isPending,
@@ -259,7 +261,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
   const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
   const gateActions = artifactGate && isLatestRevision ? (
     <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
-      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or send clear changes back to the builder."}</p></div>
+      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or request specific changes."}</p></div>
       <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
     </section>
   ) : undefined;

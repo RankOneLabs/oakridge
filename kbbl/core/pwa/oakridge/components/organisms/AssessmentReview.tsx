@@ -9,12 +9,14 @@ import { AssessmentViewer } from "../molecules/AssessmentViewer";
 /** Loads the cohort's brief and build result, so the assessment reads against what was asked and what was built. */
 export function AssessmentReview({ body, source }: ViewerProps) {
   const parsed = useMemo(() => parseAssessment(body), [body]);
-  const cohortLabel = source?.label ?? null;
+  const isIntegration = source?.producing_stage === "integration";
+  const cohortLabel = isIntegration ? null : source?.label ?? null;
   const brief = useCohortArtifact({ source, cohort_label: cohortLabel, type_id: "dev.build_brief", read: readBuildBrief });
   const result = useCohortArtifact({ source, cohort_label: cohortLabel, type_id: "dev.build_result", read: readBuildResult });
 
   if (!parsed.ok) {
     return <div className="or-error" role="alert">This assessment does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;
   }
-  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result} cohortLabel={cohortLabel} />;
+  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result}
+    cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration} />;
 }

@@ -1,0 +1,4 @@
+export function decodeCoreResponse(value: unknown): CoreResponse | null {
+  const schema: ProtocolSchema = CORE_PROTOCOL_SCHEMA.response;
+  return hasSafeWireNumbers(value) && matchesProtocolSchema(value, schema, CORE_PROTOCOL_SCHEMA.response.$defs, 0) ? value as CoreResponse : null;
+}

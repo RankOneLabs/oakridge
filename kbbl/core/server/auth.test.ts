@@ -3,6 +3,7 @@ import { Hono } from "hono";
 
 import {
   isLoopbackHost,
+  makeAuthStatusHandler,
   makeControlAuthMiddleware,
   makeCookieHandler,
   resolveStartupAuthPolicy,
@@ -43,6 +44,17 @@ describe("resolveStartupAuthPolicy — startup guard", () => {
   test("0.0.0.0 with OAKRIDGE_CONTROL_TOKEN starts in token mode", () => {
     const policy = resolveStartupAuthPolicy({
       host: "0.0.0.0",
+      controlToken: "s3cr3t",
+      allowInsecure: false,
+    });
+    expect(policy).toEqual({ mode: "token", token: "s3cr3t" });
+  });
+
+  // On loopback any local process, an agent among them, could otherwise act as
+  // the operator through the Oakridge proxy, which presents the core token.
+  test("127.0.0.1 with OAKRIDGE_CONTROL_TOKEN starts in token mode", () => {
+    const policy = resolveStartupAuthPolicy({
+      host: "127.0.0.1",
       controlToken: "s3cr3t",
       allowInsecure: false,
     });
@@ -292,5 +304,26 @@ describe("makeCookieHandler — token mode", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Path=/");
+  });
+});
+
+describe("GET /auth/status", () => {
+  const statusOf = async (policy: AuthPolicy, cookie?: string) => {
+    const app = new Hono();
+    app.get("/auth/status", makeAuthStatusHandler(policy));
+    return (await app.request("/auth/status", cookie ? { headers: { cookie } } : {})).json();
+  };
+
+  test("reports a token-mode kbbl's credential as required, and whether the cookie carries it", async () => {
+    const policy: AuthPolicy = { mode: "token", token: "tok" };
+    expect([await statusOf(policy), await statusOf(policy, "kbbl_ctrl=wrong"), await statusOf(policy, "kbbl_ctrl=tok")]).toEqual([
+      { is_required: true, is_authenticated: false },
+      { is_required: true, is_authenticated: false },
+      { is_required: true, is_authenticated: true },
+    ]);
+  });
+
+  test("reports no credential required without a token", async () => {
+    expect(await statusOf({ mode: "loopback" })).toEqual({ is_required: false, is_authenticated: true });
   });
 });

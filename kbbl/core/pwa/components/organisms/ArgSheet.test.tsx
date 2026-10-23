@@ -10,7 +10,7 @@ const SKILL: Skill = {
   description: "",
   backend: "claude-code",
   scope: "user",
-  args: [{ key: "env", required: true, hint: "target environment" }],
+  args: [{ key: "env", required: true, hint: "target environment", kind: "string" }],
   user_invocable: true,
   model_invocable: false,
 };

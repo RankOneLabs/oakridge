@@ -1,9 +1,7 @@
 // GET /inbox — snapshot-push SSE over the ACP session list (§14.1).
 //
-// The legacy inbox streamed a taxonomy of per-field deltas because the old
-// SessionManager already had an event per mutation. The ACP substrate has a
-// coarse change feed instead, and the session list is small, so this stream
-// sends the full snapshot on every change: one wire shape, no client-side
+// The ACP substrate has a coarse change feed and the session list is small,
+// so this stream sends the full snapshot on every change: one wire shape, no client-side
 // folding, and a reconnect needs no replay reasoning — the next frame is
 // always authoritative.
 
@@ -20,10 +18,11 @@ const HEARTBEAT_MS = 15_000;
 const COALESCE_MS = 25;
 
 export function listPwaSessions(acp: AcpSessionService): PwaSessionSnapshot[] {
+  const archives = acp.listSessionArchives();
   return acp
     .listSessions()
     .map((session) =>
-      toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid)),
+      toPwaSessionSnapshot(session, acp.pendingPermissionCount(session.sid), archives.get(session.sid) ?? null),
     )
     .sort(compareSessionsByActivity);
 }

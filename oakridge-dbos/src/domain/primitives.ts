@@ -1,62 +1,24 @@
 export type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Parse a path segment into a uuid-shaped branded id, or nothing.
- *
- * These ids are stored in `uuid` columns, so a malformed one is not a lookup
- * that finds nothing — Postgres rejects the value while casting it, and the
- * route answers 500 for what is simply an id that cannot exist. The brand is
- * the caller's to name, exactly as the bare `as` casts this replaces did, but
- * now the value has been checked before it carries the name.
- *
- * `UnitId` and `ExecutionId` are deliberately not covered: both are text
- * columns, so any string is a legitimate lookup that finds nothing.
- */
-export const parseUuidId = <Id extends string>(raw: string | undefined): Id | null =>
-  raw !== undefined && UUID_PATTERN.test(raw) ? raw as Id : null;
-
-export type WorkflowDefinitionId = Brand<string, "WorkflowDefinitionId">;
-export type WorkflowRunId = Brand<string, "WorkflowRunId">;
-export type StageInstanceId = Brand<string, "StageInstanceId">;
-export type ArtifactId = Brand<string, "ArtifactId">;
 export type ProjectId = Brand<string, "ProjectId">;
-export type ExecutionId = Brand<string, "ExecutionId">;
-export type RootWorkflowId = Brand<string, "RootWorkflowId">;
-export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
+/** Authority row identities; storage/schema-records.ts applies them to the generated rows. */
+export type RunId = Brand<string, "RunId">;
+export type RevisionId = Brand<string, "RevisionId">;
 export type UnitId = Brand<string, "UnitId">;
-export type WaitId = Brand<string, "WaitId">;
-export type RunUnitId = Brand<string, "RunUnitId">;
-export type WorkOrderId = Brand<string, "WorkOrderId">;
-export type ExecutorOperationId = Brand<string, "ExecutorOperationId">;
-export type RunRecordVersion = Brand<number, "RunRecordVersion">;
-export type OutputSlotVersion = Brand<number, "OutputSlotVersion">;
-export type OutputCollectionKey = Brand<string, "OutputCollectionKey">;
-export type InputFingerprint = Brand<string, "InputFingerprint">;
-export type RunTransitionId = Brand<string, "RunTransitionId">;
+/** A core action key: one per RunWorker action, shared by every attempt of a periodic worker. */
+export type ActionId = Brand<string, "ActionId">;
+export type EventId = Brand<string, "EventId">;
+export type DecisionId = Brand<string, "DecisionId">;
+export type IntentId = Brand<string, "IntentId">;
+export type EffectIntentId = IntentId;
+export type IngressId = Brand<string, "IngressId">;
+export type DefinitionBundleId = Brand<string, "DefinitionBundleId">;
+export type OperatorEventId = Brand<string, "OperatorEventId">;
+export type CollaborationThreadId = Brand<string, "CollaborationThreadId">;
+export type CollaborationMessageId = Brand<string, "CollaborationMessageId">;
+export type ReviewItemId = Brand<string, "ReviewItemId">;
 
-/**
- * One attempt at an execution — the ID of the workflow running it. A rerun
- * forks that workflow under a new ID, so this changes per attempt while staying
- * stable across step retries and recovery of the same attempt. That is exactly
- * the identity an external executor session must be keyed on: the execution id
- * alone is shared by every attempt, so keying on it makes a rerun re-attach to
- * the session that already died.
- */
-export type ExecutionAttemptId = Brand<string, "ExecutionAttemptId">;
-
-export const executorOperationIdForWorkOrder = (id: WorkOrderId): ExecutorOperationId => id as unknown as ExecutorOperationId;
-
-export type JsonPrimitive = string | number | boolean | null;
+type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
-
-/** Narrows parsed request bodies at the IO boundary; lives beside the type it guards. */
-export const isJsonValue = (value: unknown): value is JsonValue => {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  return typeof value === "object" && Object.values(value as object).every(isJsonValue);
-};
 
 export type Result<Value, ErrorValue> =
   | { readonly ok: true; readonly value: Value }
@@ -64,3 +26,9 @@ export type Result<Value, ErrorValue> =
 
 export const ok = <Value>(value: Value): Result<Value, never> => ({ ok: true, value });
 export const err = <ErrorValue>(error: ErrorValue): Result<never, ErrorValue> => ({ ok: false, error });
+
+/** A failure traced to the operation and entity it occurred on. */
+export interface TracedError { readonly operation: string; readonly entity_id: string; readonly detail: string }
+export type Traced<Value> = Result<Value, TracedError>;
+export const traced = (operation: string, entity_id: string, detail: string): Result<never, TracedError> =>
+  ({ ok: false, error: { operation, entity_id, detail } });
