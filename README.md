@@ -52,7 +52,7 @@ the provider and workflow services, launches DBOS, resumes active runs and
 parked effects, and only then binds HTTP. Set `OAKRIDGE_PROMPT_ROOT` to the repository root when launching the
 backend separately so it can read prompt files under `workflow-config/prompts/`
 when a definition is first pinned; runs render from the stored copy.
-`OAKRIDGE_GATED_REVIEW_URL` points pull request observation at the gated-review MCP endpoint (for example `http://otto:3555/mcp`). The endpoint must provide the expanded `pr_status` fields. The DBOS application version defaults to a 16-character SHA-256
+The gated-review endpoint is the `gated-review` server in the repository's `.mcp.json`; the launcher reads it and hands it to DBOS, for pull request observation, and to kbbl, for agent sessions. The endpoint must provide the expanded `pr_status` fields. The DBOS application version defaults to a 16-character SHA-256
 digest combining the sorted `ENGINE_SOURCE_MANIFEST` source digest, the
 `0001_core.sql` baseline digest and the digest of the core WASM module it
 loads (see `oakridge-dbos/README.md`).
@@ -67,7 +67,7 @@ loopback, keeps kbbl data, the agent workdir and a generated publication key
 under `~/.local/state/oakridge-shadow`, and drops every `OAKRIDGE_*`, `DBOS_*`
 and `KBBL_*` variable inherited from the shell. It refuses ports or a container
 the default install uses. `OAKRIDGE_SHADOW_NAME`, `OAKRIDGE_SHADOW_*_PORT` and
-`OAKRIDGE_SHADOW_STATE_DIR` run further instances; `OAKRIDGE_SHADOW_GATED_REVIEW_URL` (else `OAKRIDGE_GATED_REVIEW_URL`) points pull request observation at gated-review.
+`OAKRIDGE_SHADOW_STATE_DIR` run further instances; gated-review comes from the checkout's `.mcp.json`, as for the default install.
 Its database starts with no projects; add them with `POST /api/projects` (see
 the cutover below), each pointing at its own clone: a project whose `repo_dir`
 is the default install's checkout would have shadow runs working in that

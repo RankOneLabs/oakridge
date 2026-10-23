@@ -28,6 +28,29 @@ if [ ! -f "$CORE_WASM" ]; then
   echo "oakridge: workflow WASM is missing at $CORE_WASM" >&2
   exit 1
 fi
+# .mcp.json is the one place the gated-review endpoint is configured: DBOS
+# observes pull requests through it and kbbl hands it to every agent session.
+MCP_CONFIG="$OAKRIDGE_ROOT/.mcp.json"
+read_gated_review_url() {
+  bun -e '
+    const path = process.argv[1];
+    const file = Bun.file(path);
+    if (!(await file.exists())) process.exit(0);
+    const server = (await file.json()).mcpServers?.["gated-review"];
+    if (server === undefined) process.exit(0);
+    if (server?.type !== "http" || typeof server.url !== "string" || server.url.trim() === "") {
+      console.error(`${path}: gated-review must be an http server with a url`);
+      process.exit(1);
+    }
+    console.log(server.url.trim());' "$MCP_CONFIG"
+}
+if ! GATED_REVIEW_URL="$(read_gated_review_url)"; then
+  echo "oakridge: cannot read the gated-review server from $MCP_CONFIG" >&2
+  exit 1
+fi
+if [ -z "$GATED_REVIEW_URL" ]; then
+  echo "oakridge: $MCP_CONFIG names no gated-review server; pull_request.observe will fail with discovery_unsupported" >&2
+fi
 DBOS_HOST="${OAKRIDGE_DBOS_HOST:-127.0.0.1}"
 DBOS_PORT="${OAKRIDGE_DBOS_PORT:-8790}"
 DBOS_URL_HOST="$DBOS_HOST"
@@ -150,6 +173,7 @@ echo "oakridge: starting DBOS backend at $DBOS_URL"
     KBBL_BASE_URL="${KBBL_BASE_URL:-$KBBL_URL}" \
     OAKRIDGE_DBOS_HOST="$DBOS_HOST" \
     OAKRIDGE_CORE_WASM="$CORE_WASM" \
+    OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
     PORT="$DBOS_PORT" \
     bun run start
 ) &
@@ -158,6 +182,7 @@ dbos_pid=$!
 echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
 env -u ANTHROPIC_API_KEY \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
+  OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
   "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" "$@" &
 kbbl_pid=$!
 
