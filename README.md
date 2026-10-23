@@ -47,7 +47,9 @@ missing, and an explicit `OAKRIDGE_CORE_WASM` is used as given), starts PostgreS
 `DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
 the DBOS backend and kbbl PWA. It keeps the backend's publication key in
 `~/.local/state/oakridge/publication.key`, generated on first start, and the
-agent workdir beside it. The baseline can be applied again when its
+agent workdir beside it. Unless `OAKRIDGE_ALLOWED_ORIGINS` is set, it allows
+browser writes from loopback and, with `--host=0.0.0.0`, from this machine's
+hostname, addresses and tailnet name, and prints the list. The baseline can be applied again when its
 recorded digest matches; a changed baseline file stops startup and reports both
 digests. Startup verifies the encryption key and existing intents, registers
 the provider and workflow services, launches DBOS, resumes active runs and

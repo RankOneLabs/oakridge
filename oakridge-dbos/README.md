@@ -187,7 +187,8 @@ digests. DBOS system tables may exist before the authority baseline is applied.
 
 Effect instructions carry no secret, so they are stored unsealed. Set
 `OAKRIDGE_ALLOWED_ORIGINS` to a comma-separated list of exact browser origins
-that may write; loopback origins need an explicit entry. Writes require
+that may write; loopback origins need an explicit entry. `scripts/oakridge-start`
+supplies a default list for its bind when the variable is unset. Writes require
 `application/json`. The backend and kbbl proxy accept the same operator token
 as Bearer or through kbbl's HttpOnly control cookie; the proxy keeps the cookie
 local and forwards the verified token to the backend. With no token on a

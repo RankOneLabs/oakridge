@@ -105,6 +105,7 @@ for arg in "$@"; do
   fi
 done
 
+KBBL_BIND_HOST="$KBBL_DISPLAY_HOST"
 if [ "$KBBL_DISPLAY_HOST" = "0.0.0.0" ]; then
   KBBL_DISPLAY_HOST="<machine-ip-or-tailnet-name>"
 elif [ "$KBBL_DISPLAY_HOST" = "::" ]; then
@@ -113,6 +114,33 @@ elif [[ "$KBBL_DISPLAY_HOST" == *:* ]] && [[ "$KBBL_DISPLAY_HOST" != \[*\] ]]; t
   KBBL_DISPLAY_HOST="[$KBBL_DISPLAY_HOST]"
 fi
 KBBL_URL="http://127.0.0.1:${KBBL_INTERNAL_PORT}"
+
+# Browser writes are refused from any origin not listed. Unless the operator
+# lists them, allow the addresses this bind is reached at: loopback always, and
+# for an all-interfaces bind this machine's hostname, addresses and tailnet name.
+default_allowed_origins() {
+  local hosts=(127.0.0.1 localhost) addresses=() tailnet_name host origins=()
+  case "$KBBL_BIND_HOST" in
+    127.0.0.1|localhost) ;;
+    0.0.0.0|::)
+      hosts+=("$(hostname)")
+      read -r -a addresses <<< "$(hostname -I 2>/dev/null || true)"
+      if [ "${#addresses[@]}" -gt 0 ]; then hosts+=("${addresses[@]}"); fi
+      if command -v tailscale >/dev/null 2>&1; then
+        tailnet_name="$(tailscale status --self --json 2>/dev/null \
+          | bun -e 'const status = await Bun.stdin.json(); console.log((status.Self?.DNSName ?? "").replace(/\.$/, ""))' 2>/dev/null || true)"
+        if [ -n "$tailnet_name" ]; then hosts+=("$tailnet_name"); fi
+      fi ;;
+    *) hosts+=("$KBBL_BIND_HOST") ;;
+  esac
+  for host in "${hosts[@]}"; do
+    if [[ "$host" == *:* && "$host" != \[*\] ]]; then host="[$host]"; fi
+    origins+=("http://$host:$KBBL_INTERNAL_PORT")
+  done
+  (IFS=,; echo "${origins[*]}")
+}
+if [ -z "${OAKRIDGE_ALLOWED_ORIGINS:-}" ]; then OAKRIDGE_ALLOWED_ORIGINS="$(default_allowed_origins)"; fi
+export OAKRIDGE_ALLOWED_ORIGINS
 
 start_managed_postgres() {
   if ! command -v docker >/dev/null 2>&1; then
@@ -202,6 +230,7 @@ env -u ANTHROPIC_API_KEY \
 kbbl_pid=$!
 
 echo "oakridge: open http://${KBBL_DISPLAY_HOST}:${KBBL_DISPLAY_PORT}/#oakridge"
+echo "oakridge: browser writes allowed from $OAKRIDGE_ALLOWED_ORIGINS"
 echo "oakridge: Ctrl-C stops kbbl and DBOS; the PostgreSQL container remains running"
 
 set +e
