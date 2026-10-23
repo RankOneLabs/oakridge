@@ -45,7 +45,9 @@ For local startup, run `./scripts/oakridge-start` from the repository root. It
 rebuilds the Rust WASM module (a no-op when it is current; it stops if cargo is
 missing, and an explicit `OAKRIDGE_CORE_WASM` is used as given), starts PostgreSQL through Docker when
 `DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
-the DBOS backend and kbbl PWA. The baseline can be applied again when its
+the DBOS backend and kbbl PWA. It keeps the backend's publication key in
+`~/.local/state/oakridge/publication.key`, generated on first start, and the
+agent workdir beside it. The baseline can be applied again when its
 recorded digest matches; a changed baseline file stops startup and reports both
 digests. Startup verifies the encryption key and existing intents, registers
 the provider and workflow services, launches DBOS, resumes active runs and
