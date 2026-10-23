@@ -93,7 +93,7 @@ Configuration (read by `src/main.ts`):
   `<tmpdir>/oakridge-agent-workdir`). kbbl cuts every session a worktree, so
   boot makes it an empty repository with one commit. A `repository(...)` workspace runs in a
   worktree of the prepared repository, branched from its prepared head.
-- `OAKRIDGE_GATED_REVIEW_URL` — the gated-review MCP endpoint used by `pull_request.observe`. Unset, observation fails with `discovery_unsupported`. The server must expose the expanded `pr_status` result.
+- `OAKRIDGE_GATED_REVIEW_URL` — the gated-review MCP endpoint used by `pull_request.observe`. `scripts/oakridge-start` sets it from the `gated-review` server in the repository's `.mcp.json`; set it by hand only when starting the backend separately. Unset, observation fails with `discovery_unsupported`. The server must expose the expanded `pr_status` result.
 
 Steps are IO boundaries (one DB write, one core call, one provider call). A
 crash mid-step resumes at that step on the next process of the same application

@@ -63,9 +63,6 @@ if [ ! -s "$KEY_FILE" ]; then
   (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
 fi
 
-gated_review_url="${OAKRIDGE_SHADOW_GATED_REVIEW_URL:-${OAKRIDGE_GATED_REVIEW_URL:-}}"
-[ -n "$gated_review_url" ] || echo "oakridge-shadow: no gated-review URL; pull_request.observe will fail with discovery_unsupported" >&2
-
 # The shadow's own values must survive the scrub even when the shell exported these names.
 export -n OAKRIDGE_ROOT KBBL_PORT DBOS_PORT
 for variable in $(compgen -e); do
@@ -84,5 +81,4 @@ OAKRIDGE_POSTGRES_CONTAINER="$POSTGRES_CONTAINER" \
   OAKRIDGE_ALLOWED_ORIGINS="http://127.0.0.1:$KBBL_PORT" \
   OAKRIDGE_AGENT_WORKDIR="$STATE_DIR/agent-workdir" \
   OAKRIDGE_PUBLICATION_KEY="$(cat "$KEY_FILE")" \
-  OAKRIDGE_GATED_REVIEW_URL="$gated_review_url" \
   exec "$OAKRIDGE_ROOT/scripts/oakridge-start" "$@" --port="$KBBL_PORT" --dataDir="$STATE_DIR/kbbl"

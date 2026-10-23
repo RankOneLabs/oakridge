@@ -15,8 +15,8 @@ observed and expected behavior. Remove an entry once its fix is verified.
 ## Executor
 
 - **The backend publication key is readable by same-user agent processes.**
-  `scripts/oakridge-shadow` keeps it beside the agent workdir and runs the
-  backend and agents under one OS account. The loopback publish route requires
+  `scripts/oakridge-start` and `scripts/oakridge-shadow` keep it beside the
+  agent workdir and run the backend and agents under one OS account. The loopback publish route requires
   an explicit operator intent and a session bearer, which prevents accidental
   misattribution, but isolating the key needs a separate process or account.
 
