@@ -7,8 +7,9 @@ import { selectInboxPage, selectRunInboxBatch, selectRunInboxItems } from "../pr
 import { selectRunInspect, selectRunUnitView, selectRunView } from "../projections/run-view";
 import type { Database } from "../storage/database";
 import type { SessionHoldResponse } from "../projections/session-hold";
-import { listDefinitions, listLiveRuns, listRuns, readDefinition, readHistory, readPinnedDefinition, readRun, readRunInspect, readSessionHold, readSessionRunLocation,
-  readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
+import { listDefinitions, listLiveRuns, listRuns, readAllRunsChangeKey, readDefinition, readHistory, readPinnedDefinition, readRun, readRunChangeKey,
+  readRunInspect, readSessionHold, readSessionRunLocation, readRunSummaries, readRunSummary, readUnitDiagnostics, type HistoryCursor } from "../storage/read-store";
+import { changeKeyed } from "./change-key";
 import { errorResponse, fault, MalformedRequestError, MissingEntityError } from "./errors";
 
 /**
@@ -50,8 +51,19 @@ const definitionCursor = (value: unknown): value is string => typeof value === "
 const found = <Value>(context: Context, value: Value | null, what: string): Response =>
   value === null ? errorResponse(new MissingEntityError(`${what} not found`)) : context.json(value);
 
+/** Reads derived only from commit rows: they answer 304 while their change key holds. */
+const RUN_KEYED_READS = ["/api/runs/:run_id", "/api/runs/:run_id/inbox", "/api/runs/:run_id/units", "/api/runs/:run_id/units/:unit_id",
+  "/api/runs/:run_id/units/:unit_id/artifacts/:artifact", "/api/runs/:run_id/units/:unit_id/history"] as const;
+const ALL_RUNS_KEYED_READS = ["/api/runs", "/api/run-inboxes"] as const;
+
 export function installReadModels(app: Hono, deps: ReadModelDependencies): void {
   const { db } = deps;
+  // Diagnostics and the live inbox read effect intents, which change without an
+  // event, so they are not keyed.
+  const runKeyed = changeKeyed((c) => readRunChangeKey(db, c.req.param("run_id") ?? ""));
+  const allRunsKeyed = changeKeyed(() => readAllRunsChangeKey(db));
+  for (const path of RUN_KEYED_READS) app.use(path, runKeyed);
+  for (const path of ALL_RUNS_KEYED_READS) app.use(path, allRunsKeyed);
 
   app.get("/api/runs", async (c) => { try {
     const limit = pageLimit(c.req.query("limit"));

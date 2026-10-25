@@ -1,6 +1,6 @@
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
 import type { ParsedWorkflow, UnitStatus, Workflow } from "../core-client/core-types";
-import type { ActionId, DecisionId, DefinitionBundleId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
+import type { ActionId, Brand, DecisionId, DefinitionBundleId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
@@ -475,4 +475,46 @@ export async function readEventStreamBoundary(db: Reader): Promise<EventStreamBo
   const row = boundary.rows[0];
   if (!row) throw new Error("current snapshot unavailable");
   return { cursor: { commit_txid: row.commit_txid, id: "" }, snapshot: row.snapshot };
+}
+
+// ---------------------------------------------------------- change keys -----
+
+/**
+ * A key that changes whenever anything a read is derived from does. Every
+ * commit appends an event; a refused request stores a receipt; a fault,
+ * archive or registry change announces an operator event. All three are
+ * insert-only, so their counts move on every change. Counts, not the newest
+ * commit_txid: transactions can commit out of txid order.
+ */
+export type ReadChangeKey = Brand<string, "ReadChangeKey">;
+interface ChangeCounts { readonly events: number; readonly operator_events: number; readonly receipts: number }
+const changeKey = (counts: ChangeCounts, runs: number | null): ReadChangeKey =>
+  [counts.events, counts.operator_events, counts.receipts, ...(runs === null ? [] : [runs])].join(".") as ReadChangeKey;
+
+type ChangeCountSource = "authority.event" | "authority.operator_event" | "authority.ingress_receipt";
+const CHANGE_COUNT_SOURCES = { events: "authority.event", operator_events: "authority.operator_event", receipts: "authority.ingress_receipt" } as const;
+const counted = (row: { readonly [Key in keyof ChangeCounts]: number | null }): ChangeCounts =>
+  ({ events: row.events ?? 0, operator_events: row.operator_events ?? 0, receipts: row.receipts ?? 0 });
+
+/** One run's change key; null when there is no such run. */
+export async function readRunChangeKey(db: Kysely<DB>, run_id: string): Promise<ReadChangeKey | null> {
+  const countFor = (eb: ExpressionBuilder<DB & { run: DB["authority.run"] }, "run">, table: ChangeCountSource) =>
+    eb.selectFrom(table).select((inner) => inner.fn.countAll<number>().as("count")).whereRef(`${table}.run_id`, "=", "run.id");
+  const row = await db.selectFrom("authority.run as run").where("run.id", "=", run_id).select((eb) => [
+    countFor(eb, CHANGE_COUNT_SOURCES.events).as("events"),
+    countFor(eb, CHANGE_COUNT_SOURCES.operator_events).as("operator_events"),
+    countFor(eb, CHANGE_COUNT_SOURCES.receipts).as("receipts"),
+  ]).executeTakeFirst();
+  return row ? changeKey(counted(row), null) : null;
+}
+
+/** The change key across all runs, for reads that list or batch them. */
+export async function readAllRunsChangeKey(db: Kysely<DB>): Promise<ReadChangeKey> {
+  const row = await db.selectNoFrom((eb) => [
+    eb.selectFrom(CHANGE_COUNT_SOURCES.events).select((inner) => inner.fn.countAll<number>().as("count")).as("events"),
+    eb.selectFrom(CHANGE_COUNT_SOURCES.operator_events).select((inner) => inner.fn.countAll<number>().as("count")).as("operator_events"),
+    eb.selectFrom(CHANGE_COUNT_SOURCES.receipts).select((inner) => inner.fn.countAll<number>().as("count")).as("receipts"),
+    eb.selectFrom("authority.run").select((inner) => inner.fn.countAll<number>().as("count")).as("runs"),
+  ]).executeTakeFirstOrThrow();
+  return changeKey(counted(row), row.runs ?? 0);
 }

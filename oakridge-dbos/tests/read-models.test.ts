@@ -8,6 +8,7 @@ import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, Pinne
   UnitDiagnostics, UnitHistory, UnitView } from "../src/http/operator-api";
 import type { RunEvent } from "../src/projections/run-event";
 import type { SessionHoldResponse } from "../src/projections/session-hold";
+import { setRunArchived } from "../src/storage/registry-store";
 import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
 
 /**
@@ -485,5 +486,44 @@ describe("derived fields", () => {
       unitPath(run_id, `${run_id}/missing`, "/history"), unitPath(run_id, `${run_id}/missing`, "/diagnostics"), "/api/runs/run-missing/inspect"]
       .map(async (path) => (await app.request(path)).status));
     expect(statuses).toEqual([404, 404, 404, 404, 404]);
+  });
+});
+
+describe("change-keyed reads", () => {
+  /** The status a read answers when the caller already holds `tag`. */
+  const revalidate = async (path: string, tag: string | null): Promise<number> =>
+    (await app.request(path, { headers: tag === null ? {} : { "if-none-match": tag } })).status;
+  const tagOf = async (path: string): Promise<string | null> => (await app.request(path)).headers.get("etag");
+
+  test("a run read answers 304 while nothing in the run has changed", async () => {
+    const { run_id } = await drafted();
+    const path = `/api/runs/${segment(run_id)}/units`;
+    expect(await revalidate(path, await tagOf(path))).toBe(304);
+  });
+
+  test("a commit to the run makes the held tag stale", async () => {
+    const { run_id, unit } = await drafted();
+    const path = `/api/runs/${segment(run_id)}/units`;
+    const held = await tagOf(path);
+    await decide(run_id, unit, "approve", `${unit}:draft:1`, {});
+    expect(await revalidate(path, held)).toBe(200);
+  });
+
+  test("archiving the run, which appends no event, makes the held tag stale", async () => {
+    const { run_id } = await drafted();
+    const path = `/api/runs/${segment(run_id)}`;
+    const held = await tagOf(path);
+    await setRunArchived(authority.db, run_id, true);
+    expect(await revalidate(path, held)).toBe(200);
+  });
+
+  test("the run list's tag goes stale when another run launches", async () => {
+    const held = await tagOf("/api/runs");
+    await drafted();
+    expect(await revalidate("/api/runs", held)).toBe(200);
+  });
+
+  test("a missing run reads on to its 404 rather than a tag", async () => {
+    expect(await revalidate("/api/runs/run-missing/units", 'W/"anything"')).toBe(404);
   });
 });
