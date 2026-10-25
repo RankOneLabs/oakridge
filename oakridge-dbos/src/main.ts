@@ -37,7 +37,13 @@ finally { await migration_db.destroy(); }
 const composition = await createProductionComposition({ database_url, host, control_token: process.env.OAKRIDGE_CONTROL_TOKEN,
   executor: { kbbl_base_url, kbbl_control_token, publication_key: optional("OAKRIDGE_PUBLICATION_KEY"), publish_base_url, agent_workdir, gated_review_url } });
 let server: ReturnType<typeof Bun.serve>;
-try { server = Bun.serve({ hostname: host, port, fetch: composition.app.fetch }); }
+// /events is an unbounded SSE stream whose heartbeat (15s) outlasts Bun's default
+// 10s idle timeout, which otherwise severs it every quiet 10 seconds and sends
+// kbbl's relay into a reconnect loop. kbbl exempts its own hops the same way.
+try { server = Bun.serve({ hostname: host, port, fetch(request, bun) {
+  if (new URL(request.url).pathname === "/events") bun.timeout(request, 0);
+  return composition.app.fetch(request, bun);
+} }); }
 catch (cause) { await composition.close(); throw cause; }
 console.log(`oakridge-dbos ${composition.application_version} listening at ${server.url}`);
 async function stop(): Promise<void> { server.stop(); await composition.close(); }
