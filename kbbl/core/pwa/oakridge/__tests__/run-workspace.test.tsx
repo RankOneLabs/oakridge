@@ -62,7 +62,7 @@ const RUN: RunDetail = {
       artifacts: [{ id: "art-build", type_id: "dev.build_result", version: 1, created_at: "2026-09-01T09:00:00Z" }],
       delegated_kbbl_sid: null,
       worktree: null,
-      units: [{ unit_id: "c1", sid: "sid-c1", worktree: null, status: "running", gate: null }],
+      units: [{ unit_id: "c1", sid: "sid-c1", worktree: null, status: "running", gate: null, is_retryable: false }],
     },
   ],
 };

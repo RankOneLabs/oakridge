@@ -182,6 +182,15 @@ describe("v2 Oakridge client", () => {
     expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(stalled.unit_id)}/workers/builder/retry`);
   });
 
+  it("marks only the units Oakridge offers a retry for as retryable", async () => {
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
+      ? { ...unit, decisions: [retry] } : unit);
+    calls((path) => path.endsWith("/units") ? units : sample.run);
+    const cohortStage = (await fetchRun(runId)).stages.find((stage) => stage.name === "cohort");
+    expect(cohortStage?.units?.map((unit) => [unit.unit_id, unit.is_retryable])).toEqual([["a", false], ["b", true]]);
+  });
+
   it("resolves an opaque gate id from the revision and action before deciding", async () => {
     const fetch = calls((path) => path.endsWith("/decide") ? { kind: "committed", run_id: runId, event_id: "event-opaque" }
       : path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }

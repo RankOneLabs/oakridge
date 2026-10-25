@@ -19,7 +19,7 @@ function makeUnit(params: StageUnit["params"]): StageUnit {
     sid: null,
     worktree: null,
     status: "complete",
-    gate: null,
+    gate: null, is_retryable: false,
   };
 }
 

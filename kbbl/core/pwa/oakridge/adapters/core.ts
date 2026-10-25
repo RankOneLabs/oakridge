@@ -230,7 +230,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
         repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
         params: { unit_id: unit.collection_key ?? unit.unit_key, artifact: objectValue(unit.input)?.brief ?? unit.input },
         worktree: worktreeOf(unit), status: deriveStatus(statusInputOf(unit)).stage,
-        gate: reviewGateId(unit) };
+        gate: reviewGateId(unit), is_retryable: unit.decisions.some((decision) => decision.submit.kind === "retry") };
     });
     return { stage_instance_id: compositeId({ kind: "stage", runId: members[0].run_id, unitId: members[0].unit_id, name }), name, type: name,
       status, artifacts: members.flatMap((unit) => unit.artifacts.filter((artifact) => artifact.latest_revision
