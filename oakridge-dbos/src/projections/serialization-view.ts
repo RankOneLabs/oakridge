@@ -16,7 +16,9 @@ export function redactingView(value: unknown): unknown {
 export const redactingReadResponses = (): MiddlewareHandler => async (context, next) => {
   await next();
   if (context.req.method !== "GET" || !context.res.headers.get("content-type")?.startsWith("application/json")) return;
-  const value: unknown = await context.res.clone().json();
+  // Consume the original rather than a clone: the response is replaced below, and a
+  // clone's unread original leaks its whole body in native memory under Bun.
+  const value: unknown = await context.res.json();
   const headers = new Headers(context.res.headers);
   headers.delete("content-length");
   context.res = new Response(JSON.stringify(redactingView(value)), { status: context.res.status, headers });
