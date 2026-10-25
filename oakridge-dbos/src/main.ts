@@ -46,6 +46,11 @@ try { server = Bun.serve({ hostname: host, port, fetch(request, bun) {
 } }); }
 catch (cause) { await composition.close(); throw cause; }
 console.log(`oakridge-dbos ${composition.application_version} listening at ${server.url}`);
-async function stop(): Promise<void> { server.stop(); await composition.close(); }
+// One shutdown however many signals arrive: a second close() ends the pool twice.
+let stopping: Promise<void> | null = null;
+function stop(): Promise<void> {
+  stopping ??= (async () => { server.stop(); await composition.close(); })();
+  return stopping;
+}
 process.once("SIGINT", () => { void stop(); });
 process.once("SIGTERM", () => { void stop(); });
