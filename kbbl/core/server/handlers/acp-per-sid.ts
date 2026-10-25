@@ -5,6 +5,8 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
+import { guardSseStream } from "./sse-backpressure";
+
 import type { AcpSessionService } from "../../acp/session-service";
 
 const HEARTBEAT_MS = 15_000;
@@ -68,6 +70,7 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
       // Flush before session/load: a cold replay may be expensive and must
       // not leave EventSource on an empty response body.
       await stream.write(": ready\n\n");
+      const guard = guardSseStream(stream);
       let closed = false;
       let releaseHistory: (() => Promise<void>) | null = null;
       let unsubscribe: (() => void) | null = null;
@@ -131,24 +134,25 @@ export function mountAcpPerSidRoutes(app: Hono, deps: AcpPerSidRouteDeps): void 
         });
         let eventId = 0;
         for (const event of acquired.value.history.events) {
-          await stream.writeSSE({
+          await guard.send({
             event: "acp",
             id: String(eventId++),
             data: JSON.stringify(event),
           });
         }
 
+        // Not awaited: the agent never waits on a reader. The guard bounds
+        // what a reader that stops reading leaves queued, and cuts it off.
         unsubscribe = acp.subscribe(sid, (event) => {
-          void stream
-            .writeSSE({
-              event: "acp",
-              id: String(eventId++),
-              data: JSON.stringify(event),
-            })
-            .catch(finish);
+          void guard.send({
+            event: "acp",
+            id: String(eventId++),
+            data: JSON.stringify(event),
+          });
         });
         heartbeat = setInterval(() => {
-          void stream.write(": ping\n\n").catch(finish);
+          guard.checkStall();
+          void guard.sendRaw(": ping\n\n");
         }, HEARTBEAT_MS);
 
         await done;
