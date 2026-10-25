@@ -414,6 +414,22 @@ export class AcpSessionStore {
     return row ? toAcpSessionRow(row) : null;
   }
 
+  /**
+   * Whether another session records `branch` in `projectWorkdir`, or is still
+   * provisioning there and may be creating it now. A branch no session claims
+   * was left behind by a crash.
+   */
+  hasOtherBranchClaimant(sid: KbblSessionId, projectWorkdir: string, branch: string): boolean {
+    const row = this.db
+      .prepare<{ present: number }, [string, string, string]>(
+        `SELECT 1 AS present FROM acp_sessions
+         WHERE sid != ? AND project_workdir = ? AND (worktree_branch = ? OR status = 'provisioning')
+         LIMIT 1`,
+      )
+      .get(sid, projectWorkdir, branch);
+    return row !== null;
+  }
+
   hasOtherWorktreeOwner(
     sid: KbblSessionId,
     worktreePath: string,

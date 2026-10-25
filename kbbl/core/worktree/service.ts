@@ -25,6 +25,7 @@ import {
 import {
   createWorktree,
   isGitRepo,
+  releaseAbandonedBranch,
   removeWorktree,
   WorktreeCreateError,
   selectWorktreeFailureDetail,
@@ -102,6 +103,16 @@ export class GitWorktreeProvider implements WorktreeProvider {
           // so the ordinary, path-scrubbed git diagnostic remains authoritative.
         }
       }
+    }
+
+    if (spec.worktree && !this.deps.store.hasOtherBranchClaimant(sid, spec.workdir, spec.worktree.branch_name)) {
+      const isReleased = await releaseAbandonedBranch({
+        workdir: spec.workdir,
+        worktreesRoot: this.deps.worktreesRoot,
+        branch: spec.worktree.branch_name,
+        ...(spec.worktree.base_ref ? { baseRef: spec.worktree.base_ref } : {}),
+      });
+      if (isReleased) console.log(`kbbl: sid=${sid} removed abandoned branch ${spec.worktree.branch_name} before recreating it`);
     }
 
     return this.createFor(sid, {

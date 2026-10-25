@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,12 @@ let tmpRoot: string;
 let repoDir: string;
 let store: AcpSessionStore;
 let provider: GitWorktreeProvider;
+
+async function runGit(args: string[]): Promise<void> {
+  const p = Bun.spawn({ cmd: ["git", ...args], stdout: "pipe", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  if (code !== 0) throw new Error(`git ${args.join(" ")} failed (exit ${code}): ${stderr}`);
+}
 
 async function gitInitRepo(dir: string): Promise<void> {
   const cmds: string[][] = [
@@ -103,7 +109,10 @@ describe("GitWorktreeProvider.resolve", () => {
     // binds beyond loopback).
     const identity = { branch_name: "cohort/x", worktree_subdir: "x" };
     const first = await provider.resolve(SID, spec({ worktree: identity }));
-    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("first worktree failed");
+    insertProvisioningSession(SID, "live owner");
+    store.setWorktree(SID, { ...first.value, parent_sid: null });
+    store.setStatus(SID, "idle");
     const second = await provider.resolve(SID2, spec({ worktree: identity }));
     expect(!second.ok && second.error.code).toBe("worktree_failed");
     if (second.ok) return;
@@ -188,6 +197,55 @@ describe("GitWorktreeProvider.resolve", () => {
     expect(rejected.ok).toBe(false);
     expect(store.getSession(SID)?.worktree_branch).toBe(identity.branch_name);
     expect(store.getSession(SID2)?.worktree_path).toBe(repoDir);
+  });
+
+  test("a branch a crash left unrecorded, clean and without commits, is recreated", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    // git created the branch and checkout, then kbbl died before recording them.
+    const abandoned = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!abandoned.ok) throw new Error("abandoned worktree failed");
+    insertProvisioningSession(SID2, "retry after crash");
+
+    const retried = await provider.resolve(SID2, spec({ worktree: identity }));
+
+    expect(retried.ok && { branch: retried.value.worktree_branch, isAbandonedGone: !existsSync(abandoned.value.worktree_path) })
+      .toEqual({ branch: identity.branch_name, isAbandonedGone: true });
+  });
+
+  test("an unrecorded branch with commits of its own is kept, and the create fails", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const abandoned = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!abandoned.ok) throw new Error("abandoned worktree failed");
+    await runGit(["-C", abandoned.value.worktree_path, "commit", "--allow-empty", "-q", "-m", "work"]);
+    insertProvisioningSession(SID2, "retry after crash");
+
+    const retried = await provider.resolve(SID2, spec({ worktree: identity }));
+
+    expect({ isOk: retried.ok, isKept: existsSync(abandoned.value.worktree_path) }).toEqual({ isOk: false, isKept: true });
+  });
+
+  test("an unrecorded branch whose checkout has uncommitted changes is kept, and the create fails", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const abandoned = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!abandoned.ok) throw new Error("abandoned worktree failed");
+    writeFileSync(join(abandoned.value.worktree_path, "notes.txt"), "unsaved");
+    insertProvisioningSession(SID2, "retry after crash");
+
+    const retried = await provider.resolve(SID2, spec({ worktree: identity }));
+
+    expect({ isOk: retried.ok, isKept: existsSync(join(abandoned.value.worktree_path, "notes.txt")) }).toEqual({ isOk: false, isKept: true });
+  });
+
+  test("an unrecorded branch is left alone while another session is still provisioning", async () => {
+    const identity = { branch_name: "cohort/epic/1-x", worktree_subdir: "epic/1-x" };
+    const inFlight = await provider.resolve(SID, spec({ worktree: identity }));
+    if (!inFlight.ok) throw new Error("in-flight worktree failed");
+    insertProvisioningSession(SID, "still provisioning");
+    insertProvisioningSession(SID2, "concurrent start");
+
+    const concurrent = await provider.resolve(SID2, spec({ worktree: identity }));
+
+    expect({ isOk: concurrent.ok, isKept: existsSync(inFlight.value.worktree_path) }).toEqual({ isOk: false, isKept: true });
   });
 
   test("inheritance cuts a NEW worktree from the parent's, with lineage", async () => {

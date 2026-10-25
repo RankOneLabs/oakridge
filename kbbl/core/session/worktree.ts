@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { serializeByKey } from "./serialize-by-key";
 
@@ -362,6 +363,62 @@ export async function createWorktree(
   // Re-read HEAD from the new worktree as the authoritative persisted value.
   worktreeBaseRef = await resolveHead(worktreePath);
   return { worktreePath, worktreeBranch: branch, worktreeBaseRef };
+}
+
+interface GitOutcome { readonly stdout: string; readonly stderr: string; readonly code: number }
+
+async function git(args: readonly string[]): Promise<GitOutcome> {
+  const proc = Bun.spawn({ cmd: ["git", ...args], stdout: "pipe", stderr: "pipe", env: { ...process.env, LC_ALL: "C", LANG: "C" } });
+  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { stdout, stderr, code };
+}
+
+/** The checkout `git worktree list` reports for `branch`, if any. */
+async function findBranchCheckout(workdir: string, branch: string): Promise<string | null> {
+  const listed = await git(["-C", workdir, "worktree", "list", "--porcelain"]);
+  if (listed.code !== 0) return null;
+  for (const entry of listed.stdout.split("\n\n")) {
+    const lines = entry.split("\n");
+    const path = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
+    if (path && lines.includes(`branch refs/heads/${branch}`)) return path;
+  }
+  return null;
+}
+
+export interface AbandonedBranchOpts {
+  readonly workdir: string;
+  readonly worktreesRoot: string;
+  readonly branch: string;
+  readonly baseRef?: string;
+}
+
+/**
+ * A crash during `git worktree add` can leave the branch, and its checkout,
+ * behind without kbbl ever recording them, and every later create of that
+ * branch then fails. The caller has established that no kbbl session claims
+ * the branch. This removes it only when nothing would be lost: the branch
+ * has no commits beyond its base, and its checkout, if any, is kbbl's own
+ * and clean. Never throws; true when the branch was removed.
+ */
+export async function releaseAbandonedBranch(opts: AbandonedBranchOpts): Promise<boolean> {
+  try {
+    const ref = `refs/heads/${opts.branch}`;
+    if ((await git(["-C", opts.workdir, "rev-parse", "--verify", "--quiet", ref])).code !== 0) return false;
+    const base = opts.baseRef ? (await resolveBaseRef(opts.workdir, opts.baseRef)).sha : await resolveHead(opts.workdir);
+    if ((await git(["-C", opts.workdir, "merge-base", "--is-ancestor", ref, base])).code !== 0) return false;
+    const checkout = await findBranchCheckout(opts.workdir, opts.branch);
+    if (checkout !== null) {
+      if (!isPathInside(checkout, opts.worktreesRoot)) return false;
+      if (existsSync(checkout)) {
+        const status = await git(["-C", checkout, "status", "--porcelain"]);
+        if (status.code !== 0 || status.stdout.trim() !== "") return false;
+        if ((await git(["-C", opts.workdir, "worktree", "remove", checkout])).code !== 0) return false;
+      } else if ((await git(["-C", opts.workdir, "worktree", "prune"])).code !== 0) return false;
+    }
+    return (await git(["-C", opts.workdir, "branch", "-D", opts.branch])).code === 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
