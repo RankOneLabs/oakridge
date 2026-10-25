@@ -5,6 +5,7 @@ import { browserWritePolicy, browserWriteRejection, configuredBrowserWritePolicy
 import { isValidControlRequest } from "../../../../oakridge-dbos/src/http/control-auth";
 import { parseUnitViews } from "../../pwa/oakridge/adapters/parse";
 import { parseUnitHistory, runActivityEvents, type UnitActivityHistory } from "../../pwa/oakridge/adapters/activity";
+import { createTaggedReadCache } from "./oakridge-read-cache";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
@@ -52,6 +53,8 @@ export function parseFallbackRefreshMs(raw: string | undefined): number | undefi
 }
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
+/** The Activity pane's server-side reads poll the same keyed paths; most answer 304. */
+const upstreamRead = createTaggedReadCache();
 
 /**
  * Upstream paths that stream indefinitely. A request deadline severs these
@@ -71,7 +74,7 @@ async function legacyRunEvents(baseUrl: string, headers: Headers, requestUrl: st
   if (!runId || !Number.isSafeInteger(limit) || limit < 1 || limit > 500 || (after !== null && !/^\d+$/.test(after)))
     return Response.json({ error: "invalid run activity query" }, { status: 400 });
   const unitPath = `/api/runs/${encodeURIComponent(runId)}/units`;
-  const get = (path: string): Promise<Response> => fetch(baseUrl.replace(/\/$/, "") + path, {
+  const get = (path: string): Promise<Response> => upstreamRead(baseUrl.replace(/\/$/, "") + path, {
     headers, signal: AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
   });
   const unitsResponse = await get(unitPath);

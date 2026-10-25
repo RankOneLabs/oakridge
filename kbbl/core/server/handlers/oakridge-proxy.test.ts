@@ -352,7 +352,7 @@ describe("oakridge proxy", () => {
   });
 
   test("forwards a keyed read's entity tag so the browser can revalidate it", async () => {
-    globalThis.fetch = (async () => Response.json([], { headers: { etag: 'W/"e.1.2.3"', "cache-control": "private, no-cache" } })) as typeof fetch;
+    globalThis.fetch = (async (_input, _init) => Response.json([], { headers: { etag: 'W/"e.1.2.3"', "cache-control": "private, no-cache" } })) as typeof fetch;
 
     const app = new Hono();
     mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
