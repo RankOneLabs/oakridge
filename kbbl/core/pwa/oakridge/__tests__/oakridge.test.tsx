@@ -309,7 +309,7 @@ describe("RunDetail stage list", () => {
           sid: null,
           worktree: null,
           status: "pending",
-          gate: null,
+          gate: null, is_retryable: false,
           params: buildBriefParams({
             title: "Build the cohort UI",
             goal: "Operator workflow",
@@ -346,6 +346,7 @@ describe("RunDetail stage list", () => {
       repository_key: null,
       sid: null,
       worktree: null,
+      is_retryable: false,
       status: "pending" as const,
       gate: null,
       params: buildBriefParams({ title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] }),
@@ -366,7 +367,7 @@ describe("RunDetail stage list", () => {
 
   it("retries a failed build unit without restarting the run", async () => {
     const unit = retryUnit("cohort-a");
-    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "build" });
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "cohort" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "parked",
@@ -376,7 +377,7 @@ describe("RunDetail stage list", () => {
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
+          status: "failed", gate: null, is_retryable: true, params: buildBriefParams({ title: "Failed build" }),
         }],
       }],
     };
@@ -409,7 +410,7 @@ describe("RunDetail stage list", () => {
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "running", gate: null, params: buildBriefParams({ title: "Rejected build" }),
+          status: "running", gate: null, is_retryable: true, params: buildBriefParams({ title: "Rejected build" }),
         }],
       }],
     };
@@ -420,9 +421,30 @@ describe("RunDetail stage list", () => {
     expect(screen.queryByTestId("or-retry-unit-btn")).not.toBeNull();
   });
 
+  it("offers no retry for a stuck run's unit that is only waiting on its dependencies", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "running",
+      is_stuck: true,
+      stages: [{
+        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
+        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{
+          unit_id: "cohort-b", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
+          status: "pending", gate: null, is_retryable: false, params: buildBriefParams({ title: "Waiting build" }),
+        }],
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+
+    await screen.findByText("Waiting build");
+    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
+  });
+
   it("retries the single unit hidden behind a collapsed stage row", async () => {
     const unit = retryUnit("0");
-    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "brief_writer" });
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "cohort" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "running",
@@ -430,7 +452,7 @@ describe("RunDetail stage list", () => {
       stages: [{
         stage_instance_id: stageId, name: "brief_writer", type: "artifact_collection",
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
-        units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "running", gate: null, params: null }],
+        units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "running", gate: null, is_retryable: true, params: null }],
       }],
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -462,7 +484,7 @@ describe("RunDetail stage list", () => {
         status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
+          status: "failed", gate: null, is_retryable: true, params: buildBriefParams({ title: "Failed build" }),
         }],
       }],
     };
@@ -483,7 +505,7 @@ describe("RunDetail stage list", () => {
         status: "failed", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
-          status: "failed", gate: null, params: buildBriefParams({ title: "Failed build" }),
+          status: "failed", gate: null, is_retryable: true, params: buildBriefParams({ title: "Failed build" }),
         }],
       }],
     };

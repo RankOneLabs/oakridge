@@ -95,6 +95,43 @@ test("collaboration ensure revives an ended session in place", async () => {
   expect(String(harness.store.getByResumableKey("key-review" as import("../../acp/types").ResumableKey)?.sid)).toBe(initial.session.sid);
 }, 15000);
 
+/** A session under `key` that failed before its agent reported an ACP session id, as a crash mid-provision leaves it. */
+async function failUnprovisioned(key: string, body: string): Promise<import("../../acp/types").AcpSessionRow> {
+  const failing = makeAcpTestService({
+    stateDir: join(tmpRoot, "state"), worktreesRoot: join(tmpRoot, "worktrees"), db: harness.db, behavior: "new_session_error",
+  });
+  const app = new Hono();
+  mountSessionsRoutes(app, { acp: failing.service, defaultWorkdir: repoDir });
+  await app.request(`/sessions/resumable/${key}`, { method: "PUT", headers: {
+    "content-type": "application/json", "x-oakridge-collaboration-resume": "true",
+  }, body });
+  await failing.service.shutdown();
+  return harness.store.getByResumableKey(key as import("../../acp/types").ResumableKey)!;
+}
+
+test("a reviving ensure replaces a session that failed before its agent reported an ACP session", async () => {
+  const body = JSON.stringify({ initial_prompt: "build the cohort", workdir: repoDir, runtime: "fake" });
+  const unprovisioned = await failUnprovisioned("key-unprovisioned", body);
+
+  const retried = await makeApp(repoDir).request("/sessions/resumable/key-unprovisioned", { method: "PUT", headers: {
+    "content-type": "application/json", "x-oakridge-collaboration-resume": "true",
+  }, body });
+  const retriedBody = await retried.json() as { kind: string; session: { sid: string } };
+  expect({ status: retried.status, kind: retriedBody.kind, isReplaced: retriedBody.session.sid !== unprovisioned.sid,
+    released: harness.store.getSession(unprovisioned.sid)?.status })
+    .toEqual({ status: 201, kind: "started", isReplaced: true, released: "fenced" });
+}, 15000);
+
+// A stop looks its session up without reviving, and must find the dead session rather than start a new agent.
+test("an ensure without revive reports a session that failed before provisioning as terminal and keeps it", async () => {
+  const body = JSON.stringify({ initial_prompt: "build the cohort", workdir: repoDir, runtime: "fake" });
+  const unprovisioned = await failUnprovisioned("key-unprovisioned-stop", body);
+
+  const looked = await makeApp(repoDir).request("/sessions/resumable/key-unprovisioned-stop", { method: "PUT",
+    headers: { "content-type": "application/json" }, body });
+  expect(await looked.json()).toMatchObject({ kind: "terminal", session: { sid: unprovisioned.sid } });
+}, 15000);
+
 describe("POST /sessions create-session contract", () => {
   test("no model override (omitted field) is accepted; snapshot model is null", async () => {
     const app = makeApp(repoDir);

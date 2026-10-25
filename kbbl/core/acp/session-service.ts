@@ -460,6 +460,30 @@ export class AcpSessionService {
     return { kind: "advanced", session: toSnapshot(after ?? row) };
   }
 
+  /**
+   * A session that ended before its agent reported an ACP session id never
+   * accepted its initial prompt: it has no transcript to resume and no work
+   * that could still be running. A revive could only refuse it, so a
+   * reviving ensure fences it and detaches its key instead, and the next
+   * ensure provisions a fresh session. Unlike `advanceResumable`, no agent
+   * that may still be working is left behind.
+   */
+  async releaseUnprovisioned(key: string): Promise<boolean> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row || !this.isUnprovisioned(row)) return false;
+    await this.closeSession(row.sid, { fenced_by: `unprovisioned:${key}` });
+    this.deps.store.clearResumableKey(row.sid);
+    console.log(`[acp] sid=${row.sid} released unprovisioned session for key=${key}`);
+    return true;
+  }
+
+  private isUnprovisioned(row: AcpSessionRow): boolean {
+    return (row.status === "failed" || row.status === "ended")
+      && row.fenced_by === null
+      && row.acp_session_id === null
+      && this.deps.store.getInitialTurn(row.sid) === null;
+  }
+
   /** Collaboration resumes the pinned sid and ACP transcript without replaying the initial turn. */
   async reviveResumable(key: string): Promise<Result<AcpSessionSnapshot, AcpError>> {
     const row = this.deps.store.getByResumableKey(key as ResumableKey);

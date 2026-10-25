@@ -28,14 +28,9 @@ function isFannedOut(stage: StageDetail): boolean {
   );
 }
 
-interface UnitRetryFacts {
-  readonly isRunActive: boolean;
-  readonly isRunStuck: boolean;
-  readonly unitStatus: NonNullable<StageDetail["units"]>[number]["status"];
-}
-
-const canRetryUnit = ({ isRunActive, isRunStuck, unitStatus }: UnitRetryFacts): boolean =>
-  isRunActive && (unitStatus === "failed" || (isRunStuck && unitStatus !== "complete"));
+/** Retry only where Oakridge offers one: a unit merely waiting on its dependencies has nothing to retry. */
+const canRetryUnit = (isRunActive: boolean, unit: NonNullable<StageDetail["units"]>[number]): boolean =>
+  isRunActive && unit.is_retryable;
 
 interface RunDetailProps {
   runId: string;
@@ -210,7 +205,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status })}
+                        canRetry={canRetryUnit(isRunActive, unit)}
                         confirmMerge={canConfirmMerge ? {
                           onConfirm: () => confirmMergeMutation.mutate({
                             cohortId,
@@ -231,7 +226,7 @@ export function RunDetail({ runId, onRunDeleted, onSelectArtifact }: RunDetailPr
                 }
                 const unit = units?.length === 1 ? units[0] : undefined;
                 const shouldOfferRetry = unit !== undefined
-                  && canRetryUnit({ isRunActive, isRunStuck: run.is_stuck, unitStatus: unit.status });
+                  && canRetryUnit(isRunActive, unit);
                 return [
             <RunStageRow
                     key={stage.name}

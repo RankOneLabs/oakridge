@@ -322,9 +322,13 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       ...(worktree ? { worktree } : {}),
       ...(inheritWorktreeFrom ? { inherit_worktree_from: inheritWorktreeFrom } : {}),
     };
+    const isReviving = c.req.header("x-oakridge-collaboration-resume") === "true";
     let ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
+    if (ensured.ok && isReviving && await acp.releaseUnprovisioned(rawKey)) {
+      ensured = await acp.ensureResumableSession(rawKey, startSpec, workflowResult.value);
+    }
     if (ensured.ok && (ensured.value.session.status === "ended" || ensured.value.session.status === "failed" || ensured.value.session.status === "fenced")
-      && c.req.header("x-oakridge-collaboration-resume") === "true") {
+      && isReviving) {
       const revived = await acp.reviveResumable(rawKey);
       ensured = revived.ok ? { ok: true, value: { kind: "existing", session: revived.value } } : revived;
     }

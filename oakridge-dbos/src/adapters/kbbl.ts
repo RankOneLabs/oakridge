@@ -26,6 +26,8 @@ export const REVIVE_HEADER = "x-oakridge-collaboration-resume";
  */
 export const DEFAULT_MAX_SILENT_MS = 30 * 60_000;
 
+export interface EnsureOptions { readonly should_revive: boolean; readonly signal?: AbortSignal }
+
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export interface KbblClientOptions {
   readonly base_url: string;
@@ -115,16 +117,21 @@ export class KbblClient {
     return value === null ? { kind: "uncertain", detail: `kbbl ${operation} returned an unreadable body` } : { kind: "acknowledged", value };
   }
 
-  /** PUT /sessions/resumable/:key, reviving an ended session under the key. The same key and spec reach the same session. */
-  ensure(session_key: string, body: ResumableEnsureRequest, signal?: AbortSignal): Promise<ProviderResult<EnsuredSession>> {
+  /**
+   * PUT /sessions/resumable/:key. The same key and spec reach the same session.
+   * With `should_revive` an ended session under the key comes back live;
+   * without it kbbl reports the ended session as `terminal`.
+   */
+  ensure(session_key: string, body: ResumableEnsureRequest, options: EnsureOptions): Promise<ProviderResult<EnsuredSession>> {
+    const headers = { "content-type": "application/json", ...(options.should_revive ? { [REVIVE_HEADER]: "true" } : {}) };
     return this.call("ensure", `${this.base_url}/sessions/resumable/${encodeURIComponent(session_key)}`, {
-      method: "PUT", headers: this.headers({ "content-type": "application/json", [REVIVE_HEADER]: "true" }), body: JSON.stringify(body),
+      method: "PUT", headers: this.headers(headers), body: JSON.stringify(body),
     }, async (response) => {
       const raw: unknown = await response.json();
       if (!isFields(raw) || (raw.kind !== "attached" && raw.kind !== "started" && raw.kind !== "terminal")) return null;
       const session = parseSession(raw.session);
       return session ? { kind: raw.kind, session } : null;
-    }, signal);
+    }, options.signal);
   }
 
   /**

@@ -11,6 +11,7 @@ import { streamSSE } from "hono/streaming";
 import type { AcpSessionService } from "../../acp/session-service";
 import { toPwaSessionSnapshot, type PwaSessionSnapshot } from "../../acp/pwa-wire";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
+import { guardSseStream } from "./sse-backpressure";
 
 const HEARTBEAT_MS = 15_000;
 /** Trailing coalesce window: a burst of store writes (provision, turn
@@ -52,21 +53,24 @@ export function acpInboxHandler(acp: AcpSessionService) {
           wake();
         }, COALESCE_MS);
       };
+      const guard = guardSseStream(stream);
       const unsubscribe = acp.subscribeSessionsChanged(markDirty);
       signal.addEventListener("abort", wake, { once: true });
+      stream.onAbort(wake);
       const heartbeat = setInterval(() => {
-        stream.write(": ping\n\n").catch(() => {});
+        guard.checkStall();
+        void guard.sendRaw(": ping\n\n");
       }, HEARTBEAT_MS);
 
       try {
         // SSE readiness: flush before anything that can block so the
         // EventSource leaves "connecting" immediately.
         await stream.write(": ready\n\n");
-        await stream.writeSSE({
+        await guard.send({
           event: "snapshot",
           data: JSON.stringify({ sessions: listPwaSessions(acp) }),
         });
-        while (!signal.aborted) {
+        while (!signal.aborted && !stream.aborted) {
           if (!dirty) {
             await new Promise<void>((resolve) => {
               notify = resolve;
@@ -74,7 +78,7 @@ export function acpInboxHandler(acp: AcpSessionService) {
             continue;
           }
           dirty = false;
-          await stream.writeSSE({
+          await guard.send({
             event: "snapshot",
             data: JSON.stringify({ sessions: listPwaSessions(acp) }),
           });

@@ -8,6 +8,7 @@ import {
   type LiveStreamTopic,
 } from "../../live-stream";
 import { isValidSid } from "./acp-per-sid";
+import { guardSseStream } from "./sse-backpressure";
 
 type TopicsResult =
   | { ok: true; topics: LiveStreamTopic[] }
@@ -114,13 +115,16 @@ export function mountLiveStreamRoutes(app: Hono): void {
       c.req.raw.signal.addEventListener("abort", stop, { once: true });
       if (c.req.raw.signal.aborted) stop();
       await stream.write(": ready\n\n");
-      const heartbeat = setInterval(() => { void stream.write(": ping\n\n").catch(stop); }, 15_000);
+      // A browser that stops reading must not hold the relays open: cut it
+      // off, and the aborted relays release their session streams.
+      const guard = guardSseStream(stream);
+      const heartbeat = setInterval(() => { guard.checkStall(); void guard.sendRaw(": ping\n\n"); }, 15_000);
       try {
         await Promise.all(parsed.topics.map((topic) => relayTopic({
           app, request: c.req.raw, topic, signal: controller.signal, oakridgeCursor,
           emit: async (frame) => {
             try {
-              await stream.writeSSE({
+              await guard.send({
                 event: "live", data: JSON.stringify(frame),
                 // Other streams must never overwrite the browser's Oakridge cursor.
                 id: frame.topic === "/oakridge/api/events" ? frame.frame.id : undefined,

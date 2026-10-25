@@ -47,8 +47,8 @@ const RUN: RunDetail = {
       delegated_kbbl_sid: null,
       worktree: null,
       units: [
-        { unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", gate: null },
-        { unit_id: "c2", sid: "sid-c2", worktree: null, status: "running", gate: null },
+        { unit_id: "c1", sid: "sid-c1", worktree: null, status: "complete", gate: null, is_retryable: false },
+        { unit_id: "c2", sid: "sid-c2", worktree: null, status: "running", gate: null, is_retryable: false },
       ],
     },
   ],

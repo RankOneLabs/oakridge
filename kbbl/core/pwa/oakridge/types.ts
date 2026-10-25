@@ -295,6 +295,8 @@ export interface StageUnit {
   base_sha?: string | null;
   status: StageStatus;
   gate: string | null;
+  /** Oakridge offers a retry decision for this unit now. */
+  is_retryable: boolean;
 }
 
 /**
