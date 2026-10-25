@@ -4,7 +4,7 @@ import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
-import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate } from "./client";
+import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
@@ -169,6 +169,17 @@ describe("v2 Oakridge client", () => {
       : path.endsWith("/units") ? sample.units : sample.artifact);
     expect((await fetchArtifact(changeTarget)).component_id).toBe("dev-build-result-viewer");
     expect(fetch.mock.calls.some(([path]) => String(path).includes(`/units/${encodeURIComponent(cohort.unit_id)}/artifacts/build_result`))).toBe(true);
+  });
+
+  it("retries the cohort unit, not the brief that shares its collection key", async () => {
+    const retry = { key: "retry:builder", label: "Retry builder", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "builder" } };
+    const units = (sample.units as unknown as OperatorUnitView[]).map((unit) => unit.stage === "cohort" && unit.collection_key === "b"
+      ? { ...unit, decisions: [retry] } : unit);
+    const stalled = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b")!;
+    const fetch = calls((path) => path.endsWith("/retry") ? { kind: "committed", run_id: runId, event_id: "event-retry" } : units);
+    await retryRunUnit(compositeId({ kind: "stage", runId, unitId: stalled.unit_id, name: "cohort" }), "b");
+    const posted = fetch.mock.calls.find(([path]) => String(path).endsWith("/retry"));
+    expect(String(posted?.[0])).toContain(`/units/${encodeURIComponent(stalled.unit_id)}/workers/builder/retry`);
   });
 
   it("resolves an opaque gate id from the revision and action before deciding", async () => {

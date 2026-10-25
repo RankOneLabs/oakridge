@@ -366,7 +366,7 @@ describe("RunDetail stage list", () => {
 
   it("retries a failed build unit without restarting the run", async () => {
     const unit = retryUnit("cohort-a");
-    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "build" });
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "cohort" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "parked",
@@ -422,7 +422,7 @@ describe("RunDetail stage list", () => {
 
   it("retries the single unit hidden behind a collapsed stage row", async () => {
     const unit = retryUnit("0");
-    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "brief_writer" });
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "cohort" });
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "running",

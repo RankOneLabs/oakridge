@@ -418,7 +418,9 @@ export function deleteRun(runId: string): Promise<void> {
 
 export async function retryRunUnit(stageInstanceId: string, unitId: string): Promise<unknown> {
   const stage = unwrapAdapter(stageInstanceId, parseCompositeId(stageInstanceId, "stage"));
-  const unit = (await readUnits(stage.runId)).find((candidate) => candidate.collection_key === unitId || candidate.unit_key === unitId);
+  // A collection key repeats across stages (a brief and its cohort share one), so match within the stage.
+  const unit = (await readUnits(stage.runId)).find((candidate) => candidate.stage === stage.name
+    && (candidate.collection_key === unitId || candidate.unit_key === unitId));
   if (!unit) throw new Error(`oakridge ${stageInstanceId}: unit ${unitId} unavailable`);
   const retry = unit.decisions.find((decision) => decision.submit.kind === "retry");
   if (!retry || retry.submit.kind !== "retry") throw new Error(`oakridge ${stageInstanceId}: retry unavailable`);

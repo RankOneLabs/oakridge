@@ -55,7 +55,7 @@ function sessionKeyOf(instruction: EffectInstruction): string {
 
 test("ensure asks kbbl to revive an ended session under the key", async () => {
   const { calls, fetch } = recording(() => Response.json({ kind: "attached", session: snapshot() }));
-  const ensured = await new KbblClient({ base_url: "http://kbbl.test", fetch }).ensure("a.b", { initial_prompt: "p", workdir: "/w" });
+  const ensured = await new KbblClient({ base_url: "http://kbbl.test", fetch }).ensure("a.b", { initial_prompt: "p", workdir: "/w" }, { should_revive: true });
   expect({ ensured, url: calls[0]!.url, revive: calls[0]!.headers.get(REVIVE_HEADER) }).toEqual({
     ensured: { kind: "acknowledged", value: { kind: "attached", session: { sid: "sid-1", status: "live", last_activity_ts: "2026-10-12T12:00:00.000Z" } } },
     url: "http://kbbl.test/sessions/resumable/a.b", revive: "true" });
@@ -65,7 +65,7 @@ test("ensure asks kbbl to revive an ended session under the key", async () => {
 test("a configured control token reaches kbbl as Bearer on every call", async () => {
   const { calls, fetch } = recording(() => Response.json({ kind: "attached", session: snapshot() }));
   const client = new KbblClient({ base_url: "http://kbbl.test", control_token: "kbbl-token", fetch });
-  await client.ensure("a.b", { initial_prompt: "p", workdir: "/w" });
+  await client.ensure("a.b", { initial_prompt: "p", workdir: "/w" }, { should_revive: true });
   await client.deliver("sid-1", "k", "do it");
   await client.read("sid-1");
   await client.close("sid-1", { action_id: "a", is_fence: false });
@@ -81,7 +81,7 @@ test("a 5xx answer is transient, a 4xx refusal permanent, and a lost connection 
     return answer;
   } });
   const kinds = [];
-  for (let call = 0; call < 3; call++) kinds.push((await client.ensure("key", { initial_prompt: "p", workdir: "/w" })).kind);
+  for (let call = 0; call < 3; call++) kinds.push((await client.ensure("key", { initial_prompt: "p", workdir: "/w" }, { should_revive: true })).kind);
   expect(kinds).toEqual(["transiently_unavailable", "permanently_rejected", "uncertain"]);
 });
 
@@ -251,6 +251,16 @@ test("a stop fences a fresh session, closes a resumed one revivably as its attem
     `PUT http://kbbl.test/sessions/resumable/${sessionKeyOf(instructionFor())}`,
     "DELETE http://kbbl.test/sessions/sid-1?closed_by=action-initial",
   ]);
+});
+
+// A stop must not revive an ended session only to close it, nor have kbbl replace one that never provisioned.
+test("a start revives the session under its key, and a stop looks a lost start up without reviving it", async () => {
+  const { calls, fetch } = recording((call) => call.method === "PUT"
+    ? Response.json({ kind: "attached", session: snapshot() }) : new Response(null, { status: 200 }));
+  const provider = createAgentProvider(config(fetch));
+  await provider.start(instructionFor());
+  await provider.stop(instructionFor(), null);
+  expect(calls.filter((call) => call.method === "PUT").map((call) => call.headers.get(REVIVE_HEADER))).toEqual(["true", null]);
 });
 
 /** The routes kbbl registers, from its handlers, as method and path patterns. */

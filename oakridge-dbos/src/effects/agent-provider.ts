@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import type { KbblClient, KbblSession } from "../adapters/kbbl";
+import type { EnsureOptions, KbblClient, KbblSession } from "../adapters/kbbl";
 import { DEFAULT_MAX_SILENT_MS } from "../adapters/kbbl";
 import type { EffectInstruction } from "../domain/effect-instruction";
 import type { ResumableEnsureRequest } from "../../../kbbl/core/acp/resumable-wire";
@@ -98,11 +98,11 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
   const max_silent_ms = config.max_silent_ms ?? DEFAULT_MAX_SILENT_MS;
   const now = config.now ?? Date.now;
 
-  async function ensure(instruction: EffectInstruction, signal: AbortSignal | undefined) {
+  async function ensure(instruction: EffectInstruction, options: EnsureOptions) {
     if (!config.kbbl || config.publication_key === null || instruction.worker.kind !== "agent") return null;
     const secret = derivePublicationSecret(config.publication_key, instruction.worker.session_key);
     const spec = selectSessionStart(instruction, config, secret);
-    const ensured = await config.kbbl.ensure(instruction.worker.session_key, spec, signal);
+    const ensured = await config.kbbl.ensure(instruction.worker.session_key, spec, options);
     return { ensured, secret };
   }
   /** A session that cannot take input: how it ended, as kbbl reports it. */
@@ -137,7 +137,7 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
 
   return {
     async start(instruction, options = {}) {
-      const started = await ensure(instruction, options.signal);
+      const started = await ensure(instruction, { should_revive: true, signal: options.signal });
       if (!started) return unconfigured;
       const { ensured, secret } = started;
       if (ensured.kind !== "acknowledged") return ensured.kind === "permanently_rejected"
@@ -174,7 +174,8 @@ export function createAgentProvider(config: AgentProviderConfig): EffectProvider
       let session_id = handle?.session_id ?? null;
       if (session_id === null) {
         // A start whose answer was lost may still have opened the session: the same ensure finds it.
-        const started = await ensure(instruction, options.signal);
+        // It must not revive an ended session only to close it, nor replace one that never provisioned.
+        const started = await ensure(instruction, { should_revive: false, signal: options.signal });
         if (!started) return { kind: "transiently_unavailable", detail: unconfigured.detail };
         if (started.ensured.kind !== "acknowledged") return { kind: "uncertain", detail: `cannot find the session to stop: ${started.ensured.detail}` };
         session_id = started.ensured.value.session.sid;
