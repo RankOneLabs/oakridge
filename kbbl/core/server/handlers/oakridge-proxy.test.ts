@@ -350,4 +350,28 @@ describe("oakridge proxy", () => {
     await app.request("/oakridge/api/events", { headers: { "last-event-id": "cursor-7" } });
     expect(captured.lastEventId).toBe("cursor-7");
   });
+
+  test("forwards a keyed read's entity tag so the browser can revalidate it", async () => {
+    globalThis.fetch = (async () => Response.json([], { headers: { etag: 'W/"e.1.2.3"', "cache-control": "private, no-cache" } })) as typeof fetch;
+
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+
+    const res = await app.request("/oakridge/api/runs/run-1/units");
+    expect(res.headers.get("etag")).toBe('W/"e.1.2.3"');
+  });
+
+  test("relays the upstream's 304 for a revalidation carrying the browser's tag", async () => {
+    const captured = { ifNoneMatch: null as string | null };
+    globalThis.fetch = (async (_input, init) => {
+      captured.ifNoneMatch = (init?.headers as Headers | undefined)?.get("if-none-match") ?? null;
+      return new Response(null, { status: 304, headers: { etag: 'W/"e.1.2.3"' } });
+    }) as typeof fetch;
+
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+
+    const res = await app.request("/oakridge/api/runs/run-1/units", { headers: { "if-none-match": 'W/"e.1.2.3"' } });
+    expect({ status: res.status, ifNoneMatch: captured.ifNoneMatch }).toEqual({ status: 304, ifNoneMatch: 'W/"e.1.2.3"' });
+  });
 });

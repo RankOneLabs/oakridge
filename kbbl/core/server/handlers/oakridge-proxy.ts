@@ -179,6 +179,9 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       // the upstream says so and dropping the header would lose that.
       const cacheControl = upstream.headers.get("cache-control");
       if (cacheControl) responseHeaders.set("cache-control", cacheControl);
+      // The browser revalidates a keyed read with this tag and gets a bodiless 304 while it holds.
+      const etag = upstream.headers.get("etag");
+      if (etag) responseHeaders.set("etag", etag);
       return new Response(upstream.body, {
         status: upstream.status,
         headers: responseHeaders,
