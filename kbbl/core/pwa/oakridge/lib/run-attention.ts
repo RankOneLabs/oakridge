@@ -1,4 +1,4 @@
-import type { CohortLifecycleSummary, ReviewInboxItem } from "../types";
+import type { CohortLifecycleSummary, RepositoryKey, ReviewInboxItem } from "../types";
 
 /** Actionable review work grouped by the run that owns it. */
 export function selectRunAttentionCounts(
@@ -19,9 +19,20 @@ export function selectReviewCohortKey(cohort: ReviewCohortIdentity): string {
   return `${cohort.run_id}:${cohort.stage_instance_id}:${cohort.unit_id}`;
 }
 
-type AttentionContext = Pick<ReviewInboxItem, "run_title" | "title" | "artifact_key">;
+export interface UnitAttentionLabelInput {
+  cohort_key: string | null;
+  brief_title: string | null;
+  repository_key: RepositoryKey | null;
+}
 
-/** The run, stage and artifact a piece of attention work belongs to. */
+/** The cohort, brief and repository associated with a unit's work. */
+export function selectUnitAttentionLabel({ cohort_key, brief_title, repository_key }: UnitAttentionLabelInput): string {
+  return [cohort_key, brief_title, repository_key].map((part) => part?.trim()).filter((part) => !!part).join(" · ");
+}
+
+type AttentionContext = Pick<ReviewInboxItem, "run_title" | "artifact_key">;
+
+/** The run and artifact surrounding a unit's attention label. */
 export function selectAttentionContext(work: AttentionContext): string {
-  return [work.run_title, work.title, work.artifact_key].filter((part) => !!part).join(" · ");
+  return [work.run_title, work.artifact_key].filter((part) => !!part).join(" · ");
 }

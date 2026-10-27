@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "../../hooks/useRuns";
 import type { RunDisplayStatus, RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
-import { GlobalParkedGateList } from "./ParkedGateList";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
@@ -15,7 +14,7 @@ type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
 function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
   switch (tab) {
     case "active": return runs.filter((r) => r.status === "pending" || r.status === "running" || r.status === "parked");
-    case "parked": return runs.filter((r) => r.status === "parked");
+    case "parked": return runs.filter((r) => r.parked_count > 0);
     case "complete": return runs.filter((r) => r.status === "complete" || r.status === "failed" || r.status === "cancelled");
     default: return runs;
   }
@@ -51,7 +50,6 @@ interface RunListProps {
   onNewRun: () => void;
   onNewProject: () => void;
   onWorkflows?: () => void;
-  onSelectArtifact?: (id: string) => void;
   runAttentionCounts?: ReadonlyMap<string, number>;
 }
 
@@ -63,7 +61,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSelectArtifact, runAttentionCounts = new Map() }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, runAttentionCounts = new Map() }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -77,12 +75,6 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onWorkflows, onSe
 
   return (
     <div className="or-page or-page--wide" data-testid="or-run-list">
-      {onSelectArtifact && <div className="mb-6">
-        <GlobalParkedGateList
-          onNavigateRun={onSelectRun}
-          onNavigateArtifact={onSelectArtifact}
-        />
-      </div>}
       <PageHeader
         eyebrow="Workflow operations"
         title="Runs"

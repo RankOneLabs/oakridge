@@ -1,6 +1,7 @@
 import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
-import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
+import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
 import { isWebUrl } from "../lib/pr-summary";
+import { parseRepositoryKey } from "../repository-inputs";
 
 export type AdapterResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly operation: string; readonly detail: string } };
 export const ok = <T>(value: T): AdapterResult<T> => ({ ok: true, value });
@@ -48,9 +49,9 @@ export const artifactId = (artifact: OperatorArtifactView): string => compositeI
 export const artifactRevisionId = (artifact: OperatorArtifactView, revisionId: string): string =>
   compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revisionId}` });
 export const artifactKeyFromComposite = (name: string): string => name.split(":", 1)[0];
-const objectValue = (value: unknown): { readonly [key: string]: unknown } | null =>
+export const objectValue = (value: unknown): { readonly [key: string]: unknown } | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as { readonly [key: string]: unknown } : null;
-const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
+export const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
 /** The unit view includes the latest revision body, so merge links need no
  * extra artifact request. Only web URLs become clickable in frozen v1 views. */
 export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null => {
@@ -58,10 +59,11 @@ export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null
   const url = textValue(objectValue(body)?.pr_url);
   return url && isWebUrl(url) ? url : null;
 };
-const repositoryKeyOf = (unit: OperatorUnitView): string | null => {
+export const repositoryKeyOf = (unit: OperatorUnitView): RepositoryKey | null => {
   const input = objectValue(unit.input);
-  return textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
-    ?? textValue(objectValue(input?.cohort)?.repository_key);
+  const key = textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
+    ?? textValue(objectValue(input?.cohort)?.repository_key) ?? textValue(input?.repository_key);
+  return key === null ? null : parseRepositoryKey(key);
 };
 const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
   const input = objectValue(unit.input);
@@ -116,6 +118,18 @@ export function deriveStatus(input: StatusInput): { readonly run: RunStatus; rea
   if (attempts.some((attempt) => attempt.is_current && attempt.failure)) return { run: "failed", stage: "failed" };
   if (status.kind === "active") return { run: "running", stage: "running" };
   return { run: "pending", stage: "pending" };
+}
+
+/** Aggregate child run statuses before cancellation is projected to a failed stage unit. */
+export function selectAggregateStatus(statuses: readonly RunStatus[]): StageStatus {
+  if (statuses.includes("failed")) return "failed";
+  const unfinished = statuses.filter((status) => status !== "complete" && status !== "cancelled");
+  if (unfinished.includes("running")) return "running";
+  if (unfinished.includes("parked")) return "parked";
+  // A stage has no cancelled status; show a cancelled child as failed once no work is live.
+  if (statuses.includes("cancelled")) return "failed";
+  if (statuses.length > 0 && statuses.every((status) => status === "complete")) return "complete";
+  return "pending";
 }
 
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
@@ -222,9 +236,8 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
   return ok([...stages].map(([name, members]) => {
-    const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).stage);
-    const status: StageStatus = statuses.includes("failed") ? "failed" : statuses.includes("parked") ? "parked"
-      : statuses.every((item) => item === "complete") ? "complete" : statuses.includes("running") ? "running" : "pending";
+    const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).run);
+    const status = selectAggregateStatus(statuses);
     const stageUnits: StageUnit[] = members.map((unit) => {
       return { unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
         repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
@@ -251,17 +264,19 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   const grouped = unitToStages(units);
   if (!grouped.ok) return grouped;
   const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
+  const childStatuses = units.filter((unit) => unit.stage !== null).map((unit) => deriveStatus(statusInputOf(unit)).run);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
   const hasFailedUnit = unitStatuses.includes("failed");
   const isStuck = rootStatus === "running" && hasFailedUnit;
+  const hasLiveChild = childStatuses.some((status) => status !== "complete" && status !== "cancelled");
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
-    : isStuck ? "running" : hasFailedUnit ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
+    : isStuck ? "running" : hasLiveChild ? selectAggregateStatus(childStatuses) : rootStatus;
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
   return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
-    stages: grouped.value, parked_count: unitStatuses.filter((item) => item === "parked").length,
+    stages: grouped.value, parked_count: childStatuses.filter((item) => item === "parked").length,
     updated_at: run.updated_at, is_stuck: isStuck, epic_profile: null });
 }
 export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary {

@@ -1,6 +1,7 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, ok, statusInputOf, type AdapterResult } from "./core";
+import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -26,9 +27,25 @@ function lifecycle(unit: OperatorUnitView, items: readonly OperatorInboxItem[]):
   return unit.stage === "integration" ? "github_review" : "building";
 }
 
+function unitAttentionLabelInput(unit: OperatorUnitView): UnitAttentionLabelInput {
+  const input = objectValue(unit.input);
+  const brief = unit.stage === "cohort" ? objectValue(input?.brief)
+    : unit.stage === "brief" ? objectValue(input?.cohort) : null;
+  return {
+    cohort_key: unit.collection_key,
+    brief_title: textValue(brief?.title),
+    repository_key: repositoryKeyOf(unit),
+  };
+}
+
 export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, units: readonly OperatorUnitView[], runTitle: string | null = null): AdapterResult<ReviewInbox> {
   const byId = new Map(units.map((unit) => [unit.unit_id, unit]));
-  const cohorts: CohortLifecycleSummary[] = units.filter((unit) => unit.stage === "cohort" || unit.stage === "integration").map((unit) => {
+  const cohortUnits = units.filter((unit) => unit.stage === "cohort" || unit.stage === "integration");
+  const cohorts: CohortLifecycleSummary[] = [];
+  for (const unit of cohortUnits) {
+    const attention = unitAttentionLabelInput(unit);
+    // A malformed unit must not hide the rest of the run's attention items.
+    if (!attention.repository_key) continue;
     const unitItems = entry.items.filter((item) => item.unit_id === unit.unit_id);
     const name = unit.collection_key ?? unit.unit_key;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage! });
@@ -36,14 +53,14 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     const review = unitItems.find((item) => item.kind === "decision" && item.submit.kind === "review");
     const reviewName = review?.kind === "decision" && review.submit.kind === "review" ? review.submit.review : null;
     const gate = reviewName ? compositeId({ kind: "gate", runId: entry.run_id, unitId: unit.unit_id, name: reviewName }) : null;
-    return { id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
-      title: unit.label, run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
+    cohorts.push({ id: name, run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId, stage_name: unit.stage!, unit_id: name,
+      ...attention, repository_key: attention.repository_key, title: selectUnitAttentionLabel(attention), run_title: runTitle, lifecycle: lifecycle(unit, unitItems), completion: { build_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "build_result" && !!candidate.latest_revision),
         assessment_complete: unit.artifacts.some((candidate) => candidate.artifact_key === "assessment" && !!candidate.latest_revision) },
       artifact_revision_id: artifact?.latest_revision ? artifactRevisionId(artifact, artifact.latest_revision.id) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: developmentPullRequestUrl(unit),
-      updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" };
-  });
+      updated_at: unit.attempts.at(-1)?.created_at ?? artifact?.latest_revision?.created_at ?? "" });
+  }
   const seenReviews = new Set<string>();
   // A failed attempt yields both a retry decision and a stalled diagnostic.
   // The retry is the operator's one piece of work for that unit; showing the
@@ -68,6 +85,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     }
     const kind = classify(item, unit);
     const name = unit.collection_key ?? unit.unit_key;
+    const attention = unitAttentionLabelInput(unit);
     const review = item.kind === "decision" && item.submit.kind === "review" ? item.submit.review : null;
     const target = item.kind === "decision" && item.submit.kind === "review" ? item.submit.target_revision_id : null;
     const artifact = target ? unit.artifacts.find((candidate) => candidate.latest_revision?.id === target) : null;
@@ -79,10 +97,13 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      title: unit.label, run_title: runTitle, artifact_key: artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
-      resume_actions: actions, blocked_by: unit.depends_on.map((id) => byId.get(id)?.label ?? id) }];
+      resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
+        const blocker = byId.get(id);
+        return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;
+      }).filter((label) => label.length > 0) }];
   });
   return ok({ cohorts, items });
 }

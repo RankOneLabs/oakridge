@@ -5,7 +5,8 @@ import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import { withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, statusInputOf, unitToStages } from "./core";
+import type { RunStatus, StageStatus } from "../types";
+import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
@@ -14,8 +15,94 @@ import { selectCohortArtifactId } from "../lib/cohort-artifact";
 
 const run = sample.run as unknown as OperatorRunView;
 const units = sample.units as unknown as OperatorUnitView[];
-const cohort = units.find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review"));
-if (!cohort) throw new Error("captured fixture lacks a cohort review");
+const cohort: OperatorUnitView = (() => {
+  const selected = units.find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review"));
+  if (!selected) throw new Error("captured fixture lacks a cohort review");
+  return selected;
+})();
+const rootUnit: OperatorUnitView = (() => {
+  const selected = units.find((unit) => unit.stage === null);
+  if (!selected) throw new Error("captured fixture lacks the root unit");
+  return selected;
+})();
+
+function childWithStatus(status: RunStatus, index: number, stage = "cohort"): OperatorUnitView {
+  const unitStatus: OperatorUnitView["status"] = status === "complete" ? { kind: "done", outcome: null }
+    : status === "cancelled" ? { kind: "cancelled" }
+      : status === "pending" ? { kind: "not_started" } : { kind: "active" };
+  return withUnitFields(cohort, {
+    unit_id: `${cohort.unit_id}-${index}`, unit_key: `${stage}-${index}`, collection_key: `${stage}-${index}`, stage,
+    status: unitStatus, is_terminal: status === "complete" || status === "cancelled",
+    attention: status === "parked" ? { kind: "waiting", reason: "awaiting review" }
+      : status === "failed" ? { kind: "stalled", detail: "worker failed" } : null,
+    decisions: status === "parked" ? cohort.decisions : [], attempts: [], artifacts: [],
+  });
+}
+
+describe("selectAggregateStatus", () => {
+  it.each<{ name: string; statuses: RunStatus[]; expected: StageStatus }>([
+    { name: "running with pending", statuses: ["running", "pending"], expected: "running" },
+    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expected: "running" },
+    { name: "running with parked", statuses: ["running", "parked"], expected: "running" },
+    { name: "parked without running", statuses: ["parked", "pending"], expected: "parked" },
+    { name: "unstarted children", statuses: ["pending", "pending"], expected: "pending" },
+    { name: "all completed", statuses: ["complete", "complete"], expected: "complete" },
+    { name: "completed with running", statuses: ["complete", "complete", "running"], expected: "running" },
+    { name: "completed with parked", statuses: ["complete", "complete", "parked"], expected: "parked" },
+    { name: "cancelled with running", statuses: ["cancelled", "running"], expected: "running" },
+    { name: "cancelled with parked", statuses: ["cancelled", "parked"], expected: "parked" },
+    { name: "cancelled after all work ends", statuses: ["complete", "cancelled"], expected: "failed" },
+    { name: "failure with completed and pending", statuses: ["failed", "complete", "pending"], expected: "failed" },
+    { name: "no children", statuses: [], expected: "pending" },
+  ])("aggregates $name as $expected", ({ statuses, expected }) => {
+    expect(selectAggregateStatus(statuses)).toBe(expected);
+  });
+});
+
+describe("child status aggregation", () => {
+  it.each<{ name: string; statuses: RunStatus[]; expectedStage: StageStatus | null; expectedRun: RunStatus;
+    parkedCount: number; rootStatus?: OperatorRunView["status"]; rootUnit?: OperatorUnitView; isStuck?: boolean }>([
+    { name: "one running and one pending", statuses: ["running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "parked with no running", statuses: ["parked", "pending"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "unstarted children", statuses: ["pending", "pending"], expectedStage: "pending", expectedRun: "pending", parkedCount: 0 },
+    { name: "all completed with a completed root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "complete",
+      parkedCount: 0, rootStatus: { kind: "done", outcome: null } },
+    { name: "all completed with an active root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "running", parkedCount: 0 },
+    { name: "completed children with running", statuses: ["complete", "complete", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "completed children with parked", statuses: ["complete", "complete", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "cancelled child with running", statuses: ["cancelled", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "cancelled child with parked", statuses: ["cancelled", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "only terminal children including cancellation", statuses: ["complete", "cancelled"], expectedStage: "failed", expectedRun: "running", parkedCount: 0 },
+    { name: "only an active root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0, rootUnit },
+    { name: "a failed stage-null root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0,
+      rootUnit: withUnitFields(rootUnit, { attention: { kind: "stalled", detail: "root failed" } }), isStuck: true },
+  ])("uses the child and root statuses for $name", ({ statuses, expectedStage, expectedRun, parkedCount, rootStatus, rootUnit, isStuck }) => {
+    const children = statuses.map((status, index) => childWithStatus(status, index));
+    const stageUnits = rootUnit ? [rootUnit, ...children] : children;
+    const stages = unitToStages(stageUnits);
+    const detail = runSnapshot(rootStatus ? { ...run, status: rootStatus } : run, stageUnits);
+    expect(stages.ok && detail.ok && [stages.value[0]?.status ?? null, detail.value.status, detail.value.is_stuck,
+      detail.value.parked_count]).toEqual([expectedStage, expectedRun, isStuck ?? false, parkedCount]);
+  });
+
+  it("keeps failed ahead of complete and pending outside the active-root stuck case", () => {
+    const children = ["failed", "complete", "pending"].map((status, index) => childWithStatus(status as StageStatus, index));
+    const detail = runSnapshot({ ...run, status: { kind: "not_started" } }, children);
+    expect(detail.ok && [detail.value.stages[0]?.status, detail.value.status]).toEqual(["failed", "failed"]);
+  });
+
+  it("aggregates several brief outputs and the run from the same live children", () => {
+    const root = units.find((unit) => unit.stage === null);
+    if (!root) throw new Error("captured fixture lacks the root unit");
+    const children = ["complete", "parked", "running", "pending"].map((status, index) =>
+      childWithStatus(status as StageStatus, index, "brief"));
+    const stages = unitToStages(children);
+    const detail = runSnapshot(run, [root, ...children]);
+    expect(stages.ok && detail.ok && [stages.value[0]?.status, detail.value.stages[0]?.status,
+      detail.value.status, detail.value.parked_count]).toEqual(["running", "running", "running", 1]);
+  });
+});
 
 describe("v2 development adapters", () => {
   it("maps a run snapshot and summary through the same status derivation", () => {
@@ -274,6 +361,64 @@ describe("v2 development adapters", () => {
     expect(inbox.ok && [inbox.value.items[0].kind, inbox.value.cohorts[0].lifecycle]).toEqual(["artifact_gate", "artifact_review"]);
     expect(inbox.ok && inbox.value.items.filter((item) => item.kind === "artifact_gate")).toHaveLength(1);
     expect(inbox.ok && inbox.value.items[0].resume_actions).toEqual(["approve"]);
+  });
+  it("labels two repositories and every stage from the captured multi-cohort run", () => {
+    const second = units.find((unit) => unit.stage === "cohort" && unit.collection_key === "b");
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    const planning = units.find((unit) => unit.stage === "planning");
+    const brief = units.find((unit) => unit.stage === "brief" && unit.collection_key === "a");
+    const prepare = units.find((unit) => unit.stage === "prepare");
+    const integration = (integrationMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration");
+    if (!second || !analysis || !planning || !brief || !prepare || !integration) throw new Error("captured fixtures lack development stages");
+    const secondInDocs = withUnitFields(second, { input: { ...objectValue(second.input), repository: { key: "docs" } } });
+    const planningWithKey = withUnitFields(planning, { input: { ...objectValue(planning.input), repository_key: "app" } });
+    const runUnits = units.map((unit) => unit.unit_id === second.unit_id ? secondInDocs
+      : unit.unit_id === planning.unit_id ? planningWithKey : unit);
+    const entry: OperatorRunInboxBatchEntry = { run_id: run.run_id, items: [
+      ...sample.inbox.items as OperatorRunInboxBatchEntry["items"],
+      { kind: "waiting", run_id: run.run_id, unit_id: analysis.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+      { kind: "waiting", run_id: run.run_id, unit_id: planning.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+      { kind: "waiting", run_id: run.run_id, unit_id: brief.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+    ] };
+    const result = classifyDevelopmentInbox(entry, runUnits, "Ship Oakridge");
+    if (!result.ok) throw new Error(result.error.detail);
+    const firstItem = result.value.items.find((item) => item.unit_id === "a");
+    const secondItem = result.value.items.find((item) => item.unit_id === "b");
+    const analysisItem = result.value.items.find((item) => item.stage_name === "analysis");
+    const planningItem = result.value.items.find((item) => item.stage_name === "planning");
+    const briefItem = result.value.items.find((item) => item.stage_name === "brief" && item.unit_id === "a");
+    expect([firstItem?.title, secondItem?.title, secondItem?.blocked_by.includes("a · Cohort a · app"), analysisItem?.title])
+      .toEqual(["a · Cohort a · app", "b · Cohort b · docs", true, ""]);
+    expect(result.value.cohorts.map((item) => [item.title, item.repository_key]))
+      .toEqual([["a · Cohort a · app", "app"], ["b · Cohort b · docs", "docs"]]);
+    expect(briefItem?.title).toBe("a · Cohort a · app");
+    expect([repositoryKeyOf(analysis), repositoryKeyOf(planningWithKey), repositoryKeyOf(brief), repositoryKeyOf(cohort),
+      repositoryKeyOf(prepare), repositoryKeyOf(integration), analysisItem?.repository_key, planningItem?.repository_key])
+      .toEqual([null, "app", "app", "app", "app", "app", null, "app"]);
+  });
+  it("keeps inbox work and other cohort summaries when one repository input is missing", () => {
+    const withoutRepository = withUnitFields(cohort, { input: {} });
+    const other = units.find((unit) => unit.stage === "cohort" && unit.unit_id !== cohort.unit_id);
+    if (!other) throw new Error("captured fixture lacks another cohort");
+    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
+      { kind: "waiting", run_id: run.run_id, unit_id: cohort.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+    ] }, [withoutRepository, other]);
+    expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
+      .toEqual([[other.collection_key], null]);
+  });
+  it("uses an analysis blocker's unit id when it has no attention label", () => {
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    if (!analysis) throw new Error("captured fixture lacks an analysis unit");
+    const blocked = withUnitFields(cohort, { depends_on: [analysis.unit_id] });
+    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
+      { kind: "waiting", run_id: run.run_id, unit_id: blocked.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+    ] }, [blocked, analysis]);
+    expect(result.ok && result.value.items[0]?.blocked_by).toEqual([analysis.unit_id]);
+  });
+  it("parses repository keys from untrusted unit input", () => {
+    const padded = withUnitFields(cohort, { input: { repository_key: "  app  " } });
+    const blank = withUnitFields(cohort, { input: { repository_key: "  " } });
+    expect([repositoryKeyOf(padded), repositoryKeyOf(blank)]).toEqual(["app", null]);
   });
   it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
     const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {

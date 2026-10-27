@@ -3,6 +3,10 @@ import { create } from "zustand";
 import type { Sid } from "../lib/ids";
 import type { SessionSnapshot, Status } from "../types";
 
+export type SessionArchiveUpdate =
+  | { readonly kind: "archive"; readonly sid: Sid }
+  | { readonly kind: "end_and_archive"; readonly sid: Sid };
+
 export interface AppState {
   /**
    * Session map: ACP sessions come from the /inbox snapshot stream (the
@@ -29,6 +33,7 @@ export interface AppState {
    * from a purged session.
    */
   applySnapshot: (snapshots: SessionSnapshot[]) => Sid[];
+  archiveSession: (update: SessionArchiveUpdate) => void;
   setInboxStatus: (status: Status) => void;
   setCurrentSid: (sid: Sid | null) => void;
 }
@@ -111,6 +116,21 @@ export const useStore = create<AppState>()((set) => ({
     });
     return removed;
   },
+
+  archiveSession: (update) =>
+    set((state) => {
+      const session = state.sessions.get(update.sid);
+      if (!session) return state;
+      const sessions = new Map(state.sessions);
+      // The single-row action can end a live session. Bulk hide only archives
+      // terminal sessions, so it preserves their status without a fallback.
+      const status = update.kind === "end_and_archive" &&
+        session.status !== "ended" && session.status !== "fenced" && session.status !== "failed"
+        ? "ended"
+        : session.status;
+      sessions.set(update.sid, { ...session, status, archivedAt: new Date().toISOString() });
+      return { sessions };
+    }),
 
   setInboxStatus: (inboxStatus) => set({ inboxStatus }),
   setCurrentSid: (currentSid) => set({ currentSid }),
