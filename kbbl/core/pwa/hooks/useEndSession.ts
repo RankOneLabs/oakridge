@@ -14,17 +14,7 @@ export function useEndSession(sessionId: string) {
       if (!response.ok) throw await sessionCloseError(response);
     },
     onSuccess: () => {
-      useStore.setState((state) => {
-        const sid = sessionId as Sid;
-        const session = state.sessions.get(sid);
-        if (!session) return state;
-        const sessions = new Map(state.sessions);
-        const status = session.status === "ended" || session.status === "fenced" || session.status === "failed"
-          ? session.status
-          : "ended";
-        sessions.set(sid, { ...session, status, archivedAt: new Date().toISOString() });
-        return { sessions };
-      });
+      useStore.getState().archiveSession({ kind: "end_and_archive", sid: sessionId as Sid });
     },
   });
   const error = mutation.isError

@@ -12,20 +12,6 @@ import { useStore } from "../state/store";
 
 const BULK_HIDE_CONCURRENCY = 3;
 
-function markSessionArchived(sid: Sid): void {
-  useStore.setState((state) => {
-    const session = state.sessions.get(sid);
-    if (!session) return state;
-    const sessions = new Map(state.sessions);
-    // Eligibility guarantees terminal status. Keep it, just as useEndSession does.
-    const status = session.status === "ended" || session.status === "fenced" || session.status === "failed"
-      ? session.status
-      : "ended";
-    sessions.set(sid, { ...session, status, archivedAt: new Date().toISOString() });
-    return { sessions };
-  });
-}
-
 async function archiveSession(sid: Sid): Promise<BulkHideAttempt> {
   try {
     const response = await fetch(`/sessions/${encodeURIComponent(sid)}?archive=true`, {
@@ -35,7 +21,7 @@ async function archiveSession(sid: Sid): Promise<BulkHideAttempt> {
       const error = await sessionCloseError(response);
       return { kind: "refused", sid, refusal: error.refusal };
     }
-    markSessionArchived(sid);
+    useStore.getState().archiveSession({ kind: "archive", sid });
     return { kind: "archived", sid };
   } catch (error) {
     return {
