@@ -1,6 +1,4 @@
 import { Button } from "../../../components/atoms/Button";
-import { useQueryClient } from "@tanstack/react-query";
-import { useGates } from "../../hooks/useGates";
 import { useRunGates } from "../../hooks/useRunGates";
 import type { ParkedGate } from "../../types";
 import { GateDecisionActions } from "./GateDecisionActions";
@@ -101,49 +99,6 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
       )}
 
       <GateDecisionActions gate={gate} />
-    </div>
-  );
-}
-
-export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { onNavigateRun: (id: string) => void; onNavigateArtifact?: (id: string) => void }) {
-  const qc = useQueryClient();
-  const query = useGates();
-
-  return (
-    <div className="flex flex-col gap-3" data-testid="or-global-gate-list">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Needs attention</h2>
-        <Button variant="secondary"
-          type="button"
-          onClick={() => { void qc.invalidateQueries({ queryKey: ["oakridge", "gates"] }); }}
-        >
-          Refresh
-        </Button>
-      </div>
-
-      {query.isError && (
-        <div
-          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-          role="alert"
-          data-testid="or-gate-list-error"
-        >
-          {query.error instanceof Error ? query.error.message : "Failed to load gates"}
-        </div>
-      )}
-
-      {query.isPending && !query.data && (
-        <div className="py-6 text-sm text-[var(--text-muted)]">Loading gates…</div>
-      )}
-
-      {query.data && query.data.length === 0 && (
-        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-gate-list-empty">
-          Nothing needs a decision.
-        </div>
-      )}
-
-      {query.data && query.data.map((gate: ParkedGate) => (
-        <GateCard key={gate.id} gate={gate} onNavigateRun={onNavigateRun} onNavigateArtifact={onNavigateArtifact} />
-      ))}
     </div>
   );
 }

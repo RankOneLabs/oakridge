@@ -64,7 +64,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
           onNewRun={navigateToNewRun}
           onNewProject={navigateToCreateProject}
           onWorkflows={navigateToDefs}
-          onSelectArtifact={navigateToArtifact}
           runAttentionCounts={runAttentionCounts}
         />
       );

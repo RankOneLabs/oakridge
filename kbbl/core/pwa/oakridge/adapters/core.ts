@@ -118,6 +118,16 @@ export function deriveStatus(input: StatusInput): { readonly run: RunStatus; rea
   return { run: "pending", stage: "pending" };
 }
 
+/** Aggregate child units, allowing only unfinished work to choose between running and parked. */
+export function selectAggregateStatus(statuses: readonly StageStatus[]): StageStatus {
+  if (statuses.includes("failed")) return "failed";
+  const unfinished = statuses.filter((status) => status !== "complete");
+  if (unfinished.includes("running")) return "running";
+  if (unfinished.includes("parked")) return "parked";
+  if (statuses.length > 0 && statuses.every((status) => status === "complete")) return "complete";
+  return "pending";
+}
+
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
 /** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
 const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
@@ -223,8 +233,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
   return ok([...stages].map(([name, members]) => {
     const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).stage);
-    const status: StageStatus = statuses.includes("failed") ? "failed" : statuses.includes("parked") ? "parked"
-      : statuses.every((item) => item === "complete") ? "complete" : statuses.includes("running") ? "running" : "pending";
+    const status = selectAggregateStatus(statuses);
     const stageUnits: StageUnit[] = members.map((unit) => {
       return { unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
         repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
@@ -250,12 +259,12 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (units.some((unit) => unit.run_id !== run.run_id)) return fail("run snapshot", "unit belongs to another run");
   const grouped = unitToStages(units);
   if (!grouped.ok) return grouped;
-  const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
+  const unitStatuses = units.filter((unit) => unit.stage !== null).map((unit) => deriveStatus(statusInputOf(unit)).stage);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
   const hasFailedUnit = unitStatuses.includes("failed");
   const isStuck = rootStatus === "running" && hasFailedUnit;
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
-    : isStuck ? "running" : hasFailedUnit ? "failed" : unitStatuses.includes("parked") ? "parked" : rootStatus;
+    : isStuck ? "running" : selectAggregateStatus(unitStatuses);
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
