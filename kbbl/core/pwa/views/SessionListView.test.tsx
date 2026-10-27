@@ -1,10 +1,12 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, test, vi } from "vitest";
 
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
 import type { RunDetail, RunSummary } from "../oakridge/types";
+import type { Sid } from "../lib/ids";
+import { useStore } from "../state/store";
 import { SessionListView } from "./SessionListView";
 
 const runtimes: RuntimeDescriptor[] = [
@@ -77,6 +79,25 @@ function renderList(
       />
     </QueryClientProvider>,
   );
+}
+
+function StoredSessionList() {
+  const sessions = useStore((state) => state.sessions);
+  return <SessionListView
+    sessions={sessions}
+    inboxStatus="connected"
+    defaultWorkdir="/repo"
+    defaultRuntimeId="claude-code"
+    runtimes={runtimes}
+    onSelect={() => {}}
+    onHydrateSession={() => {}}
+  />;
+}
+
+function renderStoredList(snapshots: SessionSnapshot[]) {
+  useStore.setState({ sessions: new Map(snapshots.map((snapshot) => [snapshot.sid as Sid, snapshot])) });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(<QueryClientProvider client={client}><StoredSessionList /></QueryClientProvider>);
 }
 
 describe("SessionListView grouping", () => {
@@ -216,6 +237,139 @@ describe("SessionListView grouping", () => {
       expect(visibleNames()).toEqual(["newest", "established"]);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("SessionListView bulk hide", () => {
+  test("shows no bulk control without an eligible session", () => {
+    renderStoredList([makeSnapshot({ sid: "active" }), makeSnapshot({ sid: "archived", status: "ended", archivedAt: "2026-10-21T00:00:00Z" })]);
+    expect(screen.queryByRole("button", { name: /hide \d+ ended sessions?/i })).toBeNull();
+  });
+
+  test("states the exact count, requires confirmation, and only archives eligible sessions", async () => {
+    const snapshots = [
+      ...Array.from({ length: 7 }, (_, index) => makeSnapshot({ sid: `ended/${index}`, name: `ended ${index}`, status: "ended" })),
+      makeSnapshot({ sid: "provisioning", status: "provisioning" }),
+      makeSnapshot({ sid: "idle", status: "idle" }),
+      makeSnapshot({ sid: "prompting", status: "prompting" }),
+      makeSnapshot({ sid: "archived", status: "failed", archivedAt: "2026-10-21T00:00:00Z" }),
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    try {
+      renderStoredList(snapshots);
+      fireEvent.click(screen.getByRole("button", { name: "Hide 7 ended sessions" }));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Confirm hide 7 ended sessions" }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(7));
+      expect(fetchSpy.mock.calls.map(([url, options]) => [url, options?.method])).toEqual(
+        Array.from({ length: 7 }, (_, index) => [`/sessions/ended%2F${index}?archive=true`, "DELETE"]),
+      );
+      expect(fetchSpy.mock.calls.every(([url]) => !String(url).includes("purge"))).toBe(true);
+      await waitFor(() => expect(screen.getByTestId("bulk-hide-outcome").textContent).toContain("Archived 7 of 7"));
+      expect(screen.queryByText("ended 0")).toBeNull();
+      expect(useStore.getState().sessions.has("ended/0" as Sid)).toBe(true);
+      expect(useStore.getState().sessions.get("ended/0" as Sid)?.archivedAt).not.toBeNull();
+      expect(screen.getAllByText("hand-started-session")).toHaveLength(3);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("a lone ended session uses the singular label and disarms after four seconds", () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      renderStoredList([makeSnapshot({ sid: "one", status: "ended" })]);
+      fireEvent.click(screen.getByRole("button", { name: "Hide 1 ended session" }));
+      expect(screen.getByRole("button", { name: "Confirm hide 1 ended session" })).toBeTruthy();
+      act(() => vi.advanceTimersByTime(4000));
+      expect(screen.getByRole("button", { name: "Hide 1 ended session" })).toBeTruthy();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("reports successful sids and both refusal kinds while refused rows remain", async () => {
+    const held = {
+      error: "cannot archive right now",
+      code: "session_held_by_attempt",
+      hold: { session_id: "e1a84fd7-0750-404b-a82c-9daefdfbdde1", run_id: "run-5", unit_id: "unit-7", worker: "builder", action_id: "f5aeeb429c1641b3" },
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).includes("held")) return new Response(JSON.stringify(held), { status: 409 });
+      if (String(url).includes("rejected")) return new Response(JSON.stringify({ error: "server rejected archive" }), { status: 500 });
+      return new Response(null, { status: 204 });
+    });
+    try {
+      renderStoredList([
+        makeSnapshot({ sid: "success", name: "success row", status: "ended" }),
+        makeSnapshot({ sid: "held", name: "held row", status: "fenced" }),
+        makeSnapshot({ sid: "rejected", name: "rejected row", status: "failed" }),
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "Hide 3 ended sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm hide 3 ended sessions" }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+      const outcome = await screen.findByTestId("bulk-hide-outcome");
+      expect(outcome.textContent).toContain("Archived 1 of 3: success");
+      const failures = screen.getAllByRole("alert").map((message) => message.textContent);
+      expect(failures).toContain("held: cannot archive right now (run run-5, unit unit-7)");
+      expect(failures).toContain("rejected: server rejected archive");
+      expect(screen.queryByText("success row")).toBeNull();
+      expect(screen.getByText("held row")).toBeTruthy();
+      expect(screen.getByText("rejected row")).toBeTruthy();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("does not add a session that becomes ended after the first request starts", async () => {
+    let resolveFirst: ((response: Response) => void) | null = null;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveFirst = resolve; }));
+    try {
+      renderStoredList([makeSnapshot({ sid: "first", status: "ended" }), makeSnapshot({ sid: "later", status: "prompting" })]);
+      fireEvent.click(screen.getByRole("button", { name: "Hide 1 ended session" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm hide 1 ended session" }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+      act(() => useStore.setState((state) => {
+        const sessions = new Map(state.sessions);
+        const later = sessions.get("later" as Sid);
+        if (later) sessions.set("later" as Sid, { ...later, status: "ended" });
+        return { sessions };
+      }));
+      await act(async () => { resolveFirst?.(new Response(null, { status: 204 })); });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(useStore.getState().sessions.get("later" as Sid)?.archivedAt).toBeNull();
+      expect(screen.getByRole("button", { name: "Hide 1 ended session" })).toBeTruthy();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("keeps no more than three archive requests in flight", async () => {
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    const pending: Array<() => void> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => {
+      inFlight++;
+      maximumInFlight = Math.max(maximumInFlight, inFlight);
+      pending.push(() => { inFlight--; resolve(new Response(null, { status: 204 })); });
+    }));
+    try {
+      renderStoredList(Array.from({ length: 7 }, (_, index) => makeSnapshot({ sid: `sid-${index}`, status: "ended" })));
+      fireEvent.click(screen.getByRole("button", { name: "Hide 7 ended sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm hide 7 ended sessions" }));
+      await waitFor(() => expect(pending).toHaveLength(3));
+      for (let index = 0; index < 7; index++) {
+        await act(async () => { pending[index](); });
+        if (index < 4) await waitFor(() => expect(pending).toHaveLength(index + 4));
+      }
+      expect(maximumInFlight).toBe(3);
+      expect(fetchSpy).toHaveBeenCalledTimes(7);
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 });
