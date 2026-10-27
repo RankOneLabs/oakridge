@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RunSessionAttempt } from "../types";
-import { runUnitKeyOf, selectRunSessionRows, selectRunSessionsRead } from "./run-sessions";
+import { runUnitKeyOf, selectCohortBuilderSession, selectRunSessionRows, selectRunSessionsRead } from "./run-sessions";
 
 // Timestamps are written the way the route actually sends them — Postgres
 // `timestamptz::text`, so a space separator and a numeric offset, not ISO-8601
@@ -110,6 +110,20 @@ describe("runUnitKeyOf", () => {
     const assess = attempt({ work_order_id: "work-2", created_at: "2026-09-02 00:00:00+00", stage_instance_id: "stage-2", unit_id: "0" });
     expect(runUnitKeyOf(build)).not.toBe(runUnitKeyOf(assess));
     expect(currentWorkOrderIds([build, assess])).toEqual(["work-1", "work-2"]);
+  });
+});
+
+describe("selectCohortBuilderSession", () => {
+  it("selects the matching cohort's current builder attempt across cohorts and an abandoned retry", () => {
+    const attempts = [
+      attempt({ work_order_id: "alpha-first", created_at: "1", stage_key: "builder", unit_id: "alpha" }),
+      attempt({ work_order_id: "beta", created_at: "2", stage_key: "builder", unit_id: "beta" }),
+      attempt({ work_order_id: "alpha-current", created_at: "3", stage_key: "builder", unit_id: "alpha" }),
+      attempt({ work_order_id: "alpha-abandoned", created_at: "4", stage_key: "builder", unit_id: "alpha", work_order_state: "abandoned" }),
+      attempt({ work_order_id: "alpha-assessor", created_at: "5", stage_key: "assessor", unit_id: "alpha", stage_instance_id: "assess" }),
+    ];
+    expect(selectCohortBuilderSession(attempts, "alpha")?.session_id).toBe("session-alpha-current");
+    expect(selectCohortBuilderSession(attempts, "gamma")).toBeNull();
   });
 });
 

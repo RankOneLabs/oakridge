@@ -5,9 +5,10 @@ import { parseAssessment } from "../../lib/assessment";
 import { readBuildBrief } from "../../lib/build-brief";
 import { readBuildResult } from "../../lib/build-result";
 import { AssessmentViewer } from "../molecules/AssessmentViewer";
+import { BuilderHandoffPanel } from "./BuilderHandoffPanel";
 
 /** Loads the cohort's brief and build result, so the assessment reads against what was asked and what was built. */
-export function AssessmentReview({ body, source }: ViewerProps) {
+export function AssessmentReview({ body, source, edit }: ViewerProps) {
   const parsed = useMemo(() => parseAssessment(body), [body]);
   const isIntegration = source?.producing_stage === "integration";
   const cohortLabel = isIntegration ? null : source?.label ?? null;
@@ -18,5 +19,9 @@ export function AssessmentReview({ body, source }: ViewerProps) {
     return <div className="or-error" role="alert">This assessment does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;
   }
   return <AssessmentViewer assessment={parsed.value} brief={brief} result={result}
-    cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration} />;
+    cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration}
+    handoff={!isIntegration && source && cohortLabel && edit?.enabled && edit.onSubmitBody
+      ? <BuilderHandoffPanel assessment={parsed.value} body={body as typeof parsed.value}
+          runId={source.run_id} cohortLabel={cohortLabel} edit={edit} />
+      : undefined} />;
 }

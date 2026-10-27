@@ -16,6 +16,7 @@ export interface ViewerProps {
     enabled: boolean;
     isPending: boolean;
     onEdit: (anchor: string, previousValue: unknown, newValue: unknown) => void;
+    onSubmitBody?: (previousBody: unknown, nextBody: unknown) => void;
   };
 }
 
