@@ -4,7 +4,7 @@ import planningRevise from "./__fixtures__/v2-planning-revise.json";
 import cohortMerge from "./__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "./__fixtures__/v2-integration-merge.json";
 import definitionFixture from "./__fixtures__/v2-definition-detail.json";
-import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
+import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchReviewInbox, fetchRun, fetchRunSessions, fetchRuns, invalidateCachedRunUnits, postAtomEdit, putArtifactRevisionBody, refreshReviewInboxRun, resumeGate, retryRunUnit } from "./client";
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
@@ -162,6 +162,20 @@ describe("v2 Oakridge client", () => {
     await postAtomEdit(id, { anchor: "/summary", prev_value: "Built a.", new_value: "Built b.", author: "operator" });
     const put = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
     expect((put?.[1]?.headers as Record<string, string>)["X-Oakridge-Publisher"]).toBe("operator");
+  });
+
+  it("publishes a whole successor body with the displayed revision as predecessor and its subject", async () => {
+    const fetch = calls((_path, init) => init?.method === "PUT"
+      ? { kind: "committed", run_id: runId, event_id: "event-body-edit" } : sample.artifact);
+    const revision = sample.artifact.revisions[0];
+    const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id,
+      name: `build_result:${revision.id}` });
+    const body = { ...revision.body, summary: "Updated whole body" };
+    await putArtifactRevisionBody(id, body);
+    const put = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+      body, predecessor: revision.id, subject: revision.subject_id,
+    });
   });
 
   it("resolves an opaque revision id by a one-time run and unit search", async () => {
