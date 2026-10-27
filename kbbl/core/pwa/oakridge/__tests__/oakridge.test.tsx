@@ -6,7 +6,6 @@ import type { ReactElement } from "react";
 import { RunListView } from "../views/RunListView";
 // Aliased: `RunDetail` is also the name of the run view-model type below.
 import { RunDetail as RunDetailOrganism } from "../components/organisms/RunDetail";
-import { GlobalParkedGateList } from "../components/organisms/ParkedGateList";
 import type { RunSummary, RunDetail, ParkedGate, RepositoryKey, CohortId, EpicProfileId, StageUnitParams, WorkflowRunId } from "../types";
 import type { BuildBrief } from "../lib/build-brief";
 import { compositeId } from "../adapters/core";
@@ -28,7 +27,6 @@ function makeClient() {
 let runsSeed: RunSummary[] | null = null;
 let runSeed: RunDetail | null = null;
 let runGatesSeed: ParkedGate[] = [];
-let gatesSeed: ParkedGate[] | null = null;
 function wrap(ui: ReactElement) {
   const client = makeClient();
   if (runsSeed) client.setQueryData(["oakridge", "runs", ""], runsSeed);
@@ -37,7 +35,6 @@ function wrap(ui: ReactElement) {
     client.setQueryData(["oakridge", "run", runSeed.id, "gates"], runGatesSeed);
     client.setQueryData(["oakridge", "run", runSeed.id, "sessions"], []);
   }
-  if (gatesSeed) client.setQueryData(["oakridge", "gates"], gatesSeed);
   return { client, ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>) };
 }
 
@@ -48,7 +45,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); runsSeed = null; runSeed = null; runGatesSeed = []; gatesSeed = null; });
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); runsSeed = null; runSeed = null; runGatesSeed = []; });
 
 /**
  * A stage unit's `params` is the minted fan-out item (`{unit_id, artifact}`)
@@ -187,6 +184,33 @@ describe("RunListView", () => {
     expect(screen.getByText("Ship the operator console")).toBeTruthy();
     expect(screen.getByText("oakridge")).toBeTruthy();
     expect(screen.getByText("kbbl, oakridge")).toBeTruthy();
+    expect(screen.queryByTestId("or-global-gate-list")).toBeNull();
+  });
+
+  it("lists a running run with outstanding waits on the Parked tab", async () => {
+    const runningWithWaits: RunSummary = { ...RUN_SUMMARY_FIXTURE, parked_count: 1 };
+    runsSeed = [runningWithWaits, { ...PARKED_RUN_SUMMARY, parked_count: 0 }];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(runsSeed));
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
+    fireEvent.click(screen.getByTestId("or-filter-tab-parked"));
+    const rows = await screen.findAllByTestId("or-run-row");
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Ship the operator console")]);
+    expect(screen.getByTestId("or-parked-count").textContent).toBe("1");
+    expect(rows[0]?.textContent).toContain("running");
+  });
+
+  it("keeps pending, running, and parked runs on the Active tab", async () => {
+    runsSeed = [RUN_SUMMARY_FIXTURE, PARKED_RUN_SUMMARY,
+      { ...RUN_SUMMARY_FIXTURE, id: "run-3", title: "Queued work", status: "pending" },
+      { ...RUN_SUMMARY_FIXTURE, id: "run-4", title: "Finished work", status: "complete" }];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(runsSeed));
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
+    fireEvent.click(screen.getByTestId("or-filter-tab-active"));
+    expect((await screen.findAllByTestId("or-run-row")).map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Ship the operator console"),
+      expect.stringContaining("Repair production auth"),
+      expect.stringContaining("Queued work"),
+    ]);
   });
 
   it("shows parked_count badge when parked_count > 0", async () => {
@@ -585,61 +609,6 @@ describe("RunDetail stage list", () => {
       `/oakridge/api/api/runs/run-1/units/${encodeURIComponent(integrationUnit.unit_id)}/reviews/merge_confirmation/decide`,
       expect.objectContaining({ method: "POST" }),
     ));
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Global parked gate list
-// ──────────────────────────────────────────────────────────────────────────────
-
-describe("GlobalParkedGateList", () => {
-  it("renders gate card with type, stage, branch, and path", async () => {
-    gatesSeed = [PARKED_GATE_FIXTURE];
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
-    wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
-
-    expect(await screen.findByTestId("or-gate-type")).toBeTruthy();
-    expect(screen.getByTestId("or-gate-type").textContent).toBe("Operator decision");
-    expect(screen.getByTestId("or-gate-stage").textContent).toBe("approve");
-    expect(screen.getByTestId("or-gate-branch").textContent).toBe("cohort/v2_readiness/3-foo");
-    expect(screen.getByTestId("or-gate-path").textContent).toBe("/home/steve/codes/rol/oakridge");
-  });
-
-  it("shows empty state when no gates are parked", async () => {
-    gatesSeed = [];
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
-    expect(await screen.findByTestId("or-gate-list-empty")).toBeTruthy();
-  });
-
-  it("calls onNavigateRun with the gate's run_id when run link is clicked", async () => {
-    gatesSeed = [PARKED_GATE_FIXTURE];
-    const onNavigateRun = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
-    wrap(<GlobalParkedGateList onNavigateRun={onNavigateRun} />);
-    const runLink = await screen.findByTestId("or-gate-run-link");
-    fireEvent.click(runLink);
-    expect(onNavigateRun).toHaveBeenCalledWith("run-2");
-  });
-
-  it("links a parked gate directly to its review artifact", async () => {
-    gatesSeed = [PARKED_GATE_FIXTURE];
-    const onNavigateArtifact = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
-    wrap(<GlobalParkedGateList onNavigateRun={() => {}} onNavigateArtifact={onNavigateArtifact} />);
-    fireEvent.click(await screen.findByTestId("or-gate-artifact-link"));
-    expect(onNavigateArtifact).toHaveBeenCalledWith("rev-abc");
-  });
-
-  it("still lists a gate whose run is no longer active, rendered stranded rather than hidden", async () => {
-    const strandedGate: ParkedGate = { ...PARKED_GATE_FIXTURE, id: "gate-2", run_state: "failed", actionable: false };
-    gatesSeed = [strandedGate];
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([strandedGate]));
-    wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
-
-    expect(await screen.findByTestId("or-gate-card")).toBeTruthy();
-    expect(screen.getByTestId("or-gate-stranded").textContent).toBe("Run failed — gate stranded");
-    expect((screen.getByTestId("or-decision-approve") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
