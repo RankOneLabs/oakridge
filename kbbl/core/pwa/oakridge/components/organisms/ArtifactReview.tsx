@@ -9,6 +9,7 @@ import { useReviewItems } from "../../hooks/useReviewItems";
 import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
+import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../types";
@@ -57,6 +58,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
     : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
   const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
+  const bodyEdit = useArtifactBody(revision?.id ?? artifactId, artifactId);
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
   const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
   const revisionIds = new Set(revisions.map((candidate) => candidate.id));
@@ -208,13 +210,14 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
                 original_spec: artifact.original_spec ?? null }}
               edit={caps?.atom_editable ? {
                 enabled: revIdx === revisions.length - 1,
-                isPending: atomEdit.isPending,
+                isPending: atomEdit.isPending || bodyEdit.isPending,
                 onEdit: (anchor, previousValue, newValue) => atomEdit.mutate({
                   anchor,
                   prev_value: previousValue,
                   new_value: newValue,
                   author: "operator",
                 }),
+                onSubmitBody: (_previousBody, nextBody) => bodyEdit.mutate(nextBody),
               } : undefined}
             />
           ) : (

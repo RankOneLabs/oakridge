@@ -178,6 +178,24 @@ describe("v2 Oakridge client", () => {
     });
   });
 
+  it("publishes an assessment successor through the assessment artifact route", async () => {
+    const assessment = { ...sample.artifact, artifact_key: "assessment", revisions: [{
+      ...sample.artifact.revisions[0], body: {
+        verdict: "pass_with_notes", findings: [], test_evidence: null,
+        recommended_next_actions: ["First", "Second"],
+      },
+    }] };
+    const fetch = calls((_path, init) => init?.method === "PUT"
+      ? { kind: "committed", run_id: runId, event_id: "event-assessment" } : assessment);
+    const id = compositeId({ kind: "artifact", runId, unitId: cohort.unit_id,
+      name: `assessment:${assessment.revisions[0].id}` });
+    const body = { ...assessment.revisions[0].body, recommended_next_actions: ["First"] };
+    await putArtifactRevisionBody(id, body);
+    const put = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect([String(put?.[0]).endsWith("/artifacts/assessment"), JSON.parse(String(put?.[1]?.body)).body])
+      .toEqual([true, body]);
+  });
+
   it("resolves an opaque revision id by a one-time run and unit search", async () => {
     const fetch = calls((path) => path.includes("/api/runs?") ? { items: [sample.run], next_cursor: null }
       : path.endsWith("/units") ? sample.units : sample.artifact);
