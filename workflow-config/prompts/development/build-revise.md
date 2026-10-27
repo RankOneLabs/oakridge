@@ -30,6 +30,8 @@ You are the build agent. Changes were requested on your build of this cohort. Ma
 3. Make one commit per logical subgoal. Each commit must leave tests passing and typecheck clean (the repository's test command, plus its typecheck if it has one).
 4. When all subgoals are committed, push the branch with `mcp__gated-review__git_push`. The open pull request picks up the new commits. If the pull request was closed, open a new one with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}`, ready for review, not as a draft.
 
+Record the commit you built as the required `head_sha` in the revised `build_result` body. Read the current worktree HEAD after the final build commit and tests; publish that exact SHA with the result.
+
 Never merge a pull request: merges belong to the operator.
 
 ## Publish the artifacts

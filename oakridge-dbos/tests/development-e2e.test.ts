@@ -26,8 +26,8 @@ import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTu
 const root = resolve(import.meta.dir, "../..");
 const APPROVED_SPEC = "Approved specification from analysis.";
 const APPROVED_ANALYSIS = { summary: "Approved analysis for spec update.", source_spec_refs: ["Goal"],
-  findings: [], requirements: [], risks: [], proposed_spec_updates: [
-    { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement." },
+  findings: [], requirements: [{ id: "req-a", description: "Build the thing.", status: "implementable" }], risks: [], proposed_spec_updates: [
+    { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement.", finding_ids: [] },
   ] };
 const REVISED_ANALYSIS = { ...APPROVED_ANALYSIS, summary: "Revised analysis for spec update." };
 const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
@@ -125,32 +125,43 @@ function developmentAgents(forge: StubForge, timeline: Map<string, number>): Age
         if (!turn.task.includes("analysis for spec update")) throw new Error("spec editor did not receive the approved analysis");
         await publish("spec", APPROVED_SPEC);
         break;
+      case "task_editor":
+        if (!turn.task.includes(APPROVED_SPEC)) throw new Error("task editor did not receive the approved spec");
+        await publish("tasks", { tasks: [{ id: "task-a", description: "Build the thing.", requirement_ids: ["req-a"] }] });
+        break;
       case "planner":
         if (!turn.task.includes(APPROVED_SPEC)) throw new Error("planner did not receive the approved specification");
         await publish("plan", { summary: "Two cohorts.", dependency_order: ["a", "b"], scope: { in_scope: ["thing"], out_of_scope: [] },
           acceptance_criteria: ["it works"], risks: [], cohorts: COHORTS.map((cohort) => ({ ...cohort, repository_key: "app",
-            title: `Cohort ${cohort.id}`, scope: "part", description: null, files_in_scope: [], decisions: [], acceptance_criteria: ["it works"] })) });
+            title: `Cohort ${cohort.id}`, scope: "part", description: null, files_in_scope: [],
+            decisions: [{ id: "choice", text: "Use the simple implementation." }],
+            acceptance_criteria: [{ id: "works", text: "it works", task_ids: ["task-a"], decision_ids: ["choice"] }] })) });
         break;
       case "writer":
         if (!turn.task.includes(APPROVED_SPEC)) throw new Error("brief writer did not receive the approved specification");
         await publish("brief", { cohort_id: member, repository_key: "app", title: `Cohort ${member}`, depends_on: dependenciesOf(member),
-          goal: "Build it.", files_in_scope: [], decisions_made: [], approaches_rejected: [], acceptance_criteria: ["it works"], next_action: "build" });
+          goal: "Build it.", files_in_scope: [],
+          decisions_made: [{ id: "choice", decision: "Use the simple implementation.", rationale: "It meets the task." }],
+          approaches_rejected: [{ id: "alternative", approach: "Use a complex implementation.", reason: "Unneeded complexity.", decision_ids: ["choice"] }],
+          acceptance_criteria: [{ id: "works", text: "it works", task_ids: ["task-a"], decision_ids: ["choice"] }], next_action: "build" });
         break;
       case "builder": {
         timeline.set(`build:${member}`, Date.now());
         const pr_url = forge.open(`cohort-${member}`, "develop");
-        await publish("build_result", { repository_key: "app", summary: `Built ${member}.`, changed_files: [`${member}.ts`],
+        await publish("build_result", { repository_key: "app", head_sha: "abc123", summary: `Built ${member}.`, changed_files: [`${member}.ts`],
           tests: { passed: 1, failed: 0, output: null, summary: null, cargo_test_output: null }, delegated_session_metadata: null, known_issues: [] });
         await publish("pr", { pr_url, branch: `cohort-${member}`, summary: `Cohort ${member}.`, review_status: "ready" });
         break;
       }
       case "assessor":
-        await publish("assessment", { verdict: "pass", findings: [{ criterion: "it works", status: "met", evidence: "tests", description: null }],
+        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: "works", criterion: "it works", status: "met",
+          evidence: [{ kind: "test", ref: "development-e2e" }], description: null }],
           test_evidence: null, recommended_next_actions: [] }, turn.subject());
         break;
       case "integrator":
-        await publish("assessment", { verdict: "pass", findings: [{ criterion: null, status: "met",
-          evidence: "Both cohort changes pass together on the integration branch.", description: "Cross-cohort integration" }],
+        await publish("assessment", { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: null, criterion: null, status: "met",
+          evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
+          description: "Cross-cohort integration" }],
           test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
           recommended_next_actions: [] });
         await publish("pr", { pr_url: forge.open("integration", "main"), branch: "integration", summary: "Both cohorts.", review_status: "ready" });
@@ -210,7 +221,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
 const segment = encodeURIComponent;
 
 /** The decision the scripted operator makes on each review, and what it does after. */
-const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", plan_review: "accept", brief_review: "accept",
+const DECISIONS: { readonly [review: string]: string } = { analysis_review: "accept", spec_review: "accept", tasks_review: "accept", plan_review: "accept", brief_review: "accept",
   assessment_review: "accept", integration_review: "accept", merge_confirmation: "confirm_merged" };
 const capturedAdapterFixtures = new Set<string>();
 async function captureAdapterFixture(run_id: string, name: string): Promise<void> {
@@ -330,7 +341,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     readonly repository_keys: readonly string[]; readonly created_at: string; readonly updated_at: string }[] }).items.find((item) => item.run_id === run_id);
   const brief_sessions = [...stub.sessions.values()].filter((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
     && session.spec.initial_prompt.includes("worker `writer`"));
-  const early_session_workspaces = ["author", "spec_editor", "planner", "writer"].map((worker) => {
+  const early_session_workspaces = ["author", "spec_editor", "task_editor", "planner", "writer"].map((worker) => {
     const sessions = stub.sessionsFor((session) => session.spec.initial_prompt.includes(`of run \`${run_id}\``)
       && session.spec.initial_prompt.includes(`worker \`${worker}\``));
     return sessions.map((session) => [session.spec.workdir, session.spec.worktree?.base_ref]);
@@ -360,15 +371,16 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     integrations: [{ repository_key: "app", pr_url: pullUrl(3), is_merged: true }],
     b_built_after_a_merged: true,
     schemas: { ...BODY_SCHEMAS, integration_assessment: "assessment_body" },
-    integration_assessment: { verdict: "pass", findings: [{ criterion: null, status: "met",
-      evidence: "Both cohort changes pass together on the integration branch.", description: "Cross-cohort integration" }],
+    integration_assessment: { head_sha: "abc123", verdict: "pass", findings: [{ criterion_id: null, criterion: null, status: "met",
+      evidence: [{ kind: "test", ref: "integration suite", detail: "Both cohort changes pass together on the integration branch." }],
+      description: "Cross-cohort integration" }],
     test_evidence: { passed: 2, failed: 0, output: null, summary: "Integration suite", cargo_test_output: null },
     recommended_next_actions: [] },
     pr_states_change: [true, true, true],
     merged_cohorts_without_confirmation: ["a", "b"],
     run_summary: ["Two cohorts", ["app"], true],
     brief_sessions: [[2, "ended"]],
-    early_session_workspaces: ["author", "spec_editor", "planner", "writer"].map(() => [[repository, "origin/develop"]]),
+    early_session_workspaces: ["author", "spec_editor", "task_editor", "planner", "writer"].map(() => [[repository, "origin/develop"]]),
     analysis_and_plan_prompts_omit_checkout: true,
     prepared_head_vs_checkout: [remote_base_head, true],
   });
@@ -396,7 +408,7 @@ test("analysis and revised spec are separately approved before planning", async 
     return rows.length;
   };
   const first = await eventually("first analysis review", reviewTarget);
-  expect([await revisionCount("analysis"), await revisionCount("spec")]).toEqual([1, 0]);
+  expect([await revisionCount("analysis"), await revisionCount("spec"), await revisionCount("tasks")]).toEqual([1, 0, 0]);
   const change = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
     { request_id: crypto.randomUUID(), decision: "request_changes", target: first, payload: { feedback: "Clarify the finding." } });
   expect(change.status).toBe(201);
@@ -404,11 +416,12 @@ test("analysis and revised spec are separately approved before planning", async 
     const target = await reviewTarget();
     return target && target !== first ? target : null;
   });
-  expect([await revisionCount("analysis"), await revisionCount("spec")]).toEqual([2, 0]);
+  expect([await revisionCount("analysis"), await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 0, 0]);
   const accepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/analysis_review/decide`,
     { request_id: crypto.randomUUID(), decision: "accept", target: revised, payload: {} });
   expect(accepted.status).toBe(201);
   await eventually("updated spec publication", async () => await revisionCount("spec") === 1 ? true : null);
+  expect(await revisionCount("tasks")).toBe(0);
   const specTarget = await eventually("revised spec review", async () => {
     const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
     return unit?.review_prompts.spec_review?.target ?? null;
@@ -423,15 +436,35 @@ test("analysis and revised spec are separately approved before planning", async 
     const target = unit?.review_prompts.spec_review?.target;
     return target && target !== specTarget ? target : null;
   });
-  expect(await revisionCount("spec")).toBe(2);
+  expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 0]);
   const specAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
     { request_id: crypto.randomUUID(), decision: "accept", target: revisedSpecTarget, payload: {} });
   expect(specAccepted.status).toBe(201);
+  await eventually("tasks publication after spec approval", async () => await revisionCount("tasks") === 1 ? true : null);
+  const tasksTarget = await eventually("tasks review", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    return unit?.review_prompts.tasks_review?.target ?? null;
+  });
+  const beforeTasksApproval = await db.selectFrom("authority.unit").select("status").where("id", "=", `${run_id}/planning`).executeTakeFirst();
+  expect(beforeTasksApproval?.status.kind).toBe("not_started");
+  const tasksChange = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/tasks_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "request_changes", target: tasksTarget, payload: { feedback: "Clarify the task." } });
+  expect(tasksChange.status).toBe(201);
+  const revisedTasksTarget = await eventually("revised tasks review", async () => {
+    const unit = await db.selectFrom("authority.unit").select("review_prompts").where("id", "=", unit_id).executeTakeFirst();
+    const target = unit?.review_prompts.tasks_review?.target;
+    return target && target !== tasksTarget ? target : null;
+  });
+  expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 2]);
+  const tasksAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/tasks_review/decide`,
+    { request_id: crypto.randomUUID(), decision: "accept", target: revisedTasksTarget, payload: {} });
+  expect(tasksAccepted.status).toBe(201);
   const planning = await eventually("planning input", async () => {
     const unit = await db.selectFrom("authority.unit").select("input").where("id", "=", `${run_id}/planning`).executeTakeFirst();
     return unit?.input && typeof unit.input === "object" && "spec" in unit.input ? unit.input : null;
   });
   expect(planning.spec).toBe(APPROVED_SPEC);
+  expect("tasks" in planning ? planning.tasks : null).toEqual({ tasks: [{ id: "task-a", description: "Build the thing.", requirement_ids: ["req-a"] }] });
   await api("POST", `/api/runs/${segment(run_id)}/cancel`, { request_id: crypto.randomUUID() });
 }, 90_000);
 

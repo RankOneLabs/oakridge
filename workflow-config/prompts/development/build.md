@@ -22,6 +22,8 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 5. When all subgoals are committed, push the branch and open a PR (see below), then publish the two artifacts in order.
 6. Keep this task turn open until tests and both publications finish. If a command moves to the background, wait for its result in this turn; do not end the turn merely to wait for a notification.
 
+Record the commit you built as the required `head_sha` in the `build_result` body. Read the current worktree HEAD after the final build commit and tests; publish that exact SHA with the result.
+
 ## Push branch and open PR
 
 After all commits are complete, use the gated-review MCP tools to publish the branch:

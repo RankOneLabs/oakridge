@@ -1,7 +1,7 @@
 # The development workflow uses shared decisions, workers and inferred dependencies.
 #
 #   prepare         code worker repository.prepare per repository; creates the run's base branch on origin
-#   analysis        author discusses blockers and warnings; operator approves the revised spec
+#   analysis        author discusses blockers and warnings; operator reviews the revised spec and tasks
 #   planning        planner agent + operator review; validate: cohorts, repositories, graph
 #   briefs          one shared writer session across plan cohorts, with a separate review per brief
 #   implementation  one cohort per brief, after its dependencies, four at a time:
@@ -43,8 +43,10 @@ schemas:
     proposed_spec_updates: list(spec_update)
   spec_finding: { id: ident, description: text, severity: severity }
   requirement: { id: ident, description: text, status: requirement_status }
-  spec_update: { section: text, change: text, reason: text }
+  spec_update: { section: text, change: text, reason: text, finding_ids: list(ident) }
   requirement_status: enum(implementable, blocked, ambiguous)
+  task: { id: ident, description: text, requirement_ids: list(ident) }
+  tasks_body: { tasks: list(task) }
 
   plan_body:
     summary: text
@@ -61,8 +63,10 @@ schemas:
     depends_on: list(ident)
     description: optional(text)
     files_in_scope: list(text)
-    decisions: list(text)
-    acceptance_criteria: list(text)
+    decisions: list(plan_decision)
+    acceptance_criteria: list(plan_criterion)
+  plan_decision: { id: ident, text: text }
+  plan_criterion: { id: ident, text: text, task_ids: list(ident), decision_ids: list(ident) }
 
   brief_body:
     cohort_id: ident
@@ -73,13 +77,14 @@ schemas:
     files_in_scope: list(text)
     decisions_made: list(brief_decision)
     approaches_rejected: list(rejected_approach)
-    acceptance_criteria: list(text)
+    acceptance_criteria: list(plan_criterion)
     next_action: text
-  brief_decision: { decision: text, rationale: text }
-  rejected_approach: { approach: text, reason: text }
+  brief_decision: { id: ident, decision: text, rationale: text }
+  rejected_approach: { id: ident, approach: text, reason: text, decision_ids: list(ident) }
 
   build_body:
     repository_key: optional(ident)
+    head_sha: text
     summary: text
     changed_files: list(text)
     tests: test_evidence
@@ -94,15 +99,18 @@ schemas:
   build_metadata: { cohort_id: optional(ident), session_id: optional(ident), branch: optional(ident) }
 
   assessment_body:
+    head_sha: text
     verdict: enum(pass, pass_with_notes, fail)
     findings: list(assessment_finding)
     test_evidence: optional(test_evidence)
     recommended_next_actions: list(text)
   assessment_finding:
+    criterion_id: optional(ident)
     criterion: optional(text)
     status: optional(enum(met, not_met, partial))
-    evidence: optional(text)
+    evidence: list(evidence_ref)
     description: optional(text)
+  evidence_ref: { kind: "enum(file, test, output)", ref: text, detail: optional(text) }
 
   pr_body:
     pr_url: text
@@ -156,6 +164,7 @@ run:
       stage: planning
       input:
         spec: analysis.outcome.spec
+        tasks: analysis.outcome.tasks
         repositories: input.repositories
         repository_key: input.primary_repository_key
         workspace: "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
@@ -212,6 +221,7 @@ stages:
     artifacts:
       analysis: { schema: analysis_body }
       spec: { schema: text }
+      tasks: { schema: tasks_body }
     workers:
       author:
         kind: agent
@@ -226,6 +236,13 @@ stages:
         inputs: { original_spec: input.spec, approved_analysis: latest(analysis) }
         workspace: repository(input.workspace)
         creates: [spec]
+      task_editor:
+        kind: agent
+        when: approved(spec)
+        prompts: { initial: development/analysis-to-tasks.md, revise: development/analysis-to-tasks-revise.md }
+        inputs: { revised_spec: latest(spec), approved_analysis: latest(analysis) }
+        workspace: repository(input.workspace)
+        creates: [tasks]
     reviews:
       analysis_review:
         of: analysis
@@ -239,11 +256,17 @@ stages:
         prompt: development/spec-review.md
         inputs: { original_spec: input.spec, approved_analysis: latest(analysis), revised_spec: latest(spec) }
         decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the revised specification change?" } } } }
-    done_when: approved(analysis) and approved(spec)
-    outcome: { spec: latest(spec) }
+      tasks_review:
+        of: tasks
+        by: operator
+        prompt: development/tasks-review.md
+        inputs: { revised_spec: latest(spec), tasks: latest(tasks) }
+        decisions: { set: accept_or_request, overrides: { request_changes: { fields: { feedback: "What must the task list change?" } } } }
+    done_when: approved(analysis) and approved(spec) and approved(tasks)
+    outcome: { spec: latest(spec), tasks: latest(tasks) }
 
   planning:
-    input: { spec: text, repositories: list(repository), repository_key: ident, workspace: workspace }
+    input: { spec: text, tasks: tasks_body, repositories: list(repository), repository_key: ident, workspace: workspace }
     artifacts:
       plan:
         schema: plan_body
@@ -258,7 +281,7 @@ stages:
       planner:
         kind: agent
         prompts: { initial: development/plan.md, revise: development/plan-revise.md }
-        inputs: { spec: input.spec, repository_key: input.repository_key }
+        inputs: { spec: input.spec, tasks: input.tasks, repository_key: input.repository_key }
         workspace: repository(input.workspace)
         creates: [plan]
     reviews:
