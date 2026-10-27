@@ -118,12 +118,14 @@ export function deriveStatus(input: StatusInput): { readonly run: RunStatus; rea
   return { run: "pending", stage: "pending" };
 }
 
-/** Aggregate child units, allowing only unfinished work to choose between running and parked. */
-export function selectAggregateStatus(statuses: readonly StageStatus[]): StageStatus {
+/** Aggregate child run statuses before cancellation is projected to a failed stage unit. */
+export function selectAggregateStatus(statuses: readonly RunStatus[]): StageStatus {
   if (statuses.includes("failed")) return "failed";
-  const unfinished = statuses.filter((status) => status !== "complete");
+  const unfinished = statuses.filter((status) => status !== "complete" && status !== "cancelled");
   if (unfinished.includes("running")) return "running";
   if (unfinished.includes("parked")) return "parked";
+  // A stage has no cancelled status; show a cancelled child as failed once no work is live.
+  if (statuses.includes("cancelled")) return "failed";
   if (statuses.length > 0 && statuses.every((status) => status === "complete")) return "complete";
   return "pending";
 }
@@ -232,7 +234,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
   return ok([...stages].map(([name, members]) => {
-    const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).stage);
+    const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).run);
     const status = selectAggregateStatus(statuses);
     const stageUnits: StageUnit[] = members.map((unit) => {
       return { unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
@@ -259,18 +261,20 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   if (units.some((unit) => unit.run_id !== run.run_id)) return fail("run snapshot", "unit belongs to another run");
   const grouped = unitToStages(units);
   if (!grouped.ok) return grouped;
-  const unitStatuses = units.filter((unit) => unit.stage !== null).map((unit) => deriveStatus(statusInputOf(unit)).stage);
+  const unitStatuses = units.map((unit) => deriveStatus(statusInputOf(unit)).run);
+  const childStatuses = units.filter((unit) => unit.stage !== null).map((unit) => deriveStatus(statusInputOf(unit)).run);
   const rootStatus = deriveStatus({ status: run.status, attention: null, attempts: [], decisions: [] }).run;
   const hasFailedUnit = unitStatuses.includes("failed");
   const isStuck = rootStatus === "running" && hasFailedUnit;
+  const hasLiveChild = childStatuses.some((status) => status !== "complete" && status !== "cancelled");
   const status: RunStatus = rootStatus === "cancelled" ? "cancelled"
-    : isStuck ? "running" : selectAggregateStatus(unitStatuses);
+    : isStuck ? "running" : hasLiveChild ? selectAggregateStatus(childStatuses) : rootStatus;
   const root = units.find((unit) => unit.stage === null);
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
   return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
-    stages: grouped.value, parked_count: unitStatuses.filter((item) => item === "parked").length,
+    stages: grouped.value, parked_count: childStatuses.filter((item) => item === "parked").length,
     updated_at: run.updated_at, is_stuck: isStuck, epic_profile: null });
 }
 export function runSummary(detail: RunDetail, run: OperatorRunView): RunSummary {

@@ -5,7 +5,7 @@ import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import { withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
-import type { StageStatus } from "../types";
+import type { RunStatus, StageStatus } from "../types";
 import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, parseCompositeId, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
@@ -20,13 +20,19 @@ const cohort: OperatorUnitView = (() => {
   if (!selected) throw new Error("captured fixture lacks a cohort review");
   return selected;
 })();
+const rootUnit: OperatorUnitView = (() => {
+  const selected = units.find((unit) => unit.stage === null);
+  if (!selected) throw new Error("captured fixture lacks the root unit");
+  return selected;
+})();
 
-function childWithStatus(status: StageStatus, index: number, stage = "cohort"): OperatorUnitView {
+function childWithStatus(status: RunStatus, index: number, stage = "cohort"): OperatorUnitView {
   const unitStatus: OperatorUnitView["status"] = status === "complete" ? { kind: "done", outcome: null }
-    : status === "pending" ? { kind: "not_started" } : { kind: "active" };
+    : status === "cancelled" ? { kind: "cancelled" }
+      : status === "pending" ? { kind: "not_started" } : { kind: "active" };
   return withUnitFields(cohort, {
     unit_id: `${cohort.unit_id}-${index}`, unit_key: `${stage}-${index}`, collection_key: `${stage}-${index}`, stage,
-    status: unitStatus, is_terminal: status === "complete",
+    status: unitStatus, is_terminal: status === "complete" || status === "cancelled",
     attention: status === "parked" ? { kind: "waiting", reason: "awaiting review" }
       : status === "failed" ? { kind: "stalled", detail: "worker failed" } : null,
     decisions: status === "parked" ? cohort.decisions : [], attempts: [], artifacts: [],
@@ -34,7 +40,7 @@ function childWithStatus(status: StageStatus, index: number, stage = "cohort"): 
 }
 
 describe("selectAggregateStatus", () => {
-  it.each<{ name: string; statuses: StageStatus[]; expected: StageStatus }>([
+  it.each<{ name: string; statuses: RunStatus[]; expected: StageStatus }>([
     { name: "running with pending", statuses: ["running", "pending"], expected: "running" },
     { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expected: "running" },
     { name: "running with parked", statuses: ["running", "parked"], expected: "running" },
@@ -43,6 +49,9 @@ describe("selectAggregateStatus", () => {
     { name: "all completed", statuses: ["complete", "complete"], expected: "complete" },
     { name: "completed with running", statuses: ["complete", "complete", "running"], expected: "running" },
     { name: "completed with parked", statuses: ["complete", "complete", "parked"], expected: "parked" },
+    { name: "cancelled with running", statuses: ["cancelled", "running"], expected: "running" },
+    { name: "cancelled with parked", statuses: ["cancelled", "parked"], expected: "parked" },
+    { name: "cancelled after all work ends", statuses: ["complete", "cancelled"], expected: "failed" },
     { name: "failure with completed and pending", statuses: ["failed", "complete", "pending"], expected: "failed" },
     { name: "no children", statuses: [], expected: "pending" },
   ])("aggregates $name as $expected", ({ statuses, expected }) => {
@@ -51,20 +60,30 @@ describe("selectAggregateStatus", () => {
 });
 
 describe("child status aggregation", () => {
-  it.each<{ name: string; statuses: StageStatus[]; expected: StageStatus; parkedCount: number }>([
-    { name: "one running and one pending", statuses: ["running", "pending"], expected: "running", parkedCount: 0 },
-    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expected: "running", parkedCount: 0 },
-    { name: "parked with no running", statuses: ["parked", "pending"], expected: "parked", parkedCount: 1 },
-    { name: "unstarted children", statuses: ["pending", "pending"], expected: "pending", parkedCount: 0 },
-    { name: "all completed", statuses: ["complete", "complete"], expected: "complete", parkedCount: 0 },
-    { name: "completed children with running", statuses: ["complete", "complete", "running"], expected: "running", parkedCount: 0 },
-    { name: "completed children with parked", statuses: ["complete", "complete", "parked"], expected: "parked", parkedCount: 1 },
-  ])("uses $expected for $name at stage and run level", ({ statuses, expected, parkedCount }) => {
+  it.each<{ name: string; statuses: RunStatus[]; expectedStage: StageStatus | null; expectedRun: RunStatus;
+    parkedCount: number; rootStatus?: OperatorRunView["status"]; rootUnit?: OperatorUnitView; isStuck?: boolean }>([
+    { name: "one running and one pending", statuses: ["running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "several running and pending", statuses: ["running", "pending", "running", "pending"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "parked with no running", statuses: ["parked", "pending"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "unstarted children", statuses: ["pending", "pending"], expectedStage: "pending", expectedRun: "pending", parkedCount: 0 },
+    { name: "all completed with a completed root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "complete",
+      parkedCount: 0, rootStatus: { kind: "done", outcome: null } },
+    { name: "all completed with an active root", statuses: ["complete", "complete"], expectedStage: "complete", expectedRun: "running", parkedCount: 0 },
+    { name: "completed children with running", statuses: ["complete", "complete", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "completed children with parked", statuses: ["complete", "complete", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "cancelled child with running", statuses: ["cancelled", "running"], expectedStage: "running", expectedRun: "running", parkedCount: 0 },
+    { name: "cancelled child with parked", statuses: ["cancelled", "parked"], expectedStage: "parked", expectedRun: "parked", parkedCount: 1 },
+    { name: "only terminal children including cancellation", statuses: ["complete", "cancelled"], expectedStage: "failed", expectedRun: "running", parkedCount: 0 },
+    { name: "only an active root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0, rootUnit },
+    { name: "a failed stage-null root unit", statuses: [], expectedStage: null, expectedRun: "running", parkedCount: 0,
+      rootUnit: withUnitFields(rootUnit, { attention: { kind: "stalled", detail: "root failed" } }), isStuck: true },
+  ])("uses the child and root statuses for $name", ({ statuses, expectedStage, expectedRun, parkedCount, rootStatus, rootUnit, isStuck }) => {
     const children = statuses.map((status, index) => childWithStatus(status, index));
-    const stages = unitToStages(children);
-    const detail = runSnapshot(run, children);
-    expect(stages.ok && detail.ok && [stages.value[0]?.status, detail.value.status, detail.value.parked_count])
-      .toEqual([expected, expected, parkedCount]);
+    const stageUnits = rootUnit ? [rootUnit, ...children] : children;
+    const stages = unitToStages(stageUnits);
+    const detail = runSnapshot(rootStatus ? { ...run, status: rootStatus } : run, stageUnits);
+    expect(stages.ok && detail.ok && [stages.value[0]?.status ?? null, detail.value.status, detail.value.is_stuck,
+      detail.value.parked_count]).toEqual([expectedStage, expectedRun, isStuck ?? false, parkedCount]);
   });
 
   it("keeps failed ahead of complete and pending outside the active-root stuck case", () => {
