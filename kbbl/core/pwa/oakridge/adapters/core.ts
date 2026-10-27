@@ -1,6 +1,7 @@
 import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
 import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
 import { isWebUrl } from "../lib/pr-summary";
+import { parseRepositoryKey } from "../repository-inputs";
 
 export type AdapterResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly operation: string; readonly detail: string } };
 export const ok = <T>(value: T): AdapterResult<T> => ({ ok: true, value });
@@ -62,7 +63,7 @@ export const repositoryKeyOf = (unit: OperatorUnitView): RepositoryKey | null =>
   const input = objectValue(unit.input);
   const key = textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
     ?? textValue(objectValue(input?.cohort)?.repository_key) ?? textValue(input?.repository_key);
-  return key as RepositoryKey | null;
+  return key === null ? null : parseRepositoryKey(key);
 };
 const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
   const input = objectValue(unit.input);

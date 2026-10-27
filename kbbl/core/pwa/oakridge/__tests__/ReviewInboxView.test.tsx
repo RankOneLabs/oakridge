@@ -105,10 +105,15 @@ describe("ReviewInboxView", () => {
       .toEqual(["api · Build API · api", "web · Build UI · web"]);
   });
 
-  it("does not show a repository chip for an analysis item", async () => {
-    renderInbox({ cohorts: [], items: [{ ...inbox.items[0], id: "analysis-review", stage_name: "analysis",
-      cohort_key: null, brief_title: null, repository_key: null }] });
-    await screen.findByTestId("or-review-inbox-item");
+  it("names analysis and planning items by unit id when they have no attention label", async () => {
+    const scalarItem = { ...inbox.items[0], cohort_key: null, brief_title: null, repository_key: null };
+    renderInbox({ cohorts: [], items: [
+      { ...scalarItem, id: "analysis-review", stage_name: "analysis", unit_id: "analysis-unit" },
+      { ...scalarItem, id: "planning-review", stage_name: "planning", unit_id: "planning-unit" },
+    ] });
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "analysis-unit" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "planning-unit" })).toBeTruthy();
     expect(screen.queryByTestId("or-inbox-repository")).toBeNull();
   });
 

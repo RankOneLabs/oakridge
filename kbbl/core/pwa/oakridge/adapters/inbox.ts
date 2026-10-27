@@ -1,7 +1,7 @@
 import type { OperatorInboxItem, OperatorRunInboxBatchEntry, OperatorUnitView } from "../operator-contracts";
 import type { CohortLifecycle, CohortLifecycleSummary, ReviewInbox, ReviewInboxItem, ReviewInboxItemKind } from "../types";
 import { selectUnitAttentionLabel, type UnitAttentionLabelInput } from "../lib/run-attention";
-import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, fail, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
+import { artifactId, artifactRevisionId, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isDisplayedReviewDecision, isVisibleDevelopmentArtifact, objectValue, ok, repositoryKeyOf, statusInputOf, textValue, type AdapterResult } from "./core";
 
 /** This table describes only the six-stage development workflow. */
 const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
@@ -44,7 +44,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
   const cohorts: CohortLifecycleSummary[] = [];
   for (const unit of cohortUnits) {
     const attention = unitAttentionLabelInput(unit);
-    if (!attention.repository_key) return fail("classify development inbox", `missing repository key for ${unit.unit_id}`);
+    // A malformed unit must not hide the rest of the run's attention items.
+    if (!attention.repository_key) continue;
     const unitItems = entry.items.filter((item) => item.unit_id === unit.unit_id);
     const name = unit.collection_key ?? unit.unit_key;
     const stageId = compositeId({ kind: "stage", runId: entry.run_id, unitId: unit.unit_id, name: unit.stage! });
@@ -101,8 +102,8 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
         const blocker = byId.get(id);
-        return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) : id;
-      }) }];
+        return blocker ? selectUnitAttentionLabel(unitAttentionLabelInput(blocker)) || blocker.unit_id : id;
+      }).filter((label) => label.length > 0) }];
   });
   return ok({ cohorts, items });
 }

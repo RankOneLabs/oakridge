@@ -52,7 +52,7 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
     <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
         <span className="or-work-item__eyebrow">{workLabel(item)}</span>
-        {identity && <h3>{identity}</h3>}
+        <h3>{identity || item.unit_id}</h3>
         {context && <p>{context}</p>}
         {item.repository_key && <div className="mt-2"><Chip tone="neutral" testId="or-inbox-repository">Repository: {item.repository_key}</Chip></div>}
         {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}

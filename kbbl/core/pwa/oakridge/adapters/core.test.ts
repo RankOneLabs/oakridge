@@ -309,10 +309,29 @@ describe("v2 development adapters", () => {
       repositoryKeyOf(prepare), repositoryKeyOf(integration), analysisItem?.repository_key, planningItem?.repository_key])
       .toEqual([null, "app", "app", "app", "app", "app", null, "app"]);
   });
-  it("rejects a cohort summary whose declared repository input is missing", () => {
+  it("keeps inbox work and other cohort summaries when one repository input is missing", () => {
     const withoutRepository = withUnitFields(cohort, { input: {} });
-    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [] }, [withoutRepository]);
-    expect(result.ok).toBe(false);
+    const other = units.find((unit) => unit.stage === "cohort" && unit.unit_id !== cohort.unit_id);
+    if (!other) throw new Error("captured fixture lacks another cohort");
+    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
+      { kind: "waiting", run_id: run.run_id, unit_id: cohort.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+    ] }, [withoutRepository, other]);
+    expect(result.ok && [result.value.cohorts.map((summary) => summary.unit_id), result.value.items[0]?.repository_key])
+      .toEqual([[other.collection_key], null]);
+  });
+  it("uses an analysis blocker's unit id when it has no attention label", () => {
+    const analysis = units.find((unit) => unit.stage === "analysis");
+    if (!analysis) throw new Error("captured fixture lacks an analysis unit");
+    const blocked = withUnitFields(cohort, { depends_on: [analysis.unit_id] });
+    const result = classifyDevelopmentInbox({ run_id: run.run_id, items: [
+      { kind: "waiting", run_id: run.run_id, unit_id: blocked.unit_id, reason: "awaiting prerequisite", label: "Awaiting prerequisite" },
+    ] }, [blocked, analysis]);
+    expect(result.ok && result.value.items[0]?.blocked_by).toEqual([analysis.unit_id]);
+  });
+  it("parses repository keys from untrusted unit input", () => {
+    const padded = withUnitFields(cohort, { input: { repository_key: "  app  " } });
+    const blank = withUnitFields(cohort, { input: { repository_key: "  " } });
+    expect([repositoryKeyOf(padded), repositoryKeyOf(blank)]).toEqual(["app", null]);
   });
   it("shows one recovery item per failed brief when each has a retry and a stalled diagnostic", () => {
     const briefUnits = ["first", "second"].map((name) => withUnitFields(cohort, {
