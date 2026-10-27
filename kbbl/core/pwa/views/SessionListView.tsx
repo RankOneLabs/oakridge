@@ -15,18 +15,21 @@ import type { SessionRunGroup } from "../../acp/pwa-session-order";
 
 import { SessionRow } from "../components/organisms/SessionRow";
 import { FeedbackMessage } from "../components/atoms/FeedbackMessage";
+import { Button } from "../components/atoms/Button";
 import { SessionUnitHeading } from "../components/molecules/SessionUnitHeading";
 import {
   NewSessionForm,
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
+import { useHideEndedSessions } from "../hooks/useHideEndedSessions";
 import { useRun } from "../oakridge/hooks/useRun";
 import { useRuns } from "../oakridge/hooks/useRuns";
 import {
   selectSessionRunTitle,
   selectSessionStageName,
 } from "../lib/session";
+import { selectBulkHideActionLabel, selectBulkHideEligibleSessions, selectBulkHideFailureMessage } from "../lib/session-bulk-hide";
 
 interface StartSessionBody {
   resume_from?: string;
@@ -122,6 +125,18 @@ export function SessionListView({
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
   const [orderingTick, setOrderingTick] = useState(0);
+  const [isBulkHideArmed, setIsBulkHideArmed] = useState(false);
+  const bulkHide = useHideEndedSessions();
+  const eligibleCount = useMemo(
+    () => selectBulkHideEligibleSessions([...sessions.values()]).length,
+    [sessions],
+  );
+  const bulkHideLabel = selectBulkHideActionLabel(eligibleCount, isBulkHideArmed);
+  useEffect(() => {
+    if (!isBulkHideArmed) return;
+    const timeout = setTimeout(() => setIsBulkHideArmed(false), 4000);
+    return () => clearTimeout(timeout);
+  }, [isBulkHideArmed]);
   const visibleSessions = useMemo(
     () => [...sessions.values()].filter((session) => session.archivedAt === null),
     [sessions],
@@ -245,6 +260,23 @@ export function SessionListView({
           resetSignal={resetSignal}
           onSubmit={(values) => { void startSession(values); }}
         />
+        {eligibleCount > 0 && <Button
+          variant={isBulkHideArmed ? "armed" : "secondary"}
+          className="self-start"
+          disabled={bulkHide.isPending}
+          aria-label={bulkHideLabel}
+          onClick={() => {
+            if (!isBulkHideArmed) { setIsBulkHideArmed(true); return; }
+            setIsBulkHideArmed(false);
+            void bulkHide.mutateAsync([...sessions.values()]);
+          }}
+        >{bulkHideLabel}</Button>}
+        {bulkHide.data && <FeedbackMessage testId="bulk-hide-outcome">
+          Archived {bulkHide.data.archivedSids.length} of {bulkHide.data.eligibleCount}: {bulkHide.data.archivedSids.length ? bulkHide.data.archivedSids.join(", ") : "none"}.
+        </FeedbackMessage>}
+        {bulkHide.data?.failures.map((failure) => <FeedbackMessage key={failure.sid} tone="danger">
+          {selectBulkHideFailureMessage(failure)}
+        </FeedbackMessage>)}
         {pendingError && <FeedbackMessage tone="danger" className="input-error">error: {pendingError}</FeedbackMessage>}
       </div>
       {totalCount === 0 ? (

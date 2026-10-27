@@ -74,6 +74,13 @@ describe("AssessmentViewer", () => {
     expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
   });
 
+  test("keeps the derived needs-attention criteria read-only", () => {
+    renderViewer();
+    const attention = within(screen.getByTestId("or-assessment-attention"));
+    expect(attention.queryByRole("checkbox")).toBeNull();
+    expect(attention.queryByRole("button", { name: /Edit/ })).toBeNull();
+  });
+
   test("renders an integration assessment without cohort artifact warnings", () => {
     render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: null }}
       result={{ kind: "missing", cohort_label: null }} cohortLabel="assay" isIntegration />);

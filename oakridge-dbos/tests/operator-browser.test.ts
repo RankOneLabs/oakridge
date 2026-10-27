@@ -50,8 +50,10 @@ function sourceRoutes(path: string, content: string): readonly SourceRoute[] {
         function paths(argument: ts.Node): void {
           const literal = routeLiteral(argument);
           if (literal !== null) {
-            // kbbl owns configuration, session inventory, and the run-activity compatibility proxy.
+            // kbbl owns configuration, session inventory, ACP session input,
+            // and the run-activity compatibility proxy.
             if (literal === "/oakridge/config" || (literal === "/sessions" && method === "GET")
+              || (literal === "/sessions/:value/input" && method === "POST")
               || literal.startsWith("/oakridge/api/run_events?")) return;
             const normalized = literal.replace(/^\/oakridge\/api(?=\/)/, "").split("?")[0];
             if (normalized?.startsWith("/")) routes.push({ method, path: normalized, source: path });
@@ -93,10 +95,12 @@ test("route guard detects dead routes in helpers, pagination and direct fetches"
     fetch_page(cursor === null ? "/api/runs" : \`/api/runs?cursor=\${cursor}\`);
     fetch("/oakridge/api/missing-fetch");
     fetch("/oakridge/api/health");
+    fetch(\`/sessions/\${sid}/input\`, { method: "POST" });
+    fetch(\`/sessions/\${sid}/missing\`, { method: "POST" });
     request("DELETE", "/missing-delete");
   `);
   expect(routes.filter(({ method, path }) => !matchRoute(method, path)).map((route) => route.path))
-    .toEqual(["/missing-get", "/missing-post/:value", "/missing-fetch", "/missing-delete"]);
+    .toEqual(["/missing-get", "/missing-post/:value", "/missing-fetch", "/sessions/:value/missing", "/missing-delete"]);
 });
 
 test("operator listing, pinning and digest launch have explicit authority", () => {

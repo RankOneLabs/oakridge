@@ -509,13 +509,25 @@ export function resolveThread(threadId: string): Promise<{ thread_id: string; st
 
 export async function postAtomEdit(revisionId: string, req: PostAtomEditRequest): Promise<{ artifact_id: string }> {
   const location = await revisionLocation(revisionId);
-  const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId)!;
+  const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId);
+  if (!revision) throw new Error(`oakridge ${revisionId}: revision unavailable`);
   const body = unwrapAdapter(revisionId, replaceJsonPointer(revision.body, req.anchor, req.prev_value, req.new_value));
+  return publishArtifactRevision(location, body);
+}
+
+/** Publish a whole successor body for edits an anchor replacement cannot express. */
+export async function putArtifactRevisionBody(revisionId: string, body: unknown): Promise<{ artifact_id: string }> {
+  return publishArtifactRevision(await revisionLocation(revisionId), body);
+}
+
+async function publishArtifactRevision(location: RevisionLocation, body: unknown): Promise<{ artifact_id: string }> {
+  const revision = location.detail.revisions.find((candidate) => candidate.id === location.revisionId);
+  if (!revision) throw new Error(`oakridge ${location.revisionId}: revision unavailable`);
   const path = `${unitPath(location.runId, location.unitId)}/artifacts/${encodeURIComponent(location.artifactKey)}`;
   committed(await oakridgePutBody<OperatorIngressResponse>(path, { request_id: crypto.randomUUID(), body,
     predecessor: location.revisionId, subject: revision.subject_id }), path);
   invalidateCachedRunUnits(location.runId);
-  return { artifact_id: revisionId };
+  return { artifact_id: location.revisionId };
 }
 
 const reviewItemView = (item: OperatorReviewItemRow, artifactId: string, anchor: string): ReviewItem => ({
