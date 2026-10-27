@@ -46,10 +46,14 @@ const BUILDER_ATTEMPT: RunSessionAttempt = {
   cleanup_state: "not_needed",
 };
 
-function renderHandoff(status: SessionSnapshot["status"] = "idle", attempts: RunSessionAttempt[] = [BUILDER_ATTEMPT]) {
+function renderHandoff(status: SessionSnapshot["status"] | null = "idle", attempts: RunSessionAttempt[] = [BUILDER_ATTEMPT], hasSessionInventory = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(["oakridge", "run", "run-1", "sessions"], attempts);
-  useStore.setState({ sessions: new Map([["builder-sid" as Sid, { sid: "builder-sid", status } as SessionSnapshot]]) });
+  useStore.setState({
+    sessions: status === null ? new Map() : new Map([["builder-sid" as Sid, { sid: "builder-sid", status } as SessionSnapshot]]),
+    hasInboxSnapshot: hasSessionInventory,
+    hasSessionSeed: hasSessionInventory,
+  });
   const onEdit = vi.fn();
   const onSubmitBody = vi.fn();
   render(<QueryClientProvider client={client}><BuilderHandoffPanel assessment={HANDOFF_ASSESSMENT}
@@ -253,6 +257,18 @@ describe("assessment builder handoff", () => {
     renderHandoff(status);
     expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(status === "provisioning" ? /still starting/ : /Use Resume/)).toBeTruthy();
+  });
+
+  it("explains a builder session missing from a completed inventory without claiming it ended", () => {
+    renderHandoff(null);
+    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/missing from the session inventory.*use Resume if/)).toBeTruthy();
+  });
+
+  it("waits for the session inventory before diagnosing a missing builder session", () => {
+    renderHandoff(null, [BUILDER_ATTEMPT], false);
+    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Waiting for the builder session inventory.")).toBeTruthy();
   });
 
   it("blocks send when there is no matching builder session", () => {

@@ -33,6 +33,7 @@ export function BuilderHandoffPanel({ assessment, body, runId, cohortLabel, edit
   const sessions = useRunSessions(runId);
   const builder = selectCohortBuilderSession(sessions.data ?? [], cohortLabel);
   const status = useStore((state) => builder ? state.sessions.get(builder.session_id as Sid)?.status ?? null : null);
+  const hasSessionInventory = useStore((state) => state.hasInboxSnapshot && state.hasSessionSeed);
   const handoff = useSendToBuilder(builder?.session_id ?? null);
   const preview = composeHandoffText(items);
   const reason = preview.length === 0 ? "Include at least one next action to send."
@@ -40,7 +41,9 @@ export function BuilderHandoffPanel({ assessment, body, runId, cohortLabel, edit
     : status === "provisioning" ? "The builder session is still starting."
     : status === "ended" || status === "fenced" || status === "failed"
       ? "Session input is refused for an ended, failed or fenced session. Use Resume to start a new session."
-      : status === null ? "Waiting for the builder session status."
+      : status === null ? hasSessionInventory
+        ? "Builder session is missing from the session inventory. Check whether it was removed; use Resume if an ended, failed or fenced session is still available."
+        : "Waiting for the builder session inventory."
       : null;
 
   function remove(index: number): void {
