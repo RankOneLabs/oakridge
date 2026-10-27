@@ -1,6 +1,7 @@
 import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
-import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
+import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
 import { isWebUrl } from "../lib/pr-summary";
+import { parseRepositoryKey } from "../repository-inputs";
 
 export type AdapterResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly operation: string; readonly detail: string } };
 export const ok = <T>(value: T): AdapterResult<T> => ({ ok: true, value });
@@ -48,9 +49,9 @@ export const artifactId = (artifact: OperatorArtifactView): string => compositeI
 export const artifactRevisionId = (artifact: OperatorArtifactView, revisionId: string): string =>
   compositeId({ kind: "artifact", runId: artifact.run_id, unitId: artifact.unit_id, name: `${artifact.artifact_key}:${revisionId}` });
 export const artifactKeyFromComposite = (name: string): string => name.split(":", 1)[0];
-const objectValue = (value: unknown): { readonly [key: string]: unknown } | null =>
+export const objectValue = (value: unknown): { readonly [key: string]: unknown } | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as { readonly [key: string]: unknown } : null;
-const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
+export const textValue = (value: unknown): string | null => typeof value === "string" && value.trim() ? value : null;
 /** The unit view includes the latest revision body, so merge links need no
  * extra artifact request. Only web URLs become clickable in frozen v1 views. */
 export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null => {
@@ -58,10 +59,11 @@ export const developmentPullRequestUrl = (unit: OperatorUnitView): string | null
   const url = textValue(objectValue(body)?.pr_url);
   return url && isWebUrl(url) ? url : null;
 };
-const repositoryKeyOf = (unit: OperatorUnitView): string | null => {
+export const repositoryKeyOf = (unit: OperatorUnitView): RepositoryKey | null => {
   const input = objectValue(unit.input);
-  return textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
-    ?? textValue(objectValue(input?.cohort)?.repository_key);
+  const key = textValue(objectValue(input?.repository)?.key) ?? textValue(objectValue(input?.brief)?.repository_key)
+    ?? textValue(objectValue(input?.cohort)?.repository_key) ?? textValue(input?.repository_key);
+  return key === null ? null : parseRepositoryKey(key);
 };
 const worktreeOf = (unit: OperatorUnitView): StageUnit["worktree"] => {
   const input = objectValue(unit.input);

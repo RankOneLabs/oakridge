@@ -11,6 +11,7 @@ import type { OperatorUnitView } from "../operator-contracts";
 import { compositeId } from "../adapters/core";
 
 const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
+const API_REPOSITORY_KEY = parseRepositoryKey("api")!;
 const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort" && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"));
 if (!capturedCohort) throw new Error("captured fixture lacks an assessment review");
 const approveDecision = capturedCohort.decisions.find((decision) => decision.key === "accept");
@@ -32,9 +33,9 @@ function renderInbox(data: ReviewInbox, onSelectRun = vi.fn(), onSelectArtifact 
 }
 
 const inbox: ReviewInbox = {
-  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", title: "Build API", lifecycle: "building", completion: { build_complete: false, assessment_complete: false }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
-    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
-  items: [{ id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
+  cohorts: [{ id: "run-1:api", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "api", cohort_key: "api", brief_title: "Build API", repository_key: API_REPOSITORY_KEY, title: "Build API", lifecycle: "building", completion: { build_complete: false, assessment_complete: false }, artifact_revision_id: null, updated_at: "2026-08-07T00:00:00Z" },
+    { id: "run-1:web", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", cohort_key: "web", brief_title: "Build UI", repository_key: WEB_REPOSITORY_KEY, title: "Build UI", lifecycle: "artifact_review", completion: { build_complete: true, assessment_complete: false }, artifact_revision_id: "revision-web", updated_at: "2026-08-07T01:00:00Z" }],
+  items: [{ id: "review-web", kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v6", stage_instance_id: "stage-build", stage_name: "build", unit_id: "web", cohort_key: "web", brief_title: "Build UI", repository_key: WEB_REPOSITORY_KEY, lifecycle: "artifact_review", title: "Build UI", artifact_revision_id: approveTarget, gate_id: compositeId({ kind: "gate", runId: "run-1", unitId: capturedCohort.unit_id, name: "assessment_review" }), resume_actions: ["approve", "request_assessment_changes"], blocked_by: [] }],
 };
 
 const runId = "run-1";
@@ -77,6 +78,43 @@ describe("ReviewInboxView", () => {
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
     expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(1);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "web · Build UI · web" })).toBeTruthy();
+    expect(screen.getByTestId("or-inbox-repository").textContent).toBe("Repository: web");
+  });
+
+  it("keeps separate decisions from one repository visible", async () => {
+    const second = { ...inbox.items[0], id: "review-api", unit_id: "api", cohort_key: "api", brief_title: "Build API" };
+    renderInbox({ cohorts: [], items: [inbox.items[0], second] });
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "web · Build UI · web" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "api · Build API · web" })).toBeTruthy();
+  });
+
+  it("explains an empty attention queue", async () => {
+    renderInbox({ cohorts: [], items: [] });
+    expect((await screen.findByTestId("or-review-inbox-empty")).textContent).toContain("Nothing needs a decision");
+  });
+
+  it("distinguishes underway cohorts by brief and repository", async () => {
+    renderInbox({
+      items: [],
+      cohorts: [inbox.cohorts[0], { ...inbox.cohorts[1], lifecycle: "building" }],
+    });
+    const rows = await screen.findAllByTestId("or-cohort-lifecycle-card");
+    expect(rows.map((row) => row.querySelector("strong")?.textContent))
+      .toEqual(["api · Build API · api", "web · Build UI · web"]);
+  });
+
+  it("names analysis and planning items by unit id when they have no attention label", async () => {
+    const scalarItem = { ...inbox.items[0], cohort_key: null, brief_title: null, repository_key: null };
+    renderInbox({ cohorts: [], items: [
+      { ...scalarItem, id: "analysis-review", stage_name: "analysis", unit_id: "analysis-unit" },
+      { ...scalarItem, id: "planning-review", stage_name: "planning", unit_id: "planning-unit" },
+    ] });
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "analysis-unit" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "planning-unit" })).toBeTruthy();
+    expect(screen.queryByTestId("or-inbox-repository")).toBeNull();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -175,7 +213,7 @@ describe("ReviewInboxView", () => {
   });
 
   it("keeps a decided item in place so newly arrived work never slides under the pointer", async () => {
-    const briefGate = (id: string, title: string) => ({ ...inbox.items[0], id: `${runId}:${id}:approve`, unit_id: id, title,
+    const briefGate = (id: string, title: string) => ({ ...inbox.items[0], id: `${runId}:${id}:approve`, unit_id: id, cohort_key: id, brief_title: null, repository_key: null, title,
       gate_id: compositeId({ kind: "gate", runId, unitId: id, name: "assessment_review" }), artifact_revision_id: `revision-${id}` });
     const briefA = briefGate("brief-a", "Brief A");
     const briefB = briefGate("brief-b", "Brief B");
@@ -202,7 +240,7 @@ describe("ReviewInboxView", () => {
     await screen.findByTestId("or-review-inbox-settled-item");
     const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
       .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
-    expect(rows).toEqual(["settled:brief-a", "live:brief-b", "live:assessment"]);
+    expect(rows).toEqual(["settled:brief-a", "live:brief-b · Cohort a · app", "live:assessment · Cohort a · app"]);
   });
 
   it("shows automatic merged completion from durable reconciliation", async () => {
