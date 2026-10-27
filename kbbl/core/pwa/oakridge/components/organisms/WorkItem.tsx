@@ -1,7 +1,8 @@
 import { Button } from "../../../components/atoms/Button";
+import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
-import { selectAttentionContext } from "../../lib/run-attention";
+import { selectAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
 
@@ -44,13 +45,16 @@ export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelec
   const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionId = item.artifact_revision_id;
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
+  const identity = selectUnitAttentionLabel(item);
+  const context = selectAttentionContext(item);
 
   return (
     <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
         <span className="or-work-item__eyebrow">{workLabel(item)}</span>
-        <h3>{item.unit_id}</h3>
-        <p>{selectAttentionContext(item)}</p>
+        {identity && <h3>{identity}</h3>}
+        {context && <p>{context}</p>}
+        {item.repository_key && <div className="mt-2"><Chip tone="neutral" testId="or-inbox-repository">Repository: {item.repository_key}</Chip></div>}
         {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}
         <div className="or-work-item__links">
           {artifactRevisionId && <Button variant="link" onClick={() => onSelectArtifact(artifactRevisionId)} data-testid="or-inbox-artifact-link">Open full review</Button>}

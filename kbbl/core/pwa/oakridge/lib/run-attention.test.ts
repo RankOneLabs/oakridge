@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ReviewInboxItem } from "../types";
-import { selectAttentionContext, selectReviewCohortKey, selectRunAttentionCounts } from "./run-attention";
+import { selectAttentionContext, selectReviewCohortKey, selectRunAttentionCounts, selectUnitAttentionLabel } from "./run-attention";
 
 function inboxItem(
   id: string,
@@ -19,6 +19,9 @@ function inboxItem(
     stage_instance_id: "stage-1",
     stage_name: "build",
     unit_id: "unit-1",
+    cohort_key: null,
+    brief_title: null,
+    repository_key: null,
     lifecycle: "building",
     resume_actions: [],
     blocked_by: blockedBy,
@@ -66,11 +69,33 @@ it("keeps cohort identities separate across stages", () => {
     .toEqual(["gate stage", "other stage"]);
 });
 
-it("names the run, stage and artifact of attention work", () => {
-  expect(selectAttentionContext({ run_title: "import validation", title: "Brief", artifact_key: "brief" }))
-    .toBe("import validation · Brief · brief");
+it("names the run and artifact around attention work", () => {
+  expect(selectAttentionContext({ run_title: "import validation", artifact_key: "brief" }))
+    .toBe("import validation · brief");
 });
 
 it("leaves out context the work does not have", () => {
-  expect(selectAttentionContext({ run_title: null, title: "Cohort" })).toBe("Cohort");
+  expect(selectAttentionContext({ run_title: null, artifact_key: null })).toBe("");
+});
+
+describe("selectUnitAttentionLabel", () => {
+  const complete = { cohort_key: "api", brief_title: "Build the API", repository_key: "oakridge" as ReviewInboxItem["repository_key"] };
+
+  it("names the cohort, brief and repository in that order", () => {
+    expect(selectUnitAttentionLabel(complete)).toBe("api · Build the API · oakridge");
+  });
+
+  it.each([
+    [{ ...complete, cohort_key: null }, "Build the API · oakridge"],
+    [{ ...complete, brief_title: null }, "api · oakridge"],
+    [{ ...complete, repository_key: null }, "api · Build the API"],
+    [{ ...complete, brief_title: "" }, "api · oakridge"],
+    [{ ...complete, brief_title: "   " }, "api · oakridge"],
+  ])("omits one absent or empty part", (input, expected) => {
+    expect(selectUnitAttentionLabel(input)).toBe(expected);
+  });
+
+  it("returns an empty string when every part is absent", () => {
+    expect(selectUnitAttentionLabel({ cohort_key: null, brief_title: null, repository_key: null })).toBe("");
+  });
 });

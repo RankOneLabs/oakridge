@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { ReviewInbox } from "../types";
+import type { CohortLifecycleSummary, ReviewInbox } from "../types";
 import { useOakridgeInvalidationStream } from "./useOakridgeInvalidationStream";
 
 const pending = vi.hoisted(() => ({ resolutions: [] as Array<(inbox: ReviewInbox) => void> }));
@@ -45,7 +45,8 @@ test("normal run events refresh the inbox and an older response cannot overwrite
   expect(pending.resolutions).toHaveLength(2);
   const older: ReviewInbox = { cohorts: [], items: [] };
   const newer: ReviewInbox = { cohorts: [{ id: "new-review", run_id: "run-1", workflow_name: "development",
-    stage_instance_id: "stage", stage_name: "cohort", unit_id: "unit", lifecycle: "merge_confirmation",
+    stage_instance_id: "stage", stage_name: "cohort", unit_id: "unit", cohort_key: "unit", brief_title: null,
+    repository_key: "oakridge" as CohortLifecycleSummary["repository_key"], lifecycle: "merge_confirmation",
     completion: { build_complete: true, assessment_complete: true },
     updated_at: "2026-10-16T00:00:00Z" }], items: [] };
   await act(async () => { pending.resolutions[1]?.(newer); await Promise.resolve(); });

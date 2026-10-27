@@ -544,7 +544,9 @@ export interface CohortLifecycleSummary {
   stage_instance_id: string;
   stage_name: string;
   unit_id: string;
-  repository_key?: RepositoryKey | null;
+  cohort_key: string | null;
+  brief_title: string | null;
+  repository_key: RepositoryKey;
   title?: string | null;
   run_title?: string | null;
   lifecycle: CohortLifecycle;
@@ -578,7 +580,9 @@ export interface ReviewInboxItem {
   stage_instance_id: string;
   stage_name: string;
   unit_id: string;
-  repository_key?: RepositoryKey | null;
+  cohort_key: string | null;
+  brief_title: string | null;
+  repository_key: RepositoryKey | null;
   lifecycle: CohortLifecycle;
   title?: string | null;
   run_title?: string | null;
