@@ -1,0 +1,249 @@
+{
+  "run_id": "run-38bd8c2fad299e90",
+  "rows": [
+    {
+      "id": "2833828e-b4c7-40ec-a8c6-40155ead85a1",
+      "commit_txid": "985",
+      "created_at": "2026-10-23T17:00:56.450Z",
+      "payload": {
+        "kind": "launched",
+        "input": {
+          "spec": "fixture replay",
+          "title": "Observation slice",
+          "repositories": [
+            {
+              "key": "oakridge"
+            }
+          ],
+          "final_merge_policy": "require_merge",
+          "primary_repository_key": "oakridge"
+        }
+      },
+      "run_id": "run-38bd8c2fad299e90",
+      "unit_id": null
+    },
+    {
+      "id": "b2e67640-841a-48ff-9cee-501b749c6e72",
+      "commit_txid": "1715",
+      "created_at": "2026-10-23T17:23:49.818Z",
+      "payload": {
+        "kind": "revision_published",
+        "unit": "run-38bd8c2fad299e90/planning",
+        "artifact": "plan",
+        "predecessor": null,
+        "subject": null,
+        "by": "e07082e4e0d6c45c2819364499ea2195",
+        "body": {
+          "summary": "Plan the observation slice",
+          "cohorts": [
+            {
+              "id": "slice",
+              "repository_key": "oakridge",
+              "title": "Observation slice",
+              "scope": "Capture and grade the slice",
+              "depends_on": [],
+              "files_in_scope": [
+                "observation/tests/vertical-slice.test.ts"
+              ],
+              "decisions": [
+                {
+                  "id": "decision-capture",
+                  "text": "Keep captured bodies immutable"
+                }
+              ],
+              "acceptance_criteria": [
+                {
+                  "id": "criterion-lineage",
+                  "text": "Lineage is explicit",
+                  "task_ids": [],
+                  "decision_ids": [
+                    "decision-capture"
+                  ]
+                },
+                {
+                  "id": "criterion-export",
+                  "text": "Export is frozen",
+                  "task_ids": [],
+                  "decision_ids": []
+                }
+              ]
+            }
+          ],
+          "dependency_order": [
+            "slice"
+          ],
+          "scope": {
+            "in_scope": [
+              "observation"
+            ],
+            "out_of_scope": []
+          },
+          "acceptance_criteria": [
+            "Legacy operator wording without a producer id"
+          ],
+          "risks": [
+            {
+              "description": "Missing evidence",
+              "mitigation": "Record an incomplete evidence set"
+            }
+          ]
+        }
+      },
+      "run_id": "run-38bd8c2fad299e90",
+      "unit_id": "run-38bd8c2fad299e90/planning"
+    },
+    {
+      "id": "1a84012e-155d-47b1-8719-42deef16135f",
+      "commit_txid": "1768",
+      "created_at": "2026-10-23T17:28:13.261Z",
+      "payload": {
+        "kind": "operator_decided",
+        "unit": "run-38bd8c2fad299e90/planning",
+        "review": "plan_review",
+        "target": "run-38bd8c2fad299e90/planning:plan:1",
+        "payload": {
+          "feedback": "accepted for fixture replay"
+        },
+        "decision": "accept"
+      },
+      "run_id": "run-38bd8c2fad299e90",
+      "unit_id": "run-38bd8c2fad299e90/planning"
+    },
+    {
+      "id": "e366513b-8cd9-4779-b951-0dbb19cdcce4",
+      "commit_txid": "1877",
+      "created_at": "2026-10-23T17:29:56.967Z",
+      "payload": {
+        "kind": "revision_published",
+        "unit": "run-38bd8c2fad299e90/briefs/slice",
+        "artifact": "brief",
+        "predecessor": null,
+        "subject": null,
+        "by": "a82e63730ecfb1af066d6ccf9c9ed808",
+        "body": {
+          "cohort_id": "slice",
+          "repository_key": "oakridge",
+          "title": "Observation slice",
+          "depends_on": [],
+          "goal": "Capture, grade and export",
+          "files_in_scope": [
+            "observation/tests/vertical-slice.test.ts"
+          ],
+          "decisions_made": [
+            {
+              "id": "decision-capture",
+              "decision": "Keep captured bodies immutable",
+              "rationale": "Preserve provenance"
+            }
+          ],
+          "approaches_rejected": [
+            {
+              "id": "rejected-live",
+              "approach": "Use a provider",
+              "reason": "Offline suite",
+              "decision_ids": [
+                "decision-capture"
+              ]
+            }
+          ],
+          "acceptance_criteria": [
+            {
+              "id": "criterion-lineage",
+              "text": "Trace a shared criterion id",
+              "task_ids": [],
+              "decision_ids": [
+                "decision-capture"
+              ]
+            },
+            {
+              "id": "criterion-export",
+              "text": "Freeze source and evidence references",
+              "task_ids": [],
+              "decision_ids": []
+            }
+          ],
+          "next_action": "Implement"
+        }
+      },
+      "run_id": "run-38bd8c2fad299e90",
+      "unit_id": "run-38bd8c2fad299e90/briefs/slice"
+    },
+    {
+      "id": "ccc6688f-6377-405a-bba6-8c10070d5d6d",
+      "commit_txid": "4528",
+      "created_at": "2026-10-23T18:12:22.135Z",
+      "payload": {
+        "kind": "revision_published",
+        "unit": "run-38bd8c2fad299e90/implementation/slice",
+        "artifact": "assessment",
+        "predecessor": null,
+        "subject": null,
+        "by": "af6b1ef4c22828e565ba23943f1e76c8",
+        "body": {
+          "head_sha": "1111111111111111111111111111111111111111",
+          "verdict": "pass_with_notes",
+          "findings": [
+            {
+              "criterion_id": "criterion-lineage",
+              "criterion": "Trace a shared criterion id",
+              "status": "met",
+              "evidence": [
+                {
+                  "kind": "test",
+                  "ref": "vertical-slice.test.ts"
+                }
+              ]
+            },
+            {
+              "criterion_id": "missing-target",
+              "criterion": "Unresolved producer link",
+              "status": "partial",
+              "evidence": []
+            },
+            {
+              "criterion_id": null,
+              "criterion": "Unlinked assessment note",
+              "status": "met",
+              "evidence": []
+            }
+          ],
+          "recommended_next_actions": []
+        }
+      },
+      "run_id": "run-38bd8c2fad299e90",
+      "unit_id": "run-38bd8c2fad299e90/implementation/slice"
+    }
+  ],
+  "failure_cases": {
+    "duplicate_item": {
+      "id": "criterion-lineage",
+      "text": "Conflicting duplicate"
+    },
+    "reordered_criterion_ids": [
+      "criterion-export",
+      "criterion-lineage"
+    ],
+    "revision_update": {
+      "id": "criterion-export",
+      "text": "Edited successor wording"
+    },
+    "missing_source_ref": "missing-target",
+    "conflicting_duplicate": {
+      "revision_id": "plan-1",
+      "summary": "A different body under the original revision id"
+    },
+    "incomplete_evidence": {
+      "reason": "repository snapshot missing"
+    },
+    "repeated_delivery": {
+      "event_id": "b2e67640-841a-48ff-9cee-501b749c6e72"
+    },
+    "grader_failure": {
+      "question_id": "runner-failure"
+    },
+    "human_correction": {
+      "first": false,
+      "corrected": true
+    }
+  }
+}

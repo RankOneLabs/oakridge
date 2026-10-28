@@ -1,0 +1,15 @@
+{
+  "cohort_id": "slice",
+  "repository_key": "oakridge",
+  "title": "Observation slice",
+  "depends_on": [],
+  "goal": "Capture, grade and export",
+  "files_in_scope": ["observation/tests/vertical-slice.test.ts"],
+  "decisions_made": [{ "id": "decision-capture", "decision": "Keep captured bodies immutable", "rationale": "Preserve provenance" }],
+  "approaches_rejected": [{ "id": "rejected-live", "approach": "Use a provider", "reason": "Offline suite", "decision_ids": ["decision-capture"] }],
+  "acceptance_criteria": [
+    { "id": "criterion-lineage", "text": "Trace a shared criterion id", "task_ids": [], "decision_ids": ["decision-capture"] },
+    { "id": "criterion-export", "text": "Freeze source and evidence references", "task_ids": [], "decision_ids": [] }
+  ],
+  "next_action": "Implement"
+}
