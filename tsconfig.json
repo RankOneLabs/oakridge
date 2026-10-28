@@ -1,9 +1,10 @@
 {
-  // Editor workspace references. Authoritative checks: bun run typecheck (two independent packages).
+  // Editor workspace references. Authoritative checks: bun run typecheck (three independent packages).
   "files": [],
   "references": [
     { "path": "./kbbl" },
-    { "path": "./oakridge-dbos" }
+    { "path": "./oakridge-dbos" },
+    { "path": "./observation" }
   ],
   "compilerOptions": {
     "target": "ESNext",
