@@ -4,7 +4,7 @@ import type { JsonValue } from "../domain/primitives";
 import { oakridgeDevelopmentCatalogue } from "../projection/catalogue/oakridge-development";
 import { selectRevision, type ExtractorDefinition, type LinkReference, type SelectedItem, type RelationType } from "../projection/extractor";
 import { extractionIssue, issueId, type ExtractionIssue } from "../projection/issues";
-import { humanRelation, producerRelation, relationId, type RelationProposal } from "../projection/relations";
+import { humanRelation, producerRelation, relationId, revisionAnchorId, subjectRelation, type RelationProposal } from "../projection/relations";
 import { occurrenceId } from "../projection/occurrence-id";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSourceRevision } from "./db-types";
@@ -91,14 +91,41 @@ async function targetOccurrence(trx: DatabaseTransaction, tenant: TenantScope,
   return eligible[0]?.occurrence_id ?? null;
 }
 async function saveRelation(trx: DatabaseTransaction, tenant: TenantScope, proposal: RelationProposal): Promise<void> {
+  const source_occurrence_id = proposal.source.kind === "occurrence" ? proposal.source.id : null;
+  const source_logical_item_id = proposal.source.kind === "logical_item" ? proposal.source.id : null;
+  const target_occurrence_id = proposal.target.kind === "occurrence" ? proposal.target.id : null;
+  const target_logical_item_id = proposal.target.kind === "logical_item" ? proposal.target.id : null;
+  const unresolved_target_ref = proposal.target.kind === "unresolved" ? proposal.target.ref : null;
   await trx.insertInto("observation.item_relation").values({ ...tenant, relation_id: relationId(proposal),
-    source_occurrence_id: proposal.source_occurrence_id, source_logical_item_id: null,
-    target_occurrence_id: proposal.target_occurrence_id, target_logical_item_id: null,
-    unresolved_target_ref: proposal.unresolved_target_ref, type: proposal.type, asserted_by: proposal.asserted_by,
+    source_occurrence_id, source_logical_item_id, target_occurrence_id, target_logical_item_id,
+    unresolved_target_ref, type: proposal.type, asserted_by: proposal.asserted_by,
     evidence_ref: proposal.evidence_ref, algorithm: proposal.algorithm, algorithm_version: proposal.algorithm_version })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "relation_id"]).doUpdateSet({
-      target_occurrence_id: proposal.target_occurrence_id, unresolved_target_ref: proposal.unresolved_target_ref,
+      target_occurrence_id, target_logical_item_id, unresolved_target_ref,
     })).execute();
+}
+
+async function saveRevisionAnchor(trx: DatabaseTransaction, tenant: TenantScope,
+  revision: Selectable<ObservationSourceRevision>): Promise<string> {
+  const logical_item_id = revisionAnchorId(revision);
+  await trx.insertInto("observation.logical_item").values({ ...tenant, logical_item_id,
+    run_id: revision.run_id, scope: `artifact_revision/${revision.artifact_kind}`,
+    producer_local_id: revision.revision_id })
+    .onConflict((conflict) => conflict.columns(["producer", "namespace", "logical_item_id"]).doNothing()).execute();
+  return logical_item_id;
+}
+
+async function saveSubjectRelation(trx: DatabaseTransaction, tenant: TenantScope,
+  revision: Selectable<ObservationSourceRevision>): Promise<boolean> {
+  if (revision.artifact_kind !== "assessment" || !revision.subject_id) return false;
+  const source = await saveRevisionAnchor(trx, tenant, revision);
+  const targetRevision = await trx.selectFrom("observation.source_revision").selectAll()
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("run_id", "=", revision.run_id).where("artifact_kind", "=", "build_result")
+    .where("revision_id", "=", revision.subject_id).executeTakeFirst();
+  const target = targetRevision ? await saveRevisionAnchor(trx, tenant, targetRevision) : null;
+  await saveRelation(trx, tenant, subjectRelation(source, target, revision.subject_id));
+  return true;
 }
 
 /** Replaying a captured revision is idempotent; L0 body and digest are only read. */
@@ -138,6 +165,7 @@ export function projectRevision(db: Database, tenant: TenantScope, revision_id: 
       await saveRelation(trx, tenant, producerRelation(selection.occurrence_id, link, target ?? null));
       relationCount++;
     }
+    if (await saveSubjectRelation(trx, tenant, revision)) relationCount++;
     return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
   });
 }
@@ -201,11 +229,20 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", item.run_id).execute();
     const logicalByOccurrence = new Map(occurrences.map((row) => [row.occurrence_id, row.logical_item_id]));
-    const relations = await trx.selectFrom("observation.item_relation").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .orderBy("relation_id", "asc").execute();
+    const relations = (await sql<Selectable<ObservationItemRelation>>`
+      SELECT rel.* FROM observation.item_relation rel
+      WHERE rel.producer = ${tenant.producer} AND rel.namespace = ${tenant.namespace}
+        AND (
+          EXISTS (SELECT 1 FROM observation.item_occurrence source_item
+            WHERE source_item.producer = rel.producer AND source_item.namespace = rel.namespace
+              AND source_item.occurrence_id = rel.source_occurrence_id AND source_item.run_id = ${item.run_id})
+          OR EXISTS (SELECT 1 FROM observation.logical_item source_item
+            WHERE source_item.producer = rel.producer AND source_item.namespace = rel.namespace
+              AND source_item.logical_item_id = rel.source_logical_item_id AND source_item.run_id = ${item.run_id})
+        )
+      ORDER BY rel.relation_id ASC`.execute(trx)).rows;
     const reached = new Set<string>([occurrence_id]);
-    const reachedLogical = new Set<string>(item.logical_item_id ? [item.logical_item_id] : []);
+    const reachedLogical = new Set<string>([revisionAnchorId(item), ...(item.logical_item_id ? [item.logical_item_id] : [])]);
     const connected = new Set<string>();
     let changed = true;
     while (changed) {

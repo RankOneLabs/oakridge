@@ -194,3 +194,35 @@ integration("lineage marks equal predecessor bodies as republications and edits 
   expect((await lineageFor("plan-3"))?.republication).toEqual({
     predecessor_revision_id: "oakridge:projection-test:plan-2", is_republication: false });
 }));
+
+integration("assessment subject links to the captured build-result revision as producer evidence", async () => scratch(async (db) => {
+  await insertRevision(db, "build-1", "build_result", await fixture("build-result"), 1);
+  await projectRevision(db, tenant, "build-1");
+  await insertRevision(db, "assessment-1", "assessment", await fixture("assessment"), 2,
+    "run-1", "run-1/implementation/alpha", null, "build-1");
+  await projectRevision(db, tenant, "assessment-1");
+  await projectRevision(db, tenant, "assessment-1");
+  const finding = (await items(db)).find((row) => row.revision_id === "assessment-1" && row.item_id_or_path === "/findings/0")!;
+  const app = createApp({ db, credentials });
+  const response = await app.request(`/v1/items/${encodeURIComponent(finding.occurrence_id)}/lineage`,
+    { headers: { authorization: "Bearer read-secret" } });
+  expect(response.status).toBe(200);
+  const lineage = await response.json() as { edges: { type: string; asserted_by: string; evidence_ref: string;
+    source_logical_item_id: string | null; target_logical_item_id: string | null }[] };
+  const subjectEdge = lineage.edges.filter((edge) => edge.evidence_ref === "artifact_revision.subject");
+  expect(subjectEdge).toHaveLength(1);
+  expect(subjectEdge[0]).toMatchObject({ type: "assesses", asserted_by: "producer_explicit",
+    source_logical_item_id: "oakridge:projection-test:run-1:artifact_revision/assessment:assessment-1",
+    target_logical_item_id: "oakridge:projection-test:run-1:artifact_revision/build_result:build-1" });
+
+  await insertRevision(db, "build-foreign", "build_result", await fixture("build-result"), 3, "run-2");
+  await projectRevision(db, tenant, "build-foreign");
+  await insertRevision(db, "assessment-foreign", "assessment", await fixture("assessment"), 4,
+    "run-1", "run-1/implementation/alpha", null, "build-foreign");
+  await projectRevision(db, tenant, "assessment-foreign");
+  const foreignFinding = (await items(db)).find((row) => row.revision_id === "assessment-foreign" && row.item_id_or_path === "/findings/0")!;
+  const foreignLineage = await readLineage(db, tenant, foreignFinding.occurrence_id, { limit: 50, offset: 0 });
+  expect(foreignLineage?.unresolved.some((edge) => edge.evidence_ref === "artifact_revision.subject"
+    && edge.unresolved_target_ref?.includes("build-foreign"))).toBe(true);
+  expect(foreignLineage?.edges.some((edge) => edge.evidence_ref === "artifact_revision.subject")).toBe(false);
+}));
