@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { Client } from "pg";
-import { canonicalDigest, canonicalJson } from "../src/canonical/canonical-json";
+import * as canonicalModule from "../src/canonical/canonical-json";
+import type { CanonicalDigest } from "../src/domain/identity";
+import type { Result } from "../src/domain/primitives";
+
+const { canonicalDigest, canonicalJson } = canonicalModule;
 
 function value(result: ReturnType<typeof canonicalJson>): string {
   if (!result.ok) throw new Error(result.error.detail);
@@ -41,12 +45,24 @@ test("non-integers that need more than 15 significant digits are refused", () =>
   expect(result.ok).toBe(false);
 });
 test("all returned digests carry the algorithm tag", () => {
-  expect(digest(canonicalDigest({ value: 3.5 }))).toMatch(/^canonical-json\/v1:[a-f0-9]{64}$/);
+  type DigestExports = {
+    [Name in keyof typeof canonicalModule as ReturnType<(typeof canonicalModule)[Name]> extends Result<CanonicalDigest, unknown>
+      ? Name : never]: (typeof canonicalModule)[Name]
+  };
+  // A new digest-returning export must be added here or this test stops typechecking.
+  const digestExports: DigestExports = { canonicalDigest };
+  const exportedFunctions = Object.entries(canonicalModule).filter(([, exported]) => typeof exported === "function");
+  expect(Object.keys(digestExports).length).toBeGreaterThan(0);
+  for (const [name] of exportedFunctions) {
+    const exported = digestExports[name as keyof DigestExports];
+    if (exported) expect(digest(exported({ value: 3.5 }))).toMatch(/^canonical-json\/v1:[a-f0-9]{64}$/);
+  }
 });
 
 const databaseUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-const jsonbTest = databaseUrl ? test : test.skip;
+const jsonbTest = databaseUrl || process.env.CI === "true" ? test : test.skip;
 jsonbTest("a body recovered from a PostgreSQL JSONB column keeps its canonical digest", async () => {
+  if (!databaseUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required for observation tests in CI");
   const submitted = '{"z":[{"beta":1.25e-7,"alpha":-0},3],"a":{"\\u00e9":"☃"}}';
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();

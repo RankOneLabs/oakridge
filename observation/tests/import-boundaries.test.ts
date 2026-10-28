@@ -11,7 +11,7 @@ function inject(graph: ModuleGraph, source: string): ModuleGraph {
   const owner = graph.get(entry);
   if (!owner) throw new Error("missing service entry");
   const names = importNames(nodePath, source);
-  const node: ModuleNode = { path: nodePath, source, imports: [], packages: names };
+  const node: ModuleNode = { path: nodePath, imports: [], packages: names };
   const result = new Map(graph);
   result.set(nodePath, node);
   result.set(entry, { ...owner, imports: [...owner.imports, nodePath] });
