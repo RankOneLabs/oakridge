@@ -4,7 +4,7 @@ Analyze the specification against the repository in the current directory. Publi
 
 {{spec}}
 
-Publish the `analysis` artifact with a concise summary, specification sections relied on, findings, requirement statuses, risks, and `proposed_spec_updates`. For each proposed update, name the section, the exact change to make, and why. Use an empty list if the specification needs no change. Identify concrete blockers, warnings, and qualifications with code evidence and proposed resolutions. Empty arrays are valid.
+Publish the `analysis` artifact with a concise summary, specification sections relied on, findings, requirement statuses, risks, and `proposed_spec_updates`. For each proposed update, name the section, the exact change to make, why, and `finding_ids` citing the findings that caused it. Use an empty `finding_ids` list when no finding links to the update; do not infer a link from prose. Use an empty update list if the specification needs no change. Identify concrete blockers, warnings, and qualifications with code evidence and proposed resolutions. Empty arrays are valid.
 
 A finding is `blocking` only when one of these holds:
 

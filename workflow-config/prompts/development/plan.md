@@ -4,6 +4,10 @@ Plan the implementation from the approved specification and the repository in th
 
 {{spec}}
 
+## Approved task list
+
+{{tasks}}
+
 Set every cohort's `repository_key` to `{{repository_key}}`. The run's base
 branch has already been prepared on origin. Do not create, rebase, reset, or
 repair it from this planner session.
@@ -46,6 +50,8 @@ Publish the `plan` artifact. Split the work into cohorts, each with:
 - `repository_key`: the key supplied above
 - `depends_on`: the ids of the cohorts that must merge before it starts, with no cycle
 - its title, scope, files in scope, decisions and acceptance criteria
+
+Give every decision and acceptance criterion an `id` unique within its cohort. A decision has `{ id, text }`; a criterion has `{ id, text, task_ids, decision_ids }`. Cite the task ids each criterion serves in `task_ids` and the ids of its cohort decisions that it rests on in `decision_ids`. Empty id lists mean no link, never an unknown link; do not infer links from prose. An id names a logical item, not its bytes: a deliberately reworded item keeps its id, and a genuinely new item gets a new one. The plan-wide `acceptance_criteria` remains a list of text.
 
 Name at least one cohort. Give a `dependency_order`, the scope in and out, the plan's acceptance criteria and its risks. A plan that breaks these rules is returned to you with what to fix.
 
