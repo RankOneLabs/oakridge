@@ -1,20 +1,20 @@
 import type { FindingSeverity, RequirementStatus } from "../types";
 
-/** Mirrors `SpecFinding` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `spec_finding` in workflow-config/development.yaml. */
 export interface SpecFinding {
   id: string;
   description: string;
   severity: FindingSeverity;
 }
 
-/** Mirrors `SpecRequirement` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `requirement` in workflow-config/development.yaml. */
 export interface SpecRequirement {
   id: string;
   description: string;
   status: RequirementStatus;
 }
 
-/** Mirrors `DevRisk` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `risk` in workflow-config/development.yaml. */
 export interface SpecRisk {
   description: string;
   mitigation: string;
