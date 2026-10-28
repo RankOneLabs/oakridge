@@ -36,3 +36,10 @@ type AttentionContext = Pick<ReviewInboxItem, "run_title" | "artifact_key">;
 export function selectAttentionContext(work: AttentionContext): string {
   return [work.run_title, work.artifact_key].filter((part) => !!part).join(" · ");
 }
+
+type RepositoryAttentionContext = AttentionContext & Pick<ReviewInboxItem, "repository_key">;
+
+/** The repository, run and artifact a piece of review work belongs to. */
+export function selectRepositoryAttentionContext(work: RepositoryAttentionContext): string {
+  return [work.repository_key, selectAttentionContext(work)].filter((part) => !!part).join(" · ");
+}
