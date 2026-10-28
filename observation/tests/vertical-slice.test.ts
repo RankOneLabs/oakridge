@@ -17,6 +17,9 @@ import { buildGraph } from "./dependency-graph";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl ? test : test.skip;
+test("vertical slice requires OAKRIDGE_TEST_DATABASE_URL", () => {
+  expect(serverUrl).toBeTruthy();
+});
 const tenant = { producer: "oakridge", namespace: "run-slice" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
   grade: [{ ...tenant, token: "grade-fixture" }] };

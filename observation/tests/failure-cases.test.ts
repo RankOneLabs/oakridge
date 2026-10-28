@@ -10,6 +10,9 @@ import { listRunItems, readLineage } from "../src/storage/projection-store";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl ? test : test.skip;
+test("failure cases require OAKRIDGE_TEST_DATABASE_URL", () => {
+  expect(serverUrl).toBeTruthy();
+});
 const tenant = { producer: "oakridge", namespace: "failure-cases" };
 const run_id = "run-failure-fixtures";
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
