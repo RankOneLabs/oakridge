@@ -1,4 +1,4 @@
-import type { GradingContext, RunnerResult } from "../storage/grading-store";
+import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { EvaluatorKind } from "../grading/evaluator";
 
 export interface GradeRunner {

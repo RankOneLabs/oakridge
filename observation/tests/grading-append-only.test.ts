@@ -14,8 +14,8 @@ test("the store has no grade update or delete API", () => {
 test("grading schema has no consensus, aggregate, ground truth, latest, or accepted column", async () => {
   const schema = await Bun.file(new URL("../src/storage/migrations/0003_grading.sql", import.meta.url)).text();
   const columns = [...schema.matchAll(/^  (\w+) (?:text|jsonb|boolean|numeric|double precision|integer|bigint|timestamptz)\b/gm)].map((match) => match[1]);
-  for (const forbidden of ["consensus", "aggregate", "ground_truth", "is_latest", "is_accepted"])
-    expect(columns).not.toContain(forbidden);
+  for (const forbidden of ["consensus", "aggregate", "ground_truth", "latest", "accepted"])
+    expect(columns.some((column) => column.includes(forbidden))).toBe(false);
 });
 
 integration("three evaluators coexist and a human correction leaves its predecessor unchanged", async () => scratchGrading(async (db, occurrence_id) => {
@@ -37,7 +37,10 @@ integration("three evaluators coexist and a human correction leaves its predeces
   const first = await gradingStore.recordHumanGrade(db, tenant, { ...identity, evaluator_definition_id: "human", details });
   expect(first.ok).toBe(true);
   if (!first.ok || !first.value.observation) throw new Error("missing first human observation");
-  const before = JSON.stringify(first.value.observation);
+  const beforePage = await gradingStore.listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 });
+  const beforeObservation = beforePage?.items.find((item) => item.observation.observation_id === first.value.observation?.observation_id)?.observation;
+  if (!beforeObservation) throw new Error("missing first human observation on grades read");
+  const before = JSON.stringify(beforeObservation);
   const correction = await gradingStore.recordHumanGrade(db, tenant, { ...identity, evaluator_definition_id: "human",
     attempt_label: "correction", details: { ...details, answer: { state: "answered", kind: "boolean", value: true },
       supersedes_observation_id: first.value.observation.observation_id as GradeObservationId } });

@@ -1,5 +1,5 @@
 import type { GradeRunner } from "../ports/grade-runner";
-import type { EvaluationOutcome } from "../storage/grading-store";
+import type { EvaluationOutcome } from "../grading/runner";
 
 /** Replay fixture: the evaluator definition pins both answer and distribution. */
 export const stubModelRunner: GradeRunner = {

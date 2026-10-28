@@ -8,6 +8,8 @@ The five grading tables live in `observation/src/storage/migrations/0003_grading
 
 An observation retains the evaluator's answer as `{state:"answered",kind,value}` for `boolean`, `choice`, `ordinal`, `numeric`, `text`, or `structured`. `{state:"abstain"|"unclear",kind,reason}` is explicit and does not stand for a negative answer. Probabilities and confidence accompany the raw answer. A normalized score is null unless the writer supplies a `DecisionPolicy` id and version with it; readers must not infer a default normalization. Human corrections insert a new observation with `supersedes_observation_id`, leaving the first row readable.
 
+This pass has no `DecisionPolicy` registry. Human intake checks that a normalized score has both a policy id and version, but does not verify that the policy exists or that its normalization produced the submitted score. Consumers must treat those stamps as caller-supplied provenance until a separately versioned policy registry and verification path are added.
+
 A failed grader or a repository snapshot question with incomplete evidence creates an `evaluation_execution` with `status:"failed"` and an error, but creates no grade observation. The failed execution is returned by the evaluation request and remains readable through the storage API. The grades read lists only observations.
 
 ## HTTP routes

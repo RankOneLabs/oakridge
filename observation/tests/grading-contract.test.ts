@@ -101,4 +101,9 @@ integration("missing and cross-namespace references refuse grades without partia
     expect(response.status).toBe(422);
   }
   expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.total).toBe(0);
+  const executionCount = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+    .select((eb) => eb.fn.countAll<number>().as("count"))
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .executeTakeFirstOrThrow());
+  expect(Number(executionCount.count)).toBe(0);
 }));

@@ -1,9 +1,10 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { EvaluationIdentity } from "../grading/execution";
+import type { GradingContext } from "../grading/runner";
 import { deterministicChecker } from "../runners/deterministic-checker";
 import { stubModelRunner } from "../runners/stub-model";
-import { registerGradingContext, runGrade, type GradingContext } from "../storage/grading-store";
+import { registerGradingContext, runGrade } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";

@@ -1,4 +1,4 @@
-import type { GradeListingItem } from "../storage/grading-store";
+import type { GradeListingItem } from "../grading/observation";
 
 export type ExperimentFormat = "jsonl" | "assay";
 export interface ExperimentExporter {

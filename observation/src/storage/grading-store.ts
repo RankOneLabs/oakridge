@@ -7,35 +7,14 @@ import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { evaluatorIdentity, type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, type EvaluationIdentity } from "../grading/execution";
-import type { GradeAnswer, GradeObservation } from "../grading/observation";
+import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
+import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
 
-export interface GradingError { readonly operation: string; readonly entity_id: string; readonly detail: string }
-export interface GradingContext { readonly question: QuestionDefinition; readonly evidence: EvidenceSet; readonly evaluator: EvaluatorDefinition }
 export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {}
-export interface EvaluationOutcome {
-  readonly answer: GradeAnswer;
-  readonly probabilities?: Readonly<Record<string, number>> | null;
-  readonly confidence?: number | null;
-  readonly model_usage?: JsonValue | null;
-  readonly cost?: number | null;
-  readonly external_execution_id?: string | null;
-  readonly provider_link?: string | null;
-  readonly reproducibility_metadata?: JsonValue | null;
-  readonly comments?: string | null;
-  readonly rationale?: string | null;
-  readonly quality_flags?: readonly string[];
-}
-export type RunnerResult = Result<EvaluationOutcome, GradingError>;
-export interface GradeListingItem {
-  readonly observation: Selectable<ObservationGradeObservation>;
-  readonly answer: GradeAnswer;
-  readonly evaluator: EvaluatorDefinition;
-  readonly execution: Selectable<ObservationEvaluationExecution>;
-}
 export interface GradePage extends Page { readonly total: number; readonly items: readonly GradeListingItem[] }
 
 const json = (value: JsonValue) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
@@ -307,21 +286,17 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
         .onRef("x.namespace", "=", "g.namespace").onRef("x.execution_id", "=", "g.execution_id"))
       .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "g.producer")
         .onRef("d.namespace", "=", "g.namespace").onRef("d.evaluator_definition_id", "=", "g.evaluator_definition_id"))
-      .select(["g.observation_id", "x.execution_id", "d.evaluator_definition_id"])
+      .select([
+        sql<GradeListingItem["observation"]>`to_jsonb(g)`.as("observation"),
+        sql<GradeListingItem["execution"]>`to_jsonb(x)`.as("execution"),
+        sql<GradeListingItem["evaluator"]>`to_jsonb(d)`.as("evaluator"),
+      ])
       .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace)
       .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
-    const items: GradeListingItem[] = [];
-    for (const row of rows) {
-      const observation = await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("observation_id", "=", row.observation_id).executeTakeFirstOrThrow();
-      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("execution_id", "=", row.execution_id).executeTakeFirstOrThrow();
-      const evaluator = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", row.evaluator_definition_id).executeTakeFirstOrThrow();
-      items.push({ observation, answer: observation.answer_payload as unknown as GradeAnswer,
-        evaluator: { ...evaluator, kind: evaluator.kind as EvaluatorDefinition["kind"] }, execution });
-    }
+    const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
+      observation, answer: observation.answer_payload, evaluator, execution,
+    }));
     return { items, total: Number(count.count), ...page };
   });
 }

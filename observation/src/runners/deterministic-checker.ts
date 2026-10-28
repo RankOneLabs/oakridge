@@ -1,5 +1,5 @@
 import { canonicalJson } from "../canonical/canonical-json";
-import type { GradingContext, RunnerResult } from "../storage/grading-store";
+import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 
 /** A pure equality check over the first pinned evidence content and the question's expected value. */
