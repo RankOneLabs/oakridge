@@ -2,12 +2,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const migrationPaths = ["0001_observation.sql", "0002_projection.sql"]
+const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql"]
   .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
 const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 8) throw new Error(`expected eight observation tables, found ${tables.length}`);
+if (tables.length !== 13) throw new Error(`expected thirteen observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',
@@ -21,10 +21,10 @@ for (const [, tableName, definition] of tables) {
   names.push(`  "observation.${tableName}": ${interfaceName};`);
   lines.push(`export interface ${interfaceName} {`);
   for (const line of definition.split("\n")) {
-    const column = /^  (\w+) (text|jsonb|timestamptz|boolean)\b(.*)$/.exec(line);
+    const column = /^  (\w+) (text|jsonb|timestamptz|boolean|bigint|integer|numeric|double precision)\b(.*)$/.exec(line);
     if (!column) continue;
     const [, name, sqlType, modifiers] = column;
-    const type = sqlType === "text" ? "string" : sqlType === "jsonb" ? "JsonValue" : sqlType === "timestamptz" ? "Date" : "boolean";
+    const type = sqlType === "text" ? "string" : sqlType === "jsonb" ? "JsonValue" : sqlType === "timestamptz" ? "Date" : sqlType === "boolean" ? "boolean" : "number";
     const nullable = !modifiers?.includes("NOT NULL") && !modifiers?.includes("PRIMARY KEY");
     const columnType = `${type}${nullable ? " | null" : ""}`;
     lines.push(`  ${name}: ${modifiers?.includes("DEFAULT ") ? `Generated<${columnType}>` : columnType};`);

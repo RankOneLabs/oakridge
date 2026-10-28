@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { buildGraph, importNames, observationBoundaryViolations, reachable, type ModuleGraph, type ModuleNode } from "./dependency-graph";
 
 const repositoryRoot = resolve(import.meta.dir, "../..");
@@ -41,3 +42,22 @@ for (const packageName of ["oakridge-dbos", "kbbl"]) {
     expect(observationBoundaryViolations(reachable(bad, serviceEntry), repositoryRoot).length).toBeGreaterThan(0);
   });
 }
+
+test("running grading service imports only its declared local infrastructure packages", () => {
+  const allowed = new Set(["hono", "kysely", "pg", "zod"]);
+  const external = reachable(graph, serviceEntry).flatMap((node) => node.packages)
+    .filter((name) => !name.startsWith("node:") && !name.startsWith("bun:"));
+  expect(external.filter((name) => !allowed.has(name))).toEqual([]);
+  const manifest = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"));
+  expect(Object.keys(manifest.dependencies).sort()).toEqual([...allowed].sort());
+  for (const forbidden of ["langfuse", "openai", "@anthropic-ai/sdk", "@google/generative-ai", "jig", "assay"])
+    expect(external).not.toContain(forbidden);
+});
+
+test("grading ports do not depend on storage modules", () => {
+  for (const name of ["grade-runner", "evaluation-backend", "artifact-source", "experiment-exporter"]) {
+    const entry = resolve(import.meta.dir, `../src/ports/${name}.ts`);
+    const portGraph = buildGraph([entry]);
+    expect(reachable(portGraph, entry).some((node) => node.path.includes("/storage/"))).toBe(false);
+  }
+});

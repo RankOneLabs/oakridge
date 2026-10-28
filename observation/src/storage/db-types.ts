@@ -108,6 +108,101 @@ export interface ObservationExtractionIssue {
   recorded_at: Generated<Date>;
 }
 
+export interface ObservationQuestionDefinition {
+  producer: string;
+  namespace: string;
+  question_id: string;
+  question_version: string;
+  target_item_kinds: JsonValue;
+  input_recipe: JsonValue;
+  response_kind: string;
+  allowed_values: JsonValue | null;
+  missing_evidence_policy: string;
+  abstain_semantics: string;
+  unclear_semantics: string;
+  interpretation_caveats: string;
+  requires_repository_snapshot: boolean;
+}
+
+export interface ObservationEvidenceSet {
+  producer: string;
+  namespace: string;
+  evidence_set_id: string;
+  evidence_refs: JsonValue;
+  is_incomplete: boolean;
+  incompleteness_reason: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface ObservationEvaluatorDefinition {
+  producer: string;
+  namespace: string;
+  evaluator_definition_id: string;
+  kind: string;
+  backend_kind: string;
+  provider: string;
+  model: string | null;
+  prompt_digest: string;
+  config_digest: string;
+  runtime_revision: string;
+  cost_metadata: JsonValue | null;
+  seed: number | null;
+  attempt_controls: JsonValue | null;
+  identity_digest: string;
+}
+
+export interface ObservationEvaluationExecution {
+  producer: string;
+  namespace: string;
+  execution_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  evaluator_definition_id: string;
+  config_digest: string;
+  attempt_label: string;
+  idempotency_digest: string;
+  attempts: Generated<number>;
+  retries: Generated<number>;
+  started_at: Generated<Date>;
+  ended_at: Date | null;
+  status: string;
+  error: string | null;
+  model_usage: JsonValue | null;
+  cost: number | null;
+  external_execution_id: string | null;
+  provider_link: string | null;
+  reproducibility_metadata: JsonValue | null;
+}
+
+export interface ObservationGradeObservation {
+  producer: string;
+  namespace: string;
+  observation_id: string;
+  execution_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  evaluator_definition_id: string;
+  answer_kind: string;
+  answer_state: string;
+  answer_payload: JsonValue;
+  probabilities: JsonValue | null;
+  confidence: number | null;
+  normalized_score: number | null;
+  decision_policy_id: string | null;
+  decision_policy_version: string | null;
+  reviewer_id: string | null;
+  reviewer_details: JsonValue | null;
+  comments: string | null;
+  rationale: string | null;
+  quality_flags: Generated<JsonValue>;
+  supersedes_observation_id: string | null;
+  recorded_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -117,4 +212,9 @@ export interface DB {
   "observation.item_occurrence": ObservationItemOccurrence;
   "observation.item_relation": ObservationItemRelation;
   "observation.extraction_issue": ObservationExtractionIssue;
+  "observation.question_definition": ObservationQuestionDefinition;
+  "observation.evidence_set": ObservationEvidenceSet;
+  "observation.evaluator_definition": ObservationEvaluatorDefinition;
+  "observation.evaluation_execution": ObservationEvaluationExecution;
+  "observation.grade_observation": ObservationGradeObservation;
 }
