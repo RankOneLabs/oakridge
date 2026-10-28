@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "test": "bun test ./tests",
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "storage:generate": "bun scripts/generate-storage-records.ts",
+    "storage:check": "bun scripts/generate-storage-records.ts --check",
+    "start": "bun src/main.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",
