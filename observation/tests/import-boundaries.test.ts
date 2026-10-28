@@ -3,33 +3,41 @@ import { resolve } from "node:path";
 import { buildGraph, importNames, observationBoundaryViolations, reachable, type ModuleGraph, type ModuleNode } from "./dependency-graph";
 
 const repositoryRoot = resolve(import.meta.dir, "../..");
-const entry = resolve(import.meta.dir, "../src/index.ts");
-const graph = buildGraph([entry]);
+const foundationEntry = resolve(import.meta.dir, "../src/index.ts");
+const serviceEntry = resolve(import.meta.dir, "../src/main.ts");
+const graph = buildGraph([foundationEntry, serviceEntry]);
 
 function inject(graph: ModuleGraph, source: string): ModuleGraph {
   const nodePath = resolve(import.meta.dir, "../src/injected.ts");
-  const owner = graph.get(entry);
+  const owner = graph.get(serviceEntry);
   if (!owner) throw new Error("missing service entry");
   const names = importNames(nodePath, source);
   const node: ModuleNode = { path: nodePath, imports: [], packages: names };
   const result = new Map(graph);
   result.set(nodePath, node);
-  result.set(entry, { ...owner, imports: [...owner.imports, nodePath] });
+  result.set(serviceEntry, { ...owner, imports: [...owner.imports, nodePath] });
   return result;
 }
 
-test("the service entry reaches no oakridge-dbos or kbbl modules", () => {
-  expect(observationBoundaryViolations(reachable(graph, entry), repositoryRoot)).toEqual([]);
+for (const entry of [foundationEntry, serviceEntry]) {
+  test(`${entry === serviceEntry ? "running service" : "foundation"} reaches no oakridge-dbos or kbbl modules`, () => {
+    expect(observationBoundaryViolations(reachable(graph, entry), repositoryRoot)).toEqual([]);
+  });
+}
+test("running service reaches storage, HTTP, and ingest modules", () => {
+  const reached = reachable(graph, serviceEntry).map((node) => node.path);
+  for (const module of ["storage/capture-store.ts", "http/sources.ts", "ingest/capture.ts"])
+    expect(reached).toContain(resolve(import.meta.dir, `../src/${module}`));
 });
 for (const packageName of ["oakridge-dbos", "kbbl"]) {
   test(`a reachable import of ${packageName} violates the boundary`, () => {
     const bad = inject(graph, `import ${JSON.stringify(`${packageName}/src/main.ts`)};`);
-    expect(observationBoundaryViolations(reachable(bad, entry), repositoryRoot)).toContainEqual({
+    expect(observationBoundaryViolations(reachable(bad, serviceEntry), repositoryRoot)).toContainEqual({
       path: resolve(import.meta.dir, "../src/injected.ts"), detail: `observation imports ${packageName}/src/main.ts`,
     });
   });
   test(`type-only imports of ${packageName} also violate the boundary`, () => {
     const bad = inject(graph, `import type { Example } from ${JSON.stringify(`${packageName}/example`)};`);
-    expect(observationBoundaryViolations(reachable(bad, entry), repositoryRoot).length).toBeGreaterThan(0);
+    expect(observationBoundaryViolations(reachable(bad, serviceEntry), repositoryRoot).length).toBeGreaterThan(0);
   });
 }
