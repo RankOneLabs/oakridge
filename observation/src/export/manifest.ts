@@ -11,6 +11,7 @@ export type CandidateDisposition =
 
 export interface RedactionReason { readonly path: string; readonly reason: "raw_build_output" | "raw_test_output" | "repository_content" }
 export interface RedactionPolicy {
+  readonly target_name: string;
   readonly allow_raw_build_output: boolean;
   readonly allow_raw_test_output: boolean;
   readonly allow_repository_content: boolean;
@@ -39,7 +40,7 @@ export interface ExportManifest {
 }
 export interface ExportRecord {
   readonly candidate_id: CanonicalDigest;
-  readonly source_revision: { readonly revision_id: string; readonly body_digest: string; readonly body: JsonValue };
+  readonly source_revision: { readonly revision_id: string; readonly artifact_kind: string; readonly body_digest: string; readonly body: JsonValue };
   readonly occurrence: { readonly occurrence_id: string; readonly revision_id: string; readonly selected_value: JsonValue };
   readonly evidence_set: { readonly evidence_set_id: string; readonly evidence_refs: JsonValue;
     readonly is_incomplete: boolean; readonly incompleteness_reason: string | null };

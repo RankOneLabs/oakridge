@@ -54,3 +54,15 @@ CREATE TRIGGER export_manifest_immutable BEFORE UPDATE OR DELETE ON observation.
   FOR EACH ROW EXECUTE FUNCTION observation.reject_export_mutation();
 CREATE TRIGGER export_membership_immutable BEFORE UPDATE OR DELETE ON observation.export_membership
   FOR EACH ROW EXECUTE FUNCTION observation.reject_export_mutation();
+
+CREATE FUNCTION observation.require_new_export_manifest() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM observation.export_manifest m
+    WHERE m.producer = NEW.producer AND m.namespace = NEW.namespace AND m.manifest_id = NEW.manifest_id
+      AND m.xmin::text = pg_current_xact_id()::text) THEN
+    RAISE EXCEPTION 'export membership can only be written with its new manifest';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER export_membership_same_transaction BEFORE INSERT ON observation.export_membership
+  FOR EACH ROW EXECUTE FUNCTION observation.require_new_export_manifest();
