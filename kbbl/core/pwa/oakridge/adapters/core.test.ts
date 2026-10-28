@@ -6,7 +6,7 @@ import planningRevise from "../__fixtures__/v2-planning-revise.json";
 import { withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import type { RunStatus, StageStatus } from "../types";
-import { artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
+import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./inbox";
 import { parseUnitViews } from "./parse";
 import { selectRunSessionRows } from "../lib/run-sessions";
@@ -251,9 +251,16 @@ describe("v2 development adapters", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);
     expect(artifact.ok && artifact.value.component_id).toBe("dev-build-result-viewer");
     expect(artifactTypes().map((type) => type.component_id)).toEqual([
-      "dev-spec-analysis-viewer", "dev-spec-viewer", "dev-plan-viewer", "dev-build-brief-viewer",
+      "dev-spec-analysis-viewer", "dev-spec-viewer", "dev-plan-viewer", "dev-tasks-viewer", "dev-build-brief-viewer",
       "dev-build-result-viewer", "dev-assessment-viewer", "dev-pr-summary-viewer",
     ]);
+  });
+  it("exposes tasks artifacts with the tasks viewer and type id", () => {
+    const artifact = units.flatMap((unit) => unit.artifacts)[0];
+    if (!artifact) throw new Error("captured fixture has no artifact");
+    expect([isVisibleDevelopmentArtifact({ ...artifact, artifact_key: "tasks", schema: "tasks_body" }), artifactType("tasks_body")])
+      .toEqual([true, { id: "dev.tasks", component_id: "dev-tasks-viewer",
+        capabilities: { reviewable: true, commentable: true, atom_editable: true, review_items: true }, anchor_schema: null }]);
   });
   it("retains the cohort label so assessment revisions can find their brief", () => {
     const artifact = revisionToArtifact(sample.artifact as unknown as OperatorArtifactDetail, cohort);

@@ -30,7 +30,7 @@ const APPROVED_ANALYSIS = { summary: "Approved analysis for spec update.", sourc
     { section: "Goal", change: "Use the approved specification.", reason: "The analysis resolved the requirement.", finding_ids: [] },
   ] };
 const REVISED_ANALYSIS = { ...APPROVED_ANALYSIS, summary: "Revised analysis for spec update." };
-const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", brief: "brief_body", build_result: "build_body",
+const BODY_SCHEMAS = { spec: "text", analysis: "analysis_body", plan: "plan_body", tasks: "tasks_body", brief: "brief_body", build_result: "build_body",
   assessment: "assessment_body", pr: "pr_body" } as const;
 interface DevelopmentRunOutcome {
   readonly cohorts: readonly { readonly cohort_id: string }[];
@@ -40,6 +40,7 @@ const VIEWER_COMPONENTS = {
   "dev-spec-analysis-viewer": "SpecAnalysisViewer",
   "dev-spec-viewer": "SpecViewer",
   "dev-plan-viewer": "PlanViewer",
+  "dev-tasks-viewer": "TasksViewer",
   "dev-build-brief-viewer": "BuildBriefViewer",
   "dev-build-result-viewer": "BuildResultReview",
   "dev-assessment-viewer": "AssessmentReview",
@@ -315,7 +316,7 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
     (await (await api("GET", `/api/runs/${segment(run_id)}/units/${segment(unit)}/artifacts/${artifact}`)).json() as { readonly schema: string }).schema;
   const schemas = {
     spec: await schemaOf(unitOf("analysis"), "spec"), analysis: await schemaOf(unitOf("analysis"), "analysis"),
-    plan: await schemaOf(unitOf("planning"), "plan"),
+    plan: await schemaOf(unitOf("planning"), "plan"), tasks: await schemaOf(unitOf("analysis"), "tasks"),
     brief: await schemaOf(unitOf("brief", "a"), "brief"), build_result: await schemaOf(unitOf("cohort", "a"), "build_result"),
     assessment: await schemaOf(unitOf("cohort", "a"), "assessment"),
     integration_assessment: await schemaOf(unitOf("integration"), "assessment"), pr: await schemaOf(unitOf("integration"), "pr"),
