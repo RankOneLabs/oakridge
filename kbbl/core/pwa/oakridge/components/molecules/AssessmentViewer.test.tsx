@@ -5,6 +5,12 @@ import type { Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortId, RepositoryKey } from "../../types";
+import { parseAssessment } from "../../lib/assessment";
+import { readBuildBrief } from "../../lib/build-brief";
+import linkedAssessment from "../../lib/__fixtures__/id-linked-assessment.json";
+import emptyEvidenceAssessment from "../../lib/__fixtures__/empty-evidence-assessment.json";
+import unresolvedAssessment from "../../lib/__fixtures__/unresolved-assessment.json";
+import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
 import { AssessmentViewer } from "./AssessmentViewer";
 
 const brief: BuildBrief = {
@@ -21,6 +27,7 @@ const brief: BuildBrief = {
 };
 
 const result: BuildResult = {
+  head_sha: null,
   repository_key: "assay" as RepositoryKey,
   summary: "Built it.",
   changed_files: [],
@@ -32,8 +39,8 @@ const result: BuildResult = {
 const assessment: Assessment = {
   verdict: "fail",
   findings: [
-    { criterion: "The CLI prints JSON.", status: "met", evidence: "Snapshot test passes.", description: null },
-    { criterion: "Every fixture exists.", status: "not_met", evidence: "B, E, F and G are missing.", description: null },
+    { criterion_id: null, criterion: "The CLI prints JSON.", status: "met", evidence: { kind: "legacy", text: "Snapshot test passes." }, description: null },
+    { criterion_id: null, criterion: "Every fixture exists.", status: "not_met", evidence: { kind: "legacy", text: "B, E, F and G are missing." }, description: null },
   ],
   test_evidence: { passed: 1274, failed: 0, output: null, summary: "Independently re-run.", cargo_test_output: null },
   recommended_next_actions: ["Supply the missing fixtures."],
@@ -67,6 +74,43 @@ describe("AssessmentViewer", () => {
   test("shows the verdict", () => {
     renderViewer();
     expect(screen.getByTestId("or-assessment-verdict").textContent).toBe("Fail");
+  });
+
+  test("labels a legacy assessment commit as not recorded", () => {
+    renderViewer();
+    expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("Not recorded");
+    expect(within(screen.getByTestId("or-assessment-attention")).getByText("Matched by normalized text")).toBeTruthy();
+  });
+
+  test("shows linked evidence references and their matching provenance", () => {
+    const parsed = parseAssessment(linkedAssessment);
+    const linked = readBuildBrief(linkedBrief);
+    if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
+    expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("abc123def456");
+    const met = within(screen.getByTestId("or-assessment-met"));
+    expect(met.getByText("Matched by criterion ID")).toBeTruthy();
+    expect(met.getByText("file")).toBeTruthy();
+    expect(met.getByText("kbbl/core/pwa/oakridge/lib/build-brief.ts:100-110")).toBeTruthy();
+    expect(met.getByText("test")).toBeTruthy();
+    expect(met.getByText("output")).toBeTruthy();
+  });
+
+  test("marks a met finding with an empty evidence list", () => {
+    const parsed = parseAssessment(emptyEvidenceAssessment);
+    if (!parsed.ok) throw new Error("fixture failed to parse");
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "missing", cohort_label: "pwa" }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
+    expect(screen.getByText("Met with no evidence cited.")).toBeTruthy();
+  });
+
+  test("shows an unresolved criterion id", () => {
+    const parsed = parseAssessment(unresolvedAssessment);
+    const linked = readBuildBrief(linkedBrief);
+    if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    expect(screen.getByText("criterion-missing")).toBeTruthy();
   });
 
   test("still lists findings when the brief is missing", () => {

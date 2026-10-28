@@ -2,11 +2,14 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 import type { BuildBrief } from "../../lib/build-brief";
+import { readBuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
+import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
 import type { CohortId, RepositoryKey } from "../../types";
 import { BuildResultViewer } from "./BuildResultViewer";
 
 const result: BuildResult = {
+  head_sha: null,
   repository_key: "assay" as RepositoryKey,
   summary: "Built the API.",
   changed_files: ["src/api.py", "ci.yml"],
@@ -34,6 +37,21 @@ describe("BuildResultViewer", () => {
   test("titles the result with its brief", () => {
     render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
     expect(screen.getByRole("heading", { name: "Assemble the API" })).toBeTruthy();
+  });
+
+  test("shows the recorded build commit or labels its absence", () => {
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
+    expect(screen.getByTestId("or-build-head-sha").textContent).toContain("Not recorded");
+    cleanup();
+    render(<BuildResultViewer result={{ ...result, head_sha: "abc123def456" }} brief={{ kind: "found", value: brief }} cohortLabel="cm-api" />);
+    expect(screen.getByTestId("or-build-head-sha").textContent).toContain("abc123def456");
+  });
+
+  test("renders an id-linked brief's criterion text", () => {
+    const linked = readBuildBrief(linkedBrief);
+    if (linked === null) throw new Error("fixture failed to parse");
+    render(<BuildResultViewer result={result} brief={{ kind: "found", value: linked }} cohortLabel="pwa" />);
+    expect(within(screen.getByTestId("or-build-acceptance")).getByText("The brief remains readable.")).toBeTruthy();
   });
 
   test("flags a change the brief did not plan", () => {

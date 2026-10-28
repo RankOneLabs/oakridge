@@ -51,6 +51,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
           {branch && <Chip tone="muted" className="font-mono">{branch}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-build-head-sha">Commit: <code className="or-code">{result.head_sha ?? "Not recorded"}</code></p>
       </header>
 
       <ArtifactSection title="What was built" testId="or-build-summary">

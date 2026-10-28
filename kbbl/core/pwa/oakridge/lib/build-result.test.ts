@@ -18,7 +18,12 @@ const body = {
 describe("parseBuildResult", () => {
   test("reads omitted test text and metadata fields as null", () => {
     const result = parseBuildResult(body);
-    expect(result.ok && [result.value.tests.summary, result.value.delegated_session_metadata?.branch]).toEqual([null, null]);
+    expect(result.ok && [result.value.head_sha, result.value.tests.summary, result.value.delegated_session_metadata?.branch]).toEqual([null, null, null]);
+  });
+
+  test("reads the build commit", () => {
+    const result = parseBuildResult({ ...body, head_sha: "abc123def456" });
+    expect(result.ok && result.value.head_sha).toBe("abc123def456");
   });
 
   test("names an issue whose severity is outside the contract", () => {
