@@ -5,6 +5,8 @@ import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEven
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
+import { projectRevisionInTransaction } from "./projection-store";
+import { storeHumanGradeInTransaction } from "./backfill-store";
 
 export interface SourceRevisionRead {
   readonly id: string;
@@ -139,15 +141,19 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
       const result = await captureInTransaction(trx, { request_key: outcome.event_id, envelope: outcome.revision,
         local_revision_id: source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length) });
       if (result.status !== 201) return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
+      await projectRevisionInTransaction(trx, tenant, source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length));
     }
     await trx.insertInto("observation.source_event_outcome").values({ producer: tenant.producer, namespace: tenant.namespace,
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
-      event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: outcome as unknown as JsonValue }).execute();
+      event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: outcome as unknown as JsonValue })
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     if (outcome.kind === "human_grade") {
+      await storeHumanGradeInTransaction(trx, tenant, outcome);
       await trx.insertInto("observation.source_human_grade").values({ producer: tenant.producer, namespace: tenant.namespace,
         event_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review,
         decision: outcome.decision, target_revision_id: outcome.target, evaluator_kind: "human",
-        feedback: outcome.feedback as JsonValue | null }).execute();
+        feedback: outcome.feedback as JsonValue | null })
+        .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     }
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);

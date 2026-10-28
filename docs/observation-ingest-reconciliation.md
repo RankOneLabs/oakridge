@@ -21,6 +21,12 @@ already advanced and the adapter starts after that event. If it did not commit,
 the cursor stands and the event is read again. Oakridge writes no observation
 cursor into `authority`.
 
+## Historical labels and collaboration backfill
+
+`bun run --filter oakridge-dbos ops -- observation-backfill <max_rows>` is an operator-triggered pass over the two sources absent from `authority.event`: historical `authority.review_decision` rows, then `authority.collaboration_thread` with their messages. The command processes at most `max_rows` source rows (1–1000) per invocation. The observation service durably records the `(created_at, id)` position and separate active/archived counts after every acknowledged row; the next invocation resumes it. The optional `position-json` argument starts an explicit replay range. A replay does not move the durable position.
+
+The pass reads `authority.run` directly, so archived runs are included. It uses the same Oakridge mapping module and scoped ingest credential as live delivery. Review decisions retain their original timestamp, payload, review, decision and effect. Collaboration anchors resolve by exact JSON pointer within the named revision; an unmatched pointer records a queryable issue and leaves its comments unattached. Run the live revision tail before backfilling labels whose target revisions have not yet been captured. Historical and live decisions use the same source event ID and deterministic L2 identities, so replaying a range or overlapping the live cursor does not multiply rows.
+
 ## Mapping and unmapped outcomes
 
 `oakridge-dbos/src/adapters/observation-mapping.ts` is the sole Oakridge-to-

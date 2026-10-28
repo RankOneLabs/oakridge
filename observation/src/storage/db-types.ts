@@ -75,6 +75,7 @@ export interface ObservationItemOccurrence {
   producer_local_id: string | null;
   selected_value: JsonValue;
   logical_item_id: string | null;
+  json_pointer: string | null;
 }
 
 export interface ObservationItemRelation {
@@ -262,6 +263,54 @@ export interface ObservationExportMembership {
   redaction_reasons: JsonValue;
 }
 
+export interface ObservationPurgeEvent {
+  producer: string;
+  namespace: string;
+  purge_id: string;
+  run_id: string;
+  trigger_event_id: string;
+  trigger_run_key: string;
+  operator_override: boolean;
+  frozen_manifest_ids: JsonValue;
+  source_revisions_removed: number;
+  item_occurrences_removed: number;
+  item_relations_removed: number;
+  extraction_issues_removed: number;
+  evaluation_executions_removed: number;
+  grade_observations_removed: number;
+  recorded_at: Generated<Date>;
+}
+
+export interface ObservationSourceOperatorCursor {
+  producer: string;
+  namespace: string;
+  commit_txid: Generated<number>;
+  event_id: Generated<string>;
+}
+
+export interface ObservationSourceBackfillPosition {
+  producer: string;
+  namespace: string;
+  position: JsonValue;
+  counts: JsonValue;
+  updated_at: Generated<Date>;
+}
+
+export interface ObservationSourceCollaborationComment {
+  producer: string;
+  namespace: string;
+  message_id: string;
+  thread_id: string;
+  run_id: string;
+  unit_id: string;
+  revision_id: string | null;
+  anchor: string | null;
+  title: string;
+  body: JsonValue;
+  occurrence_id: string | null;
+  recorded_at: Date;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -281,4 +330,8 @@ export interface DB {
   "observation.source_human_grade": ObservationSourceHumanGrade;
   "observation.export_manifest": ObservationExportManifest;
   "observation.export_membership": ObservationExportMembership;
+  "observation.purge_event": ObservationPurgeEvent;
+  "observation.source_operator_cursor": ObservationSourceOperatorCursor;
+  "observation.source_backfill_position": ObservationSourceBackfillPosition;
+  "observation.source_collaboration_comment": ObservationSourceCollaborationComment;
 }

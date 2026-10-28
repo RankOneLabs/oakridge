@@ -3,13 +3,15 @@ import { openDatabase } from "./storage/database";
 import { migrateEmptyDatabase } from "./storage/migrate";
 import { selectApplicationVersion } from "./workflows/engine-version";
 import { currentRunGeneration, ensureRunRecoveryFork, forkStartStep, runGenerationOf, runWorkflowId } from "./workflows/topology";
+import { runObservationBackfill, type BackfillPosition } from "./adapters/observation-backfill";
 
 /** Recovery forks onto the version of the running engine and its WASM core. */
 function opsApplicationVersion(env: NodeJS.ProcessEnv = process.env): string {
   return selectApplicationVersion(undefined, env);
 }
 
-type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]] | readonly ["migrate"];
+type OpsCommand = readonly ["workflows", "list" | "inspect" | "recover", ...string[]]
+  | readonly ["migrate"] | readonly ["observation-backfill", string, ...string[]];
 
 export async function runOps(args: readonly string[], database_url: string | undefined = process.env.DBOS_SYSTEM_DATABASE_URL): Promise<unknown> {
   const command = (args[0] === "--" ? args.slice(1) : args) as OpsCommand;
@@ -19,8 +21,22 @@ export async function runOps(args: readonly string[], database_url: string | und
     try { await migrateEmptyDatabase(db); return { migrated: true }; }
     finally { await db.destroy(); }
   }
+  if (command[0] === "observation-backfill") {
+    const url = process.env.OAKRIDGE_OBSERVATION_URL;
+    const token = process.env.OAKRIDGE_OBSERVATION_INGEST_TOKEN;
+    if (!url || !token) throw new Error("OAKRIDGE_OBSERVATION_URL and OAKRIDGE_OBSERVATION_INGEST_TOKEN are required");
+    const max_rows = Number(command[1]);
+    const position = command[2] ? JSON.parse(command[2]) as BackfillPosition : null;
+    const db = openDatabase(database_url);
+    try {
+      const result = await runObservationBackfill(db, { url,
+        namespace: process.env.OAKRIDGE_OBSERVATION_NAMESPACE ?? "default", token }, { max_rows, position });
+      if (!result.ok) throw new Error(`${result.error.operation}: ${result.error.detail}`);
+      return result.value;
+    } finally { await db.destroy(); }
+  }
   if (command[0] !== "workflows" || !["list", "inspect", "recover"].includes(command[1]))
-    throw new Error("usage: ops -- workflows list|inspect <id>|recover <id> OR ops -- migrate");
+    throw new Error("usage: ops -- workflows list|inspect <id>|recover <id> OR ops -- migrate OR ops -- observation-backfill <max_rows> [position-json]");
   const workflow_id = command[2];
   if (command[1] !== "list" && !workflow_id) throw new Error(`${command[1]} requires a workflow id`);
   // The operator process must not recover production workflows without their services.
