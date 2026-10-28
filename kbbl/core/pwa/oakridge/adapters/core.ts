@@ -1,5 +1,5 @@
-import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
-import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
+import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorBodyValue, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
+import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, ParkedGate, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, SentReviewFeedback, StageDetail, StageStatus, StageUnit } from "../types";
 import { isWebUrl } from "../lib/pr-summary";
 import { parseRepositoryKey } from "../repository-inputs";
 
@@ -183,6 +183,25 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
       pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));
+}
+
+const feedbackOf = (payload: OperatorBodyValue): string | null => {
+  if (typeof payload !== "object" || payload === null || !("feedback" in payload)) return null;
+  const feedback = payload.feedback;
+  return typeof feedback === "string" && feedback.trim() ? feedback : null;
+};
+/** Changes requested on a revision that is still its artifact's latest: sent, and not yet answered by a new revision. */
+export function sentReviewFeedback(unit: OperatorUnitView): SentReviewFeedback[] {
+  const latestRevisionIds = new Set(unit.artifacts.flatMap((artifact) => artifact.latest_revision ? [artifact.latest_revision.id] : []));
+  // Oldest first, so each target keeps its latest decision.
+  const latestByTarget = new Map(unit.recorded_decisions.map((decision) => [decision.target_revision_id, decision]));
+  return [...latestByTarget.values()]
+    .filter((decision) => decision.effect === "request_changes" && latestRevisionIds.has(decision.target_revision_id))
+    .map((decision) => {
+      const session = developmentReviewSession(unit, decision.review);
+      return { id: decision.id, run_id: unit.run_id, stage_name: session.stage, unit_id: session.unit, review: decision.review,
+        decision: decision.decision, feedback: feedbackOf(decision.payload), sent_at: decision.created_at };
+    });
 }
 
 export function attemptToWorkOrder(input: { readonly runId: string; readonly stage: string; readonly unit: OperatorUnitView; readonly attempt: OperatorAttemptView }): AdapterResult<RunSessionAttempt> {

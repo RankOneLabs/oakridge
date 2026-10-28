@@ -19,12 +19,13 @@ const CONTRACT_FIELDS = {
   RunView: ["archived_at", "created_at", "definition_bundle_id", "definition_digest", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
-    "run_id", "stage", "status", "unit_id", "unit_key"],
+    "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
   AttemptView: ["cause", "created_at", "failure", "id", "is_current", "kbbl_session_id", "mode", "number", "status", "unit_id", "worker"],
   ArtifactView: ["artifact_key", "is_editable", "is_reviewable", "latest_revision", "revision_count", "run_id", "schema", "unit_id"],
   ArtifactRevisionView: ["artifact_key", "attempt_id", "body", "created_at", "id", "number", "predecessor_id", "run_id", "subject_id", "unit_id"],
   DecisionDefinition: ["fields", "key", "label", "payload_schema", "submit"],
   DecisionField: ["key", "label"],
+  RevisionDecision: ["created_at", "decision", "effect", "id", "payload", "review", "target_revision_id"],
   InboxPage: ["items", "next_cursor"],
   InboxDecisionItem: ["key", "kind", "label", "prompt", "run_id", "submit", "unit_id"],
   InboxWaitingItem: ["kind", "label", "reason", "run_id", "unit_id"],
@@ -274,6 +275,15 @@ describe("derived fields", () => {
     await decide(run_id, unit, "request_changes", `${unit}:draft:1`, { feedback: "more" });
     const view = await get<UnitView>(unitPath(run_id, unit));
     expect({ decisions: view.decisions, attention: view.attention }).toEqual({ decisions: [], attention: null });
+  });
+
+  test("a unit records the decisions made on its revisions, with their payloads", async () => {
+    const { run_id, unit } = await drafted();
+    await decide(run_id, unit, "request_changes", `${unit}:draft:1`, { feedback: "more" });
+    const view = await get<UnitView>(unitPath(run_id, unit));
+    holds("RevisionDecision", view.recorded_decisions[0]);
+    expect(view.recorded_decisions.map((decision) => [decision.review, decision.decision, decision.effect, decision.target_revision_id, decision.payload]))
+      .toEqual([["editor", "request_changes", "request_changes", `${unit}:draft:1`, { feedback: "more" }]]);
   });
 
   test("a stalled worker offers a retry and its unit's attention is the failure", async () => {

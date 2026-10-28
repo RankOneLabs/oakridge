@@ -288,6 +288,7 @@
           }
         }
       ],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "c8d82121304da9338a3f7e8545ee0489:1",

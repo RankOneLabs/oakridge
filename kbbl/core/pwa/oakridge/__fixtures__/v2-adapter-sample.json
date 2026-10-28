@@ -264,6 +264,7 @@
           }
         }
       ],
+      "recorded_decisions": [],
       "attempts": [],
       "artifacts": []
     },
@@ -345,6 +346,7 @@
       "is_terminal": true,
       "attention": null,
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "b10a4b96e4a552e3586f5a2c7da18e2a:1",
@@ -538,6 +540,7 @@
       "is_terminal": true,
       "attention": null,
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "dffaaa8b13a94531a53af9edb4e96607:1",
@@ -736,6 +739,7 @@
       "is_terminal": true,
       "attention": null,
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "3e962c41a11d172662f9108bf6b43b43:1",
@@ -881,6 +885,7 @@
           }
         }
       ],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "18485cf0558263357b2710478718a046:1",
@@ -1182,6 +1187,7 @@
         "reason": "waiting on Cohort"
       },
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [],
       "artifacts": [
         {
@@ -1394,6 +1400,7 @@
       "is_terminal": true,
       "attention": null,
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "25f8c2ccba91eb0398e46e99ebc97bd2:1",
@@ -1526,6 +1533,7 @@
       "is_terminal": true,
       "attention": null,
       "decisions": [],
+      "recorded_decisions": [],
       "attempts": [
         {
           "id": "ff23aae8db31931a3d9f65bbee61d9ad:1",
