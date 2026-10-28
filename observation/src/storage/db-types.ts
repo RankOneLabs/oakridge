@@ -22,6 +22,8 @@ export interface ObservationSourceRevision {
   body_digest: string;
   recorded_at: Date;
   captured_at: Generated<Date>;
+  predecessor_id: string | null;
+  subject_id: string | null;
 }
 
 export interface ObservationIngestReceipt {

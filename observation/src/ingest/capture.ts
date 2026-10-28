@@ -12,6 +12,8 @@ export interface CaptureSource {
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
   readonly definition_bundle: { readonly id: string; readonly digest: string };
+  readonly predecessor_id: string | null;
+  readonly subject_id: string | null;
 }
 export interface CaptureEnvelope {
   readonly format: "observation.artifact-revision/v1";
@@ -31,6 +33,14 @@ function failure(entity_id: string, detail: string): Result<never, CaptureError>
   return err({ operation: "decode_capture", entity_id, detail });
 }
 
+function revisionReference(value: unknown, prefix: string, field: string): Result<string | null, CaptureError> {
+  if (value === undefined || value === null) return ok(null);
+  if (!nonempty(value)) return failure(`source.${field}`, `${field} must be a revision id or null`);
+  if (value.startsWith(prefix) && value.length > prefix.length) return ok(value);
+  if (!value.includes(":")) return ok(`${prefix}${value}`);
+  return failure(`source.${field}`, `${field} must belong to the capture tenant`);
+}
+
 /** Decode only fields from the accepted L0 envelope; canonical body hashing is the integrity check. */
 export function decodeCapture(input: unknown, request_key: string | null): Result<CaptureDelivery, CaptureError> {
   if (!object(input) || input.format !== "observation.artifact-revision/v1") return failure("envelope", "invalid capture format");
@@ -47,10 +57,16 @@ export function decodeCapture(input: unknown, request_key: string | null): Resul
   const prefix = `${source.producer}:${source.namespace}:`;
   if (!revision_id.startsWith(prefix) || revision_id.length === prefix.length)
     return failure("source.revision_id", "revision identity must match source producer and namespace");
+  const predecessor = revisionReference(source.predecessor_id, prefix, "predecessor_id");
+  if (!predecessor.ok) return predecessor;
+  const subject = revisionReference(source.subject_id, prefix, "subject_id");
+  if (!subject.ok) return subject;
   if (!nonempty(input.recorded_at) || Number.isNaN(Date.parse(input.recorded_at))) return failure("recorded_at", "valid recorded_at is required");
   if (!Object.hasOwn(input, "body") || input.body === null) return failure("body", "a non-null body is required");
   const digest = canonicalDigest(input.body);
   if (!digest.ok) return failure("body", digest.error.detail);
   if (input.body_digest !== digest.value) return failure("body_digest", "body_digest does not match the canonical body");
-  return ok({ request_key: key, local_revision_id: revision_id.slice(prefix.length), envelope: input as unknown as CaptureEnvelope });
+  const envelope: CaptureEnvelope = { ...(input as unknown as CaptureEnvelope),
+    source: { ...(source as unknown as CaptureSource), predecessor_id: predecessor.value, subject_id: subject.value } };
+  return ok({ request_key: key, local_revision_id: revision_id.slice(prefix.length), envelope });
 }

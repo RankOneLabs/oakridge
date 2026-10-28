@@ -35,6 +35,25 @@ integration("fresh baseline applies and a second apply is a no-op", async () => 
   } finally { await db.destroy(); }
 }));
 
+integration("an existing L0 plus projection database gains nullable revision links without changing its baseline", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
+    const projection = await Bun.file(new URL("../src/storage/migrations/0002_projection.sql", import.meta.url)).text();
+    await sql.raw(baseline).execute(db);
+    const digest = createHash("sha256").update(baseline).digest("hex");
+    await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${digest})`.execute(db);
+    await sql.raw(projection).execute(db);
+    await migrateEmptyDatabase(db);
+    const columns = await sql<{ column_name: string }>`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'observation' AND table_name = 'source_revision'
+      AND column_name IN ('predecessor_id', 'subject_id') ORDER BY column_name`.execute(db);
+    expect(columns.rows.map((row) => row.column_name)).toEqual(["predecessor_id", "subject_id"]);
+    const after = await sql<{ digest: string }>`SELECT digest FROM observation.schema_baseline`.execute(db);
+    expect(after.rows[0]?.digest).toBe(digest);
+  } finally { await db.destroy(); }
+}));
+
 integration("a changed recorded digest names both values", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
