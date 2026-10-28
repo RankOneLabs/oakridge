@@ -23,6 +23,17 @@ export function evaluator(kind: "code" | "model" | "human"): EvaluatorDefinition
     model: kind === "model" ? "pinned" : null, prompt_digest: "prompt-1", config_digest: "config-1",
     runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
 }
+async function dropScratchDatabase(admin: Client, name: string): Promise<void> {
+  // Do not FORCE: it can terminate a pool connection still finishing cleanup.
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    try { await admin.query(`DROP DATABASE IF EXISTS ${name}`); return; }
+    catch (cause) {
+      if ((cause as { code?: string }).code !== "55006" || Date.now() >= deadline) throw cause;
+      await Bun.sleep(50);
+    }
+  }
+}
 export async function scratchGrading(work: (db: Database, occurrence_id: ItemOccurrenceId) => Promise<void>): Promise<void> {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
   const name = `observation_grading_${randomBytes(6).toString("hex")}`;
@@ -51,6 +62,6 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
           'fixture', '1', 'cohort_criterion', '/criterion', 'criterion-1', '{}'::jsonb)`.execute(trx);
       });
       await work(db, occurrence_id);
-    } finally { await db.destroy(); await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+    } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 }

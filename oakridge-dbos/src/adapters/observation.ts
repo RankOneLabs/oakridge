@@ -19,7 +19,7 @@ async function deliveryFor(db: Kysely<DB>, row: CommittedEventRow<Event>, namesp
   const matched = event.kind === "operator_decided"
     ? await readDecisionForEvent(db, row.run_id ?? "", event, row.created_at) : null;
   const outcome = mapObservationEvent({ row, definition, namespace, stage, revision_sequence: sequence,
-    decision_effect: matched?.effect ?? null, decision_created_at: matched?.created_at });
+    decision_effect: matched?.effect ?? null, decision_created_at: matched?.created_at, decision_id: matched?.id ?? null });
   return { previous, cursor: { commit_txid: row.commit_txid, id: row.id }, outcome };
 }
 

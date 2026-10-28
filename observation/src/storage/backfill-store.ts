@@ -44,9 +44,10 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     const question_id = `oakridge-review:${outcome.review}:${item.item_kind}`;
     const question_version = "1";
     const evidence_set_id = digest(["oakridge-review-evidence", outcome.target, item.occurrence_id]);
-    const execution_id = digest(["oakridge-review-execution", outcome.event_id, item.occurrence_id]);
-    const observation_id = digest(["oakridge-review-observation", outcome.event_id, item.occurrence_id]);
-    const idempotency_digest = digest(["oakridge-review", outcome.event_id, item.occurrence_id]);
+    const decision_key = outcome.decision_id ?? outcome.event_id;
+    const execution_id = digest(["oakridge-review-execution", decision_key, item.occurrence_id]);
+    const observation_id = digest(["oakridge-review-observation", decision_key, item.occurrence_id]);
+    const idempotency_digest = digest(["oakridge-review", decision_key, item.occurrence_id]);
     await trx.insertInto("observation.question_definition").values({ ...scope(tenant), question_id, question_version,
       target_item_kinds: json([item.item_kind]), input_recipe: json({ source: "oakridge.review_decision" }),
       response_kind: "structured", allowed_values: null, missing_evidence_policy: "abstain",
@@ -59,7 +60,7 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "evidence_set_id"]).doNothing()).execute();
     await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id,
       subject_occurrence_id: item.occurrence_id, evidence_set_id, question_id, question_version,
-      evaluator_definition_id, config_digest, attempt_label: outcome.event_id, idempotency_digest,
+      evaluator_definition_id, config_digest, attempt_label: decision_key, idempotency_digest,
       started_at: new Date(outcome.decided_at), ended_at: new Date(outcome.decided_at), status: "completed",
       error: null, model_usage: null, cost: null, external_execution_id: null,
       provider_link: null, reproducibility_metadata: null })

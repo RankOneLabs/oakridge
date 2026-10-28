@@ -9,6 +9,7 @@ export interface SourceEventProvenance { readonly format: "observation.source-ev
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "human_grade"; readonly event_kind: "operator_decided"; readonly run_id: string; readonly event_id: string;
+      readonly decision_id: string | null;
       readonly evaluator: { readonly kind: "human" }; readonly unit: string; readonly review: string; readonly decision: string;
       readonly target: string; readonly feedback: unknown; readonly effect: "approve" | "request_changes" | null;
       readonly decided_at: string }
@@ -42,7 +43,8 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (outcome.definition_bundle !== null && (!record(outcome.definition_bundle)
     || typeof outcome.definition_bundle.id !== "string" || typeof outcome.definition_bundle.digest !== "string")) return null;
   if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v1")) return null;
-  if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string")) return null;
+  if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
+    || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
   if (!["artifact_revision", "human_grade", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
   return value as unknown as SourceEventDelivery;

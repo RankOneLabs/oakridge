@@ -14,7 +14,8 @@ void allKindsCovered;
 
 export interface MappingInput { readonly row: CommittedEventRow<Event>; readonly definition: PinnedDefinitionRead | null;
   readonly namespace: string; readonly stage: string | null; readonly revision_sequence: number | null;
-  readonly decision_effect?: "approve" | "request_changes" | null; readonly decision_created_at?: Date }
+  readonly decision_effect?: "approve" | "request_changes" | null; readonly decision_created_at?: Date;
+  readonly decision_id?: string | null }
 export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const { row, definition } = input;
   const event = row.payload;
@@ -45,6 +46,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       const targetVersion = definition && input.stage && targetArtifact ? artifactSchemaVersion(definition, input.stage, targetArtifact) : null;
       return { ...provenance, artifact_schema_version: targetVersion, kind: "human_grade", event_kind: event.kind, ...identity,
         evaluator: { kind: "human" }, unit: event.unit, review: event.review, decision: event.decision,
+        decision_id: input.decision_id ?? null,
         target: event.target, feedback: event.payload, effect: input.decision_effect ?? null,
         decided_at: (input.decision_created_at ?? row.created_at).toISOString() };
     }
@@ -61,7 +63,7 @@ export function mapHistoricalDecision(input: Omit<MappingInput, "row" | "revisio
   readonly decision: Selectable<AuthorityReviewDecision>; readonly event_id: string }): SourceEventOutcome {
   const { decision } = input;
   return mapObservationEvent({ ...input, revision_sequence: null,
-    decision_effect: decision.effect, decision_created_at: decision.created_at,
+    decision_effect: decision.effect, decision_created_at: decision.created_at, decision_id: decision.id,
     row: { id: input.event_id, run_id: decision.run_id, unit_id: decision.unit_id,
       payload: { kind: "operator_decided", unit: decision.unit_id, review: decision.review,
         decision: decision.decision, target: decision.target_revision_id, payload: decision.payload },

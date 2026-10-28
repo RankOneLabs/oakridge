@@ -9,7 +9,7 @@ const gradingMigration = new URL("./migrations/0003_grading.sql", import.meta.ur
 const cursorMigration = new URL("./migrations/0004_cursor.sql", import.meta.url);
 const exportMigration = new URL("./migrations/0005_export.sql", import.meta.url);
 const exportGuardMigration = new URL("./migrations/0006_export_guard.sql", import.meta.url);
-const purgeMigration = new URL("./migrations/0006_purge.sql", import.meta.url);
+const purgeMigration = new URL("./migrations/0007_purge.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {

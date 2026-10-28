@@ -51,7 +51,8 @@ function decodeBackfillDelivery(value: unknown): BackfillDelivery | null {
     || typeof outcome.run_id !== "string" || outcome.format !== "observation.source-event/v1")) return null;
   if (isRecord(outcome) && outcome.kind === "human_grade" && (!isRecord(outcome.evaluator)
     || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
-    || typeof outcome.decided_at !== "string")) return null;
+    || typeof outcome.decided_at !== "string"
+    || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (isRecord(outcome) && outcome.kind === "collaboration_thread" && (!isRecord(outcome.context)
     || typeof outcome.context.title !== "string" || !(outcome.context.anchor === null || typeof outcome.context.anchor === "string")
     || !Array.isArray(outcome.messages))) return null;

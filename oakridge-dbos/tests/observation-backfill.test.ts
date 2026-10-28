@@ -21,7 +21,8 @@ const digest = (body: unknown): string => {
   if (!value.ok) throw new Error(value.error.detail);
   return value.value;
 };
-const brief = { cohort_id: "c", decisions_made: [], approaches_rejected: [],
+const brief = { cohort_id: "c", decisions_made: [{ id: "decision-1", decision: "Approved" }],
+  approaches_rejected: [{ id: "reject-1", approach: "No", decision_ids: ["decision-1"] }],
   acceptance_criteria: [{ id: "criterion-1", text: "Works", task_ids: [], decision_ids: [] }] };
 
 integration("bounded backfill covers active and archived labels, anchors, replay and live overlap", async () => {
@@ -35,7 +36,7 @@ integration("bounded backfill covers active and archived labels, anchors, replay
     const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
       fetcher: async (input, init) => app.request(new Request(input, init)) };
     const { bundle_id } = await pinSample(authority);
-    async function seed(archived: boolean, effect: "approve" | "request_changes", number: number) {
+    async function seed(archived: boolean, effect: "approve" | "request_changes", number: number, has_event = true) {
       const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: `run-${number}` } });
       const unit_id = unitOf(run_id, "document");
       const revision_id = `${unit_id}:brief:1`;
@@ -47,7 +48,7 @@ integration("bounded backfill covers active and archived labels, anchors, replay
          definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
         VALUES (${tenant.producer}, ${tenant.namespace}, ${revision_id}, ${run_id}, ${unit_id},
           'brief', '1', ${bundle_id}, 'bundle-digest', ${JSON.stringify(brief)}::jsonb, ${digest(brief)}, now())`.execute(trx));
-      expect(await projectRevision(observation, tenant, revision_id)).toMatchObject({ occurrences: 1 });
+      expect(await projectRevision(observation, tenant, revision_id)).toMatchObject({ occurrences: 3, relations: 1 });
       const decision_id = `${unit_id}:d${number}`;
       const event_id = crypto.randomUUID();
       const feedback = { note: effect };
@@ -55,13 +56,15 @@ integration("bounded backfill covers active and archived labels, anchors, replay
       await authority.db.insertInto("authority.review_decision").values({ id: decision_id, run_id, unit_id,
         review: "editor", decision: effect, effect, target_revision_id: revision_id,
         payload: jsonText(feedback), validation_artifact: null, validation_messages: null, created_at: at }).execute();
-      await authority.db.insertInto("authority.event").values({ id: event_id, run_id, unit_id,
-        payload: jsonText({ kind: "operator_decided", unit: unit_id, review: "editor", decision: effect,
-          target: revision_id, payload: feedback }), writer: jsonText({ kind: "operator", subject: "test" }),
-        ingress_id: crypto.randomUUID(), created_at: new Date(at.getTime() + 1) }).execute();
-      return { run_id, unit_id, revision_id, event_id };
+      const event = { id: event_id, run_id, unit_id,
+        payload: jsonText({ kind: "operator_decided" as const, unit: unit_id, review: "editor", decision: effect,
+          target: revision_id, payload: feedback }), writer: jsonText({ kind: "operator" as const, subject: "test" }),
+        ingress_id: crypto.randomUUID(), created_at: new Date(at.getTime() + 1) };
+      if (has_event) await authority.db.insertInto("authority.event").values(event).execute();
+      return { run_id, unit_id, revision_id, event, at };
     }
-    const active = await seed(false, "approve", 1);
+    // This decision has no event at backfill time, so it exercises the fallback key.
+    const active = await seed(false, "approve", 1, false);
     const archived = await seed(true, "request_changes", 2);
     for (const [index, anchor] of ["/acceptance_criteria/0", "/acceptance_criteria/9"].entries()) {
       const thread_id = `thread-${index}`;
@@ -86,11 +89,16 @@ integration("bounded backfill covers active and archived labels, anchors, replay
         FROM ${sql.table(`observation.${table}`)}`.execute(trx)).rows[0]?.count ?? 0)));
     });
     const firstCounts = await counts();
-    expect(firstCounts).toEqual([2, 2, 0, 2, 2]);
+    expect(firstCounts).toEqual([2, 6, 2, 6, 6]);
+    const relations = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.item_relation")
+      .select("relation_id").execute());
+    expect(relations).toHaveLength(2);
     const replay = await runObservationBackfill(authority.db, options,
       { max_rows: 4, position: INITIAL_BACKFILL_POSITION });
     expect(replay.ok).toBe(true);
     expect(await counts()).toEqual(firstCounts);
+    // A matching event arriving after a fallback-keyed backfill must use the same decision identity.
+    await authority.db.insertInto("authority.event").values(active.event).execute();
     for (let index = 0; index < 10 && await publishObservationOnce(authority.db, options); index++);
     expect(await counts()).toEqual(firstCounts);
     const comments = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_collaboration_comment")
@@ -103,35 +111,49 @@ integration("bounded backfill covers active and archived labels, anchors, replay
     expect(unresolved).toEqual([{ item_selector: "/acceptance_criteria/9", kind: "unresolved_relation" }]);
     const archivedGrades = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.item_occurrence as i", "i.occurrence_id", "g.subject_occurrence_id")
-      .select(["g.answer_payload", "g.recorded_at"]).where("i.run_id", "=", archived.run_id).execute());
+      .select(["g.answer_payload", "g.recorded_at"]).where("i.run_id", "=", archived.run_id)
+      .where("i.item_kind", "=", "criterion").execute());
     expect(archivedGrades).toHaveLength(1);
+    expect(archivedGrades[0]?.recorded_at.toISOString()).toBe(archived.at.toISOString());
     expect(archivedGrades[0]?.answer_payload).toMatchObject({ value: { review: "editor", decision: "request_changes",
       effect: "request_changes", feedback: { note: "request_changes" } } });
     const activeGrades = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.item_occurrence as i", "i.occurrence_id", "g.subject_occurrence_id")
-      .select("g.answer_payload").where("i.run_id", "=", active.run_id).execute());
+      .select("g.answer_payload").where("i.run_id", "=", active.run_id)
+      .where("i.item_kind", "=", "criterion").execute());
     expect(activeGrades[0]?.answer_payload).toMatchObject({ value: { review: "editor", decision: "approve",
       effect: "approve", feedback: { note: "approve" } } });
     const archivedOccurrence = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
-      .select("occurrence_id").where("run_id", "=", archived.run_id).executeTakeFirstOrThrow());
-    const comparisonQuestion = { ...sampleQuestion, target_item_kinds: ["criterion"] };
+      .select("occurrence_id").where("run_id", "=", archived.run_id)
+      .where("item_kind", "=", "criterion").executeTakeFirstOrThrow());
+    const comparisonQuestion = { ...sampleQuestion, target_item_kinds: ["criterion"], response_kind: "structured" as const };
     expect((await registerGradingContext(observation, tenant, { question: comparisonQuestion,
       evidence: sampleEvidence, evaluator: sampleEvaluator("human") })).ok).toBe(true);
     const submitted = await recordHumanGrade(observation, tenant, { subject_occurrence_id: archivedOccurrence.occurrence_id as ItemOccurrenceId,
       evidence_set_id: sampleEvidence.evidence_set_id, question_id: comparisonQuestion.question_id,
       question_version: comparisonQuestion.question_version, evaluator_definition_id: "human", config_digest: "config-1",
-      attempt_label: "comparison", details: { answer: { state: "answered", kind: "boolean", value: true },
+      attempt_label: "comparison", details: { answer: { state: "answered", kind: "structured",
+        value: { review: "editor", decision: "request_changes", effect: "request_changes", feedback: { note: "fresh" } } },
         probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: "operator", reviewer_details: null, comments: null,
         rationale: null, quality_flags: [], supersedes_observation_id: null } });
-    expect(submitted.ok).toBe(true);
+    if (!submitted.ok || !submitted.value.observation) throw new Error("fresh human grade was not stored");
     const shape = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "g.producer")
         .onRef("d.namespace", "=", "g.namespace").onRef("d.evaluator_definition_id", "=", "g.evaluator_definition_id"))
       .selectAll("g").select("d.kind as evaluator_kind")
-      .where("g.subject_occurrence_id", "=", archivedOccurrence.occurrence_id).orderBy("g.question_id").execute());
-    expect(shape.map((row) => row.evaluator_kind)).toEqual(["human", "human"]);
-    expect(Object.keys(shape[0] ?? {}).sort()).toEqual(Object.keys(shape[1] ?? {}).sort());
+      .where("g.subject_occurrence_id", "=", archivedOccurrence.occurrence_id).execute());
+    const fresh = shape.find((row) => row.observation_id === submitted.value.observation?.observation_id);
+    const backfilled = shape.find((row) => row.observation_id !== submitted.value.observation?.observation_id);
+    expect(shape).toHaveLength(2);
+    expect([backfilled, fresh].map((row) => ({ answer_kind: row?.answer_kind, answer_state: row?.answer_state,
+      evaluator_kind: row?.evaluator_kind, has_reviewer_id: row?.reviewer_id !== null,
+      quality_flags: row?.quality_flags }))).toEqual([
+      { answer_kind: "structured", answer_state: "answered", evaluator_kind: "human", has_reviewer_id: true, quality_flags: [] },
+      { answer_kind: "structured", answer_state: "answered", evaluator_kind: "human", has_reviewer_id: true, quality_flags: [] } ]);
+    expect(backfilled?.observation_id).not.toBe(fresh?.observation_id);
+    expect(backfilled?.recorded_at).not.toEqual(fresh?.recorded_at);
+    expect(backfilled?.answer_payload).not.toEqual(fresh?.answer_payload);
     await withTenant(observation, tenant, (trx) => sql`INSERT INTO observation.source_revision
       (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
        definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)

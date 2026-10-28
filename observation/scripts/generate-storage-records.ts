@@ -2,7 +2,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql", "0005_export.sql", "0006_purge.sql"]
+const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql",
+  "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql"]
   .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
 const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
