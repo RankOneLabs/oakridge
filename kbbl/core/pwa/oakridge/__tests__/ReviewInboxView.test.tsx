@@ -67,7 +67,6 @@ describe("ReviewInboxView", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
-    expect(screen.getAllByText("Artifact ready for review")).toHaveLength(1);
     expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
     expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/units"))).toHaveLength(1);
@@ -77,9 +76,12 @@ describe("ReviewInboxView", () => {
     renderInbox(inbox);
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
     expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(1);
-    expect(screen.getByText("Artifact ready for review")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "web · Build UI · web" })).toBeTruthy();
-    expect(screen.getByTestId("or-inbox-repository").textContent).toBe("Repository: web");
+  });
+
+  it("leads each item with its repository, run and artifact", async () => {
+    renderInbox({ cohorts: [], items: [{ ...inbox.items[0], run_title: "import validation", artifact_key: "assessment" }] });
+    expect((await screen.findByTestId("or-inbox-context")).textContent).toBe("web · import validation · assessment");
   });
 
   it("keeps separate decisions from one repository visible", async () => {
@@ -114,7 +116,7 @@ describe("ReviewInboxView", () => {
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "analysis-unit" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "planning-unit" })).toBeTruthy();
-    expect(screen.queryByTestId("or-inbox-repository")).toBeNull();
+    expect(screen.queryByTestId("or-inbox-context")).toBeNull();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -154,9 +156,10 @@ describe("ReviewInboxView", () => {
     expect(JSON.parse(String(request.body))).toMatchObject({ decision: "request_assessment_changes", target: approveTarget, payload: { feedback: "Explain the recovery path." } });
   });
 
-  it("shows blockers", async () => {
+  it("does not spell out what blocked work is waiting on", async () => {
     renderInbox({ cohorts: [], items: [{ ...inbox.items[0], kind: "cohort_blocked", state: "blocked", blocked_by: ["database"] }] });
-    expect((await screen.findByTestId("or-review-inbox-blocked")).textContent).toContain("database");
+    expect(await screen.findByTestId("or-review-inbox-item")).toBeTruthy();
+    expect(screen.queryByText(/database/)).toBeNull();
   });
 
   it("names every lifecycle state in operator language", async () => {
@@ -178,7 +181,7 @@ describe("ReviewInboxView", () => {
     expect(screen.getByText("Complete")).toBeTruthy();
   });
 
-  it("labels merge-confirmation work distinctly from artifact review", async () => {
+  it("offers merge confirmation for merge-confirmation work", async () => {
     renderInbox({
       cohorts: [],
       items: [{
@@ -190,8 +193,7 @@ describe("ReviewInboxView", () => {
       }],
     });
 
-    expect(await screen.findByText("Confirm the merged pull request")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Confirm merge" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Confirm merge" })).toBeTruthy();
   });
 
   it("surfaces pull request mismatches as actionable with reconciliation detail", async () => {
@@ -207,8 +209,7 @@ describe("ReviewInboxView", () => {
       },
     };
     renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[0], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "pull_request_mismatch", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
-    expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
-    expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
+    expect(await screen.findByText("observed pull request belongs to another repository")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
   });
 

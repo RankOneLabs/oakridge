@@ -1,8 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
-import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
-import { selectAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
+import { selectRepositoryAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
 
@@ -29,33 +28,18 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   };
 }
 
-function workLabel(item: ReviewInboxItem): string {
-  switch (item.kind) {
-    case "artifact_gate": return "Artifact ready for review";
-    case "merge_confirmation": return "Confirm the merged pull request";
-    case "cohort_blocked": return "Waiting on another cohort";
-    case "cohort_failed": return "Cohort needs recovery";
-    case "pull_request_mismatch": return "Pull request needs attention";
-    case "pull_request_merge": return "Waiting for the pull request to merge";
-    case "gate_decision": return "Decision recorded";
-  }
-}
-
 export function WorkItem({ item, cohort, isSettled = false, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; cohort?: CohortLifecycleSummary; isSettled?: boolean; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
   const gate = isSettled ? null : itemToGate(item);
   const artifactRevisionId = item.artifact_revision_id;
   const mismatch = cohort?.pull_request_reconciliation?.mismatch;
   const identity = selectUnitAttentionLabel(item);
-  const context = selectAttentionContext(item);
+  const context = selectRepositoryAttentionContext(item);
 
   return (
     <article className={isSettled ? "or-work-item or-work-item--settled" : "or-work-item"} data-testid={isSettled ? "or-review-inbox-settled-item" : "or-review-inbox-item"}>
       <div className="or-work-item__context">
-        <span className="or-work-item__eyebrow">{workLabel(item)}</span>
+        {context && <span className="or-work-item__eyebrow" data-testid="or-inbox-context">{context}</span>}
         <h3>{identity || item.unit_id}</h3>
-        {context && <p>{context}</p>}
-        {item.repository_key && <div className="mt-2"><Chip tone="neutral" testId="or-inbox-repository">Repository: {item.repository_key}</Chip></div>}
-        {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}
         <div className="or-work-item__links">
           {artifactRevisionId && <Button variant="link" onClick={() => onSelectArtifact(artifactRevisionId)} data-testid="or-inbox-artifact-link">Open full review</Button>}
           <Button variant="link" onClick={() => onSelectRun(item.run_id)} data-testid="or-inbox-run-link">View run details</Button>

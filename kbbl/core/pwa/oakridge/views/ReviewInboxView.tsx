@@ -1,11 +1,9 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { selectStableDecisionQueue, type DecisionQueueEntry } from "../lib/decision-queue";
 import { selectReviewCohortKey } from "../lib/run-attention";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import type { ReviewInbox, ReviewInboxItem } from "../types";
-import { Button } from "../../components/atoms/Button";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 import { WorkItem } from "../components/organisms/WorkItem";
 import { ProgressRow } from "../components/molecules/ProgressRow";
@@ -20,11 +18,10 @@ const isActionable = (item: ReviewInboxItem): boolean => item.state === "actiona
 interface DecisionQueueState { readonly source: ReviewInbox | null; readonly entries: readonly DecisionQueueEntry[] }
 
 export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxViewProps) {
-  const client = useQueryClient();
   const query = useReviewInbox();
   // Decisions are clicked in quick succession, so the list must not reflow
   // under the pointer: each poll is merged into what is already on screen
-  // rather than replacing it. Refresh is the explicit way to compact it.
+  // rather than replacing it. Settled rows clear when the view remounts.
   const [queue, setQueue] = useState<DecisionQueueState>({ source: null, entries: [] });
   if (query.data && query.data !== queue.source) {
     setQueue({ source: query.data, entries: selectStableDecisionQueue(queue.entries, query.data.items.filter(isActionable)) });
@@ -46,7 +43,6 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
     <div className="or-review-workspace" data-testid="or-review-inbox">
       <header className="or-review-workspace__header">
         <div><span className="or-review-workspace__kicker">Oakridge</span><h1>Work requiring your attention</h1><p>Review decisions are first. Work already underway stays out of the way.</p></div>
-        <Button variant="secondary" className="or-review-refresh" onClick={() => { setQueue({ source: null, entries: [] }); void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] }); }}>Refresh</Button>
       </header>
 
       <section className="or-review-section" aria-labelledby="review-decisions">

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ReviewInboxItem } from "../types";
-import { selectAttentionContext, selectReviewCohortKey, selectRunAttentionCounts, selectUnitAttentionLabel } from "./run-attention";
+import { selectAttentionContext, selectRepositoryAttentionContext, selectReviewCohortKey, selectRunAttentionCounts, selectUnitAttentionLabel } from "./run-attention";
 
 function inboxItem(
   id: string,
@@ -76,6 +76,20 @@ it("names the run and artifact around attention work", () => {
 
 it("leaves out context the work does not have", () => {
   expect(selectAttentionContext({ run_title: null, artifact_key: null })).toBe("");
+});
+
+describe("selectRepositoryAttentionContext", () => {
+  const repository_key = "oakridge" as ReviewInboxItem["repository_key"];
+
+  it("leads the run and artifact with the repository", () => {
+    expect(selectRepositoryAttentionContext({ repository_key, run_title: "import validation", artifact_key: "brief" }))
+      .toBe("oakridge · import validation · brief");
+  });
+
+  it("leaves out a repository the work does not have", () => {
+    expect(selectRepositoryAttentionContext({ repository_key: null, run_title: "import validation", artifact_key: "brief" }))
+      .toBe("import validation · brief");
+  });
 });
 
 describe("selectUnitAttentionLabel", () => {
