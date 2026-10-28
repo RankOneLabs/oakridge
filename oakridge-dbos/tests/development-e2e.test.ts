@@ -433,6 +433,8 @@ test("analysis, spec, and tasks need approval after joint republication", async 
     const target = unit?.review_prompts.spec_review?.target;
     return target && target !== specTarget ? target : null;
   });
+  await eventually("spec and tasks republication after spec changes", async () =>
+    await revisionCount("spec") === 2 && await revisionCount("tasks") === 2 ? true : null);
   expect([await revisionCount("spec"), await revisionCount("tasks")]).toEqual([2, 2]);
   const specAccepted = await api("POST", `/api/runs/${segment(run_id)}/units/${segment(unit_id)}/reviews/spec_review/decide`,
     { request_id: crypto.randomUUID(), decision: "accept", target: revisedSpecTarget, payload: {} });
