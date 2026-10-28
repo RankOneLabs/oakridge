@@ -38,7 +38,8 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
 
 test("development reviews analysis, specification, and tasks before planning", () => {
   interface DevelopmentSpecFlow {
-    readonly run: { readonly units: { readonly planning: { readonly input: { readonly spec: string; readonly tasks: string } };
+    readonly run: { readonly units: { readonly planning: { readonly input: { readonly spec: string; readonly tasks: string;
+      readonly repositories: string; readonly repository_key: string; readonly workspace: string } };
       readonly briefs: { readonly input: { readonly spec: string } } } };
     readonly stages: { readonly analysis: { readonly artifacts: { readonly analysis: { readonly schema: string }; readonly spec: { readonly schema: string };
       readonly tasks: { readonly schema: string } };
