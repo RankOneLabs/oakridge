@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { parsePlan, selectOrderedCohorts, type Plan } from "./plan";
+import legacyPlan from "./__fixtures__/legacy-plan.json";
+import linkedPlan from "./__fixtures__/id-linked-plan.json";
 
 const cohort = (id: string, depends_on: string[] = []) => ({
   id,
@@ -29,6 +31,24 @@ function parsed(value: unknown): Plan {
 }
 
 describe("parsePlan", () => {
+  test("reads a legacy cohort without inventing ids", () => {
+    expect(parsed(legacyPlan).cohorts[0]?.decisions).toEqual(["Keep the existing layout."]);
+    expect(parsed(legacyPlan).cohorts[0]?.acceptance_criteria).toEqual(["The plan is readable.", "The brief is readable."]);
+  });
+
+  test("reads linked decisions and criteria, including empty link lists", () => {
+    const linked = parsed(linkedPlan).cohorts[0];
+    expect(linked?.decisions[0]).toEqual({ id: "decision-layout", text: "Keep the existing layout." });
+    expect(linked?.acceptance_criteria[0]).toEqual({ id: "criterion-plan", text: "The plan is readable.", task_ids: ["task-plan"], decision_ids: ["decision-layout"] });
+    expect(linked?.acceptance_criteria[1]).toEqual({ id: "criterion-brief", text: "The brief is readable.", task_ids: [], decision_ids: [] });
+  });
+
+  test.each(["decisions", "acceptance_criteria"] as const)("rejects a mixed %s list at the offending entry", (field) => {
+    const mixed = { ...linkedPlan, cohorts: [legacyPlan.cohorts[0], { ...linkedPlan.cohorts[0], [field]: [legacyPlan.cohorts[0][field][0], linkedPlan.cohorts[0][field][0]] }] };
+    const result = parsePlan(mixed);
+    expect(result.ok ? null : result.error).toMatchObject({ operation: "parse_plan", field: `cohorts[1].${field}[1]` });
+  });
+
   test("accepts the registered artifact body", () => {
     expect(parsePlan(body).ok).toBe(true);
   });

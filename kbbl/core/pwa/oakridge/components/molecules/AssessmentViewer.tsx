@@ -5,6 +5,7 @@ import { selectCriterionCounts, selectCriterionReport, type Assessment, type Cri
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
+import { planCriterionText } from "../../lib/plan";
 import { selectStatusTone } from "../../lib/status-tone";
 import type { AssessmentVerdict } from "../../types";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
@@ -43,7 +44,7 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
 
 export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
-  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
+  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria.map(planCriterionText) : null, assessment.findings);
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-assessment-viewer">

@@ -1,7 +1,15 @@
 import type { Result } from "../../lib/result";
 import type { CohortId, RepositoryKey } from "../types";
 
-/** Mirrors `PlanCohort` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Cohort item shapes mirror `plan_cohort` in workflow-config/development.yaml. */
+export type PlanTraceId = string & { readonly __brand: "PlanTraceId" };
+export type PlanDecision = string | { id: PlanTraceId; text: string };
+export type PlanCriterion = string | { id: PlanTraceId; text: string; task_ids: PlanTraceId[]; decision_ids: PlanTraceId[] };
+
+export const planDecisionText = (decision: PlanDecision): string => typeof decision === "string" ? decision : decision.text;
+export const planCriterionText = (criterion: PlanCriterion): string => typeof criterion === "string" ? criterion : criterion.text;
+
+/** Mirrors `plan_cohort` in workflow-config/development.yaml. */
 export interface PlanCohort {
   id: CohortId;
   repository_key: RepositoryKey | null;
@@ -10,18 +18,22 @@ export interface PlanCohort {
   depends_on: CohortId[];
   description: string | null;
   files_in_scope: string[];
-  decisions: string[];
-  acceptance_criteria: string[];
+  decisions: PlanDecision[];
+  acceptance_criteria: PlanCriterion[];
 }
 
-/** Mirrors `PlanScope` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+export const isPlanCohortIdLinked = (cohort: PlanCohort): boolean =>
+  cohort.decisions.some((decision) => typeof decision !== "string")
+  || cohort.acceptance_criteria.some((criterion) => typeof criterion !== "string");
+
+/** Mirrors `plan_body.scope` in workflow-config/development.yaml. */
 export interface PlanScope {
   in_scope: string[];
   out_of_scope: string[];
 }
 
 /**
- * Mirrors `DevRisk`, except that `mitigation` is nullable: plan writers have
+ * Mirrors `risk` in workflow-config/development.yaml, except that `mitigation` is nullable: plan writers have
  * published risks as bare strings, and the dbos emit path does not reject them.
  */
 export interface PlanRisk {
@@ -68,6 +80,57 @@ function parseStringArray(value: unknown, field: string): Parsed<string[]> {
     : fail(field, "expected an array of strings");
 }
 
+function parseIdent(value: unknown, field: string): Parsed<PlanTraceId> {
+  return typeof value === "string" && value.trim().length > 0
+    ? ok(value as PlanTraceId)
+    : fail(field, "expected a non-empty identifier");
+}
+
+function parseIdentList(value: unknown, field: string): Parsed<PlanTraceId[]> {
+  return parseEach(value, field, parseIdent);
+}
+
+export function parsePlanDecision(value: unknown, field: string): Parsed<PlanDecision> {
+  if (typeof value === "string") return ok(value);
+  if (!isRecord(value)) return fail(field, "expected a string or plan decision");
+  const id = parseIdent(value.id, `${field}.id`);
+  if (!id.ok) return id;
+  const itemText = parseString(value.text, `${field}.text`);
+  if (!itemText.ok) return itemText;
+  return ok({ id: id.value, text: itemText.value });
+}
+
+export function parsePlanCriterion(value: unknown, field: string): Parsed<PlanCriterion> {
+  if (typeof value === "string") return ok(value);
+  if (!isRecord(value)) return fail(field, "expected a string or plan criterion");
+  const id = parseIdent(value.id, `${field}.id`);
+  if (!id.ok) return id;
+  const itemText = parseString(value.text, `${field}.text`);
+  if (!itemText.ok) return itemText;
+  const taskIds = parseIdentList(value.task_ids, `${field}.task_ids`);
+  if (!taskIds.ok) return taskIds;
+  const decisionIds = parseIdentList(value.decision_ids, `${field}.decision_ids`);
+  if (!decisionIds.ok) return decisionIds;
+  return ok({ id: id.value, text: itemText.value, task_ids: taskIds.value, decision_ids: decisionIds.value });
+}
+
+function parseGenerationList<T extends string | object>(value: unknown, field: string, parseEntry: (entry: unknown, entryField: string) => Parsed<T>): Parsed<T[]> {
+  if (!Array.isArray(value)) return fail(field, "expected an array");
+  const generation = value.length > 0 ? typeof value[0] : null;
+  return parseEach(value, field, (entry, entryField) =>
+    generation !== typeof entry
+      ? fail(entryField, "mixed legacy and id-linked entries")
+      : parseEntry(entry, entryField));
+}
+
+export function parsePlanDecisionList(value: unknown, field: string): Parsed<PlanDecision[]> {
+  return parseGenerationList(value, field, parsePlanDecision);
+}
+
+export function parsePlanCriterionList(value: unknown, field: string): Parsed<PlanCriterion[]> {
+  return parseGenerationList(value, field, parsePlanCriterion);
+}
+
 function parseEach<T>(value: unknown, field: string, parseEntry: (entry: unknown, entryField: string) => Parsed<T>): Parsed<T[]> {
   if (!Array.isArray(value)) return fail(field, "expected an array");
   const parsed: T[] = [];
@@ -95,9 +158,9 @@ function parseCohort(value: unknown, field: string): Parsed<PlanCohort> {
   if (!description.ok) return description;
   const files = parseStringArray(value.files_in_scope, `${field}.files_in_scope`);
   if (!files.ok) return files;
-  const decisions = parseStringArray(value.decisions, `${field}.decisions`);
+  const decisions = parsePlanDecisionList(value.decisions, `${field}.decisions`);
   if (!decisions.ok) return decisions;
-  const criteria = parseStringArray(value.acceptance_criteria, `${field}.acceptance_criteria`);
+  const criteria = parsePlanCriterionList(value.acceptance_criteria, `${field}.acceptance_criteria`);
   if (!criteria.ok) return criteria;
   return ok({
     id: id.value as CohortId,
