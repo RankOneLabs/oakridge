@@ -36,7 +36,7 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => vi.restoreAllMocks());
 
 const HANDOFF_ASSESSMENT: Assessment = {
-  verdict: "pass_with_notes", findings: [], test_evidence: null,
+  head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
   recommended_next_actions: ["Fix the first issue", "Add coverage"],
 };
 const BUILDER_ATTEMPT: RunSessionAttempt = {

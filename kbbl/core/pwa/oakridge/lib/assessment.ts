@@ -26,7 +26,7 @@ export interface AssessmentFinding {
 
 /** Mirrors `assessment_body` in workflow-config/development.yaml, including legacy revisions. */
 export interface Assessment {
-  head_sha?: string | null;
+  head_sha: string | null;
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
   test_evidence: TestEvidence | null;

@@ -37,6 +37,7 @@ const result: BuildResult = {
 };
 
 const assessment: Assessment = {
+  head_sha: null,
   verdict: "fail",
   findings: [
     { criterion_id: null, criterion: "The CLI prints JSON.", status: "met", evidence: { kind: "legacy", text: "Snapshot test passes." }, description: null },

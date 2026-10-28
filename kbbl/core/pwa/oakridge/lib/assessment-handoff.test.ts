@@ -4,6 +4,7 @@ import { composeHandoffText, selectHandoffItems, withItemRemoved } from "./asses
 import linkedAssessment from "./__fixtures__/id-linked-assessment.json";
 
 const assessment: Assessment = {
+  head_sha: null,
   verdict: "pass_with_notes",
   findings: [{ criterion_id: null, criterion: "Ship it", status: "partial", evidence: { kind: "legacy", text: "Some evidence" }, description: null }],
   test_evidence: null,
