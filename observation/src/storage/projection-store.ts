@@ -19,6 +19,7 @@ export interface LineagePage { readonly occurrence_id: string; readonly relation
   readonly unresolved: readonly Selectable<ObservationItemRelation>[]; readonly total: number;
   readonly limit: number; readonly offset: number; readonly republication: Republication | null }
 interface StoredSelection { readonly occurrence_id: string; readonly item: SelectedItem; readonly definition: ExtractorDefinition }
+const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer, namespace: tenant.namespace });
 
 function sameJson(left: JsonValue, right: JsonValue): boolean {
   const a = canonicalJson(left);
@@ -26,12 +27,12 @@ function sameJson(left: JsonValue, right: JsonValue): boolean {
   return a.ok && b.ok && a.value === b.value;
 }
 async function saveIssue(trx: DatabaseTransaction, tenant: TenantScope, issue: ExtractionIssue): Promise<void> {
-  await trx.insertInto("observation.extraction_issue").values({ ...tenant, issue_id: issueId(issue), ...issue })
+  await trx.insertInto("observation.extraction_issue").values({ ...scope(tenant), issue_id: issueId(issue), ...issue })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "issue_id"]).doNothing()).execute();
 }
 async function saveDefinition(trx: DatabaseTransaction, tenant: TenantScope, definition: ExtractorDefinition): Promise<void> {
   const { artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector } = definition;
-  await trx.insertInto("observation.extractor_definition").values({ ...tenant, artifact_kind, schema_version,
+  await trx.insertInto("observation.extractor_definition").values({ ...scope(tenant), artifact_kind, schema_version,
     extractor_id, extractor_version, item_kind, item_selector })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "artifact_kind", "schema_version", "extractor_id", "extractor_version"]).doNothing()).execute();
 }
@@ -43,17 +44,21 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
   const occurrence_id = identity.value;
   const logical_item_id = item.item_scope && item.producer_local_id
     ? `${tenant.producer}:${tenant.namespace}:${revision.run_id}:${item.item_scope}:${item.producer_local_id}` : null;
-  if (logical_item_id) await trx.insertInto("observation.logical_item").values({ ...tenant, logical_item_id,
+  if (logical_item_id) await trx.insertInto("observation.logical_item").values({ ...scope(tenant), logical_item_id,
     run_id: revision.run_id, scope: item.item_scope!, producer_local_id: item.producer_local_id! })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "logical_item_id"]).doNothing()).execute();
-  const row = { ...tenant, occurrence_id, revision_id: revision.revision_id, run_id: revision.run_id,
+  const row = { ...scope(tenant), occurrence_id, revision_id: revision.revision_id, run_id: revision.run_id,
     artifact_kind: revision.artifact_kind, schema_version: revision.artifact_schema_version,
     extractor_id: definition.extractor_id, extractor_version: definition.extractor_version,
     item_kind: item.item_kind, item_selector: item.item_selector, item_id_or_path: item.item_id_or_path,
     item_scope: item.item_scope, producer_local_id: item.producer_local_id,
-    selected_value: sql<JsonValue>`${JSON.stringify(item.selected_value)}::jsonb`, logical_item_id };
+    selected_value: sql<JsonValue>`${JSON.stringify(item.selected_value)}::jsonb`, logical_item_id,
+    json_pointer: item.path };
   await trx.insertInto("observation.item_occurrence").values(row)
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "occurrence_id"]).doNothing()).execute();
+  await trx.updateTable("observation.item_occurrence").set({ json_pointer: item.path })
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("occurrence_id", "=", occurrence_id).where("json_pointer", "is", null).execute();
   const existing = await trx.selectFrom("observation.item_occurrence").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow();
@@ -96,7 +101,7 @@ async function saveRelation(trx: DatabaseTransaction, tenant: TenantScope, propo
   const target_occurrence_id = proposal.target.kind === "occurrence" ? proposal.target.id : null;
   const target_logical_item_id = proposal.target.kind === "logical_item" ? proposal.target.id : null;
   const unresolved_target_ref = proposal.target.kind === "unresolved" ? proposal.target.ref : null;
-  await trx.insertInto("observation.item_relation").values({ ...tenant, relation_id: relationId(proposal),
+  await trx.insertInto("observation.item_relation").values({ ...scope(tenant), relation_id: relationId(proposal),
     source_occurrence_id, source_logical_item_id, target_occurrence_id, target_logical_item_id,
     unresolved_target_ref, type: proposal.type, asserted_by: proposal.asserted_by,
     evidence_ref: proposal.evidence_ref, algorithm: proposal.algorithm, algorithm_version: proposal.algorithm_version })
@@ -108,7 +113,7 @@ async function saveRelation(trx: DatabaseTransaction, tenant: TenantScope, propo
 async function saveRevisionAnchor(trx: DatabaseTransaction, tenant: TenantScope,
   revision: Selectable<ObservationSourceRevision>): Promise<string> {
   const logical_item_id = revisionAnchorId(revision);
-  await trx.insertInto("observation.logical_item").values({ ...tenant, logical_item_id,
+  await trx.insertInto("observation.logical_item").values({ ...scope(tenant), logical_item_id,
     run_id: revision.run_id, scope: `artifact_revision/${revision.artifact_kind}`,
     producer_local_id: revision.revision_id })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "logical_item_id"]).doNothing()).execute();
@@ -130,7 +135,10 @@ async function saveSubjectRelation(trx: DatabaseTransaction, tenant: TenantScope
 
 /** Replaying a captured revision is idempotent; L0 body and digest are only read. */
 export function projectRevision(db: Database, tenant: TenantScope, revision_id: string): Promise<ProjectionSummary | null> {
-  return withTenant(db, tenant, async (trx) => {
+  return withTenant(db, tenant, (trx) => projectRevisionInTransaction(trx, tenant, revision_id));
+}
+
+export async function projectRevisionInTransaction(trx: DatabaseTransaction, tenant: TenantScope, revision_id: string): Promise<ProjectionSummary | null> {
     const revision = await trx.selectFrom("observation.source_revision").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("revision_id", "=", revision_id).executeTakeFirst();
@@ -167,7 +175,6 @@ export function projectRevision(db: Database, tenant: TenantScope, revision_id: 
     }
     if (await saveSubjectRelation(trx, tenant, revision)) relationCount++;
     return { occurrences: selections.length, issues: pass.issues.length + collisionCount, relations: relationCount };
-  });
 }
 
 export function recordHumanRelation(db: Database, tenant: TenantScope, source_occurrence_id: string,

@@ -9,6 +9,7 @@ const gradingMigration = new URL("./migrations/0003_grading.sql", import.meta.ur
 const cursorMigration = new URL("./migrations/0004_cursor.sql", import.meta.url);
 const exportMigration = new URL("./migrations/0005_export.sql", import.meta.url);
 const exportGuardMigration = new URL("./migrations/0006_export_guard.sql", import.meta.url);
+const purgeMigration = new URL("./migrations/0007_purge.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -21,6 +22,7 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const cursor = await Bun.file(cursorMigration).text();
   const exportSql = await Bun.file(exportMigration).text();
   const exportGuardSql = await Bun.file(exportGuardMigration).text();
+  const purgeSql = await Bun.file(purgeMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -51,6 +53,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
     if (!exports.rows[0]?.name) await sql.raw(exportSql).execute(trx);
     // The function replacement is idempotent and also upgrades databases that already have 0005.
     await sql.raw(exportGuardSql).execute(trx);
+    const purges = await sql<{ name: string | null }>`SELECT to_regclass('observation.purge_event')::text AS name`.execute(trx);
+    if (!purges.rows[0]?.name) await sql.raw(purgeSql).execute(trx);
   });
 }
 

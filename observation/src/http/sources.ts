@@ -6,10 +6,115 @@ import type { Database } from "../storage/database";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
 import { projectRevision } from "../storage/projection-store";
+import { sql } from "kysely";
+import { withTenant } from "../storage/database";
+import { handleOperatorEvent, type OperatorEventDelivery } from "../purge/trigger";
+import { deliverBackfill, readBackfillCheckpoint, type BackfillDelivery, type BackfillPosition } from "../storage/backfill-store";
 
 export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks;
   readonly exportRoot?: string }
+interface OperatorCursor { readonly commit_txid: string; readonly id: string }
+interface OperatorDelivery { readonly previous: OperatorCursor; readonly cursor: OperatorCursor; readonly event: OperatorEventDelivery }
+const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const isCursor = (value: unknown): value is OperatorCursor => isRecord(value)
+  && typeof value.commit_txid === "string" && /^(0|[1-9][0-9]*)$/.test(value.commit_txid)
+  && typeof value.id === "string";
+function decodeOperatorDelivery(value: unknown): OperatorDelivery | null {
+  if (!isRecord(value) || !isCursor(value.previous) || !isCursor(value.cursor) || !isRecord(value.event)) return null;
+  const event = value.event;
+  if (typeof event.id !== "string" || event.id !== value.cursor.id || typeof event.run_key !== "string"
+    || !isRecord(event.payload) || typeof event.payload.kind !== "string"
+    || typeof event.run_exists !== "boolean" || typeof event.operator_override !== "boolean") return null;
+  if (event.payload.kind === "invalidate" && (!isRecord(event.payload.data)
+    || typeof event.payload.data.target !== "string"
+    || !(typeof event.payload.data.run_id === "string" || event.payload.data.run_id === null))) return null;
+  return value as unknown as OperatorDelivery;
+}
+function isBackfillPosition(value: unknown): value is BackfillPosition {
+  if (!isRecord(value)) return false;
+  if (value.source === "done") return true;
+  return (value.source === "review_decision" || value.source === "collaboration_thread")
+    && typeof value.created_at === "string" && !Number.isNaN(Date.parse(value.created_at)) && typeof value.id === "string";
+}
+function decodeBackfillDelivery(value: unknown): BackfillDelivery | null {
+  if (!isRecord(value) || !isBackfillPosition(value.previous) || !isBackfillPosition(value.position)
+    || !isRecord(value.counts)) return null;
+  if (value.replay !== undefined && typeof value.replay !== "boolean") return null;
+  for (const source of ["review_decision", "collaboration_thread"]) {
+    const counts = value.counts[source];
+    if (!isRecord(counts) || !Number.isSafeInteger(counts.active) || !Number.isSafeInteger(counts.archived)
+      || Number(counts.active) < 0 || Number(counts.archived) < 0) return null;
+  }
+  const outcome = value.outcome;
+  if (outcome !== null && (!isRecord(outcome) || typeof outcome.event_id !== "string"
+    || typeof outcome.run_id !== "string" || outcome.format !== "observation.source-event/v1")) return null;
+  if (isRecord(outcome) && outcome.kind === "human_grade" && (!isRecord(outcome.evaluator)
+    || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
+    || typeof outcome.decided_at !== "string"
+    || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
+  if (isRecord(outcome) && outcome.kind === "collaboration_thread" && (!isRecord(outcome.context)
+    || typeof outcome.context.title !== "string" || !(outcome.context.anchor === null || typeof outcome.context.anchor === "string")
+    || !Array.isArray(outcome.messages))) return null;
+  if (isRecord(outcome) && !["human_grade", "collaboration_thread"].includes(String(outcome.kind))) return null;
+  return value as unknown as BackfillDelivery;
+}
+async function readOperatorCursor(db: Database, tenant: { readonly producer: string; readonly namespace: string }): Promise<OperatorCursor> {
+  return withTenant(db, tenant, async (trx) => {
+    const result = await sql<OperatorCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
+      FROM observation.source_operator_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
+    return result.rows[0] ?? { commit_txid: "0", id: "" };
+  });
+}
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/sources/oakridge/backfill", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    return c.json(await readBackfillCheckpoint(deps.db, credential));
+  });
+  app.post("/v1/sources/oakridge/backfill", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    let input: unknown;
+    try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
+    const delivery = decodeBackfillDelivery(input);
+    if (!delivery) return errorResponse(c, 400, "invalid_backfill", "valid backfill delivery required");
+    try {
+      const result = await deliverBackfill(deps.db, credential, delivery);
+      return result === "accepted" ? c.json({ position: delivery.position, counts: delivery.counts })
+        : errorResponse(c, 409, "position_conflict", "backfill position changed");
+    } catch (cause) { return errorResponse(c, 409, "backfill_refused", String(cause)); }
+  });
+  app.get("/v1/sources/oakridge/operator-cursor", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    return c.json({ cursor: await readOperatorCursor(deps.db, credential) });
+  });
+  app.post("/v1/sources/oakridge/operator-events", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
+    let input: unknown;
+    try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
+    const delivery = decodeOperatorDelivery(input);
+    if (!delivery) return errorResponse(c, 400, "invalid_event", "valid operator event delivery required");
+    const current = await readOperatorCursor(deps.db, credential);
+    if (current.commit_txid !== delivery.previous.commit_txid || current.id !== delivery.previous.id)
+      return errorResponse(c, 409, "cursor_conflict", "operator cursor changed");
+    if (BigInt(delivery.cursor.commit_txid) < BigInt(current.commit_txid)
+      || delivery.cursor.commit_txid === current.commit_txid && delivery.cursor.id <= current.id)
+      return errorResponse(c, 409, "cursor_conflict", "operator event is not after cursor");
+    const handled = await handleOperatorEvent(deps.db, credential, delivery.event);
+    if (!handled.ok) return errorResponse(c, handled.error.code === "frozen_export" ? 409 : 500,
+      handled.error.code, handled.error.detail);
+    await withTenant(deps.db, credential, async (trx) => {
+      await sql`INSERT INTO observation.source_operator_cursor (producer, namespace, commit_txid, event_id)
+        VALUES (${credential.producer}, ${credential.namespace}, ${delivery.cursor.commit_txid}::bigint, ${delivery.cursor.id})
+        ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = excluded.commit_txid, event_id = excluded.event_id
+        WHERE (observation.source_operator_cursor.commit_txid, observation.source_operator_cursor.event_id)
+          = (${current.commit_txid}::bigint, ${current.id})`.execute(trx);
+    });
+    return c.json({ cursor: delivery.cursor, purge: handled.value });
+  });
   app.get("/v1/sources/oakridge/cursor", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
     if (!credential || credential.producer !== "oakridge") return errorResponse(c, 401, "unauthorized", "ingest credential required");
@@ -40,6 +145,16 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
     return c.json({ items: await readSourceHumanGrades(deps.db, credential) });
+  });
+  app.get("/v1/sources/oakridge/collaboration-comments", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
+    const run_id = new URL(c.req.url).searchParams.get("run_id");
+    if (!run_id) return errorResponse(c, 400, "invalid_run", "run_id is required");
+    const items = await withTenant(deps.db, credential, (trx) => trx.selectFrom("observation.source_collaboration_comment")
+      .selectAll().where("producer", "=", credential.producer).where("namespace", "=", credential.namespace)
+      .where("run_id", "=", run_id).orderBy("recorded_at").orderBy("message_id").limit(200).execute());
+    return c.json({ items });
   });
   app.post("/v1/sources/oakridge/sync", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);
