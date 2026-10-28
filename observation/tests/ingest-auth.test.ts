@@ -31,6 +31,8 @@ async function send(app: ReturnType<typeof createApp>, token: string, namespace:
 test("a token is configured for exactly one capability and tenant", () => {
   expect(() => credentialsFromEnv({ OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest),
     OBSERVATION_READ_CREDENTIALS: JSON.stringify([{ token: "alpha-ingest", producer: "oakridge", namespace: "alpha" }]) })).toThrow("unique");
+  expect(() => credentialsFromEnv({ OBSERVATION_READ_CREDENTIALS: JSON.stringify(credentials.read),
+    OBSERVATION_EXPORT_RAW_CREDENTIALS: JSON.stringify(credentials.read) })).toThrow("unique");
 });
 
 integration("ingest credential rejects another tenant and all read or grade routes without disclosure", async () => {

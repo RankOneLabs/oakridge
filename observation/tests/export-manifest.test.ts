@@ -31,7 +31,7 @@ function rows(): ExportRows {
     revisions: [{ ...tenant, revision_id: "rev-1", artifact_kind: "build_result", body_digest: revisionDigest, body }],
     occurrences: [{ ...tenant, occurrence_id: occurrenceId, revision_id: "rev-1", run_id: "run-1",
       selected_value: { output: "PRIVATE BUILD", tests: { output: "PRIVATE TEST" }, repository_content: "PRIVATE SOURCE" } }],
-    evidences: [{ ...tenant, evidence_set_id: "evidence-1", evidence_refs: [{ ref: "repo-snapshot", content: "PRIVATE SOURCE" }],
+    evidences: [{ ...tenant, evidence_set_id: "evidence-1", evidence_refs: [{ ref: "repo-snapshot", kind: "repository_content", content: "PRIVATE SOURCE" }],
       is_incomplete: false, incompleteness_reason: null }],
     grades: [{ ...tenant, observation_id: "grade-1", execution_id: "exec-1", subject_occurrence_id: occurrenceId,
       evidence_set_id: "evidence-1", question_id: "relevance", question_version: "1", evaluator_definition_id: "human",
@@ -124,6 +124,12 @@ integration("the assay route freezes files and membership when another grade is 
       const stillFrozen = await withTenant(db, gradingTenant, (trx) => trx.selectFrom("observation.export_membership")
         .selectAll().where("manifest_id", "=", first.manifest.manifest_id).execute());
       expect(stillFrozen).toEqual(frozenRows);
+      await expect(withTenant(db, gradingTenant, (trx) => sql`INSERT INTO observation.export_membership
+        (producer, namespace, manifest_id, candidate_id, occurrence_id, revision_id, revision_digest,
+         disposition, reason, redaction_reasons)
+        VALUES (${gradingTenant.producer}, ${gradingTenant.namespace}, ${first.manifest.manifest_id},
+          ${id(["late candidate"])}, ${occurrence_id}, 'rev-1', ${id({})}, 'excluded', 'late', '[]'::jsonb)`.execute(trx)))
+        .rejects.toThrow("new manifest");
       await expect(withTenant(db, gradingTenant, (trx) => sql`UPDATE observation.export_membership
         SET reason = 'rewritten' WHERE manifest_id = ${first.manifest.manifest_id}`.execute(trx)))
         .rejects.toThrow("immutable");
@@ -136,6 +142,23 @@ integration("the assay route freezes files and membership when another grade is 
       expect(fileManifest.membership_digest).toBe(first.manifest.membership_digest);
       expect(membershipDigest(fileManifest.membership)).toEqual({ ok: true, value: first.manifest.membership_digest });
       expect((await readFile(first.files.data, "utf8")).trim().split("\n")).toHaveLength(1);
+    });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+integration("raw allowances require the tenant's raw export credential", async () => {
+  const root = await mkdtemp(join(tmpdir(), "observation-raw-auth-"));
+  try {
+    await scratchGrading(async (db) => {
+      const app = createApp({ db, exportRoot: root, credentials: { ingest: [],
+        read: [{ ...gradingTenant, token: "read-token" }],
+        export_raw: [{ ...gradingTenant, token: "raw-token" }] } });
+      const body = JSON.stringify({ target: { name: "assay", redaction_policy: {
+        allow_raw_build_output: true, allow_raw_test_output: false, allow_repository_content: false } } });
+      const request = (token: string) => app.request("/v1/exports/assay", { method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body });
+      expect((await request("read-token")).status).toBe(403);
+      expect((await request("raw-token")).status).toBe(201);
     });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

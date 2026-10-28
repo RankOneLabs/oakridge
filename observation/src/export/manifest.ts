@@ -9,7 +9,7 @@ export type CandidateDisposition =
   | { readonly disposition: "included"; readonly reason: string }
   | { readonly disposition: "excluded"; readonly reason: string };
 
-export interface RedactionReason { readonly path: string; readonly reason: "raw_build_output" | "raw_test_output" | "repository_content" }
+export interface RedactionReason { readonly path: string; readonly reason: "raw_build_output" | "raw_test_output" | "repository_content" | "unclassified_content" }
 export interface RedactionPolicy {
   readonly target_name: string;
   readonly allow_raw_build_output: boolean;

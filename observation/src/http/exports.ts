@@ -23,12 +23,17 @@ const requestSchema = z.object({
 
 export function registerExportRoutes(app: Hono, deps: SourceDependencies): void {
   app.post("/v1/exports/assay", async (c) => {
-    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.read);
-    if (!tenant) return errorResponse(c, 403, "forbidden", "read credential required");
+    const authorization = c.req.header("authorization");
+    const rawCredential = credentialFor(authorization, deps.credentials.export_raw ?? []);
+    const tenant = rawCredential ?? credentialFor(authorization, deps.credentials.read);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "export credential required");
     let body: unknown;
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_export", parsed.error.message);
+    const allowances = parsed.data.target.redaction_policy;
+    if ((allowances.allow_raw_build_output || allowances.allow_raw_test_output || allowances.allow_repository_content)
+      && !rawCredential) return errorResponse(c, 403, "forbidden", "raw export credential required");
     const policy = { target_name: parsed.data.target.name, ...parsed.data.target.redaction_policy };
     const prepared = await prepareExport(deps.db, tenant, parsed.data.selection, policy);
     const root = deps.exportRoot ?? process.env.OBSERVATION_EXPORT_ROOT ?? join(tmpdir(), "observation-exports");
