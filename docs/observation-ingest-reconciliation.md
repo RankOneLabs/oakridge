@@ -38,6 +38,8 @@ these in `observation.source_event_outcome` and exposes them through the scoped
 `GET /v1/sources/oakridge/unmapped` read route. Its cursor advances only when
 that row commits, so the tail continues past a visible gap.
 
+## Artifact schema and body digests
+
 The adapter resolves the bundle pinned to each run. A revision's schema
 version hashes only that artifact kind's parsed declaration subtree in
 `checked_program`; prompt-only changes leave this version stable. Each revision
