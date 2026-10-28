@@ -1,0 +1,21 @@
+{
+  "pre_existing": {
+    "id": "1a84012e-155d-47b1-8719-42deef16135f",
+    "commit_txid": "1768",
+    "created_at": "2026-10-23T17:28:13.261Z",
+    "payload": {
+      "kind": "operator_decided",
+      "unit": "run-38bd8c2fad299e90/planning",
+      "review": "plan_review",
+      "target": "run-38bd8c2fad299e90/planning:plan:1",
+      "payload": {
+        "feedback": "accepted for fixture replay"
+      },
+      "decision": "accept"
+    },
+    "decision_id": "run-slice-plan-review-1",
+    "effect": "approve",
+    "run_id": "run-38bd8c2fad299e90",
+    "unit_id": "run-38bd8c2fad299e90/planning"
+  }
+}

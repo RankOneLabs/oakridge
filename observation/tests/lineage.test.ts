@@ -7,6 +7,7 @@ import { createApp } from "../src/http/app";
 import { openDatabase, withTenant, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { listRunItems, projectRevision, readLineage, recordHumanRelation } from "../src/storage/projection-store";
+import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -24,7 +25,7 @@ async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
     url.pathname = `/${name}`;
     const db = openDatabase(url.href);
     try { await migrateEmptyDatabase(db); await work(db); }
-    finally { await db.destroy(); await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+    finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 }
 async function fixture(name: string): Promise<JsonValue> {

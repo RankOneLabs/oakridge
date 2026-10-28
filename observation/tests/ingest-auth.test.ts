@@ -6,6 +6,7 @@ import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -62,7 +63,6 @@ integration("ingest credential rejects another tenant and all read or grade rout
       }
       const tenantRead = await app.request("/v1/source-revisions/oakridge:beta:present", { headers: { authorization: "Bearer alpha-read" } });
       expect(tenantRead.status).toBe(404);
-    } finally { await db.destroy(); }
-    await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 });
