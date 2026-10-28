@@ -42,23 +42,21 @@ test("development reviews analysis, specification, and tasks before planning", (
       readonly briefs: { readonly input: { readonly spec: string } } } };
     readonly stages: { readonly analysis: { readonly artifacts: { readonly analysis: { readonly schema: string }; readonly spec: { readonly schema: string };
       readonly tasks: { readonly schema: string } };
-      readonly workers: { readonly author: { readonly creates: string[] }; readonly spec_editor: { readonly when: string; readonly creates: string[] };
-        readonly task_editor: { readonly when: string; readonly creates: string[] } };
+      readonly workers: { readonly author: { readonly creates: string[] }; readonly spec_editor: { readonly when: string; readonly creates: string[] } };
       readonly reviews: { readonly analysis_review: { readonly of: string }; readonly spec_review: { readonly of: string };
         readonly tasks_review: { readonly of: string } };
       readonly done_when: string; readonly outcome: { readonly spec: string; readonly tasks: string } } };
   }
   const workflow = YAML.parse(readFileSync(resolve(root, WORKFLOW_SOURCES.development), "utf8")) as DevelopmentSpecFlow;
   const analysis = workflow.stages.analysis;
+  expect(Object.keys(analysis.workers).sort()).toEqual(["author", "spec_editor"]);
   expect({ artifacts: analysis.artifacts, author: analysis.workers.author.creates,
     editor: { when: analysis.workers.spec_editor.when, creates: analysis.workers.spec_editor.creates },
-    taskEditor: { when: analysis.workers.task_editor.when, creates: analysis.workers.task_editor.creates },
     review: analysis.reviews.analysis_review.of, specReview: analysis.reviews.spec_review.of, tasksReview: analysis.reviews.tasks_review.of,
     done_when: analysis.done_when, outcome: analysis.outcome,
     planning: workflow.run.units.planning.input, brief: workflow.run.units.briefs.input.spec })
     .toEqual({ artifacts: { analysis: { schema: "analysis_body" }, spec: { schema: "text" }, tasks: { schema: "tasks_body" } },
-      author: ["analysis"], editor: { when: "approved(analysis)", creates: ["spec"] },
-      taskEditor: { when: "approved(spec)", creates: ["tasks"] },
+      author: ["analysis"], editor: { when: "approved(analysis)", creates: ["spec", "tasks"] },
       review: "analysis", specReview: "spec", tasksReview: "tasks",
       done_when: "approved(analysis) and approved(spec) and approved(tasks)", outcome: { spec: "latest(spec)", tasks: "latest(tasks)" },
       planning: { spec: "analysis.outcome.spec", tasks: "analysis.outcome.tasks", repositories: "input.repositories",

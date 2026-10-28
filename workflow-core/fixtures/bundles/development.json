@@ -381,22 +381,7 @@
           },
           "workspace": "repository(input.workspace)",
           "creates": [
-            "spec"
-          ]
-        },
-        "task_editor": {
-          "kind": "agent",
-          "when": "approved(spec)",
-          "prompts": {
-            "initial": "development/analysis-to-tasks.md",
-            "revise": "development/analysis-to-tasks-revise.md"
-          },
-          "inputs": {
-            "revised_spec": "latest(spec)",
-            "approved_analysis": "latest(analysis)"
-          },
-          "workspace": "repository(input.workspace)",
-          "creates": [
+            "spec",
             "tasks"
           ]
         }
