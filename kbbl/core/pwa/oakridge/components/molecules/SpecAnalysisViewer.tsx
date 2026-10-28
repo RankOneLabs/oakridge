@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import type { ViewerProps } from "../../artifactRegistry";
-import { isSpecAnalysis, selectSpecAnalysisView, type SpecBlocker, type SpecAnalysisTally } from "../../lib/spec-analysis";
+import { isSpecAnalysis, selectSpecAnalysisView, selectUpdateFindings, type SpecAnalysis, type SpecBlocker, type SpecAnalysisTally, type SpecUpdate } from "../../lib/spec-analysis";
 import { selectStatusTone, type StatusToneSource } from "../../lib/status-tone";
 import { ArtifactSection } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
@@ -61,6 +61,20 @@ function BlockerCallout({ blockers }: { blockers: SpecBlocker[] }) {
   );
 }
 
+function UpdateFindingLinks({ update, analysis }: { update: SpecUpdate; analysis: SpecAnalysis }) {
+  const references = selectUpdateFindings(update, analysis);
+  return <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]" data-testid="or-spec-update-findings">
+    <span>Findings</span>
+    {references.length === 0 && <Chip tone="muted">Unlinked</Chip>}
+    {references.map(({ id, finding }, index) => finding
+      ? <span key={`${index}-${id}`} className="inline-flex items-center gap-1">
+        <code className="or-code">{id}</code><Chip tone={selectStatusTone(finding.severity)}>{finding.severity}</Chip>
+        <span className="text-[var(--text-secondary)]">{finding.description}</span>
+      </span>
+      : <code key={`${index}-${id}`} className="or-code">{id}</code>)}
+  </div>;
+}
+
 export function SpecAnalysisViewer({ body }: ViewerProps) {
   if (!isSpecAnalysis(body)) {
     return <div className="or-error" role="alert">This spec analysis does not match the registered contract.</div>;
@@ -84,6 +98,7 @@ export function SpecAnalysisViewer({ body }: ViewerProps) {
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">{update.section}</h3>
               <p className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{update.change}</p>
               <p className="text-xs text-[var(--text-muted)]">Why: {update.reason}</p>
+              <UpdateFindingLinks update={update} analysis={body} />
             </li>)}
           </ol>
           : <p className="text-sm text-[var(--text-muted)]">No changes to the specification proposed.</p>}

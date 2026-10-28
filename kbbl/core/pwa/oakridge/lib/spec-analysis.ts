@@ -25,6 +25,13 @@ export interface SpecUpdate {
   section: string;
   change: string;
   reason: string;
+  /** Missing on analysis revisions published before finding links were introduced. */
+  finding_ids?: string[];
+}
+
+export interface SpecFindingReference {
+  id: string;
+  finding: SpecFinding | null;
 }
 
 /** Mirrors the registered oakridge-dbos `dev.spec_analysis` artifact body. */
@@ -98,7 +105,14 @@ function isSpecUpdate(value: unknown): value is SpecUpdate {
   return isRecord(value)
     && typeof value.section === "string"
     && typeof value.change === "string"
-    && typeof value.reason === "string";
+    && typeof value.reason === "string"
+    && (value.finding_ids === undefined || isStringArray(value.finding_ids));
+}
+
+/** Resolve an update's explicit finding ids without hiding broken references. */
+export function selectUpdateFindings(update: SpecUpdate, analysis: SpecAnalysis): SpecFindingReference[] {
+  const byId = new Map(analysis.findings.map((finding) => [finding.id, finding]));
+  return (update.finding_ids ?? []).map((id) => ({ id, finding: byId.get(id) ?? null }));
 }
 
 export function isSpecAnalysis(value: unknown): value is SpecAnalysis {

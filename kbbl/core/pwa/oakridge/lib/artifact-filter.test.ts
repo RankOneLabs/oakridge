@@ -4,7 +4,7 @@ import type { RunArtifactRef } from "./run-overview";
 import { selectFilteredRunArtifacts, type RunArtifactFilter } from "./artifact-filter";
 
 const types = [
-  "workspace", "dev.spec_analysis", "dev.spec", "dev.plan", "dev.build_brief",
+  "workspace", "dev.spec_analysis", "dev.spec", "dev.plan", "dev.tasks", "dev.build_brief",
   "dev.pr_summary", "dev.build_result", "dev.assessment", "custom.report",
 ];
 const rows: readonly RunArtifactRef[] = types.map((type_id) => ({
@@ -14,7 +14,7 @@ const rows: readonly RunArtifactRef[] = types.map((type_id) => ({
 
 describe("run artifact filter", () => {
   it.each([
-    ["prep", types.slice(0, 4)],
+    ["prep", types.slice(0, 5)],
     ["briefs", ["dev.build_brief"]],
     ["pr_summaries", ["dev.pr_summary"]],
     ["build_results", ["dev.build_result"]],
