@@ -62,7 +62,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
           </ul>
         ) : <p className="text-sm text-[var(--success-fg)]">Every criterion is met.</p>}
       </ArtifactSection>
@@ -93,7 +93,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           </Button>
           {isMetOpen && (
             <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
             </ul>
           )}
         </ArtifactSection>

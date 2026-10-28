@@ -20,7 +20,9 @@ export function CriterionCheckItem({ check, showBriefComparison = true }: { chec
         <p className="text-sm font-medium text-[var(--text-primary)]">{selectCheckCriterionText(check)}</p>
       </div>
       <div className="flex flex-col gap-1 pl-8">
-        <span className="text-xs text-[var(--text-muted)]">{MATCH_LABEL[check.match]}</span>
+        {(check.match !== "unmatched" || (showBriefComparison && check.kind === "assessment_only")) && (
+          <span className="text-xs text-[var(--text-muted)]">{MATCH_LABEL[check.match]}</span>
+        )}
         {showBriefComparison && check.kind === "assessment_only" && <span className="text-xs text-[var(--text-muted)]">Not one of the brief's criteria.</span>}
         {check.kind === "assessment_only" && check.finding.criterion_id && <span className="text-xs text-[var(--text-muted)]">Unresolved criterion ID: <code>{check.finding.criterion_id}</code></span>}
         {check.finding?.evidence.kind === "legacy" && check.finding.evidence.text && (

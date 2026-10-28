@@ -111,11 +111,20 @@ describe("AssessmentViewer", () => {
     if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
     render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
     expect(screen.getByText("criterion-missing")).toBeTruthy();
+    expect(screen.getByText("No brief criterion match")).toBeTruthy();
+  });
+
+  test("does not call an unassessed brief criterion unmatched to the brief", () => {
+    render(<AssessmentViewer assessment={{ ...assessment, findings: assessment.findings.slice(0, 1) }} brief={{ kind: "found", value: brief }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
+    const attention = within(screen.getByTestId("or-assessment-attention"));
+    expect(attention.getByText("Every fixture exists.")).toBeTruthy();
+    expect(attention.queryByText("No brief criterion match")).toBeNull();
   });
 
   test("still lists findings when the brief is missing", () => {
     render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: "cm-cli" }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
     expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
+    expect(screen.queryByText("No brief criterion match")).toBeNull();
   });
 
   test("keeps the derived needs-attention criteria read-only", () => {
@@ -132,6 +141,7 @@ describe("AssessmentViewer", () => {
     expect(screen.queryByTestId("or-assessment-brief-note")).toBeNull();
     expect(screen.queryByTestId("or-assessment-result-note")).toBeNull();
     expect(screen.queryByText("Not one of the brief's criteria.")).toBeNull();
+    expect(screen.queryByText("No brief criterion match")).toBeNull();
     expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
   });
 });
