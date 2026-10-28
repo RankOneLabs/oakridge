@@ -14,6 +14,7 @@ export interface CaptureSource {
   readonly definition_bundle: { readonly id: string; readonly digest: string };
   readonly predecessor_id: string | null;
   readonly subject_id: string | null;
+  readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
   readonly format: "observation.artifact-revision/v1";
