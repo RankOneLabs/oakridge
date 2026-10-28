@@ -1,0 +1,8 @@
+{
+  "repository_key": "oakridge",
+  "head_sha": "1111111111111111111111111111111111111111",
+  "summary": "Built alpha",
+  "changed_files": ["src/alpha.ts"],
+  "tests": { "passed": 1, "failed": 0 },
+  "known_issues": []
+}

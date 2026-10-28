@@ -1,7 +1,8 @@
 # Active known issues
 
-Reproducible issues in the Rust evaluator, DBOS authority, provider composition
-and operator PWA. Record the affected version or bundle, a reproduction, and the
+Reproducible issues and deliberate deferrals in the Rust evaluator, DBOS
+authority, observation service, provider composition and operator PWA. Record
+the affected version or bundle, a reproduction or reason for deferral, and the
 observed and expected behavior. Remove an entry once its fix is verified.
 
 ## Development workflow
@@ -11,6 +12,24 @@ observed and expected behavior. Remove an entry once its fix is verified.
   `pr_watch` then starts and fails `invalid_instruction`, because
   `pull_request.observe` requires a nonempty URL. Expected: the artifact is
   rejected, so an absent PR neither starts observation nor reads as published.
+
+## Observation service deferrals
+
+- **No `text_span` selector or `spec` extraction.** The development `spec`
+  artifact is a bare string. Stable offsets or heading rules for a span have
+  not been defined, so the catalogue leaves it out rather than inventing a
+  cross-revision identity.
+- **Ingest tokens are configuration-sourced.** A stored credential table would
+  add a rotation and management API. This pass uses scoped runtime secrets and
+  restarts for rotation while that management contract remains undecided.
+- **Access revocation is documented, not implemented.** Revocation needs a
+  tenancy and access model identifying affected runs before it can safely use
+  the audited purge entry point. Frozen exports can otherwise lose their source
+  evidence without a recorded override.
+- **Independent Springfield deployment is documented, not scripted.** The
+  operator has not chosen whether observation shares Oakridge's deployment
+  lifecycle. A deployment script would prematurely fix that topology; the
+  local start script remains an optional development path.
 
 ## Executor
 

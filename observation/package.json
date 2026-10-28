@@ -1,0 +1,24 @@
+{
+  "name": "observation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./tests",
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "storage:generate": "bun scripts/generate-storage-records.ts",
+    "storage:check": "bun scripts/generate-storage-records.ts --check",
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "kysely": "~0.29.6",
+    "pg": "^8.23.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.7.2"
+  }
+}

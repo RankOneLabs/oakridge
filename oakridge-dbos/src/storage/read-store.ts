@@ -4,6 +4,8 @@ import type { ActionId, Brand, DecisionId, DefinitionBundleId, EventId, IngressI
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
+import type { Event } from "../core-client/core-types";
+import type { OperatorEventPayload } from "../projections/operator-event";
 import type { SessionHold, SessionRunLocation } from "../projections/session-hold";
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
@@ -457,14 +459,39 @@ export async function readPinnedDefinition(db: Reader, run_id: string): Promise<
  * gone, so no later commit can land behind the cursor. `subscription_snapshot`
  * marks the rows a reconnecting subscriber had already seen.
  */
+export interface CommittedEventCursor { readonly commit_txid: string; readonly id: string }
+export interface CommittedEventRow<Payload> { readonly id: string; readonly run_id: string | null; readonly unit_id: string | null;
+  readonly payload: Payload; readonly created_at: Date; readonly commit_txid: string; readonly was_visible_at_subscription: boolean }
+export interface CommittedEventQuery { readonly after: CommittedEventCursor; readonly limit: number; readonly subscription_snapshot?: string | null }
+/** Both authority event feeds use this one guarded, ordered tuple scan. */
+export async function readCommittedEventsAfter(db: Reader, table: "authority.event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event>[]>;
+export async function readCommittedEventsAfter(db: Reader, table: "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<OperatorEventPayload>[]>;
+export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event | OperatorEventPayload>[]> {
+  const rows = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: Event | OperatorEventPayload; created_at: Date;
+    commit_txid: string; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid, coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription FROM ${sql.table(table)} WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id}) AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY commit_txid, id LIMIT ${input.limit}`.execute(db);
+  return rows.rows;
+}
+
+/** The stage pinned on the unit addressed by a revision event. */
+export async function readEventUnitStage(db: Reader, run_id: string, unit_id: string): Promise<string | null> {
+  const row = await db.selectFrom("authority.unit").select("stage").where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
+  return row?.stage ?? null;
+}
+
+/** Count committed publications through this event to reproduce the core's revision sequence. */
+export async function readEventRevisionSequence(db: Reader, row: CommittedEventRow<Event>, artifact: string): Promise<number> {
+  const counted = await db.selectFrom("authority.event").select((eb) => eb.fn.countAll<number>().as("count"))
+    .where("run_id", "=", row.run_id ?? "").where("unit_id", "=", row.unit_id)
+    .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "revision_published"))
+    .where((eb) => eb(eb.ref("payload", "->>").key("artifact"), "=", artifact))
+    .where((eb) => eb(eb.refTuple("commit_txid", "id"), "<=", eb.tuple(eb.cast<number>(eb.val(row.commit_txid), "bigint"), row.id)))
+    .executeTakeFirstOrThrow();
+  return Number(counted.count);
+}
+
 export async function readOperatorEventsAfter(db: Reader, input: { readonly after: RunEventCursor; readonly limit: number; readonly subscription_snapshot: string | null }): Promise<readonly OperatorEventDeliveryRow[]> {
-  const { after, subscription_snapshot } = input;
-  const rows = await db.selectFrom("authority.operator_event").select(["id", "payload", "commit_txid",
-    sql<boolean>`coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${subscription_snapshot}::pg_snapshot), false)`.as("was_visible_at_subscription")])
-    .where((eb) => eb(eb.refTuple("commit_txid", "id"), ">", eb.tuple(eb.cast<number>(eb.val(after.commit_txid), "bigint"), after.id)))
-    .where("commit_txid", "<", sql<number>`pg_snapshot_xmin(pg_current_snapshot())::text::bigint`)
-    .orderBy("commit_txid").orderBy("id").limit(input.limit).execute();
-  return rows.map((row) => ({ id: row.id, payload: row.payload, commit_txid: String(row.commit_txid),
+  const rows = await readCommittedEventsAfter(db, "authority.operator_event", input);
+  return rows.map((row) => ({ id: row.id, payload: row.payload, commit_txid: row.commit_txid,
     was_visible_at_subscription: row.was_visible_at_subscription }));
 }
 
