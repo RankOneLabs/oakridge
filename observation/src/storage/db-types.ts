@@ -203,6 +203,38 @@ export interface ObservationGradeObservation {
   recorded_at: Generated<Date>;
 }
 
+export interface ObservationSourceEventCursor {
+  producer: string;
+  namespace: string;
+  commit_txid: Generated<number>;
+  event_id: Generated<string>;
+}
+
+export interface ObservationSourceEventOutcome {
+  producer: string;
+  namespace: string;
+  event_id: string;
+  run_id: string;
+  commit_txid: number;
+  event_kind: string;
+  outcome_kind: string;
+  detail: JsonValue;
+  recorded_at: Generated<Date>;
+}
+
+export interface ObservationSourceHumanGrade {
+  producer: string;
+  namespace: string;
+  event_id: string;
+  run_id: string;
+  unit_id: string;
+  review: string;
+  decision: string;
+  target_revision_id: string;
+  evaluator_kind: string;
+  feedback: JsonValue | null;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -217,4 +249,7 @@ export interface DB {
   "observation.evaluator_definition": ObservationEvaluatorDefinition;
   "observation.evaluation_execution": ObservationEvaluationExecution;
   "observation.grade_observation": ObservationGradeObservation;
+  "observation.source_event_cursor": ObservationSourceEventCursor;
+  "observation.source_event_outcome": ObservationSourceEventOutcome;
+  "observation.source_human_grade": ObservationSourceHumanGrade;
 }
