@@ -8,6 +8,7 @@ import { decodeCapture } from "../src/ingest/capture";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { startObservation } from "../src/main";
+import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -24,19 +25,7 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
     const url = new URL(serverUrl);
     url.pathname = `/${name}`;
     try { await work(url.href); }
-    finally {
-      // pg's pool can finish closing before PostgreSQL has removed its last
-      // backend. A forced drop then sends a FATAL error to that closing client.
-      // Wait for the backend instead, and fail clearly if a connection leaks.
-      const deadline = Date.now() + 5_000;
-      for (;;) {
-        try { await admin.query(`DROP DATABASE IF EXISTS ${name}`); break; }
-        catch (error) {
-          if ((error as { code?: string }).code !== "55006" || Date.now() >= deadline) throw error;
-          await Bun.sleep(20);
-        }
-      }
-    }
+    finally { await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 }
 

@@ -4,6 +4,7 @@ import { Client } from "pg";
 import { sql } from "kysely";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -18,7 +19,7 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
     const url = new URL(serverUrl);
     url.pathname = `/${name}`;
     try { await work(url.href); }
-    finally { await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+    finally { await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 }
 

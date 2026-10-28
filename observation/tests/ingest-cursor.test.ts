@@ -4,6 +4,7 @@ import { createApp } from "../src/http/app";
 import { decodeSourceEventDelivery } from "../src/ingest/cursor";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -44,7 +45,6 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
       const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_event_outcome").select("event_id").execute());
       expect({ cursor: await cursor.json(), unmapped: await unmapped.json(), stored: stored.map((row) => row.event_id) }).toEqual({
         cursor: { cursor: delivery.cursor }, unmapped: { items: [delivery.outcome] }, stored: ["event-1"] });
-    } finally { await db.destroy(); }
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 });
