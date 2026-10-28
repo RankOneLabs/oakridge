@@ -69,6 +69,8 @@ export interface ObservationItemOccurrence {
   item_kind: string;
   item_selector: string;
   item_id_or_path: string;
+  item_scope: string | null;
+  producer_local_id: string | null;
   selected_value: JsonValue;
   logical_item_id: string | null;
 }

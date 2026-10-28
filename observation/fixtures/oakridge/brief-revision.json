@@ -1,0 +1,12 @@
+{
+  "cohort_id": "alpha",
+  "repository_key": "oakridge",
+  "title": "Alpha",
+  "depends_on": [],
+  "goal": "Build alpha",
+  "files_in_scope": [],
+  "decisions_made": [{ "id": "decision-a", "decision": "Choose A", "rationale": "Fits" }],
+  "approaches_rejected": [{ "id": "rejected-a", "approach": "Choose B", "reason": "Worse", "decision_ids": ["decision-a"] }],
+  "acceptance_criteria": [{ "id": "crit-a", "text": "A works reliably", "task_ids": [], "decision_ids": [] }],
+  "next_action": "Implement"
+}

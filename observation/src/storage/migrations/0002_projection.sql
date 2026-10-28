@@ -36,9 +36,12 @@ CREATE TABLE observation.item_occurrence (
   item_kind text NOT NULL,
   item_selector text NOT NULL,
   item_id_or_path text NOT NULL,
+  item_scope text,
+  producer_local_id text,
   selected_value jsonb NOT NULL,
   logical_item_id text,
-  PRIMARY KEY (producer, namespace, occurrence_id),
+  PRIMARY KEY (occurrence_id),
+  UNIQUE (producer, namespace, occurrence_id),
   UNIQUE (producer, namespace, revision_id, extractor_id, extractor_version, item_selector, item_id_or_path),
   FOREIGN KEY (producer, namespace, revision_id)
     REFERENCES observation.source_revision(producer, namespace, revision_id),
