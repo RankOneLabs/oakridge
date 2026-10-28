@@ -192,12 +192,15 @@ if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
 dbos_pid=""
 kbbl_pid=""
+observation_pid=""
 stop_services() {
   trap - INT TERM EXIT
   if [ -n "$kbbl_pid" ] && kill -0 "$kbbl_pid" 2>/dev/null; then kill -TERM "$kbbl_pid" 2>/dev/null || true; fi
   if [ -n "$dbos_pid" ] && kill -0 "$dbos_pid" 2>/dev/null; then kill -TERM "$dbos_pid" 2>/dev/null || true; fi
+  if [ -n "$observation_pid" ] && kill -0 "$observation_pid" 2>/dev/null; then kill -TERM "$observation_pid" 2>/dev/null || true; fi
   [ -z "$kbbl_pid" ] || wait "$kbbl_pid" 2>/dev/null || true
   [ -z "$dbos_pid" ] || wait "$dbos_pid" 2>/dev/null || true
+  [ -z "$observation_pid" ] || wait "$observation_pid" 2>/dev/null || true
 }
 stop_from_signal() {
   stop_services
@@ -205,6 +208,15 @@ stop_from_signal() {
 }
 trap stop_from_signal INT TERM
 trap stop_services EXIT
+
+if [ -n "${OBSERVATION_DATABASE_URL:-}" ]; then
+  echo "oakridge: starting observation service"
+  (
+    cd "$OAKRIDGE_ROOT/observation"
+    bun run start
+  ) &
+  observation_pid=$!
+fi
 
 echo "oakridge: starting DBOS backend at $DBOS_URL"
 (
@@ -231,10 +243,16 @@ kbbl_pid=$!
 
 echo "oakridge: open http://${KBBL_DISPLAY_HOST}:${KBBL_DISPLAY_PORT}/#oakridge"
 echo "oakridge: browser writes allowed from $OAKRIDGE_ALLOWED_ORIGINS"
-echo "oakridge: Ctrl-C stops kbbl and DBOS; the PostgreSQL container remains running"
+if [ -n "$observation_pid" ]; then
+  echo "oakridge: Ctrl-C stops kbbl, DBOS and observation; the PostgreSQL container remains running"
+else
+  echo "oakridge: Ctrl-C stops kbbl and DBOS; the PostgreSQL container remains running"
+fi
 
 set +e
-wait -n "$dbos_pid" "$kbbl_pid"
+wait_pids=("$dbos_pid" "$kbbl_pid")
+if [ -n "$observation_pid" ]; then wait_pids+=("$observation_pid"); fi
+wait -n "${wait_pids[@]}"
 exit_code=$?
 set -e
 exit "$exit_code"
