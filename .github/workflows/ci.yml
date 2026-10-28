@@ -101,6 +101,7 @@ jobs:
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
+      - run: bunx tsc --noEmit -p observation/tsconfig.json
 
   kbbl-tests:
     name: kbbl backend tests (bun)
@@ -193,6 +194,9 @@ jobs:
       - name: Check generated storage records
         if: matrix.shard == 0
         run: bun oakridge-dbos/scripts/generate-storage-records.ts --check
+      - name: Run observation tests against PostgreSQL
+        if: matrix.shard == 0
+        run: bun run --filter observation test
       - name: Run DBOS integration shard
         env:
           TEST_SHARD: ${{ matrix.shard }}
