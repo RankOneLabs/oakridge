@@ -2,7 +2,7 @@ import type { Result } from "../../lib/result";
 import type { FindingSeverity, RepositoryKey } from "../types";
 
 /**
- * Mirrors `TestEvidence` in oakridge-dbos/src/domain/dev-flow-artifacts.ts.
+ * Mirrors `test_evidence` in workflow-config/development.yaml.
  * Builders routinely omit the text fields, so absence reads as null.
  */
 export interface TestEvidence {
@@ -13,21 +13,22 @@ export interface TestEvidence {
   cargo_test_output: string | null;
 }
 
-/** Mirrors `DelegatedBuildMetadata`; builders publish only the fields they know. */
+/** Mirrors `build_metadata` in workflow-config/development.yaml; builders publish only the fields they know. */
 export interface DelegatedBuildMetadata {
   cohort_id: string | null;
   session_id: string | null;
   branch: string | null;
 }
 
-/** Mirrors `BuildIssue`. */
+/** Mirrors `issue` in workflow-config/development.yaml. */
 export interface BuildIssue {
   description: string;
   severity: FindingSeverity;
 }
 
-/** Mirrors the registered oakridge-dbos `dev.build_result` artifact body. */
+/** Mirrors `build_body` in workflow-config/development.yaml, including legacy revisions. */
 export interface BuildResult {
+  head_sha: string | null;
   repository_key: RepositoryKey | null;
   summary: string;
   changed_files: string[];
@@ -94,6 +95,9 @@ function parseIssues(value: unknown): Parsed<BuildIssue[]> {
 
 export function parseBuildResult(body: unknown): Parsed<BuildResult> {
   if (!isRecord(body)) return fail("body", "expected an object");
+  if (body.head_sha !== undefined && body.head_sha !== null && typeof body.head_sha !== "string") {
+    return fail("head_sha", "expected a string or null");
+  }
   if (typeof body.summary !== "string") return fail("summary", "expected a string");
   if (!Array.isArray(body.changed_files) || !body.changed_files.every((file) => typeof file === "string")) {
     return fail("changed_files", "expected an array of strings");
@@ -104,6 +108,7 @@ export function parseBuildResult(body: unknown): Parsed<BuildResult> {
   if (!issues.ok) return issues;
   const metadata = body.delegated_session_metadata;
   return ok({
+    head_sha: nullableString(body.head_sha),
     repository_key: nullableString(body.repository_key) as RepositoryKey | null,
     summary: body.summary,
     changed_files: body.changed_files,

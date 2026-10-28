@@ -2,6 +2,7 @@ import { Chip } from "../../../components/atoms/Chip";
 import { selectFileScopeComparison, selectHasBlockingIssue, selectOrderedIssues, type BuildIssue, type BuildResult } from "../../lib/build-result";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
+import { planCriterionText } from "../../lib/plan";
 import { selectStatusTone } from "../../lib/status-tone";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { BuildFileScope } from "./BuildFileScope";
@@ -50,6 +51,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
           {branch && <Chip tone="muted" className="font-mono">{branch}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-build-head-sha">Commit: <code className="or-code">{result.head_sha ?? "Not recorded"}</code></p>
       </header>
 
       <ArtifactSection title="What was built" testId="or-build-summary">
@@ -88,7 +90,7 @@ export function BuildResultViewer({ result, brief, cohortLabel }: Props) {
       {brief.kind === "found" && (
         <ArtifactSection title={`The brief's acceptance criteria (${brief.value.acceptance_criteria.length})`} testId="or-build-acceptance">
           <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm text-[var(--text-secondary)]">
-            {brief.value.acceptance_criteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}
+            {brief.value.acceptance_criteria.map((criterion, index) => <li key={index}>{planCriterionText(criterion)}</li>)}
           </ol>
         </ArtifactSection>
       )}

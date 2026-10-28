@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ViewerProps } from "../../artifactRegistry";
-import { parsePlan, selectOrderedCohorts, type PlanScope } from "../../lib/plan";
+import { isPlanCohortIdLinked, parsePlan, selectOrderedCohorts, type PlanScope } from "../../lib/plan";
 import { selectPlanGraphLayout } from "../../lib/plan-graph";
 import type { ArtifactReviewDescriptor, CohortId } from "../../types";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
@@ -48,6 +48,7 @@ export function PlanViewer({ body, descriptor }: ViewerProps) {
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-plan-viewer">
+      {!plan.cohorts.some(isPlanCohortIdLinked) && <p className="text-xs text-[var(--text-muted)]">This revision is not id-linked.</p>}
       {isSectionVisible(descriptor, "summary") && (
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">{plan.summary}</p>
       )}

@@ -1,0 +1,7 @@
+{
+  "head_sha": "abc123def456",
+  "verdict": "fail",
+  "findings": [{ "criterion_id": "criterion-missing", "criterion": "The brief remains readable.", "status": "not_met", "evidence": [] }],
+  "test_evidence": null,
+  "recommended_next_actions": []
+}

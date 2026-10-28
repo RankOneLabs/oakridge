@@ -17,6 +17,7 @@ const ARTIFACT_GROUP: Readonly<Record<string, Exclude<RunArtifactFilter, "all">>
   "dev.spec_analysis": "prep",
   "dev.spec": "prep",
   "dev.plan": "prep",
+  "dev.tasks": "prep",
   "dev.build_brief": "briefs",
   "dev.pr_summary": "pr_summaries",
   "dev.build_result": "build_results",

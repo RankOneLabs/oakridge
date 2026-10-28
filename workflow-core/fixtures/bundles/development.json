@@ -71,9 +71,18 @@
     "spec_update": {
       "section": "text",
       "change": "text",
-      "reason": "text"
+      "reason": "text",
+      "finding_ids": "list(ident)"
     },
     "requirement_status": "enum(implementable, blocked, ambiguous)",
+    "task": {
+      "id": "ident",
+      "description": "text",
+      "requirement_ids": "list(ident)"
+    },
+    "tasks_body": {
+      "tasks": "list(task)"
+    },
     "plan_body": {
       "summary": "text",
       "cohorts": "list(plan_cohort)",
@@ -93,8 +102,18 @@
       "depends_on": "list(ident)",
       "description": "optional(text)",
       "files_in_scope": "list(text)",
-      "decisions": "list(text)",
-      "acceptance_criteria": "list(text)"
+      "decisions": "list(plan_decision)",
+      "acceptance_criteria": "list(plan_criterion)"
+    },
+    "plan_decision": {
+      "id": "ident",
+      "text": "text"
+    },
+    "plan_criterion": {
+      "id": "ident",
+      "text": "text",
+      "task_ids": "list(ident)",
+      "decision_ids": "list(ident)"
     },
     "brief_body": {
       "cohort_id": "ident",
@@ -105,19 +124,23 @@
       "files_in_scope": "list(text)",
       "decisions_made": "list(brief_decision)",
       "approaches_rejected": "list(rejected_approach)",
-      "acceptance_criteria": "list(text)",
+      "acceptance_criteria": "list(plan_criterion)",
       "next_action": "text"
     },
     "brief_decision": {
+      "id": "ident",
       "decision": "text",
       "rationale": "text"
     },
     "rejected_approach": {
+      "id": "ident",
       "approach": "text",
-      "reason": "text"
+      "reason": "text",
+      "decision_ids": "list(ident)"
     },
     "build_body": {
       "repository_key": "optional(ident)",
+      "head_sha": "text",
       "summary": "text",
       "changed_files": "list(text)",
       "tests": "test_evidence",
@@ -137,16 +160,23 @@
       "branch": "optional(ident)"
     },
     "assessment_body": {
+      "head_sha": "text",
       "verdict": "enum(pass, pass_with_notes, fail)",
       "findings": "list(assessment_finding)",
       "test_evidence": "optional(test_evidence)",
       "recommended_next_actions": "list(text)"
     },
     "assessment_finding": {
+      "criterion_id": "optional(ident)",
       "criterion": "optional(text)",
       "status": "optional(enum(met, not_met, partial))",
-      "evidence": "optional(text)",
+      "evidence": "list(evidence_ref)",
       "description": "optional(text)"
+    },
+    "evidence_ref": {
+      "kind": "enum(file, test, output)",
+      "ref": "text",
+      "detail": "optional(text)"
     },
     "pr_body": {
       "pr_url": "text",
@@ -230,6 +260,7 @@
         "stage": "planning",
         "input": {
           "spec": "analysis.outcome.spec",
+          "tasks": "analysis.outcome.tasks",
           "repositories": "input.repositories",
           "repository_key": "input.primary_repository_key",
           "workspace": "require(lookup(map(prepare, prepare.outcome), key, input.primary_repository_key)).workspace"
@@ -317,6 +348,9 @@
         },
         "spec": {
           "schema": "text"
+        },
+        "tasks": {
+          "schema": "tasks_body"
         }
       },
       "workers": {
@@ -347,7 +381,8 @@
           },
           "workspace": "repository(input.workspace)",
           "creates": [
-            "spec"
+            "spec",
+            "tasks"
           ]
         }
       },
@@ -383,16 +418,37 @@
               }
             }
           }
+        },
+        "tasks_review": {
+          "of": "tasks",
+          "by": "operator",
+          "prompt": "development/tasks-review.md",
+          "inputs": {
+            "revised_spec": "latest(spec)",
+            "tasks": "latest(tasks)"
+          },
+          "decisions": {
+            "set": "accept_or_request",
+            "overrides": {
+              "request_changes": {
+                "fields": {
+                  "feedback": "What must the task list change?"
+                }
+              }
+            }
+          }
         }
       },
-      "done_when": "approved(analysis) and approved(spec)",
+      "done_when": "approved(analysis) and approved(spec) and approved(tasks)",
       "outcome": {
-        "spec": "latest(spec)"
+        "spec": "latest(spec)",
+        "tasks": "latest(tasks)"
       }
     },
     "planning": {
       "input": {
         "spec": "text",
+        "tasks": "tasks_body",
         "repositories": "list(repository)",
         "repository_key": "ident",
         "workspace": "workspace"
@@ -425,6 +481,7 @@
           },
           "inputs": {
             "spec": "input.spec",
+            "tasks": "input.tasks",
             "repository_key": "input.repository_key"
           },
           "workspace": "repository(input.workspace)",

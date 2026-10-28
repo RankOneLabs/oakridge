@@ -54,6 +54,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           {brief.kind === "found" && <Chip tone="neutral">{brief.value.repository_key}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-assessment-head-sha">Commit: <code className="or-code">{assessment.head_sha ?? "Not recorded"}</code></p>
         <VerdictBanner verdict={assessment.verdict} tally={report.tally} />
         {!isIntegration && brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
       </header>
@@ -61,7 +62,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
           </ul>
         ) : <p className="text-sm text-[var(--success-fg)]">Every criterion is met.</p>}
       </ArtifactSection>
@@ -92,7 +93,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           </Button>
           {isMetOpen && (
             <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
             </ul>
           )}
         </ArtifactSection>

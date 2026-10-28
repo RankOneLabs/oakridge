@@ -7,6 +7,7 @@ import { BuildResultReview } from "./components/organisms/BuildResultReview";
 import { AssessmentReview } from "./components/organisms/AssessmentReview";
 import { PrSummaryViewer } from "./components/molecules/PrSummaryViewer";
 import { BuildBriefViewer } from "./components/molecules/BuildBriefViewer";
+import { TasksViewer } from "./components/molecules/TasksViewer";
 
 export interface ViewerProps {
   body: unknown;
@@ -28,6 +29,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
   "dev-spec-viewer": { Viewer: SpecViewer },
   "dev-plan-viewer": { Viewer: PlanViewer },
+  "dev-tasks-viewer": { Viewer: TasksViewer },
   "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
   "dev-build-result-viewer": { Viewer: BuildResultReview },
   "dev-assessment-viewer": { Viewer: AssessmentReview },

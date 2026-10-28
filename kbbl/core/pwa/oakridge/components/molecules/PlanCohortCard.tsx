@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import type { PlanCohort } from "../../lib/plan";
+import { isPlanCohortIdLinked, planCriterionText, planDecisionText, type PlanCohort } from "../../lib/plan";
 import type { CohortId } from "../../types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
@@ -45,6 +45,7 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
         <span className="font-mono text-xs text-[var(--text-muted)]">{order}.</span>
         <code className="or-code">{cohort.id}</code>
         {cohort.repository_key && <Chip tone="neutral">{cohort.repository_key}</Chip>}
+        {!isPlanCohortIdLinked(cohort) && <Chip tone="muted">Not id-linked</Chip>}
       </div>
       <p className="text-sm font-medium text-[var(--text-primary)]">{cohort.title}</p>
       {cohort.depends_on.length > 0 && (
@@ -68,8 +69,34 @@ export function PlanCohortCard({ cohort, order, isSelected, onSelectCohort }: Pr
             </div>
           )}
           <DetailList label="Files in scope" values={cohort.files_in_scope} isMono />
-          <DetailList label="Decisions" values={cohort.decisions} />
-          <DetailList label="Acceptance criteria" values={cohort.acceptance_criteria} />
+          {cohort.decisions.length > 0 && (
+            <div>
+              <div className={artifactLabelClass}>Decisions</div>
+              <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+                {cohort.decisions.map((decision, index) => <li key={index}>
+                  {typeof decision !== "string" && <code className="or-code mr-2">{decision.id}</code>}
+                  {planDecisionText(decision)}
+                </li>)}
+              </ul>
+            </div>
+          )}
+          {cohort.acceptance_criteria.length > 0 && (
+            <div>
+              <div className={artifactLabelClass}>Acceptance criteria</div>
+              <ul className="m-0 mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+                {cohort.acceptance_criteria.map((criterion, index) => <li key={index}>
+                  {typeof criterion !== "string" && <code className="or-code mr-2">{criterion.id}</code>}
+                  {planCriterionText(criterion)}
+                  {typeof criterion !== "string" && (criterion.task_ids.length > 0 || criterion.decision_ids.length > 0) && (
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      {criterion.task_ids.length > 0 && <>Tasks: {criterion.task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+                      {criterion.decision_ids.length > 0 && <>Decisions: {criterion.decision_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</>}
+                    </span>
+                  )}
+                </li>)}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </li>

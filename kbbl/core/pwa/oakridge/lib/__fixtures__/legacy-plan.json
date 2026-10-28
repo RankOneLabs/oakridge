@@ -1,0 +1,18 @@
+{
+  "summary": "Prepare the operator view.",
+  "cohorts": [{
+    "id": "pwa",
+    "repository_key": "oakridge",
+    "title": "Operator view",
+    "scope": "The PWA.",
+    "depends_on": [],
+    "description": "Display the brief.",
+    "files_in_scope": ["kbbl/core/pwa"],
+    "decisions": ["Keep the existing layout."],
+    "acceptance_criteria": ["The plan is readable.", "The brief is readable."]
+  }],
+  "dependency_order": ["pwa"],
+  "scope": { "in_scope": ["PWA"], "out_of_scope": ["Backend"] },
+  "acceptance_criteria": ["Operators can review artifacts."],
+  "risks": []
+}

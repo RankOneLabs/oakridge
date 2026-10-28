@@ -1,0 +1,12 @@
+{
+  "cohort_id": "pwa",
+  "repository_key": "oakridge",
+  "title": "Operator view",
+  "depends_on": [],
+  "goal": "Display the brief.",
+  "files_in_scope": ["kbbl/core/pwa"],
+  "decisions_made": [{ "decision": "Keep the existing layout.", "rationale": "Familiar to operators." }],
+  "approaches_rejected": [{ "approach": "Replace the layout.", "reason": "More disruption." }],
+  "acceptance_criteria": ["The plan is readable.", "The brief is readable."],
+  "next_action": "Build the view."
+}

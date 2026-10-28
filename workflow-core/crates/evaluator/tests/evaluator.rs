@@ -315,6 +315,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "schemas": {
             "assessment_body": schemas["assessment_body"],
             "assessment_finding": schemas["assessment_finding"],
+            "evidence_ref": schemas["evidence_ref"],
             "test_evidence": schemas["test_evidence"]
         },
         "run": {"units": {}, "outcome": {}},
@@ -323,15 +324,16 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     .unwrap();
     let program = compile_workflow(&source, &[], &BTreeMap::new()).unwrap();
     let body = serde_json::json!({
+        "head_sha": "abc123",
         "verdict": "pass_with_notes",
-        "findings": [{"description": "One non-blocking follow-up"}],
+        "findings": [{"description": "One non-blocking follow-up", "evidence": []}],
         "recommended_next_actions": []
     });
 
     assert!(check_type(&program.input, &body));
     assert!(check_type(
         &program.input,
-        &serde_json::json!({"verdict": "pass", "findings": [], "test_evidence": null,
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [], "test_evidence": null,
             "recommended_next_actions": []})
     ));
     assert!(!check_type(
@@ -340,7 +342,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
     ));
     assert!(!check_type(
         &program.input,
-        &serde_json::json!({"verdict": "pass", "findings": [{"status": "unknown"}],
+        &serde_json::json!({"head_sha": "abc123", "verdict": "pass", "findings": [{"status": "unknown", "evidence": []}],
             "recommended_next_actions": []})
     ));
 }
