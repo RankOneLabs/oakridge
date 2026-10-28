@@ -2,6 +2,8 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 import { PlanViewer } from "./PlanViewer";
+import legacyPlan from "../../lib/__fixtures__/legacy-plan.json";
+import linkedPlan from "../../lib/__fixtures__/id-linked-plan.json";
 
 const cohort = (id: string, depends_on: string[] = []) => ({
   id,
@@ -30,6 +32,23 @@ const selectedCardId = () =>
 afterEach(cleanup);
 
 describe("PlanViewer", () => {
+  test("shows a legacy cohort's text and marks its revision", () => {
+    render(<PlanViewer body={legacyPlan} />);
+    expect(screen.getAllByText(/not id-linked/i)).toHaveLength(2);
+    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("Keep the existing layout.")).toBeTruthy();
+    expect(screen.getByText("The plan is readable.")).toBeTruthy();
+  });
+
+  test("shows decision and criterion ids with their task and decision links", () => {
+    render(<PlanViewer body={linkedPlan} />);
+    expect(screen.queryByText(/not id-linked/i)).toBeNull();
+    fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("criterion-plan")).toBeTruthy();
+    expect(screen.getByText("task-plan")).toBeTruthy();
+    expect(screen.getAllByText("decision-layout")).toHaveLength(2);
+  });
+
   test("draws every cohort in the graph", () => {
     render(<PlanViewer body={body} />);
     expect(screen.getAllByTestId("or-plan-graph-node")).toHaveLength(2);

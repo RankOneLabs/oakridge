@@ -1,0 +1,21 @@
+{
+  "cohort_id": "pwa",
+  "repository_key": "oakridge",
+  "title": "Operator view",
+  "depends_on": [],
+  "goal": "Display the brief.",
+  "files_in_scope": ["kbbl/core/pwa"],
+  "decisions_made": [
+    { "id": "decision-layout", "decision": "Keep the existing layout.", "rationale": "Familiar to operators." },
+    { "id": "decision-new", "decision": "Add a compact trace section.", "rationale": "The links need space." }
+  ],
+  "approaches_rejected": [
+    { "id": "approach-replace", "approach": "Replace the layout.", "reason": "More disruption.", "decision_ids": ["decision-layout"] },
+    { "id": "approach-floating", "approach": "Use a floating panel.", "reason": "Harder to scan.", "decision_ids": [] }
+  ],
+  "acceptance_criteria": [
+    { "id": "criterion-brief", "text": "The brief remains readable.", "task_ids": [], "decision_ids": [] },
+    { "id": "criterion-plan", "text": "The plan is readable.", "task_ids": ["task-plan"], "decision_ids": ["decision-layout"] }
+  ],
+  "next_action": "Build the view."
+}
