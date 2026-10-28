@@ -74,6 +74,7 @@ integration("producer lineage, human splits, unresolved links and both read page
   const unresolved = await readLineage(db, tenant, missing.occurrence_id, { limit: 100, offset: 0 });
   expect(unresolved?.unresolved.some((edge) => edge.unresolved_target_ref?.includes("missing"))).toBe(true);
   expect(unresolved?.edges.some((edge) => edge.unresolved_target_ref !== null)).toBe(false);
+  await recordHumanRelation(db, tenant, missing.occurrence_id, briefCriterion.occurrence_id, "addresses", "operator:link-1");
   const foreignBrief = await fixture("brief") as unknown as { acceptance_criteria: { id: string; text: string; task_ids: string[]; decision_ids: string[] }[] };
   foreignBrief.acceptance_criteria[0]!.id = "foreign";
   await insertRevision(db, "brief-foreign", "brief", foreignBrief as unknown as JsonValue, 4, "run-2", "run-2/briefs/alpha");
@@ -104,7 +105,7 @@ integration("producer lineage, human splits, unresolved links and both read page
   expect(await allPages(pageIds, 2)).toEqual(await allPages(pageIds, 5));
   const lineageIds = async (limit: number, offset: number) => {
     const page = (await readLineage(db, tenant, finding.occurrence_id, { limit, offset }))!;
-    return { items: [...page.edges, ...page.unresolved].map((edge) => edge.relation_id), total: page.total };
+    return { items: page.relations.map((edge) => edge.relation_id), total: page.total };
   };
   expect(await allPages(lineageIds, 2)).toEqual(await allPages(lineageIds, 5));
 
