@@ -2,7 +2,7 @@ import type { AttemptStatus, Cause, DeclaredDecisionEffect, Mode, ParsedReview, 
 import type { JsonValue, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RevisionRef, RunRead, RunSummaryRead, UnitSummaryRecord } from "../storage/read-store";
-import type { ArtifactRevisionRecord, AttemptRecord, UnitRecord } from "../storage/schema-records";
+import type { ArtifactRevisionRecord, AttemptRecord, ReviewDecisionRecord, UnitRecord } from "../storage/schema-records";
 import { selectAttemptWorkerKey, selectAttention, selectLatestAttempts, type Attention, type UnitAttention } from "./attention";
 import { EMPTY_PAYLOAD, schemaKey, selectDecisionPayloadType, typeSchemaKey } from "./schema-view";
 import { ROOT_UNIT_KEY, selectCollectionKey, selectUnitKey, selectUnitLabel, selectUnitTree, titleCase } from "./unit-label";
@@ -77,6 +77,20 @@ export interface DecisionDefinition {
   readonly submit: DecisionSubmit;
 }
 
+/** A decision recorded on one of a unit's artifact revisions. */
+export interface RevisionDecision {
+  readonly id: string;
+  readonly review: string;
+  readonly decision: string;
+  readonly effect: DeclaredDecisionEffect;
+  readonly target_revision_id: string;
+  readonly payload: BodyValue;
+  readonly created_at: Date;
+}
+export const selectRevisionDecision = (decision: ReviewDecisionRecord): RevisionDecision => ({
+  id: decision.id, review: decision.review, decision: decision.decision, effect: decision.effect,
+  target_revision_id: decision.target_revision_id, payload: decision.payload as BodyValue, created_at: decision.created_at });
+
 export interface UnitView {
   readonly unit_id: UnitId;
   readonly run_id: RunId;
@@ -91,6 +105,8 @@ export interface UnitView {
   readonly is_terminal: boolean;
   readonly attention: Attention | null;
   readonly decisions: readonly DecisionDefinition[];
+  /** Decisions already made on the unit's revisions, oldest first. */
+  readonly recorded_decisions: readonly RevisionDecision[];
   readonly attempts: readonly AttemptView[];
   readonly artifacts: readonly ArtifactView[];
 }
@@ -185,6 +201,7 @@ export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitA
     status: unit.status, outcome: unit.status.kind === "done" ? unit.status.outcome as BodyValue : null, is_terminal: isTerminalStatus(unit.status),
     attention: selectAttention(attention, read),
     decisions: selectAvailableDecisions(read, unit, attention),
+    recorded_decisions: read.decisions.filter((decision) => decision.unit_id === unit.id).map(selectRevisionDecision),
     attempts: selectAttemptViews(read.attempts.filter((attempt) => attempt.unit_id === unit.id)),
     artifacts: selectArtifactViews(read, unit) };
 }

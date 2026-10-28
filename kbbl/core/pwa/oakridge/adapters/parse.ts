@@ -23,6 +23,9 @@ const submit = (value: unknown): boolean => record(value) && (
   value.kind === "cancel" || value.kind === "retry" && string(value.worker)
   || value.kind === "review" && string(value.review) && string(value.decision) && string(value.target_revision_id)
     && ["approve", "request_changes"].includes(String(value.effect)));
+const recordedDecision = (value: unknown): boolean => record(value) && string(value.id) && string(value.review)
+  && string(value.decision) && ["approve", "request_changes"].includes(String(value.effect))
+  && string(value.target_revision_id) && string(value.created_at);
 const decision = (value: unknown): boolean => record(value) && string(value.key) && string(value.label)
   && array(value.fields) && value.fields.every((field) => record(field) && string(field.key) && string(field.label))
   && submit(value.submit);
@@ -32,6 +35,7 @@ const unit = (value: unknown): boolean => record(value) && string(value.unit_id)
   && (value.attention === null || record(value.attention) && (value.attention.kind === "waiting" && string(value.attention.reason)
     || value.attention.kind === "stalled" && string(value.attention.detail)))
   && array(value.decisions) && value.decisions.every(decision)
+  && array(value.recorded_decisions) && value.recorded_decisions.every(recordedDecision)
   && array(value.attempts) && value.attempts.every(attempt)
   && array(value.artifacts) && value.artifacts.every(artifact);
 

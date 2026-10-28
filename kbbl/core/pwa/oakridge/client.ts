@@ -38,10 +38,11 @@ import type {
   WorkflowRunId,
   RunSessionAttempt,
   SessionRunLocation,
+  SentReviewFeedback,
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, sentReviewFeedback, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
@@ -229,6 +230,10 @@ export async function fetchRun(id: string): Promise<RunDetail> {
 
 export async function fetchRunGates(runId: string): Promise<ParkedGate[]> {
   return (await readUnits(runId)).flatMap((unit) => unwrapAdapter(unitPath(runId, unit.unit_id), reviewToGates(unit)));
+}
+
+export async function fetchRunSentFeedback(runId: string): Promise<SentReviewFeedback[]> {
+  return (await readUnits(runId)).flatMap(sentReviewFeedback);
 }
 
 export function fetchRunSessions(runId: string): Promise<RunSessionAttempt[]> {

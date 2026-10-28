@@ -66,6 +66,8 @@ export interface OperatorUnitView {
   readonly is_terminal: boolean;
   readonly attention: OperatorAttention | null;
   readonly decisions: readonly OperatorDecisionDefinition[];
+  /** Decisions already made on the unit's revisions, oldest first. */
+  readonly recorded_decisions: readonly OperatorRevisionDecision[];
   readonly attempts: readonly OperatorAttemptView[];
   readonly artifacts: readonly OperatorArtifactView[];
 }
@@ -269,6 +271,16 @@ export type OperatorBodyValue = OperatorJsonValue;
 
 export type OperatorAttention = { readonly kind: "waiting"; readonly reason: string } | { readonly kind: "stalled"; readonly detail: string };
 
+export interface OperatorRevisionDecision {
+  readonly id: string;
+  readonly review: string;
+  readonly decision: string;
+  readonly effect: OperatorDeclaredDecisionEffect;
+  readonly target_revision_id: string;
+  readonly payload: OperatorBodyValue;
+  readonly created_at: string;
+}
+
 export type OperatorDecisionSubmit =
   | { readonly kind: "review"; readonly review: string; readonly decision: string; readonly effect: OperatorDeclaredDecisionEffect; readonly target_revision_id: string }
   | { readonly kind: "retry"; readonly worker: string }
@@ -288,16 +300,6 @@ export interface OperatorArtifactRevisionView {
   readonly created_at: string;
   /** The revision's position in its artifact, from 1. */
   readonly number: number;
-}
-
-export interface OperatorRevisionDecision {
-  readonly id: string;
-  readonly review: string;
-  readonly decision: string;
-  readonly effect: OperatorDeclaredDecisionEffect;
-  readonly target_revision_id: string;
-  readonly payload: OperatorBodyValue;
-  readonly created_at: string;
 }
 
 export interface OperatorEventHistory {

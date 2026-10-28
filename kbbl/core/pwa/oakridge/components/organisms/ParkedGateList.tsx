@@ -1,6 +1,8 @@
 import { Button } from "../../../components/atoms/Button";
 import { useRunGates } from "../../hooks/useRunGates";
+import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
 import type { ParkedGate } from "../../types";
+import { SentFeedbackCard } from "../molecules/SentFeedbackCard";
 import { GateDecisionActions } from "./GateDecisionActions";
 
 const chipClass =
@@ -104,17 +106,25 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
 }
 
 export function RunParkedGateList({ runId }: { runId: string }) {
-  const query = useRunGates(runId);
-
-  if (query.isPending && !query.data) return null;
-  if (!query.data || query.data.length === 0) return null;
+  const gates = useRunGates(runId).data ?? [];
+  const sentFeedback = useRunSentFeedback(runId).data ?? [];
 
   return (
-    <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
-      <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Needs attention</h3>
-      {query.data.map((gate: ParkedGate) => (
-        <GateCard key={gate.id} gate={gate} />
-      ))}
-    </div>
+    <>
+      {gates.length > 0 && (
+        <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
+          <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Needs attention</h3>
+          {gates.map((gate: ParkedGate) => (
+            <GateCard key={gate.id} gate={gate} />
+          ))}
+        </div>
+      )}
+      {sentFeedback.length > 0 && (
+        <div className="mt-6 flex flex-col gap-3" data-testid="or-run-sent-feedback-list">
+          <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Feedback sent</h3>
+          {sentFeedback.map((feedback) => <SentFeedbackCard key={feedback.id} feedback={feedback} />)}
+        </div>
+      )}
+    </>
   );
 }

@@ -479,6 +479,22 @@ export interface ParkedGate {
   actionable: boolean;
 }
 
+/**
+ * Changes the operator requested on a unit, shown until the agent publishes a
+ * revision that replaces the one they targeted. Mirrors one
+ * `request_changes` entry of the unit view's `recorded_decisions`.
+ */
+export interface SentReviewFeedback {
+  id: string;
+  run_id: string;
+  stage_name: string;
+  unit_id: string;
+  review: string;
+  decision: string;
+  feedback: string | null;
+  sent_at: string;
+}
+
 export interface GateResumeRequest {
   idempotency_key: string;
   artifact_revision_id: string;
