@@ -1,0 +1,17 @@
+{
+  "summary": "Plan",
+  "cohorts": [{
+    "id": "alpha",
+    "repository_key": "oakridge",
+    "title": "Alpha",
+    "scope": "Implement alpha",
+    "depends_on": [],
+    "files_in_scope": [],
+    "decisions": [{ "id": "decision-a", "text": "Choose A" }],
+    "acceptance_criteria": [{ "id": "crit-a", "text": "A works", "task_ids": [], "decision_ids": ["decision-a"] }]
+  }],
+  "dependency_order": ["alpha"],
+  "scope": { "in_scope": [], "out_of_scope": [] },
+  "acceptance_criteria": ["Whole plan is coherent"],
+  "risks": [{ "description": "Drift", "mitigation": "Pin versions" }]
+}

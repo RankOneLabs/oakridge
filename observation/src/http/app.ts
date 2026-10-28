@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 import { registerSourceRoutes, type SourceDependencies } from "./sources";
+import { registerItemRoutes } from "./items";
 
 export function createApp(deps: SourceDependencies): Hono {
   const app = new Hono();
   registerSourceRoutes(app, deps);
+  registerItemRoutes(app, deps);
   app.notFound((c) => credentialFor(c.req.header("authorization"), deps.credentials.ingest)
     ? errorResponse(c, 403, "forbidden", "ingest credential cannot use this route")
     : errorResponse(c, 404, "not_found", "route not found"));

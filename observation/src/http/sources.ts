@@ -4,6 +4,7 @@ import { captureDelivery, readSourceRevision, type CaptureHooks } from "../stora
 import type { Database } from "../storage/database";
 import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
+import { projectRevision } from "../storage/projection-store";
 
 export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks }
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
@@ -19,6 +20,7 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     if (source.producer !== "oakridge" || source.producer !== credential.producer || source.namespace !== credential.namespace)
       return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     const result = await captureDelivery(deps.db, delivery.value, deps.captureHooks);
+    if (result.status === 201) await projectRevision(deps.db, credential, delivery.value.local_revision_id);
     return c.json(result.body, result.status);
   });
   app.get("/v1/source-revisions/:id", async (c) => {

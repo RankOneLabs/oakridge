@@ -24,7 +24,19 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
     const url = new URL(serverUrl);
     url.pathname = `/${name}`;
     try { await work(url.href); }
-    finally { await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+    finally {
+      // pg's pool can finish closing before PostgreSQL has removed its last
+      // backend. A forced drop then sends a FATAL error to that closing client.
+      // Wait for the backend instead, and fail clearly if a connection leaks.
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        try { await admin.query(`DROP DATABASE IF EXISTS ${name}`); break; }
+        catch (error) {
+          if ((error as { code?: string }).code !== "55006" || Date.now() >= deadline) throw error;
+          await Bun.sleep(20);
+        }
+      }
+    }
   } finally { await admin.end(); }
 }
 
@@ -80,7 +92,35 @@ test("capture validates the identity components and submitted canonical digest",
   wrongDigest.body_digest = "canonical-json/v1:" + "0".repeat(64);
   const result = decodeCapture(wrongDigest, "key-2");
   expect(result.ok).toBe(false);
+  const crossTenant = envelope({ value: 1 });
+  (crossTenant.source as Record<string, unknown>).subject_id = "oakridge:other:rev-1";
+  expect(decodeCapture(crossTenant, "key-3").ok).toBe(false);
 });
+
+integration("capture retains explicit predecessor and subject ids while preserving body identity", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const app = createApp({ db, credentials });
+    const first = envelope({ claim: "one" }, "oakridge:local-dev:rev-1");
+    expect((await post(app, first, "link-1")).status).toBe(201);
+    const second = envelope({ claim: "one" }, "oakridge:local-dev:rev-2");
+    (second.source as Record<string, unknown>).predecessor_id = "oakridge:local-dev:rev-1";
+    (second.source as Record<string, unknown>).subject_id = "oakridge:local-dev:rev-1";
+    expect((await post(app, second, "link-2")).status).toBe(201);
+    const read = await app.request("/v1/source-revisions/oakridge:local-dev:rev-2",
+      { headers: { authorization: "Bearer read-secret" } });
+    expect(await read.json()).toMatchObject({ predecessor_id: "oakridge:local-dev:rev-1",
+      subject_id: "oakridge:local-dev:rev-1" });
+    const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
+      .selectAll().where("revision_id", "=", "rev-2").executeTakeFirstOrThrow());
+    expect(row.predecessor_id).toBe("rev-1");
+    const rehashed = canonicalDigest(row.body);
+    expect(String(rehashed.ok && rehashed.value)).toBe(row.body_digest);
+    const altered = envelope({ claim: "one" }, "oakridge:local-dev:rev-2");
+    expect((await post(app, altered, "link-3")).status).toBe(409);
+  } finally { await db.destroy(); }
+}));
 
 integration("conflicting body records both digests without changing the immutable revision", async () => scratch(async (url) => {
   const db = openDatabase(url);

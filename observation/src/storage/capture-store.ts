@@ -17,6 +17,8 @@ export interface SourceRevisionRead {
   readonly definition_bundle_digest: string;
   readonly body: JsonValue;
   readonly body_digest: string;
+  readonly predecessor_id: string | null;
+  readonly subject_id: string | null;
   readonly recorded_at: string;
   readonly captured_at: string;
 }
@@ -28,10 +30,14 @@ export interface CaptureHooks { readonly afterMirror?: () => Promise<void> }
 
 function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionRead {
   const id = `${row.producer}:${row.namespace}:${row.revision_id}`;
+  const prefix = `${row.producer}:${row.namespace}:`;
   return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id,
     revision_id: id, artifact_kind: row.artifact_kind, artifact_schema_version: row.artifact_schema_version,
     definition_bundle_id: row.definition_bundle_id, definition_bundle_digest: row.definition_bundle_digest,
-    body: row.body, body_digest: row.body_digest, recorded_at: row.recorded_at.toISOString(), captured_at: row.captured_at.toISOString() };
+    body: row.body, body_digest: row.body_digest,
+    predecessor_id: row.predecessor_id ? `${prefix}${row.predecessor_id}` : null,
+    subject_id: row.subject_id ? `${prefix}${row.subject_id}` : null,
+    recorded_at: row.recorded_at.toISOString(), captured_at: row.captured_at.toISOString() };
 }
 
 function receiptOutcome(outcome: string, response: JsonValue): DeliveryOutcome {
@@ -42,6 +48,9 @@ async function captureInTransaction(trx: DatabaseTransaction, delivery: CaptureD
   const { source, body, body_digest, recorded_at } = delivery.envelope;
   const { producer, namespace } = source;
   const revision_id = delivery.local_revision_id;
+  const prefix = `${producer}:${namespace}:`;
+  const predecessor_id = source.predecessor_id?.slice(prefix.length) ?? null;
+  const subject_id = source.subject_id?.slice(prefix.length) ?? null;
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:request:${delivery.request_key}`}, 0))`.execute(trx);
   const receipt = await trx.selectFrom("observation.ingest_receipt").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("request_key", "=", delivery.request_key).executeTakeFirst();
@@ -49,7 +58,7 @@ async function captureInTransaction(trx: DatabaseTransaction, delivery: CaptureD
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${producer}:${namespace}:revision:${revision_id}`}, 0))`.execute(trx);
   const existing = await trx.selectFrom("observation.source_revision").selectAll()
     .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id).executeTakeFirst();
-  if (existing?.body_digest === body_digest) {
+  if (existing?.body_digest === body_digest && existing.predecessor_id === predecessor_id && existing.subject_id === subject_id) {
     const first = await trx.selectFrom("observation.ingest_receipt").selectAll()
       .where("producer", "=", producer).where("namespace", "=", namespace).where("revision_id", "=", revision_id)
       .where("outcome", "=", "captured").orderBy("recorded_at", "asc").executeTakeFirstOrThrow();
@@ -66,7 +75,8 @@ async function captureInTransaction(trx: DatabaseTransaction, delivery: CaptureD
   const row = await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
     run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_bundle_id: source.definition_bundle.id,
-    definition_bundle_digest: source.definition_bundle.digest, body, body_digest, recorded_at: new Date(recorded_at) })
+    definition_bundle_digest: source.definition_bundle.digest, body, body_digest, predecessor_id, subject_id,
+    recorded_at: new Date(recorded_at) })
     .returningAll().executeTakeFirstOrThrow();
   await hooks.afterMirror?.();
   const response: CaptureResponse = { source_revision: sourceRead(row) };
