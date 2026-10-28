@@ -7,6 +7,8 @@ const projectionMigration = new URL("./migrations/0002_projection.sql", import.m
 const revisionLinksMigration = new URL("./migrations/0003_revision_links.sql", import.meta.url);
 const gradingMigration = new URL("./migrations/0003_grading.sql", import.meta.url);
 const cursorMigration = new URL("./migrations/0004_cursor.sql", import.meta.url);
+const exportMigration = new URL("./migrations/0005_export.sql", import.meta.url);
+const exportGuardMigration = new URL("./migrations/0006_export_guard.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -17,6 +19,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const revisionLinks = await Bun.file(revisionLinksMigration).text();
   const grading = await Bun.file(gradingMigration).text();
   const cursor = await Bun.file(cursorMigration).text();
+  const exportSql = await Bun.file(exportMigration).text();
+  const exportGuardSql = await Bun.file(exportGuardMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -43,6 +47,10 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
     if (!grades.rows[0]?.name) await sql.raw(grading).execute(trx);
     const sourceCursor = await sql<{ name: string | null }>`SELECT to_regclass('observation.source_event_cursor')::text AS name`.execute(trx);
     if (!sourceCursor.rows[0]?.name) await sql.raw(cursor).execute(trx);
+    const exports = await sql<{ name: string | null }>`SELECT to_regclass('observation.export_manifest')::text AS name`.execute(trx);
+    if (!exports.rows[0]?.name) await sql.raw(exportSql).execute(trx);
+    // The function replacement is idempotent and also upgrades databases that already have 0005.
+    await sql.raw(exportGuardSql).execute(trx);
   });
 }
 

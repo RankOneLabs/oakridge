@@ -2,12 +2,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql"]
+const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql", "0005_export.sql"]
   .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
 const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 16) throw new Error(`expected sixteen observation tables, found ${tables.length}`);
+if (tables.length !== 18) throw new Error(`expected eighteen observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',

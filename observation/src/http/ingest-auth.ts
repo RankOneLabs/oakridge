@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { TenantScope } from "../storage/database";
 
 export interface Credential extends TenantScope { readonly token: string }
-export interface Credentials { readonly ingest: readonly Credential[]; readonly read: readonly Credential[]; readonly grade?: readonly Credential[] }
+export interface Credentials { readonly ingest: readonly Credential[]; readonly read: readonly Credential[];
+  readonly grade?: readonly Credential[]; readonly export_raw?: readonly Credential[] }
 
 function sameSecret(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -32,8 +33,9 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv): Credentials {
   const ingest = configuredCredentials(env.OBSERVATION_INGEST_CREDENTIALS);
   const read = configuredCredentials(env.OBSERVATION_READ_CREDENTIALS);
   const grade = configuredCredentials(env.OBSERVATION_GRADE_CREDENTIALS);
-  const all = [...ingest, ...read, ...grade];
+  const export_raw = configuredCredentials(env.OBSERVATION_EXPORT_RAW_CREDENTIALS);
+  const all = [...ingest, ...read, ...grade, ...export_raw];
   if (all.some((item, index) => all.findIndex((candidate) => sameSecret(item.token, candidate.token)) !== index))
     throw new Error("observation credential tokens must be unique across capabilities");
-  return { ingest, read, grade };
+  return { ingest, read, grade, export_raw };
 }

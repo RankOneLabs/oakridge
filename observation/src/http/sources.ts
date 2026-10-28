@@ -7,7 +7,8 @@ import { errorResponse } from "./errors";
 import { credentialFor, type Credentials } from "./ingest-auth";
 import { projectRevision } from "../storage/projection-store";
 
-export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks }
+export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks;
+  readonly exportRoot?: string }
 export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void {
   app.get("/v1/sources/oakridge/cursor", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.ingest);

@@ -235,6 +235,33 @@ export interface ObservationSourceHumanGrade {
   feedback: JsonValue | null;
 }
 
+export interface ObservationExportManifest {
+  producer: string;
+  namespace: string;
+  manifest_id: string;
+  frozen_at: Date;
+  membership_digest: string;
+  format_version: string;
+  redaction_policy: JsonValue;
+  file_hashes: JsonValue;
+}
+
+export interface ObservationExportMembership {
+  producer: string;
+  namespace: string;
+  manifest_id: string;
+  candidate_id: string;
+  occurrence_id: string;
+  revision_id: string;
+  revision_digest: string;
+  evidence_set_id: string | null;
+  evidence_set_digest: string | null;
+  observation_id: string | null;
+  disposition: string;
+  reason: string;
+  redaction_reasons: JsonValue;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -252,4 +279,6 @@ export interface DB {
   "observation.source_event_cursor": ObservationSourceEventCursor;
   "observation.source_event_outcome": ObservationSourceEventOutcome;
   "observation.source_human_grade": ObservationSourceHumanGrade;
+  "observation.export_manifest": ObservationExportManifest;
+  "observation.export_membership": ObservationExportMembership;
 }
