@@ -24,7 +24,19 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
     const url = new URL(serverUrl);
     url.pathname = `/${name}`;
     try { await work(url.href); }
-    finally { await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+    finally {
+      // pg's pool can finish closing before PostgreSQL has removed its last
+      // backend. A forced drop then sends a FATAL error to that closing client.
+      // Wait for the backend instead, and fail clearly if a connection leaks.
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        try { await admin.query(`DROP DATABASE IF EXISTS ${name}`); break; }
+        catch (error) {
+          if ((error as { code?: string }).code !== "55006" || Date.now() >= deadline) throw error;
+          await Bun.sleep(20);
+        }
+      }
+    }
   } finally { await admin.end(); }
 }
 
