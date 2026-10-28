@@ -31,13 +31,15 @@ async function fixture(name: string): Promise<JsonValue> {
   return await Bun.file(new URL(`../fixtures/oakridge/${name}-revision.json`, import.meta.url)).json() as JsonValue;
 }
 async function insertRevision(db: Database, revision_id: string, artifact_kind: string, body: JsonValue,
-  at: number, run_id = "run-1", unit_id = `run-1/implementation/alpha`): Promise<void> {
+  at: number, run_id = "run-1", unit_id = `run-1/implementation/alpha`,
+  predecessor_id: string | null = null, subject_id: string | null = null): Promise<void> {
   const digest = canonicalDigest(body);
   if (!digest.ok) throw new Error(digest.error.detail);
   await withTenant(db, tenant, (trx) => trx.insertInto("observation.source_revision").values({ ...tenant,
     revision_id, run_id, unit_id, artifact_kind, artifact_schema_version: "development-v1",
     definition_bundle_id: "development", definition_bundle_digest: "bundle-sha256:test", body,
-    body_digest: digest.value, recorded_at: new Date(`2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`) }).execute().then(() => undefined));
+    body_digest: digest.value, predecessor_id, subject_id,
+    recorded_at: new Date(`2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`) }).execute().then(() => undefined));
 }
 async function items(db: Database, run_id = "run-1") {
   return (await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 })).items;
@@ -171,4 +173,24 @@ integration("ambiguous prior revisions stay unresolved instead of choosing a pre
   const lineage = await readLineage(db, tenant, briefCriterion.occurrence_id, { limit: 100, offset: 0 });
   expect(lineage?.unresolved.some((edge) => edge.unresolved_target_ref?.includes("crit-a"))).toBe(true);
   expect(lineage?.edges.some((edge) => edge.type === "derived_from" && edge.target_occurrence_id !== null)).toBe(false);
+}));
+
+integration("lineage marks equal predecessor bodies as republications and edits as changes", async () => scratch(async (db) => {
+  const plan = await fixture("plan");
+  await insertRevision(db, "plan-1", "plan", plan, 1);
+  await projectRevision(db, tenant, "plan-1");
+  await insertRevision(db, "plan-2", "plan", plan, 2, "run-1", "run-1/planning", "plan-1");
+  await projectRevision(db, tenant, "plan-2");
+  const edited = { ...(plan as object), summary: "Edited plan" } as JsonValue;
+  await insertRevision(db, "plan-3", "plan", edited, 3, "run-1", "run-1/planning", "plan-2");
+  await projectRevision(db, tenant, "plan-3");
+  const rows = await items(db);
+  const lineageFor = (revision_id: string) => readLineage(db, tenant,
+    rows.find((row) => row.revision_id === revision_id && row.item_kind === "plan_wide_criterion")!.occurrence_id,
+    { limit: 50, offset: 0 });
+  expect((await lineageFor("plan-1"))?.republication).toBeNull();
+  expect((await lineageFor("plan-2"))?.republication).toEqual({
+    predecessor_revision_id: "oakridge:projection-test:plan-1", is_republication: true });
+  expect((await lineageFor("plan-3"))?.republication).toEqual({
+    predecessor_revision_id: "oakridge:projection-test:plan-2", is_republication: false });
 }));

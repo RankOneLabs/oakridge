@@ -13,10 +13,11 @@ export interface ProjectionSummary { readonly occurrences: number; readonly issu
 export interface Page { readonly limit: number; readonly offset: number }
 export interface ItemsPage { readonly items: readonly Selectable<ObservationItemOccurrence>[];
   readonly issues: readonly ExtractionIssue[]; readonly total: number; readonly limit: number; readonly offset: number }
+export interface Republication { readonly predecessor_revision_id: string; readonly is_republication: boolean }
 export interface LineagePage { readonly occurrence_id: string; readonly relations: readonly Selectable<ObservationItemRelation>[];
   readonly edges: readonly Selectable<ObservationItemRelation>[];
   readonly unresolved: readonly Selectable<ObservationItemRelation>[]; readonly total: number;
-  readonly limit: number; readonly offset: number; readonly republication: null }
+  readonly limit: number; readonly offset: number; readonly republication: Republication | null }
 interface StoredSelection { readonly occurrence_id: string; readonly item: SelectedItem; readonly definition: ExtractorDefinition }
 
 function sameJson(left: JsonValue, right: JsonValue): boolean {
@@ -184,6 +185,18 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
     if (!item) return null;
+    const revision = await trx.selectFrom("observation.source_revision")
+      .select(["predecessor_id", "body_digest"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("revision_id", "=", item.revision_id).executeTakeFirstOrThrow();
+    const predecessor = revision.predecessor_id ? await trx.selectFrom("observation.source_revision")
+      .select(["revision_id", "body_digest"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", item.run_id).where("artifact_kind", "=", item.artifact_kind)
+      .where("revision_id", "=", revision.predecessor_id).executeTakeFirst() : null;
+    const republication: Republication | null = predecessor
+      ? { predecessor_revision_id: `${tenant.producer}:${tenant.namespace}:${predecessor.revision_id}`,
+        is_republication: revision.body_digest === predecessor.body_digest } : null;
     const occurrences = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "logical_item_id"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", item.run_id).execute();
@@ -217,6 +230,6 @@ export function readLineage(db: Database, tenant: TenantScope, occurrence_id: st
     const slice = ordered.slice(page.offset, page.offset + page.limit);
     return { occurrence_id, relations: slice, edges: slice.filter((relation) => relation.unresolved_target_ref === null),
       unresolved: slice.filter((relation) => relation.unresolved_target_ref !== null),
-      total: ordered.length, ...page, republication: null };
+      total: ordered.length, ...page, republication };
   });
 }
