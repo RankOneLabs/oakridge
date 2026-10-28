@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Event } from "../src/core-client/core-types";
+import { CORE_PROTOCOL_SCHEMA, type Event } from "../src/core-client/core-types";
 import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { DELIBERATELY_UNMAPPED_EVENTS, MAPPED_EVENTS, mapObservationEvent } from "../src/adapters/observation-mapping";
 import type { CommittedEventRow, PinnedDefinitionRead } from "../src/storage/read-store";
@@ -22,8 +22,8 @@ test("schema digest changes with the artifact declaration, not the bundle digest
 });
 
 test("every current event variant is explicitly mapped or deliberately excluded", () => {
-  expect([...MAPPED_EVENTS, ...DELIBERATELY_UNMAPPED_EVENTS].sort().join(",")).toBe([
-    "launched", "worker_started", "worker_ended", "revision_published", "operator_decided", "retry_requested", "cancel_requested"].sort().join(","));
+  const coreEventKinds = CORE_PROTOCOL_SCHEMA.request.$defs.Event.oneOf.map((variant) => variant.properties.kind.const);
+  expect([...MAPPED_EVENTS, ...DELIBERATELY_UNMAPPED_EVENTS].sort()).toEqual(coreEventKinds.sort());
 });
 
 test("new variants and unknown artifact declarations become unmapped outcomes", () => {
