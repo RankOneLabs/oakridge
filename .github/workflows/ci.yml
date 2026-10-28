@@ -194,6 +194,9 @@ jobs:
       - name: Check generated storage records
         if: matrix.shard == 0
         run: bun oakridge-dbos/scripts/generate-storage-records.ts --check
+      - name: Check generated observation storage records
+        if: matrix.shard == 0
+        run: bun observation/scripts/generate-storage-records.ts --check
       - name: Run observation tests against PostgreSQL
         if: matrix.shard == 0
         run: bun run --filter observation test
