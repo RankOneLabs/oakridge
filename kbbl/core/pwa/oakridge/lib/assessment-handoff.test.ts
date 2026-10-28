@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment } from "./assessment";
 import { composeHandoffText, selectHandoffItems, withItemRemoved } from "./assessment-handoff";
+import linkedAssessment from "./__fixtures__/id-linked-assessment.json";
 
 const assessment: Assessment = {
+  head_sha: null,
   verdict: "pass_with_notes",
-  findings: [{ criterion: "Ship it", status: "partial", evidence: "Some evidence", description: null }],
+  findings: [{ criterion_id: null, criterion: "Ship it", status: "partial", evidence: { kind: "legacy", text: "Some evidence" }, description: null }],
   test_evidence: null,
   recommended_next_actions: ["Fix the first issue", "Add coverage", "Document the result"],
 };
@@ -23,5 +25,11 @@ describe("assessment handoff", () => {
   it("removes one action and leaves the rest of the body identical", () => {
     const body = { ...assessment, extra_server_field: { retained: true } };
     expect(withItemRemoved(body, 1)).toEqual({ ...body, recommended_next_actions: ["Fix the first issue", "Document the result"] });
+  });
+
+  it("preserves the raw commit and typed evidence on republish", () => {
+    const body = { ...linkedAssessment, recommended_next_actions: ["Fix it", "Add coverage"], extra_server_field: { retained: true } };
+    const updated = withItemRemoved(body as unknown as Assessment, 0);
+    expect(JSON.stringify(updated)).toBe(JSON.stringify({ ...body, recommended_next_actions: ["Add coverage"] }));
   });
 });

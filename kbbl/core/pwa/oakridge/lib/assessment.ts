@@ -1,17 +1,32 @@
 import type { Result } from "../../lib/result";
 import type { AssessmentVerdict, CriterionStatus } from "../types";
 import { parseTestEvidence, type TestEvidence } from "./build-result";
+import { planCriterionText, type PlanCriterion, type PlanTraceId } from "./plan";
 
-/** Mirrors `AssessmentFinding` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `evidence_ref` in workflow-config/development.yaml. */
+export interface EvidenceRef {
+  kind: "file" | "test" | "output";
+  ref: string;
+  detail: string | null;
+}
+
+/** Keeps historical prose distinct from current structured references. */
+export type FindingEvidence =
+  | { kind: "legacy"; text: string | null }
+  | { kind: "current"; refs: EvidenceRef[] };
+
+/** Mirrors `assessment_finding` in workflow-config/development.yaml. */
 export interface AssessmentFinding {
+  criterion_id: PlanTraceId | null;
   criterion: string | null;
   status: CriterionStatus | null;
-  evidence: string | null;
+  evidence: FindingEvidence;
   description: string | null;
 }
 
-/** Mirrors the registered oakridge-dbos `dev.assessment` artifact body. */
+/** Mirrors `assessment_body` in workflow-config/development.yaml, including legacy revisions. */
 export interface Assessment {
+  head_sha: string | null;
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
   test_evidence: TestEvidence | null;
@@ -34,7 +49,7 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const TEXT_FIELDS = ["criterion", "evidence", "description"] as const;
+const TEXT_FIELDS = ["criterion", "description"] as const;
 
 /** A nullable text field: absent or null reads as null, as does a blank string; anything else that is not a string is refused. */
 function parseNullableText(value: unknown, field: string): Parsed<string | null> {
@@ -43,8 +58,32 @@ function parseNullableText(value: unknown, field: string): Parsed<string | null>
   return { ok: true, value: value.trim() === "" ? null : value };
 }
 
+function parseEvidence(value: unknown, field: string): Parsed<FindingEvidence> {
+  if (!Array.isArray(value)) {
+    const text = parseNullableText(value, field);
+    return text.ok ? { ok: true, value: { kind: "legacy", text: text.value } } : text;
+  }
+  const refs: EvidenceRef[] = [];
+  for (const [index, entry] of value.entries()) {
+    const entryField = `${field}[${index}]`;
+    if (!isRecord(entry)) return fail(entryField, "expected an evidence reference object");
+    if (entry.kind !== "file" && entry.kind !== "test" && entry.kind !== "output") {
+      return fail(`${entryField}.kind`, "expected file, test or output");
+    }
+    if (typeof entry.ref !== "string") return fail(`${entryField}.ref`, "expected a string");
+    const detail = parseNullableText(entry.detail, `${entryField}.detail`);
+    if (!detail.ok) return detail;
+    refs.push({ kind: entry.kind, ref: entry.ref, detail: detail.value });
+  }
+  return { ok: true, value: { kind: "current", refs } };
+}
+
 function parseFinding(value: unknown, field: string): Parsed<AssessmentFinding> {
   if (!isRecord(value)) return fail(field, "expected an object");
+  const criterionId = parseNullableText(value.criterion_id, `${field}.criterion_id`);
+  if (!criterionId.ok) return criterionId;
+  const evidence = parseEvidence(value.evidence, `${field}.evidence`);
+  if (!evidence.ok) return evidence;
   const text: Partial<Record<(typeof TEXT_FIELDS)[number], string | null>> = {};
   for (const key of TEXT_FIELDS) {
     const parsed = parseNullableText(value[key], `${field}.${key}`);
@@ -55,18 +94,27 @@ function parseFinding(value: unknown, field: string): Parsed<AssessmentFinding> 
     ? null
     : CRITERION_STATUSES.find((candidate) => candidate === value.status);
   if (status === undefined) return fail(`${field}.status`, "expected met, partial, not_met or null");
-  return { ok: true, value: { criterion: text.criterion ?? null, status, evidence: text.evidence ?? null, description: text.description ?? null } };
+  return { ok: true, value: { criterion_id: criterionId.value as PlanTraceId | null, criterion: text.criterion ?? null, status, evidence: evidence.value, description: text.description ?? null } };
 }
 
 export function parseAssessment(body: unknown): Parsed<Assessment> {
   if (!isRecord(body)) return fail("body", "expected an object");
   const verdict = VERDICTS.find((candidate) => candidate === body.verdict);
   if (!verdict) return fail("verdict", "expected pass, pass_with_notes or fail");
+  const headSha = parseNullableText(body.head_sha, "head_sha");
+  if (!headSha.ok) return headSha;
   if (!Array.isArray(body.findings)) return fail("findings", "expected an array");
   const findings: AssessmentFinding[] = [];
+  let evidenceGeneration: FindingEvidence["kind"] | null = null;
   for (const [index, entry] of body.findings.entries()) {
     const finding = parseFinding(entry, `findings[${index}]`);
     if (!finding.ok) return finding;
+    if (isRecord(entry) && entry.evidence !== undefined && entry.evidence !== null) {
+      if (evidenceGeneration !== null && finding.value.evidence.kind !== evidenceGeneration) {
+        return fail(`findings[${index}].evidence`, "mixed legacy and current evidence generations");
+      }
+      evidenceGeneration = finding.value.evidence.kind;
+    }
     findings.push(finding.value);
   }
   const actions = body.recommended_next_actions;
@@ -82,6 +130,7 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
   return {
     ok: true,
     value: {
+      head_sha: headSha.value,
       verdict,
       findings,
       test_evidence: testEvidence,
@@ -96,8 +145,10 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
  * no criterion from the brief.
  */
 export type CriterionCheck =
-  | { kind: "brief"; number: number; criterion: string; finding: AssessmentFinding | null }
-  | { kind: "assessment_only"; finding: AssessmentFinding };
+  | { kind: "brief"; number: number; criterion: string; finding: AssessmentFinding | null; match: CriterionMatch }
+  | { kind: "assessment_only"; finding: AssessmentFinding; match: "unmatched" };
+
+export type CriterionMatch = "id" | "normalized_text" | "unmatched";
 
 export interface CriterionTally {
   met: number;
@@ -150,22 +201,25 @@ const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 const ATTENTION_ORDER: readonly (CriterionStatus | null)[] = ["not_met", "partial", null];
 
 /**
- * Lays the assessment over the brief's criteria. The assessor quotes each
- * criterion verbatim, so matching is on the whitespace-normalised text.
+ * Lays the assessment over the brief's criteria. Linked briefs use stable IDs;
+ * historical string criteria retain whitespace-normalised text matching.
  */
-export function selectCriterionReport(briefCriteria: string[] | null, findings: AssessmentFinding[]): CriterionReport {
+export function selectCriterionReport(briefCriteria: PlanCriterion[] | null, findings: AssessmentFinding[]): CriterionReport {
   const unmatched = [...findings];
-  const takeFinding = (criterion: string): AssessmentFinding | null => {
-    const index = unmatched.findIndex((finding) => finding.criterion !== null && normalize(finding.criterion) === normalize(criterion));
+  const takeFinding = (criterion: PlanCriterion): AssessmentFinding | null => {
+    const index = typeof criterion === "string"
+      ? unmatched.findIndex((finding) => finding.criterion !== null && normalize(finding.criterion) === normalize(criterion))
+      : unmatched.findIndex((finding) => finding.criterion_id === criterion.id);
     return index === -1 ? null : unmatched.splice(index, 1)[0] ?? null;
   };
-  const briefChecks: CriterionCheck[] = (briefCriteria ?? []).map((criterion, index) => ({
-    kind: "brief",
-    number: index + 1,
-    criterion,
-    finding: takeFinding(criterion),
-  }));
-  const checks = [...briefChecks, ...unmatched.map((finding): CriterionCheck => ({ kind: "assessment_only", finding }))];
+  const briefChecks: CriterionCheck[] = (briefCriteria ?? []).map((criterion, index) => {
+    const finding = takeFinding(criterion);
+    return {
+      kind: "brief", number: index + 1, criterion: planCriterionText(criterion), finding,
+      match: finding === null ? "unmatched" : typeof criterion === "string" ? "normalized_text" : "id",
+    };
+  });
+  const checks = [...briefChecks, ...unmatched.map((finding): CriterionCheck => ({ kind: "assessment_only", finding, match: "unmatched" }))];
   const statuses = checks.map(selectCheckStatus);
   return {
     needs_attention: ATTENTION_ORDER.flatMap((status) => checks.filter((check) => selectCheckStatus(check) === status)),

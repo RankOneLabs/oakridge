@@ -5,7 +5,6 @@ import { selectCriterionCounts, selectCriterionReport, type Assessment, type Cri
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
-import { planCriterionText } from "../../lib/plan";
 import { selectStatusTone } from "../../lib/status-tone";
 import type { AssessmentVerdict } from "../../types";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
@@ -44,7 +43,7 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
 
 export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
-  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria.map(planCriterionText) : null, assessment.findings);
+  const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
 
   return (
     <article className="flex flex-col gap-5" data-testid="or-assessment-viewer">
@@ -55,6 +54,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           {brief.kind === "found" && <Chip tone="neutral">{brief.value.repository_key}</Chip>}
         </div>
         {brief.kind === "found" && <h2 className="m-0 text-lg font-semibold leading-snug text-[var(--text-primary)]">{brief.value.title}</h2>}
+        <p className="m-0 text-xs text-[var(--text-muted)]" data-testid="or-assessment-head-sha">Commit: <code className="or-code">{assessment.head_sha ?? "Not recorded"}</code></p>
         <VerdictBanner verdict={assessment.verdict} tally={report.tally} />
         {!isIntegration && brief.kind !== "found" && <CohortArtifactNote lookup={brief} artifactName="build brief" testId="or-assessment-brief-note" />}
       </header>
@@ -62,7 +62,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       <ArtifactSection title={`Needs attention (${report.needs_attention.length})`} testId="or-assessment-attention">
         {report.needs_attention.length > 0 ? (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+            {report.needs_attention.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
           </ul>
         ) : <p className="text-sm text-[var(--success-fg)]">Every criterion is met.</p>}
       </ArtifactSection>
@@ -93,7 +93,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
           </Button>
           {isMetOpen && (
             <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
-              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration} />)}
+              {report.met.map((check, index) => <CriterionCheckItem key={index} check={check} showBriefComparison={!isIntegration && brief.kind === "found"} />)}
             </ul>
           )}
         </ArtifactSection>

@@ -1,0 +1,6 @@
+{
+  "verdict": "fail",
+  "findings": [{ "criterion": "It works.", "status": "not_met", "evidence": "It does not." }],
+  "test_evidence": { "passed": 3, "failed": 1 },
+  "recommended_next_actions": ["Fix it."]
+}

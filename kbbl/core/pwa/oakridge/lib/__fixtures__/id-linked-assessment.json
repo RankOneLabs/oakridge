@@ -1,0 +1,17 @@
+{
+  "head_sha": "abc123def456",
+  "verdict": "pass_with_notes",
+  "findings": [{
+    "criterion_id": "criterion-brief",
+    "criterion": "The brief remains readable.",
+    "status": "met",
+    "evidence": [
+      { "kind": "file", "ref": "kbbl/core/pwa/oakridge/lib/build-brief.ts:100-110", "detail": "Parser accepts linked criteria." },
+      { "kind": "test", "ref": "build-brief.test.ts::reads id-linked brief" },
+      { "kind": "output", "ref": "bun run test:pwa", "detail": "Passed" }
+    ],
+    "description": null
+  }],
+  "test_evidence": null,
+  "recommended_next_actions": []
+}

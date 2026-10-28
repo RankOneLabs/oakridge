@@ -401,15 +401,15 @@ export interface ArtifactRevision {
 
 /** Mirrors the revision status returned by the artifact API. */
 export type ArtifactRevisionStatus = "draft" | "approved" | "rejected";
-/** Mirrors `FindingSeverity` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `issue.severity` in workflow-config/development.yaml. */
 export type FindingSeverity = "blocking" | "warning" | "info";
-/** Mirrors `RequirementStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `spec_requirement.status` in workflow-config/development.yaml. */
 export type RequirementStatus = "implementable" | "blocked" | "ambiguous";
-/** Mirrors `AssessmentVerdict` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `assessment_body.verdict` in workflow-config/development.yaml. */
 export type AssessmentVerdict = "pass" | "pass_with_notes" | "fail";
-/** Mirrors `CriterionStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `assessment_finding.status` in workflow-config/development.yaml. */
 export type CriterionStatus = "met" | "not_met" | "partial";
-/** Mirrors `PrReviewStatus` in oakridge-dbos/src/domain/dev-flow-artifacts.ts. */
+/** Mirrors `pr_body.review_status` in workflow-config/development.yaml. */
 export type PrReviewStatus = "draft" | "ready" | "changes_requested" | "approved" | "merged" | "closed";
 
 export interface ArtifactCapabilities {
