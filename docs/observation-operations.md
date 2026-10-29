@@ -6,8 +6,11 @@ external projection contract and the five operator recommendations.
 The observation service stores its own PostgreSQL data. Oakridge remains the
 workflow authority. Start the service with `OBSERVATION_DATABASE_URL` and
 `bun run --filter observation start`; it binds to `127.0.0.1:8791` unless
-`OBSERVATION_HOST` or `OBSERVATION_PORT` is set. `scripts/oakridge-start` starts
-it alongside DBOS and kbbl only when `OBSERVATION_DATABASE_URL` is nonempty.
+`OBSERVATION_HOST` or `OBSERVATION_PORT` is set. `scripts/oakridge-start
+--observation` starts it alongside DBOS and kbbl, reading `OBSERVATION_DATABASE_URL`
+and any `OBSERVATION_LANGFUSE_*` settings from `observation/.env`; it stops before
+starting anything when that file names no database. Without the flag the service
+is not started.
 For an independent Springfield deployment, run the same package with its own
 database, credentials and network binding, then point the Oakridge publisher
 at its URL. That deployment topology is documented here, not automated.
@@ -17,10 +20,15 @@ at its URL. That deployment topology is documented here, not automated.
 Configure `OBSERVATION_INGEST_CREDENTIALS` as a JSON array of
 `{"producer":"oakridge","namespace":"development","token":"<secret>"}`
 entries. Give DBOS the matching `OAKRIDGE_OBSERVATION_NAMESPACE`,
-`OAKRIDGE_OBSERVATION_INGEST_TOKEN`, and `OAKRIDGE_OBSERVATION_URL` (for a local
-`oakridge-start` service, `http://127.0.0.1:${OBSERVATION_PORT:-8791}`). DBOS
-does not construct the publisher when the URL is absent. The start script does
-not set that publisher URL automatically. An ingest token may
+`OAKRIDGE_OBSERVATION_INGEST_TOKEN`, and `OAKRIDGE_OBSERVATION_URL`. DBOS
+does not construct the publisher when the URL is absent. With `--observation`,
+the start script wires both sides itself: it keeps one ingest token in
+`~/.local/state/oakridge/observation-ingest.token`, generated on first start,
+sets `OBSERVATION_INGEST_CREDENTIALS` for the service to that token under
+producer `oakridge` and `OAKRIDGE_OBSERVATION_NAMESPACE` (default `default`),
+and gives DBOS the matching token and `http://127.0.0.1:${OBSERVATION_PORT:-8791}`.
+Without the flag, an exported publisher URL and token pass through to DBOS
+unchanged, for a separately deployed service. An ingest token may
 only submit and inspect its configured producer and namespace through the
 source routes; it cannot read item history, grade, or export. Configure
 separate tenant-bound arrays `OBSERVATION_READ_CREDENTIALS`,
