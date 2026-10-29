@@ -138,6 +138,22 @@ least-privilege keys, choose a region or self-hosted endpoint, pin the Jev
 model and evaluator, run the synthetic write/readback exercise, and record the
 returned IDs and timing here. Until then, outbound projection remains pending.
 
+The gate is configuration: `OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID` names the
+32-hex trace ID of the passing `--write-synthetic` run. While it is unset,
+`LangfuseBackend.project` makes only capability reads and returns the pending
+failure. Once set, it POSTs one OTLP span per attempt-scoped mapping to
+`/api/public/otel/v1/traces` and returns a `written` outcome carrying the trace
+and span IDs. Both IDs are derived from the mapping key's digest, so a replay
+re-sends the same target and nothing is stored; the mapping stays `pending`
+until a score exists. The span is named `question_id@question_version`, its
+input and output are the encoded projection as JSON strings, and trace metadata
+is flattened under `langfuse.trace.metadata.*`. Whether Langfuse upserts a
+re-sent span with the same IDs is unmeasured and must be recorded from the
+first live run. Evidence content reaches the span only for references marked
+`kind: "public"`; native evaluators read it from the observation input.
+Native evaluator scores are not yet ingested into local grades: `fetch` still
+expects a pre-known score ID and Oakridge metadata.
+
 If the native Jev evaluator or evaluator API is unavailable, run the pinned
 Jev question through a direct grader in the observation service and store that
 result with its own evaluator identity; do not represent it as a Langfuse

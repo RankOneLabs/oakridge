@@ -66,7 +66,12 @@ Use the existing tenant-bound `OBSERVATION_GRADE_CREDENTIALS` token for
 `OBSERVATION_READ_CREDENTIALS` token for `GET /v1/langfuse/status`. Projection
 loads the frozen execution, question, evidence and source revision for that
 tenant and applies a restrictive disclosure policy. It remains pending until
-the deployment's synthetic Phase A write/readback is validated. The status
+`OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID` names the trace of a passing
+`langfuse-capability-spike.ts --write-synthetic` run on this project; it then
+writes one OTLP span per mapping and responds `202` with `{ "status":
+"written", "trace_id", "observation_id" }`. Evidence references marked
+`kind: "public"` carry their content into the span; other kinds are redacted
+under the restrictive policy. The status
 route lists the latest 100 mapping states for the caller's tenant.
 
 Removing all `OBSERVATION_LANGFUSE_*` settings and restarting selects the

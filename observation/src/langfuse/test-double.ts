@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../domain/primitives";
-import type { EvaluationBackend, ExternalTargetIds, FetchSelector, InboundEvaluation, LangfuseError,
+import type { EvaluationBackend, ExternalTargetIds, FetchSelector, InboundEvaluation, LangfuseError, ProjectionOutcome,
   LangfuseObservationId, LangfuseQueueItemId, LangfuseScoreId, LangfuseTraceId, ProjectionInput,
   ReconcileOutcome, ReconcileSelector } from "../ports/evaluation-backend";
 import { mappingKey } from "./mapping";
@@ -32,7 +32,7 @@ export class TestEvaluationBackend implements EvaluationBackend {
     this.inbound.set(mapping_key, value);
   }
 
-  async project(input: ProjectionInput): Promise<Result<ExternalTargetIds, LangfuseError>> {
+  async project(input: ProjectionInput): Promise<Result<ProjectionOutcome, LangfuseError>> {
     const shape = encodeProjection(input);
     if (!shape.ok) return shape;
     const identity = mappingKey({ occurrence_id: input.execution.subject_occurrence_id, evidence: input.evidence,
@@ -40,7 +40,7 @@ export class TestEvaluationBackend implements EvaluationBackend {
       projection_version: input.projection_version });
     if (!identity.ok) return identity;
     const existing = this.projected.get(identity.value.mapping_key);
-    if (existing) return ok(existing.external_ids);
+    if (existing) return ok({ status: "complete", external_ids: existing.external_ids });
     const digest = identity.value.mapping_key.slice("canonical-json/v1:".length);
     const external_ids: ExternalTargetIds = { trace_id: `trace-${digest}` as LangfuseTraceId,
       observation_id: `observation-${digest}` as LangfuseObservationId,
@@ -48,7 +48,7 @@ export class TestEvaluationBackend implements EvaluationBackend {
     this.projected.set(identity.value.mapping_key, { external_ids, shape: shape.value,
       occurrence_id: input.execution.subject_occurrence_id, question_id: input.question.question_id,
       question_version: input.question.question_version });
-    return ok(external_ids);
+    return ok({ status: "complete", external_ids });
   }
 
   async fetch(selector: FetchSelector): Promise<Result<InboundEvaluation, LangfuseError>> {

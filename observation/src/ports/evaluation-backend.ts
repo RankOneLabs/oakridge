@@ -83,16 +83,21 @@ export interface ReconcileOutcome {
   readonly sync_state: LangfuseSyncState;
 }
 
+/** A written target has its trace and observation; its score and queue item arrive later. */
+export type ProjectionOutcome =
+  | { readonly status: "written"; readonly trace_id: LangfuseTraceId; readonly observation_id: LangfuseObservationId }
+  | { readonly status: "complete"; readonly external_ids: ExternalTargetIds };
+
 /** Optional external mirror. The local grading store remains authoritative. */
 export interface EvaluationBackend {
-  project(input: ProjectionInput): Promise<Result<ExternalTargetIds, LangfuseError>>;
+  project(input: ProjectionInput): Promise<Result<ProjectionOutcome, LangfuseError>>;
   fetch(selector: FetchSelector): Promise<Result<InboundEvaluation, LangfuseError>>;
   reconcile(selector: ReconcileSelector): Promise<Result<ReconcileOutcome, LangfuseError>>;
 }
 
 /** Offline mode makes absence explicit without affecting local capture or grading. */
 export class LocalEvaluationBackend implements EvaluationBackend {
-  async project(input: ProjectionInput): Promise<Result<ExternalTargetIds, LangfuseError>> {
+  async project(input: ProjectionInput): Promise<Result<ProjectionOutcome, LangfuseError>> {
     return err({ operation: "project", entity_id: input.execution.execution_id, detail: "Langfuse adapter is disabled" });
   }
   async fetch(selector: FetchSelector): Promise<Result<InboundEvaluation, LangfuseError>> {

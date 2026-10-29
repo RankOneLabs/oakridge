@@ -159,7 +159,7 @@ export function registerLangfuseRoutes(app: Hono, deps: LangfuseRouteDependencie
     const backend = new LangfuseBackend(deps.db, tenant, configuration.config,
       createLangfuseHttpClient(configuration.config));
     const result = await backend.project(input);
-    return result.ok ? c.json({ status: "pending", external_ids: result.value }, 202)
+    return result.ok ? c.json(result.value, 202)
       : errorResponse(c, 422, "langfuse_projection_pending", result.error.detail);
   });
   app.post("/v1/langfuse/reconcile", async (c) => {

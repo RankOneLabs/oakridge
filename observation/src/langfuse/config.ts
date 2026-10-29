@@ -15,6 +15,7 @@ const settingsSchema = z.object({
   decision_evaluator_id: z.string().min(1).optional(),
   decision_model: z.string().min(1).optional(),
   phase_a_jev_score_name: z.string().min(1).optional(),
+  phase_a_trace_id: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   max_attempts: z.coerce.number().int().min(1).max(5).default(3),
   backoff_ms: z.coerce.number().int().min(0).max(5_000).default(200),
 });
@@ -28,6 +29,8 @@ export interface LangfuseConfig {
   readonly decision_evaluator_id: string | null;
   readonly decision_model?: string | null;
   readonly phase_a_jev_score_name?: string | null;
+  /** Trace of the passing Phase A synthetic run on this project; writes stay off until it is set. */
+  readonly phase_a_trace_id?: string | null;
   readonly retry: { readonly max_attempts: number; readonly backoff_ms: number };
 }
 export type LangfuseConfiguration =
@@ -45,11 +48,12 @@ export function langfuseConfigFromEnv(env: NodeJS.ProcessEnv): Result<LangfuseCo
     decision_evaluator_id: env.OBSERVATION_LANGFUSE_DECISION_EVALUATOR_ID,
     decision_model: env.OBSERVATION_LANGFUSE_DECISION_MODEL,
     phase_a_jev_score_name: env.OBSERVATION_LANGFUSE_PHASE_A_JEV_SCORE_NAME,
+    phase_a_trace_id: env.OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID,
     max_attempts: env.OBSERVATION_LANGFUSE_MAX_ATTEMPTS,
     backoff_ms: env.OBSERVATION_LANGFUSE_BACKOFF_MS,
   };
   if (!raw.base_url && !raw.project_id && !raw.public_key && !raw.secret_key && !raw.annotation_queue_id
-    && !raw.decision_evaluator_id && !raw.decision_model && !raw.phase_a_jev_score_name)
+    && !raw.decision_evaluator_id && !raw.decision_model && !raw.phase_a_jev_score_name && !raw.phase_a_trace_id)
     return ok({ status: "disabled" });
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) return err({ operation: "langfuse_config", entity_id: "environment",
@@ -61,6 +65,7 @@ export function langfuseConfigFromEnv(env: NodeJS.ProcessEnv): Result<LangfuseCo
     decision_evaluator_id: parsed.data.decision_evaluator_id ?? null,
     decision_model: parsed.data.decision_model ?? null,
     phase_a_jev_score_name: parsed.data.phase_a_jev_score_name ?? null,
+    phase_a_trace_id: parsed.data.phase_a_trace_id ?? null,
     retry: { max_attempts: parsed.data.max_attempts, backoff_ms: parsed.data.backoff_ms },
   } });
 }
