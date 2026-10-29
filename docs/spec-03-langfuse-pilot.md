@@ -47,3 +47,33 @@ of `extractor_version`, already pinned in `occurrence_id`, and of
 observations structurally incomparable with old ones. A bump creates new mapping
 keys and targets. Existing mappings remain readable and are never rewritten to
 the new shape.
+
+## Pilot catalogue and evidence boundary
+
+The three `v1` definitions live in `observation/src/grading/catalogue/langfuse-pilot.ts`.
+Their pinned recipes live in `observation/src/langfuse/evidence-recipe.ts`.
+Each projected reference carries only its role, source ref, digest and deep link;
+whole artifact bodies, raw code and specification text remain in the observation
+store. An undeclared role or a missing reference address is rejected. An
+assessment may have zero linked finding references, which is a meaningful
+coverage miss rather than missing evidence.
+
+| Question | Selected item | Pinned input | Pinned output | Answer |
+| --- | --- | --- | --- | --- |
+| `analysis.finding_relevance/v1` | `analysis.findings` `finding` | Original requested change and relevant excerpt, each by source reference | One analysis finding reference | Choice: relevant, irrelevant or unclear/insufficient evidence |
+| `brief.source_fidelity/v1` | `brief.criteria` `criterion` | The identified plan criterion | Its brief criterion with the same cohort criterion id | Choice: faithful, changed meaning or unclear/insufficient evidence |
+| `assessment.coverage/v1` | `brief.criteria` `criterion` | One brief criterion | Assessment finding references, possibly empty | Boolean: at least one explicit `assesses` link |
+
+For fidelity, the brief criterion's `derived_from` link uses the unchanged plan
+cohort criterion id; rewritten text preserves that identity. For coverage, the
+catalogue creates an `assesses` link only when the assessment finding has a
+string `criterion_id`. A finding with no id has no link and is not itself a
+coverage miss. Only a brief criterion with no linked assessment finding is a
+miss.
+
+`observation/src/langfuse/classification.ts` declares the top-level body field
+kinds for analysis, plan, brief and assessment. A field absent from its artifact
+map is `unclassified_content` and is withheld; only fields declared `public`
+pass through a whole-body projection. This policy is separate from the frozen
+Assay export redaction policy. An explicit recipe can name bounded source
+references for grading while leaving source content in the observation store.
