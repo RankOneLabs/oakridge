@@ -226,3 +226,47 @@ agreement, coverage, abstentions, confidence bands and disagreements; a
 threshold tuned on an example cannot be reported as held-out validation on
 that same example. Historical Oakridge labels may be compared in their own
 unblinded series, with their different collection and visibility stated.
+
+## Phase B Fastino custom upstream probe (2026-10-29)
+
+The intended Langfuse TypeSafe (System One) Custom upstream base URL is
+`https://api.fastino.ai/v1`, without `/systemone`. The custom-model catalogue
+must use the exact model ID accepted by the selected Fastino API version. The
+current [Fastino GLiDE example](https://fastino.ai/blog/introducing-glide-the-first-thinking-decision-model)
+uses `fastino/glide` with `Authorization: Bearer` and `Content-Type:
+application/json`; another Fastino page shows `fastino/GLiDE`. Neither spelling
+has been validated with a credential in this deployment. The
+[Langfuse custom connection guide](https://langfuse.com/docs/evaluation/evaluation-methods/decision-models)
+says it uses Bearer authorization and supports extra headers.
+
+A live synthetic `POST https://api.fastino.ai/v1/systemone` was attempted with
+both `Authorization: Bearer` and `X-API-Key` on 2026-10-29. Each returned HTTP
+401 because this worktree has no `FASTINO_API_KEY`; the probe used an invalid
+synthetic key. No `OBSERVATION_LANGFUSE_*` configuration is present, so a native
+Langfuse custom connection could not be configured or read back. The accepted
+model string, working auth method, required headers beyond JSON content type,
+and whether Langfuse preserves all probabilities and confidence on readback
+remain **unmeasured**. No native observation is claimed. The direct
+`POST /v1/systemone` fallback is implemented and exercised against a stubbed
+provider boundary in `observation/tests/fastino-glide.test.ts`; a live Fastino
+answer also remains unmeasured.
+
+The service model runners store the raw typed answer, every returned option
+probability, provider confidence and usage in the local grade and execution
+records. Yes/No is a numeric P(true), and a fractional Score keeps its expected
+level, legend and distribution. They leave normalization and decision policy
+fields null. When a completed grade has an authenticated Langfuse observation
+mapping, `POST /v1/langfuse/model-scores` writes a separately labelled raw score
+through the Scores API; the local observation remains authoritative. The
+adapter's current Phase A projection gate leaves mappings pending until a
+deployment completes the synthetic write and readback validation above, so
+end-to-end score ingestion has not yet been demonstrated against Langfuse.
+
+When a pinned Choice question includes `insufficient_evidence` and a System One
+provider selects it, the local answer is an explicit abstention. The selected
+raw provider answer is also retained in execution reproducibility metadata;
+low confidence by itself never causes abstention. A Yes/No response that supplies
+only `noul` has a derived `false = 1 - noul` probability in the observation;
+`probability_provenance` marks the true value as `provider_noul` and the false
+value as `derived_complement`. If the provider returns its own probability map,
+the map is retained and marked `provider_returned`.
