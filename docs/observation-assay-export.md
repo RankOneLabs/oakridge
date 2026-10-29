@@ -29,3 +29,26 @@ To verify a redacted export offline, recompute `membership_digest` from the mani
 Selection includes complete evidence sets with answered grades. An evidence reference with no captured content is excluded because an offline consumer could not resolve it. Other considered candidates remain in the manifest with reasons such as `run_id_mismatch`, `occurrence_not_selected`, `no_grade_observation`, `incomplete_evidence_set`, `unresolved_evidence_content`, or `answer_abstain`. A short or empty JSONL file can therefore be explained by the manifest. Redaction can thin the content of an included record, and every withheld field is separately named in `redaction_reasons`.
 
 `export_manifest` and `export_membership` are immutable after creation. The service writes the header and membership in one transaction and refuses later updates, deletes, or membership inserts against an already committed manifest. Appending a grade after that transaction does not change a frozen manifest, its files, or its digest. A fresh export has a new manifest id and reflects the new grade. The later purge flow must refuse a run with occurrences referenced by any frozen membership row.
+
+For the Langfuse pilot, `observation/src/langfuse/population-manifest.ts` freezes
+the selected occurrence, question/version, evidence digest, stratum and explicit
+selection reason before grading. Its full membership digest includes those
+fields. `shared_item_evidence_digest` is a second canonical digest of the
+sorted, distinct included `{occurrence_id, evidence_set_digest}` pairs. The
+pilot runner calls the existing `POST /v1/exports/assay` route and recomputes
+that same digest from its frozen manifest; a mismatch is recorded as a failed
+population check. The Assay `membership_digest` cannot equal the pilot's full
+membership digest because Assay members are grade-specific candidates with
+revision and redaction fields, whereas the pilot manifest also pins question,
+stratum and selection reason.
+
+The runner semantics differ: Langfuse projection targets a selected
+occurrence/question/attempt and its scores can arrive asynchronously, while
+Assay exports only answered grades with complete, resolvable evidence as
+included candidates. An unanswered, failed or abstaining attempt remains in
+the pilot report denominator but appears as an excluded Assay membership row.
+Multiple grade attempts can also create several Assay candidates for one
+occurrence. The shared digest removes identical item/evidence pairs when
+comparing populations, while each format retains its own attempt-level detail.
+The Assay manifest remains the controlled-study boundary; the Langfuse score
+view alone does not freeze runner or score semantics.
