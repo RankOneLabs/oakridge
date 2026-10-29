@@ -84,12 +84,8 @@ async function targetOccurrence(trx: DatabaseTransaction, tenant: TenantScope,
       AND (${scope}::text IS NULL OR i.item_scope = ${scope})
       AND r.recorded_at <= ${source.recorded_at}
     ORDER BY i.revision_id, i.occurrence_id`.execute(trx);
-  let eligible = link.target_artifact_kind === source.artifact_kind
+  const eligible = link.target_artifact_kind === source.artifact_kind
     ? candidates.rows.filter((row) => row.revision_id === source.revision_id) : candidates.rows;
-  if (scope === null && link.target_artifact_kind === "brief") {
-    const cohort = source.unit_id.split("/implementation/")[1]?.split("/")[0];
-    if (cohort) eligible = eligible.filter((row) => row.item_scope === `cohort/${cohort}/criterion`);
-  }
   if (eligible.length === 0) return null;
   // A local id alone does not identify which prior revision was approved.
   if (eligible.length > 1) return undefined;

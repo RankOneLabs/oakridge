@@ -3,12 +3,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql",
-  "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql"]
+  "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql", "0008_langfuse_sync.sql"]
   .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
 const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
+const gradeLabelOriginPath = resolve(import.meta.dir, "../src/storage/migrations/0009_grade_label_origin.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 22) throw new Error(`expected twenty-two observation tables, found ${tables.length}`);
+if (tables.length !== 25) throw new Error(`expected twenty-five observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',
@@ -38,6 +39,12 @@ for (const [, tableName, definition] of tables) {
     for (const [, name] of columns) lines.push(`  ${name}: string | null;`);
   }
   if (tableName === "item_occurrence") lines.push("  json_pointer: string | null;");
+  if (tableName === "grade_observation") {
+    const gradeOrigin = readFileSync(gradeLabelOriginPath, "utf8");
+    if (!/ADD COLUMN label_origin text GENERATED ALWAYS AS/.test(gradeOrigin))
+      throw new Error("grade label origin migration is missing");
+    lines.push("  label_origin: Generated<string>;");
+  }
   lines.push("}", "");
 }
 lines.push("export interface DB {", ...names, "}", "");

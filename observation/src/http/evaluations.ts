@@ -3,9 +3,17 @@ import { z } from "zod";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradingContext } from "../grading/runner";
 import { deterministicChecker } from "../runners/deterministic-checker";
+import { coverageChecker } from "../runners/coverage-checker";
 import { stubModelRunner } from "../runners/stub-model";
+import { jevDirectRunner } from "../runners/jev-direct";
+import { fastinoGlideRunner } from "../runners/fastino-glide";
+import { llmJudgeRunner } from "../runners/llm-judge";
+import { ingestModelScore } from "../langfuse/score-ingestion";
+import { createLangfuseHttpClient } from "../langfuse/http-client";
+import type { GradeAnswer } from "../grading/observation";
 import { registerGradingContext, runGrade } from "../storage/grading-store";
-import type { SourceDependencies } from "./sources";
+import { withTenant } from "../storage/database";
+import type { LangfuseRouteDependencies } from "./langfuse-sync";
 import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
 
@@ -37,28 +45,70 @@ export function contextMatchesIdentity(context: GradingContext, identity: Evalua
     && context.evaluator.config_digest === identity.config_digest;
 }
 
-export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): void {
+const modelRunners = { stub_model: stubModelRunner, jev_direct: jevDirectRunner,
+  fastino_glide: fastinoGlideRunner, llm_judge: llmJudgeRunner } as const;
+
+export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependencies): void {
   app.post("/v1/evaluations", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
     let body: unknown;
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
-      runner: z.enum(["deterministic", "stub_model"]) }).safeParse(body);
+      runner: z.enum(["deterministic", "coverage", "stub_model", "jev_direct", "fastino_glide", "llm_judge"]) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
-      if ((parsed.data.runner === "deterministic" && context.evaluator.kind !== "code")
-        || (parsed.data.runner === "stub_model" && context.evaluator.kind !== "model"))
+      if (((parsed.data.runner === "deterministic" || parsed.data.runner === "coverage") && context.evaluator.kind !== "code")
+        || (parsed.data.runner in modelRunners && context.evaluator.kind !== "model"))
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
-    const runner = parsed.data.runner === "deterministic" ? deterministicChecker : stubModelRunner;
+    const runner = parsed.data.runner === "deterministic" ? deterministicChecker
+      : parsed.data.runner === "coverage" ? coverageChecker : modelRunners[parsed.data.runner];
     const result = await runGrade(deps.db, credential, { identity, runner });
     return result.ok ? c.json(result.value, result.value.was_replay ? 200 : 201)
       : errorResponse(c, 422, "evaluation_refused", result.error.detail);
+  });
+  app.post("/v1/langfuse/model-scores", async (c) => {
+    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "grade credential required");
+    if (!deps.langfuse || deps.langfuse.status === "disabled")
+      return errorResponse(c, 422, "langfuse_disabled", "Langfuse is disabled");
+    const parsed = z.object({ execution_id: z.string().min(1) }).safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return errorResponse(c, 400, "invalid_score_request", "execution_id required");
+    const source = await withTenant(deps.db, tenant, async (trx) => {
+      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", parsed.data.execution_id).executeTakeFirst();
+      if (!execution || execution.status !== "completed") return null;
+      const observation = await trx.selectFrom("observation.grade_observation").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution.execution_id).executeTakeFirst();
+      const mapping = await trx.selectFrom("observation.langfuse_mapping").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution.execution_id).where("trace_id", "is not", null)
+        .executeTakeFirst();
+      const evaluator = await trx.selectFrom("observation.evaluator_definition").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("evaluator_definition_id", "=", execution.evaluator_definition_id).executeTakeFirst();
+      return observation && mapping?.trace_id && mapping.observation_id && evaluator?.model
+        && evaluator.kind === "model" ? { execution, observation, mapping, evaluator } : null;
+    });
+    if (!source) return errorResponse(c, 409, "projection_pending", "completed model grade and mapped Langfuse observation required");
+    const client = createLangfuseHttpClient(deps.langfuse.config);
+    const result = await ingestModelScore(client, { score_id: source.observation.observation_id,
+      trace_id: source.mapping.trace_id!, external_observation_id: source.mapping.observation_id!,
+      question_id: source.execution.question_id, question_version: source.execution.question_version,
+      evaluator_definition_id: source.execution.evaluator_definition_id,
+      provider: source.evaluator.provider, model: source.evaluator.model!,
+      answer: source.observation.answer_payload as GradeAnswer,
+      probabilities: source.observation.probabilities as Record<string, number> | null,
+      confidence: source.observation.confidence });
+    return result.ok ? c.json({ score_id: result.value }, 200)
+      : errorResponse(c, 422, "score_ingestion_failed", result.error.detail);
   });
 }

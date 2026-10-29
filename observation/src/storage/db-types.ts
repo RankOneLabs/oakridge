@@ -202,6 +202,7 @@ export interface ObservationGradeObservation {
   quality_flags: Generated<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
+  label_origin: Generated<string>;
 }
 
 export interface ObservationSourceEventCursor {
@@ -311,6 +312,50 @@ export interface ObservationSourceCollaborationComment {
   recorded_at: Date;
 }
 
+export interface ObservationLangfuseMapping {
+  producer: string;
+  namespace: string;
+  mapping_key: string;
+  occurrence_id: string;
+  evidence_set_id: string;
+  evidence_set_digest: string;
+  question_id: string;
+  question_version: string;
+  projection_version: string;
+  execution_id: string;
+  attempt_id: string;
+  trace_id: string | null;
+  observation_id: string | null;
+  score_id: string | null;
+  queue_item_id: string | null;
+  sync_state: string;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ObservationLangfuseSyncTransition {
+  producer: string;
+  namespace: string;
+  transition_id: Generated<string>;
+  mapping_key: string;
+  from_state: string | null;
+  to_state: string;
+  recorded_at: Generated<Date>;
+}
+
+export interface ObservationLangfuseInboundQuarantine {
+  producer: string;
+  namespace: string;
+  quarantine_id: Generated<string>;
+  mapping_key: string | null;
+  score_id: string | null;
+  observation_id: string | null;
+  sync_state: string;
+  raw_payload: JsonValue;
+  reason: string;
+  recorded_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -334,4 +379,7 @@ export interface DB {
   "observation.source_operator_cursor": ObservationSourceOperatorCursor;
   "observation.source_backfill_position": ObservationSourceBackfillPosition;
   "observation.source_collaboration_comment": ObservationSourceCollaborationComment;
+  "observation.langfuse_mapping": ObservationLangfuseMapping;
+  "observation.langfuse_sync_transition": ObservationLangfuseSyncTransition;
+  "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
 }

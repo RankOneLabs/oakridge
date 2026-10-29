@@ -10,6 +10,8 @@ const cursorMigration = new URL("./migrations/0004_cursor.sql", import.meta.url)
 const exportMigration = new URL("./migrations/0005_export.sql", import.meta.url);
 const exportGuardMigration = new URL("./migrations/0006_export_guard.sql", import.meta.url);
 const purgeMigration = new URL("./migrations/0007_purge.sql", import.meta.url);
+const langfuseSyncMigration = new URL("./migrations/0008_langfuse_sync.sql", import.meta.url);
+const gradeLabelOriginMigration = new URL("./migrations/0009_grade_label_origin.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -23,6 +25,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const exportSql = await Bun.file(exportMigration).text();
   const exportGuardSql = await Bun.file(exportGuardMigration).text();
   const purgeSql = await Bun.file(purgeMigration).text();
+  const langfuseSyncSql = await Bun.file(langfuseSyncMigration).text();
+  const gradeLabelOriginSql = await Bun.file(gradeLabelOriginMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -55,6 +59,12 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
     await sql.raw(exportGuardSql).execute(trx);
     const purges = await sql<{ name: string | null }>`SELECT to_regclass('observation.purge_event')::text AS name`.execute(trx);
     if (!purges.rows[0]?.name) await sql.raw(purgeSql).execute(trx);
+    const langfuseMappings = await sql<{ name: string | null }>`SELECT to_regclass('observation.langfuse_mapping')::text AS name`.execute(trx);
+    if (!langfuseMappings.rows[0]?.name) await sql.raw(langfuseSyncSql).execute(trx);
+    const labelOrigin = await sql<{ has_column: boolean }>`SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns WHERE table_schema = 'observation'
+      AND table_name = 'grade_observation' AND column_name = 'label_origin') AS has_column`.execute(trx);
+    if (!labelOrigin.rows[0]?.has_column) await sql.raw(gradeLabelOriginSql).execute(trx);
   });
 }
 
