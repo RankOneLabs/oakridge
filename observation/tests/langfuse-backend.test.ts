@@ -93,6 +93,8 @@ integration("a recorded Phase A run lets projection write one span whose IDs a r
   const transport = async (request: string, init: RequestInit) => {
     if (init?.method === "POST") { posts.push({ url: request, body: JSON.parse(String(init.body)) }); return Response.json({}); }
     if (String(request).endsWith("/api/openapi.yaml")) return new Response(openapi);
+    if (String(request).includes("/v2/evaluation-rules?")) return Response.json({ data: [{ enabled: true,
+      evaluatorAssignments: [{ evaluatorId: "evaluator-1", variableMapping: null }] }], meta: {} });
     return Response.json({ data: [] });
   };
   const gated = { ...config, phase_a_trace_id: "a".repeat(32) };
