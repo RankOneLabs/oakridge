@@ -11,6 +11,14 @@ const DEVELOPMENT_REVIEWS: Readonly<Record<string, ReviewInboxItemKind>> = {
   "cohort:pr_closed": "gate_decision", "integration:pr_closed": "gate_decision",
 };
 
+/**
+ * Reviews whose decision targets one artifact while the operator judges another.
+ * The integration review approves the pull request, but its evidence is the assessment.
+ */
+const DEVELOPMENT_REVIEW_SUBJECTS: Readonly<Record<string, string>> = {
+  "integration:integration_review": "assessment",
+};
+
 function classify(item: OperatorInboxItem, unit: OperatorUnitView): ReviewInboxItemKind {
   if (item.kind === "stalled") return "cohort_failed";
   if (item.kind === "waiting") return item.reason.includes("pull request") ? "pull_request_merge" : "cohort_blocked";
@@ -97,7 +105,7 @@ export function classifyDevelopmentInbox(entry: OperatorRunInboxBatchEntry, unit
     return [{ id: `${item.run_id}:${item.unit_id}:${item.kind === "decision" ? item.key : item.kind}`, kind,
       state: item.kind === "waiting" ? "blocked" : "actionable", run_id: entry.run_id, workflow_name: "development", stage_instance_id: stageId,
       stage_name: unit.stage ?? "$root", unit_id: name, lifecycle: lifecycle(unit, entry.items.filter((candidate) => candidate.unit_id === unit.unit_id)),
-      ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
+      ...attention, title: selectUnitAttentionLabel(attention), run_title: runTitle, artifact_key: (review ? DEVELOPMENT_REVIEW_SUBJECTS[`${unit.stage}:${review}`] : null) ?? artifact?.artifact_key ?? null, artifact_revision_id: artifact && target ? artifactRevisionId(artifact, target) : null,
       artifact_url: artifact ? `oakridge/artifact/${artifactId(artifact)}` : null, gate_id: gate, gate_url: gate ? `oakridge/gate/${gate}` : null,
       pr_url: kind === "merge_confirmation" || kind === "pull_request_merge" ? developmentPullRequestUrl(unit) : null,
       resume_actions: actions, blocked_by: unit.depends_on.map((id) => {
