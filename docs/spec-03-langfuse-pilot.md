@@ -141,9 +141,14 @@ the config name uses a period before the version. Each category label exactly
 matches its `QuestionDefinition.allowed_values`; Langfuse's numeric category
 value is only the wire representation. The pure transform also covers
 `assessment.coverage/v1`, whose Boolean domain is `false` and `true`.
+The queue accepts the three pinned pilot question recipes, which are
+categorical or Boolean. The generic score-config transform and parity check
+also support a bounded numeric domain, but no numeric pilot evidence recipe
+is pinned, so numeric questions cannot be queued in this pilot.
 Config descriptions contain the pinned question wording, queue instructions,
-abstain rule and unclear rule. The service validates each config request with
-the documented API shape before sending it through the adapter HTTP client.
+the explicit `Graded artifact: report` declaration, abstain rule and unclear
+rule. The service validates each config request with the documented API shape
+before sending it through the adapter HTTP client.
 
 `POST /v1/langfuse/score-configs` provisions one of the two selected pilot
 configs. The operator attaches their returned config IDs to a Langfuse
@@ -155,8 +160,11 @@ set with the same digest, one pinned question recipe, and a queue containing
 exactly one score config with the matching question name and domain. It reads
 the remote observation's IO before handoff and refuses any displayed evidence
 content, extra verdict fields, altered question wording or non-pinned source
-reference. The remote input must also declare whether the report or code is
-graded. It then reads the created item back and stores a queue claim on the Langfuse mapping. The
+reference. The queue checks that the displayed score-config instructions
+declare report scope exactly; an optional scope marker in observation input
+must agree when present. This accepts the existing adapter input shape while
+keeping the declaration visible to the reviewer. It then reads the created
+item back and stores a queue claim on the Langfuse mapping. The
 claim is required by `POST /v1/langfuse/annotations/import`, so an unrelated
 queue item cannot be declared a blinded label by supplying its ID.
 
@@ -192,11 +200,15 @@ annotator; each package declares whether the report or code is graded.
 The actual deployed annotation sample at this revision is **empty**. No
 Langfuse project credentials or captured pilot occurrences were supplied to
 this cohort, and the adapter's Phase A gate still leaves projection mappings
-pending. The current adapter projection does not yet include the required
-`graded_artifact` field in remote observation input, so the queue guard will
-also refuse its observations until that producer contract is updated. The
-counts below are observed pilot counts, not the synthetic test
-fixture (which exercises one example of each stratum):
+pending. The current adapter projection does not include `graded_artifact` in
+remote observation input; scope is instead required in the verified Langfuse
+score-config instructions. The counts below are observed pilot counts, not the
+synthetic test fixture (which exercises one example of each stratum):
+
+The `oakridge-dbos-tests` CI job supplies PostgreSQL 16 and
+`OAKRIDGE_TEST_DATABASE_URL`, and its first shard runs
+`bun run --filter observation test`. The DB-gated queue, import and
+operator-origin tests run there rather than being skipped.
 
 | Stratum or required case | Selected | Labelled |
 | --- | ---: | ---: |

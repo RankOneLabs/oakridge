@@ -5,6 +5,7 @@ import type { EvidenceSetId, ExecutionId } from "../src/domain/identity";
 import { importLangfuseAnnotation } from "../src/langfuse/annotation-import";
 import { createLangfuseHttpClient } from "../src/langfuse/http-client";
 import { mappingKey } from "../src/langfuse/mapping";
+import { scoreConfigFromQuestion } from "../src/langfuse/score-config";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { upsertLangfuseMapping } from "../src/storage/langfuse-store";
@@ -33,6 +34,8 @@ integration("annotation imports through human intake, preserves score mapping, a
     external_ids: { trace_id: "trace" as never, observation_id: "remote-observation" as never,
       score_id: "judge-score" as never, queue_item_id: "old-queue-item" as never } });
   if (!original.ok) throw new Error(original.error.detail);
+  const scoreConfig = scoreConfigFromQuestion(question, LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].text);
+  if (!scoreConfig.ok) throw new Error(scoreConfig.error.detail);
   const queueClaim = await upsertLangfuseMapping(db, tenant, { base_mapping_key: original.value.mapping_key as typeof key.value.mapping_key,
     occurrence_id, evidence_set_id: evidence.evidence_set_id, evidence_set_digest: key.value.evidence_set_digest,
     question_id: question.question_id, question_version: question.question_version,
@@ -42,11 +45,12 @@ integration("annotation imports through human intake, preserves score mapping, a
   expect(queueClaim.ok).toBe(true);
   let value = "faithful";
   let updatedAt = "2026-10-29T10:00:00.000Z";
+  let scoreConfigDescription = scoreConfig.value.instructions;
   const client = createLangfuseHttpClient(config, async (url) => {
     if (url.includes("/annotation-queues/")) return Response.json({ id: "queue-item", queueId: "queue",
       objectId: "remote-observation", objectType: "OBSERVATION", status: "COMPLETED" });
     if (url.includes("/score-configs/")) return Response.json({ id: "config", name: "brief.source_fidelity.v1",
-      dataType: "CATEGORICAL", categories: [
+      dataType: "CATEGORICAL", description: scoreConfigDescription, categories: [
         { value: 0, label: "faithful" }, { value: 1, label: "changed_meaning" },
         { value: 2, label: "unclear_insufficient_evidence" }] });
     return Response.json({ data: [{ id: "human-score", projectId: "project", name: "brief.source_fidelity.v1",
@@ -64,6 +68,10 @@ integration("annotation imports through human intake, preserves score mapping, a
   expect(repeated.ok && repeated.value.was_replay).toBe(true);
   value = "changed_meaning";
   updatedAt = "2026-10-29T11:00:00.000Z";
+  scoreConfigDescription = "Scope declaration removed";
+  const unscoped = await importLangfuseAnnotation(db, tenant, config, client, input);
+  expect(unscoped).toMatchObject({ ok: false, error: { operation: "annotation_import" } });
+  scoreConfigDescription = scoreConfig.value.instructions;
   const revision = await importLangfuseAnnotation(db, tenant, config, client, input);
   expect(revision.ok).toBe(true);
   const mappings = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.langfuse_mapping").selectAll()

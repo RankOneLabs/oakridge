@@ -41,6 +41,13 @@ export function scoreConfigName(question_id: string, question_version: string): 
   return `${question_id}.${question_version}`;
 }
 
+/** The three pinned pilot recipes grade report artifacts, not repository code. */
+export function pilotGradedArtifact(question_id: string, question_version: string): "report" | null {
+  if (question_version !== "v1") return null;
+  return ["analysis.finding_relevance", "brief.source_fidelity", "assessment.coverage"].includes(question_id)
+    ? "report" : null;
+}
+
 function failure(question: QuestionDefinition, detail: string): Result<never, LangfuseError> {
   return err({ operation: "score_config", entity_id: question.question_id, detail });
 }
@@ -49,7 +56,8 @@ function failure(question: QuestionDefinition, detail: string): Result<never, La
 export function scoreConfigFromQuestion(question: QuestionDefinition, question_text: string): Result<ScoreConfig, LangfuseError> {
   if (!question_text.trim()) return failure(question, "question wording is required");
   const name = scoreConfigName(question.question_id, question.question_version);
-  const instructions = `${question_text}\n${question.interpretation_caveats}\nAbstain: ${question.abstain_semantics}\nUnclear: ${question.unclear_semantics}`;
+  const graded_artifact = pilotGradedArtifact(question.question_id, question.question_version);
+  const instructions = `${question_text}\n${graded_artifact ? `Graded artifact: ${graded_artifact}\n` : ""}${question.interpretation_caveats}\nAbstain: ${question.abstain_semantics}\nUnclear: ${question.unclear_semantics}`;
   let value_domain: ScoreValueDomain;
   let request: ScoreConfigRequest;
   if (question.response_kind === "choice" || question.response_kind === "ordinal") {

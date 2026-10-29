@@ -10,7 +10,9 @@ import { registerGradingContext, type GradeDetails } from "../storage/grading-st
 import { withTenant, type Database, type TenantScope } from "../storage/database";
 import { upsertLangfuseMapping } from "../storage/langfuse-store";
 import { evidenceSetDigest } from "./mapping";
-import { scoreConfigName } from "./score-config";
+import { scoreConfigFromQuestion, scoreConfigName } from "./score-config";
+import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
+import type { PilotQuestionId } from "./evidence-recipe";
 import type { CanonicalDigest, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvidenceSet } from "../grading/evidence";
 import type { EvaluatorDefinition } from "../grading/evaluator";
@@ -31,7 +33,8 @@ const scoreSchema = z.object({ id: z.string().min(1), projectId: z.string().min(
 const scoresSchema = z.object({ data: z.array(scoreSchema) });
 const configSchema = z.object({ id: z.string().min(1), name: z.string().min(1),
   dataType: z.enum(["BOOLEAN", "CATEGORICAL", "NUMERIC"]),
-  categories: z.array(z.object({ label: z.string(), value: z.number() })).nullable().optional() });
+  categories: z.array(z.object({ label: z.string(), value: z.number() })).nullable().optional(),
+  description: z.string().nullable() });
 
 function failure(entity_id: string, detail: string): Result<never, LangfuseError> {
   return err({ operation: "annotation_import", entity_id, detail });
@@ -124,6 +127,11 @@ export async function importLangfuseAnnotation(db: Database, tenant: TenantScope
     response_kind: pinned.question.response_kind as QuestionDefinition["response_kind"],
     allowed_values: pinned.question.allowed_values as QuestionDefinition["allowed_values"],
     missing_evidence_policy: pinned.question.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] };
+  const pilot = LANGFUSE_PILOT_QUESTIONS[question.question_id as PilotQuestionId];
+  if (!pilot) return failure(score.id, "annotation question has no pinned pilot instructions");
+  const expectedConfig = scoreConfigFromQuestion(question, pilot.text);
+  if (!expectedConfig.ok || remoteConfig.value.description !== expectedConfig.value.instructions)
+    return failure(score.id, "score config instructions no longer match the blinded queue scope");
   if (score.dataType === "CATEGORICAL" && JSON.stringify(remoteConfig.value.categories?.map((category) => category.label))
     !== JSON.stringify(question.allowed_values)) return failure(score.id, "score config categories differ from allowed values");
   const answer = answerForScore(question, score);

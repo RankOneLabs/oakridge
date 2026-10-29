@@ -4,7 +4,7 @@ import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilo
 import type { EvidenceSet } from "../src/grading/evidence";
 import { createLangfuseHttpClient } from "../src/langfuse/http-client";
 import { mappingKey } from "../src/langfuse/mapping";
-import { queueAnnotationTarget } from "../src/langfuse/annotation-queue";
+import { queueAnnotationTarget, scoreConfigMatchesQuestion } from "../src/langfuse/annotation-queue";
 import { scoreConfigFromQuestion } from "../src/langfuse/score-config";
 import { withTenant } from "../src/storage/database";
 import { upsertLangfuseMapping } from "../src/storage/langfuse-store";
@@ -38,6 +38,15 @@ test("pilot score config categories exactly equal the question allowed values", 
   }
 });
 
+test("numeric queue config parity checks both bounds", () => {
+  const question = { response_kind: "numeric", allowed_values: [0, 5] } as const;
+  const config = { id: "numeric", name: "numeric.v1", dataType: "NUMERIC" as const,
+    categories: null, minValue: 0, maxValue: 5, description: "Graded artifact: report" };
+  expect(scoreConfigMatchesQuestion(config, question)).toBe(true);
+  expect(scoreConfigMatchesQuestion({ ...config, maxValue: 10 }, question)).toBe(false);
+  expect(scoreConfigMatchesQuestion({ ...config, minValue: null }, question)).toBe(false);
+});
+
 integration("queue creation verifies one pinned source occurrence and frozen evidence set", async () => scratchGrading(async (db, occurrence_id) => {
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
   const key = mappingKey({ occurrence_id, evidence, question_id: question.question_id,
@@ -52,18 +61,21 @@ integration("queue creation verifies one pinned source occurrence and frozen evi
   if (!mapping.ok) throw new Error(mapping.error.detail);
   const calls: string[] = [];
   let exposesVerdict = false;
+  let omitsScopeInstructions = false;
+  const scoreConfig = scoreConfigFromQuestion(question, LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].text);
+  if (!scoreConfig.ok) throw new Error(scoreConfig.error.detail);
   const client = createLangfuseHttpClient(config, async (url, init) => {
     calls.push(`${init.method} ${url}`);
     if (url.endsWith("/annotation-queues/queue"))
       return Response.json({ id: "queue", scoreConfigIds: ["config"] });
     if (url.endsWith("/score-configs/config"))
       return Response.json({ id: "config", name: "brief.source_fidelity.v1", dataType: "CATEGORICAL",
+        description: omitsScopeInstructions ? "No scope" : scoreConfig.value.instructions,
         categories: [{ value: 0, label: "faithful" }, { value: 1, label: "changed_meaning" },
           { value: 2, label: "unclear_insufficient_evidence" }] });
     if (url.includes("/v2/observations?"))
       return Response.json({ data: [{ id: "remote-observation", traceId: "trace", projectId: "project",
         input: JSON.stringify({ question_text: LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].text,
-          graded_artifact: "report",
           input_recipe: question.input_recipe, evidence_set: { evidence_set_id: evidence.evidence_set_id,
             evidence_refs: evidence.references.map((ref) => ({ ...ref, is_redacted: false,
               ...(exposesVerdict ? { verdict: "approve" } : {}) })),
@@ -78,6 +90,10 @@ integration("queue creation verifies one pinned source occurrence and frozen evi
   expect(created.ok && created.value).toMatchObject({ occurrence_id, evidence_set_id: evidence.evidence_set_id,
     queue_item_id: "item-1", evidence: { graded_artifact: "report" } });
   expect(calls.map((call) => call.split(" ")[0])).toEqual(["GET", "GET", "GET", "POST", "GET"]);
+  omitsScopeInstructions = true;
+  const missingScope = await queueAnnotationTarget(db, tenant, client, "queue", target);
+  expect(missingScope).toMatchObject({ ok: false, error: { operation: "annotation_queue" } });
+  omitsScopeInstructions = false;
   exposesVerdict = true;
   const leaked = await queueAnnotationTarget(db, tenant, client, "queue", target);
   expect(leaked).toMatchObject({ ok: false, error: { operation: "annotation_queue" } });

@@ -8,7 +8,7 @@ import type { LangfuseHttpClient } from "./http-client";
 import { evidenceSetDigest } from "./mapping";
 import { upsertLangfuseMapping } from "../storage/langfuse-store";
 import type { CanonicalDigest, EvidenceSetId, ExecutionId, ItemOccurrenceId, QuestionId } from "../domain/identity";
-import { scoreConfigName } from "./score-config";
+import { pilotGradedArtifact, scoreConfigFromQuestion, scoreConfigName } from "./score-config";
 import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
 import { canonicalJson } from "../canonical/canonical-json";
 import type { PilotQuestionId } from "./evidence-recipe";
@@ -20,6 +20,7 @@ export interface PinnedAnnotationTarget { readonly mapping_key: string; readonly
   readonly evidence_set_digest: string; readonly question_id: string; readonly question_version: string;
   readonly projection_version: string; readonly execution_id: string; readonly score_id: string;
   readonly response_kind: string; readonly allowed_values: readonly JsonValue[] | null;
+  readonly score_config_description: string;
   readonly evidence: BlindedEvidencePackage }
 export interface QueuedAnnotationTarget extends PinnedAnnotationTarget { readonly queue_item_id: string }
 
@@ -31,10 +32,12 @@ const queueItemSchema = z.object({ id: z.string().min(1), queueId: z.string().mi
 const queueSchema = z.object({ id: z.string().min(1), scoreConfigIds: z.array(z.string().min(1)) });
 const configSchema = z.object({ id: z.string().min(1), name: z.string().min(1),
   dataType: z.enum(["CATEGORICAL", "BOOLEAN", "NUMERIC"]),
-  categories: z.array(z.object({ label: z.string(), value: z.number() })).nullable().optional() });
+  categories: z.array(z.object({ label: z.string(), value: z.number() })).nullable().optional(),
+  minValue: z.number().nullable().optional(), maxValue: z.number().nullable().optional(),
+  description: z.string().nullable() });
 const observationSchema = z.object({ data: z.array(z.object({ id: z.string(), traceId: z.string().nullable(),
   projectId: z.string(), input: z.string().nullable(), output: z.string().nullable() })) });
-const remoteInputSchema = z.object({ question_text: z.string(), graded_artifact: z.enum(["report", "code"]),
+const remoteInputSchema = z.object({ question_text: z.string(), graded_artifact: z.enum(["report", "code"]).optional(),
   input_recipe: z.unknown(),
   evidence_set: z.object({ evidence_set_id: z.string(), evidence_refs: z.array(z.object({
     ref: z.string(), digest: z.string().nullable(), content: z.null(),
@@ -46,6 +49,21 @@ const remoteOutputSchema = z.object({ execution_id: z.string(), status: z.string
 
 function failure(entity_id: string, detail: string): Result<never, LangfuseError> {
   return err({ operation: "annotation_queue", entity_id, detail });
+}
+
+export function scoreConfigMatchesQuestion(config: z.infer<typeof configSchema>,
+  question: { readonly response_kind: string; readonly allowed_values: readonly JsonValue[] | null }): boolean {
+  if (["choice", "ordinal"].includes(question.response_kind))
+    return config.dataType === "CATEGORICAL" && JSON.stringify(config.categories?.map((category) => category.label))
+      === JSON.stringify(question.allowed_values);
+  if (question.response_kind === "boolean") return config.dataType === "BOOLEAN";
+  if (question.response_kind === "numeric") {
+    const bounds = question.allowed_values;
+    return config.dataType === "NUMERIC" && bounds?.length === 2
+      && typeof bounds[0] === "number" && typeof bounds[1] === "number"
+      && config.minValue === bounds[0] && config.maxValue === bounds[1];
+  }
+  return false;
 }
 
 /** A queue item is eligible only when its remote observation points to one captured occurrence and frozen set. */
@@ -87,10 +105,17 @@ export async function resolveAnnotationTarget(db: Database, tenant: TenantScope,
       refs.data.filter((ref) => ref.ref === entry.ref && ref.digest === entry.digest).length !== 1))
       return failure(target.mapping_key, "selected references differ from the frozen evidence set");
     const question = questions[0]!;
-    const blinded = blindEvidence({ ...question, question_id: question.question_id as never,
+    const definition = { ...question, question_id: question.question_id as never,
       target_item_kinds: question.target_item_kinds as string[], input_recipe: question.input_recipe as never,
       response_kind: question.response_kind as never, allowed_values: question.allowed_values as never,
-      missing_evidence_policy: question.missing_evidence_policy as never }, target.sources, target.graded_artifact);
+      missing_evidence_policy: question.missing_evidence_policy as never };
+    const pilot = LANGFUSE_PILOT_QUESTIONS[question.question_id as PilotQuestionId];
+    const graded_artifact = pilotGradedArtifact(question.question_id, question.question_version);
+    if (!pilot || !graded_artifact || target.graded_artifact !== graded_artifact)
+      return failure(target.mapping_key, "queueing is restricted to pinned pilot questions and their report scope");
+    const scoreConfig = scoreConfigFromQuestion(definition, pilot.text);
+    if (!scoreConfig.ok) return failure(target.mapping_key, scoreConfig.error.detail);
+    const blinded = blindEvidence(definition, target.sources, target.graded_artifact);
     if (!blinded.ok) return failure(target.mapping_key, blinded.error.detail);
     return ok({ mapping_key: target.mapping_key, occurrence_id: row.occurrence_id,
       evidence_set_id: row.evidence_set_id, trace_id: row.trace_id,
@@ -98,6 +123,7 @@ export async function resolveAnnotationTarget(db: Database, tenant: TenantScope,
       question_id: row.question_id, question_version: row.question_version,
       projection_version: row.projection_version, execution_id: row.execution_id, score_id: row.score_id,
       response_kind: question.response_kind, allowed_values: question.allowed_values as readonly JsonValue[] | null,
+      score_config_description: scoreConfig.value.instructions,
       evidence: blinded.value });
   });
 }
@@ -116,13 +142,10 @@ export async function queueAnnotationTarget(db: Database, tenant: TenantScope, c
     const remoteConfig = await client.request({ operation: "read_annotation_score_config", entity_id: config_id,
       method: "GET", path: `/api/public/score-configs/${encodeURIComponent(config_id)}`, response: configSchema });
     if (!remoteConfig.ok) return remoteConfig;
-    const isCategorical = ["choice", "ordinal"].includes(pinned.value.response_kind);
-    const matchesDomain = isCategorical
-      ? remoteConfig.value.dataType === "CATEGORICAL"
-        && JSON.stringify(remoteConfig.value.categories?.map((category) => category.label)) === JSON.stringify(pinned.value.allowed_values)
-      : pinned.value.response_kind === "boolean" && remoteConfig.value.dataType === "BOOLEAN";
+    const matchesDomain = scoreConfigMatchesQuestion(remoteConfig.value, pinned.value);
     if (remoteConfig.value.id === config_id && remoteConfig.value.name ===
-      scoreConfigName(pinned.value.question_id, pinned.value.question_version) && matchesDomain) matchingConfigs++;
+      scoreConfigName(pinned.value.question_id, pinned.value.question_version)
+      && remoteConfig.value.description === pinned.value.score_config_description && matchesDomain) matchingConfigs++;
   }
   if (matchingConfigs !== 1) return failure(target.mapping_key, "queue must contain exactly one config for the pinned question");
   const filter = JSON.stringify([{ type: "string", column: "id", operator: "=", value: pinned.value.observation_id }]);
@@ -145,7 +168,7 @@ export async function queueAnnotationTarget(db: Database, tenant: TenantScope, c
   const references = input.success ? input.data.evidence_set.evidence_refs : [];
   if (!input.success || !output.success || !pilot || !expectedRecipe?.ok || !actualRecipe?.ok
     || expectedRecipe.value !== actualRecipe.value || input.data.question_text !== pilot.text
-    || input.data.graded_artifact !== target.graded_artifact
+    || (input.data.graded_artifact !== undefined && input.data.graded_artifact !== target.graded_artifact)
     || input.data.evidence_set.evidence_set_id !== pinned.value.evidence_set_id
     || references.length !== target.sources.length
     || target.sources.some((source) => references.filter((ref) => ref.ref === source.ref && ref.digest === source.digest).length !== 1))
