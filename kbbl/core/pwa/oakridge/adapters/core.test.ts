@@ -496,4 +496,13 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(unit as unknown as OperatorUnitView);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "merge_confirmation")?.resume_actions).toEqual(["confirm_merged"]);
   });
+  it("labels integration review work with the assessment it asks the operator to judge", () => {
+    const integration = (integrationMerge.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "integration");
+    if (!integration) throw new Error("captured fixture lacks an integration unit");
+    const items = integration.decisions.flatMap((decision) => decision.submit.kind === "review" ? [{ kind: "decision" as const,
+      run_id: integration.run_id, unit_id: integration.unit_id, key: decision.key, label: decision.label, submit: decision.submit, prompt: null }] : []);
+    const result = classifyDevelopmentInbox({ run_id: integration.run_id, items }, [integration]);
+    expect(result.ok && result.value.items.map((item) => [item.kind, item.artifact_key]))
+      .toEqual([["artifact_gate", "assessment"], ["merge_confirmation", "pr_state"]]);
+  });
 });
