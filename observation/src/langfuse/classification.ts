@@ -34,15 +34,16 @@ const BODY_FIELDS: Readonly<Record<ProjectionArtifactKind, Readonly<Record<strin
 };
 
 export function classifyProjectionField(artifactKind: ProjectionArtifactKind, field: string): Result<ProjectionFieldKind, ClassificationError> {
-  return ok(BODY_FIELDS[artifactKind][field] ?? "unclassified_content");
+  const declaredFields = BODY_FIELDS[artifactKind];
+  return ok(Object.hasOwn(declaredFields, field) ? declaredFields[field] : "unclassified_content");
 }
 
 /** Only fields explicitly declared public can enter a whole-body projection. */
 export function projectClassifiedBody(artifactKind: ProjectionArtifactKind, body: JsonValue): Result<ClassifiedBody, ClassificationError> {
   if (body === null || typeof body !== "object" || Array.isArray(body))
     return err({ operation: "classify_projection_body", entity_id: artifactKind, detail: "artifact body must be an object" });
-  const public_fields: Record<string, JsonValue> = {};
-  const field_kinds: Record<string, ProjectionFieldKind> = {};
+  const public_fields: Record<string, JsonValue> = Object.create(null);
+  const field_kinds: Record<string, ProjectionFieldKind> = Object.create(null);
   for (const [field, value] of Object.entries(body)) {
     const classified = classifyProjectionField(artifactKind, field);
     if (!classified.ok) return classified;
