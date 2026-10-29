@@ -2,6 +2,10 @@ import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type ExtractorDefinition,
   type LinkReference, type SelectedItem } from "../extractor";
 
+/** Criterion identity is flat and run-unique: a criterion outlives the cohort it was
+ * planned in, so a renameable cohort id must not form part of its identity. */
+export const CRITERION_SCOPE = "criterion";
+
 /** These fields mirror workflow-config/development.yaml's development artifact schemas. */
 export interface Finding { readonly id: string; readonly description: string; readonly severity: string }
 export interface Requirement { readonly id: string; readonly description: string; readonly status: string }
@@ -126,7 +130,7 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (!tasks.ok) return tasks;
         const decisions = idsLink(value, "decision_ids", path, "plan", "decision", `cohort/${cohortId}/decision`, "derived_from");
         return decisions.ok ? ok(idItem("criterion", "/cohorts/*/acceptance_criteria/*", path,
-          `cohort/${cohortId}/criterion`, id.value, value, [...tasks.value, ...decisions.value])) : decisions;
+          CRITERION_SCOPE, id.value, value, [...tasks.value, ...decisions.value])) : decisions;
       })),
     definition("plan", schemaVersion, "plan.acceptance_criteria", "plan_wide_criterion", "/acceptance_criteria/*",
       topList("acceptance_criteria", (value, path) => typeof value === "string"
@@ -148,10 +152,10 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
           `cohort/${cohortId}/rejected_approach`, id.value, value, links.value)) : links;
       })),
     definition("brief", schemaVersion, "brief.criteria", "criterion", "/acceptance_criteria/*",
-      briefList("acceptance_criteria", (value, path, cohortId) => { const id = requiredId(value, path);
-        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, `cohort/${cohortId}/criterion`,
+      briefList("acceptance_criteria", (value, path) => { const id = requiredId(value, path);
+        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, CRITERION_SCOPE,
           id.value, value, [{ type: "derived_from", target_artifact_kind: "plan", target_item_kind: "criterion",
-          target_scope: `cohort/${cohortId}/criterion`, target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
+          target_scope: CRITERION_SCOPE, target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
       })),
     definition("assessment", schemaVersion, "assessment.findings", "assessment_finding", "/findings/*",
       topList("findings", (value, path) => { const object = objectAt(value, path);
@@ -160,7 +164,7 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (criterionId !== undefined && criterionId !== null && typeof criterionId !== "string")
           return err({ operation: "select_items", entity_id: `${path}/criterion_id`, detail: "invalid criterion id" });
         const links: LinkReference[] = typeof criterionId === "string" ? [{ type: "assesses", target_artifact_kind: "brief",
-          target_item_kind: "criterion", target_scope: null, target_local_id: criterionId,
+          target_item_kind: "criterion", target_scope: CRITERION_SCOPE, target_local_id: criterionId,
           evidence_ref: `${path}/criterion_id` }] : [];
         return ok(pathItem("assessment_finding", "/findings/*", path, value, links));
       })),
