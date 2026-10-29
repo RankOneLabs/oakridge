@@ -127,7 +127,19 @@ describe("GateDecisionActions", () => {
     render(wrapper(client, gate("gate-a", "revision-root"), vi.fn(), "revision-edited"));
 
     fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(await screen.findByTestId("or-decision-approve-confirmed"));
     await waitFor(() => expect(requestBody?.target).toBe("revision-edited"));
+  });
+
+  it("records nothing when an approval is clicked once and then cancelled", async () => {
+    const fetchMock = mockV2([unitFor("unit-a", "revision-a")], async () => json({ kind: "committed", run_id: "run-1", event_id: "decided" }));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, gate("gate-a", "revision-a"), vi.fn()));
+
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(await screen.findByTestId("or-decision-approve-cancel"));
+    expect([screen.queryByTestId("or-decision-approve-confirm"),
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST")]).toEqual([null, false]);
   });
 
   it("resets decision state on a gate switch and ignores the previous gate response", async () => {
@@ -139,6 +151,7 @@ describe("GateDecisionActions", () => {
     const view = render(wrapper(client, gate("gate-a", "revision-a"), onComplete));
 
     fireEvent.click(screen.getByTestId("or-decision-approve"));
+    fireEvent.click(await screen.findByTestId("or-decision-approve-confirmed"));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
     const staleResponseResolver = resolveRequest;
     if (!staleResponseResolver) throw new Error("Expected an in-flight request for gate-a");

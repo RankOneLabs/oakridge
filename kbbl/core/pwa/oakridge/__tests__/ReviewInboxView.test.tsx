@@ -134,6 +134,7 @@ describe("ReviewInboxView", () => {
     client.setQueryData(["oakridge", "review-inbox"], inbox);
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-decision-approve"));
+    fireEvent.click(await screen.findByTestId("or-decision-approve-confirmed"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes(`/units/${encodeURIComponent(v2Unit.unit_id)}/reviews/assessment_review/decide`))).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({ decision: "accept", target: approveTarget, payload: {} });
@@ -238,6 +239,7 @@ describe("ReviewInboxView", () => {
     client.setQueryData(["oakridge", "review-inbox"], { cohorts: [], items: [briefA, briefB] });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click((await screen.findAllByTestId("or-decision-approve"))[0]);
+    fireEvent.click(await screen.findByTestId("or-decision-approve-confirmed"));
     await screen.findByTestId("or-review-inbox-settled-item");
     const rows = screen.getAllByTestId(/^or-review-inbox-(settled-)?item$/)
       .map((row) => `${row.dataset.testid === "or-review-inbox-settled-item" ? "settled" : "live"}:${row.querySelector("h3")?.textContent}`);
