@@ -14,6 +14,16 @@ const relevance: QuestionDefinition = {
   interpretation_caveats: "Judge one analysis finding against the original requested change and its relevant excerpt, not the whole analysis body.",
   requires_repository_snapshot: false,
 };
+const traceability: QuestionDefinition = {
+  question_id: "plan.criterion_traceability" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
+  input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["plan.criterion_traceability"]),
+  response_kind: "choice", allowed_values: ["traceable", "unsupported", "unclear_insufficient_evidence"],
+  missing_evidence_policy: "abstain",
+  abstain_semantics: "Abstain only when the tasks or plan revision that should hold a cited id was not captured; a cited id absent from a captured revision is a dangling citation and is excluded before grading.",
+  unclear_semantics: "Choose unclear_insufficient_evidence when every cited source is present but the bounded excerpts do not settle whether the criterion follows from them.",
+  interpretation_caveats: "Judge one plan criterion only against the tasks and decisions it cites, not the whole plan, analysis or task list. Added implementation detail is not unsupported; only scope or a requirement no cited source supports is.",
+  requires_repository_snapshot: false,
+};
 const fidelity: QuestionDefinition = {
   question_id: "brief.source_fidelity" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
   input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["brief.source_fidelity"]),
@@ -34,9 +44,10 @@ const coverage: QuestionDefinition = {
   requires_repository_snapshot: false,
 };
 
-/** Three independently versioned questions pinned to Oakridge's selected item kinds. */
+/** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
 export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
   "analysis.finding_relevance": { definition: relevance, text: "Is this analysis finding relevant to the originally requested change?" },
+  "plan.criterion_traceability": { definition: traceability, text: "Does this plan criterion follow from the tasks and decisions it cites?" },
   "brief.source_fidelity": { definition: fidelity, text: "Does this brief criterion preserve the meaning of its identified plan criterion?" },
   "assessment.coverage": { definition: coverage, text: "Does at least one assessment finding explicitly assess this brief criterion?" },
 };

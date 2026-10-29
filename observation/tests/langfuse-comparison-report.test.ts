@@ -10,7 +10,7 @@ const question_id = "analysis.finding_relevance" as QuestionId;
 const occurrence_id = "occ-1" as ItemOccurrenceId;
 const evidence_set_id = "evidence-1" as EvidenceSetId;
 const selected = { occurrence_id, question_id, question_version: "v1", stratum: "borderline" as const,
-  disposition: "included" as const, reason: "revisioned borderline finding",
+  disposition: "included" as const, reason: { kind: "operator" as const, detail: "revisioned borderline finding" },
   evidence: { evidence_set_id, references: [{ ref: "revision:1", kind: "public" as const,
     content: { excerpt: "pinned" }, digest: null }], is_incomplete: false, incompleteness_reason: null } };
 const manifestResult = makePopulationManifest({ manifest_id: "population-1", projection_version: "v1",

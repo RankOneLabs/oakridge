@@ -36,6 +36,8 @@ export function renderPilotReport(run: PilotRunOutput, report: ComparisonReport)
     "| Question/version | Evidence digest | Evaluator version | Split | N | Answered | Missing | Failed | Label agreement |",
     "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
     ...groups.map((group) => `| ${group.key.question_id}@${group.key.question_version} | ${group.key.evidence_set_digest} | ${group.key.evaluator_version} | ${group.key.split} | ${group.denominator} | ${group.answered} | ${group.missing} | ${group.failed} | ${group.label_agreement.compared === 0 ? "not measured" : `${group.label_agreement.agreed}/${group.label_agreement.compared}`} |`),
+    "", "Excluded before grading (never in a denominator):",
+    ...report.exclusions.map((count) => `- ${count.question_id}@${count.question_version}: ${count.uncited} uncited, ${count.dangling_citation} dangling citation, ${count.operator} by operator.`),
     "", "Per-label disagreements are counted only where a machine answer and human label were both recorded.",
     ...groups.flatMap((group) => group.per_label_disagreement.map((label) =>
       `- ${group.key.question_id}@${group.key.question_version}, ${group.key.evaluator_version}, ${group.key.split}, ${label.label}: ${label.disagreements}/${label.compared} disagreements.`)),

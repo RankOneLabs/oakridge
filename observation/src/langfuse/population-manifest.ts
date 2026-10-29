@@ -9,19 +9,29 @@ export interface PopulationError { readonly operation: "population_manifest"; re
 export interface QuestionPin { readonly question_id: QuestionId; readonly question_version: string }
 export type PopulationStratum = "clearly_easy" | "borderline" | "known_failure";
 export type PopulationDisposition = "included" | "excluded";
+/** Exclusions decided by a deterministic check are typed so reports can count them apart. */
+export type ExclusionReason =
+  | { readonly kind: "uncited" }
+  | { readonly kind: "dangling_citation"; readonly evidence_refs: readonly string[] };
+export type PopulationReason = { readonly kind: "operator"; readonly detail: string } | ExclusionReason;
 export interface SelectedOccurrence extends QuestionPin {
   readonly occurrence_id: ItemOccurrenceId;
   readonly evidence: EvidenceSet;
   readonly stratum: PopulationStratum;
   readonly disposition: PopulationDisposition;
-  readonly reason: string;
+  readonly reason: PopulationReason;
 }
 export interface PopulationMember extends QuestionPin {
   readonly occurrence_id: ItemOccurrenceId;
   readonly evidence_set_digest: CanonicalDigest;
   readonly stratum: PopulationStratum;
   readonly disposition: PopulationDisposition;
-  readonly reason: string;
+  readonly reason: PopulationReason;
+}
+export interface ExclusionCount extends QuestionPin {
+  readonly operator: number;
+  readonly uncited: number;
+  readonly dangling_citation: number;
 }
 export interface PopulationManifest {
   readonly manifest_id: string;
@@ -47,6 +57,15 @@ function memberOrder(a: PopulationMember, b: PopulationMember): number {
 }
 function failure(entity_id: string, detail: string): Result<never, PopulationError> {
   return err({ operation: "population_manifest", entity_id, detail });
+}
+function reasonIssue(selected: SelectedOccurrence): string | null {
+  const reason = selected.reason;
+  switch (reason.kind) {
+    case "operator": return reason.detail.trim() ? null : "inclusion or exclusion reason is required";
+    case "uncited": return selected.disposition === "excluded" ? null : "an uncited occurrence must be excluded";
+    case "dangling_citation": return selected.disposition !== "excluded" ? "a dangling citation must be excluded"
+      : reason.evidence_refs.length > 0 ? null : "a dangling citation names its evidence refs";
+  }
 }
 export function sharedItemEvidenceDigest(membership: readonly Pick<PopulationMember,
   "occurrence_id" | "evidence_set_digest" | "disposition">[]): Result<CanonicalDigest, PopulationError> {
@@ -83,7 +102,8 @@ export function makePopulationManifest(input: PopulationSelection): Result<Popul
     seen.add(key);
     if (!pins.has(`${selected.question_id}\u0000${selected.question_version}`))
       return failure(selected.occurrence_id, "question is not pinned");
-    if (!selected.reason.trim()) return failure(selected.occurrence_id, "inclusion or exclusion reason is required");
+    const issue = reasonIssue(selected);
+    if (issue) return failure(selected.occurrence_id, issue);
     const evidence = evidenceSetDigest(selected.evidence);
     if (!evidence.ok) return failure(selected.occurrence_id, evidence.error.detail);
     membership.push({ occurrence_id: selected.occurrence_id, evidence_set_digest: evidence.value,
@@ -99,4 +119,15 @@ export function makePopulationManifest(input: PopulationSelection): Result<Popul
     question_pins: [...input.question_pins].sort((a, b) => a.question_id.localeCompare(b.question_id)
       || a.question_version.localeCompare(b.question_version)), membership,
     membership_digest: membershipDigest.value, shared_item_evidence_digest: shared.value });
+}
+
+/** Excluded members per question pin, split by why they left the population. */
+export function exclusionCounts(manifest: PopulationManifest): readonly ExclusionCount[] {
+  return manifest.question_pins.map((pin) => {
+    const excluded = manifest.membership.filter((member) => member.disposition === "excluded"
+      && member.question_id === pin.question_id && member.question_version === pin.question_version);
+    const count = (kind: PopulationReason["kind"]) => excluded.filter((member) => member.reason.kind === kind).length;
+    return { question_id: pin.question_id, question_version: pin.question_version, operator: count("operator"),
+      uncited: count("uncited"), dangling_citation: count("dangling_citation") };
+  });
 }
