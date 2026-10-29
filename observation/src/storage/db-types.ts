@@ -202,6 +202,7 @@ export interface ObservationGradeObservation {
   quality_flags: Generated<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
+  label_origin: Generated<string>;
 }
 
 export interface ObservationSourceEventCursor {

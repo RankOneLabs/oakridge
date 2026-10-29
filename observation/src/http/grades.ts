@@ -35,6 +35,8 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(), details: detailsSchema }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_grade", parsed.error.message);
     const identity = parsed.data.identity as EvaluationIdentity;
+    if (["oakridge-operator-human", "langfuse-annotation-human"].includes(identity.evaluator_definition_id))
+      return errorResponse(c, 400, "reserved_evaluator", "evaluator is reserved for its authenticated import path");
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");

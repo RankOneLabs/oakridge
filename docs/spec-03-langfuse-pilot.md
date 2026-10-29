@@ -131,3 +131,86 @@ human grade intake for manual labels, with its separate provenance. If score
 readback is unavailable, leave the external mapping pending and use only local
 grades for reports. These fallbacks do not turn integration telemetry into a
 correctness judgment.
+
+## Human annotation and held-out boundary
+
+The pilot's human score config names are `analysis.finding_relevance.v1` and
+`brief.source_fidelity.v1`. Langfuse's score-config API permits letters,
+numbers, underscores, spaces, periods, parentheses and hyphens in names, so
+the config name uses a period before the version. Each category label exactly
+matches its `QuestionDefinition.allowed_values`; Langfuse's numeric category
+value is only the wire representation. The pure transform also covers
+`assessment.coverage/v1`, whose Boolean domain is `false` and `true`.
+Config descriptions contain the pinned question wording, queue instructions,
+abstain rule and unclear rule. The service validates each config request with
+the documented API shape before sending it through the adapter HTTP client.
+
+`POST /v1/langfuse/score-configs` provisions one of the two selected pilot
+configs. The operator attaches their returned config IDs to a Langfuse
+annotation queue and configures that queue's ID for the service. A request to
+`POST /v1/langfuse/annotation-queue/items` names one existing projection
+mapping and the pinned evidence references. Before posting an item, the
+service requires a single captured source occurrence, one frozen evidence
+set with the same digest, one pinned question recipe, and a queue containing
+exactly one score config with the matching question name and domain. It reads
+the remote observation's IO before handoff and refuses any displayed evidence
+content, extra verdict fields, altered question wording or non-pinned source
+reference. The remote input must also declare whether the report or code is
+graded. It then reads the created item back and stores a queue claim on the Langfuse mapping. The
+claim is required by `POST /v1/langfuse/annotations/import`, so an unrelated
+queue item cannot be declared a blinded label by supplying its ID.
+
+Import reads the completed queue item, the annotation score with its subject
+and author fields, and the score config. It authenticates their project,
+trace, observation, queue, question and category domain against the pinned
+mapping. `POST /v1/grades` and the import route share `acceptHumanGrade`;
+the imported score uses the human evaluator and the normal answer union.
+The mapping preserves the Langfuse score and queue-item IDs, and reviewer
+details retain the author, score timestamp and creation or revision action.
+Reviewer notes are retained only when `allow_notes` is explicitly true.
+The generic grade route refuses the reserved evaluator IDs used by the
+Langfuse importer and Oakridge operator backfill, so a direct grade request
+cannot claim either observation origin.
+Each changed score timestamp creates a new attempt label and an immutable
+grade whose `supersedes_observation_id` points to the previous annotation.
+
+The generated `grade_observation.label_origin` field recognizes the existing
+`oakridge-review:<review>:<item_kind>` version `1` rows written by
+`backfill-store.ts` with evaluator `oakridge-operator-human` and reviewer
+`oakridge-operator` as `oakridge_operator_unblinded`. It classifies imported
+Langfuse human grades as `langfuse_annotation_blinded`; other grades are
+`other`. This derivation applies to historical rows during migration without
+rewriting their append-only answers. The grades read contract exposes the
+origin, and `GET /v1/langfuse/label-series` reports separate counts for held-out
+Langfuse annotations, Oakridge operator verdicts and collaboration threads.
+Only the positive blinded-origin series is eligible for held-out comparison.
+Existing operator verdicts and collaboration comments never enter the
+sampling inputs. The original assessor verdict is recorded separately and
+is absent from the reference-only package handed to a blinded judge or
+annotator; each package declares whether the report or code is graded.
+
+The actual deployed annotation sample at this revision is **empty**. No
+Langfuse project credentials or captured pilot occurrences were supplied to
+this cohort, and the adapter's Phase A gate still leaves projection mappings
+pending. The current adapter projection does not yet include the required
+`graded_artifact` field in remote observation input, so the queue guard will
+also refuse its observations until that producer contract is updated. The
+counts below are observed pilot counts, not the synthetic test
+fixture (which exercises one example of each stratum):
+
+| Stratum or required case | Selected | Labelled |
+| --- | ---: | ---: |
+| Clearly easy | 0 | 0 |
+| Borderline | 0 | 0 |
+| Known failure | 0 | 0 |
+| Split criterion | 0 | 0 |
+| False verified claim | 0 | 0 |
+
+The pilot requires at least one split criterion and one false verified claim
+before any agreement result is reported. Once pinned source examples exist,
+the sample selector takes independently assigned strata and source IDs, never
+operator verdicts. Held-out reporting must show raw confusion counts,
+agreement, coverage, abstentions, confidence bands and disagreements; a
+threshold tuned on an example cannot be reported as held-out validation on
+that same example. Historical Oakridge labels may be compared in their own
+unblinded series, with their different collection and visibility stated.
