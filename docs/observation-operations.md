@@ -30,6 +30,44 @@ the runtime secret store, outside checked-in configuration and logs. Credentials
 are configuration-sourced; rotation means replacing the configuration and
 restarting the service and publisher together.
 
+## Langfuse pilot configuration and disable path
+
+The pilot uses platform `fetch` and adds no package dependency. Its deployment
+choice is pending: no Langfuse Cloud region or self-hosted URL and project keys
+were provisioned for the adapter cohort's Phase A run. Set
+`OBSERVATION_LANGFUSE_BASE_URL` to the chosen HTTPS origin,
+`OBSERVATION_LANGFUSE_PROJECT_ID` to the project ID, and
+`OBSERVATION_LANGFUSE_PUBLIC_KEY` and `OBSERVATION_LANGFUSE_SECRET_KEY` to an
+independent project-scoped key pair. Set
+`OBSERVATION_LANGFUSE_ANNOTATION_QUEUE_ID` and
+`OBSERVATION_LANGFUSE_DECISION_EVALUATOR_ID` only after the queue and pinned
+decision-model evaluator have been verified on that deployment. The Phase A
+synthetic run also requires `OBSERVATION_LANGFUSE_DECISION_MODEL` and
+`OBSERVATION_LANGFUSE_PHASE_A_JEV_SCORE_NAME`, matched to that evaluator's
+configured model and score question. Optional
+`OBSERVATION_LANGFUSE_MAX_ATTEMPTS` (1–5, default 3) and
+`OBSERVATION_LANGFUSE_BACKOFF_MS` (0–5000, default 200) bound transient HTTP
+retries. Give this key only the trace/score ingestion and read, evaluator read,
+and annotation queue access needed for this project. Keep both keys in the
+runtime secret store outside checked-in configuration and logs; rotate them
+there and restart the service. Error details name fields and HTTP status only,
+never the supplied key or response body.
+
+Use the existing tenant-bound `OBSERVATION_GRADE_CREDENTIALS` token for
+`POST /v1/langfuse/projections` and `POST /v1/langfuse/reconcile`, and an
+`OBSERVATION_READ_CREDENTIALS` token for `GET /v1/langfuse/status`. Projection
+loads the frozen execution, question, evidence and source revision for that
+tenant and applies a restrictive disclosure policy. It remains pending until
+the deployment's synthetic Phase A write/readback is validated. The status
+route lists the latest 100 mapping states for the caller's tenant.
+
+Removing all `OBSERVATION_LANGFUSE_*` settings and restarting selects the
+disabled variant. The three Langfuse routes then return `{ "status":
+"disabled" }` to authorized operators. Producer ingest, local projections,
+lineage and previously stored grades continue through their existing routes.
+Restore the settings and restart to re-enable the adapter; pending mappings
+remain in the observation database for reconciliation.
+
 ## Sensitive inputs, redaction and export gating
 
 Captured L0 revision bodies and evidence references can contain prompts,

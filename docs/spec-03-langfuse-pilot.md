@@ -1,12 +1,12 @@
 # Spec 03 Langfuse pilot: contract decisions
 
-These are **planner recommendations pending operator confirmation**. They pin the
-pilot's contract so the storage, adapter and grading cohorts can be reviewed
-against one shape. The operator can veto a recommendation before live rollout.
+These decisions pin the pilot contract so the storage, adapter and grading
+cohorts can be reviewed against one shape. The HTTP transport is fixed for this
+cohort; the other rollout choices still require an operator decision.
 
 | Open decision | Planner recommendation pending operator confirmation | Rationale |
 | --- | --- | --- |
-| Transport (section 2) | Use dependency-free HTTP through the platform `fetch` API. | The observation package has an exact dependency allowlist (`hono`, `kysely`, `pg`, `zod`). HTTP keeps the adapter behind the port without adding an SDK or expanding that list. |
+| Transport (section 2) | **Selected:** HTTP through the platform `fetch` API. | The observation package has an exact dependency allowlist (`hono`, `kysely`, `pg`, `zod`). HTTP keeps the adapter behind the port without adding an SDK or expanding that list. |
 | Privacy classification (section 4.1) | Use a separate Langfuse projection policy declaring sensitivity for analysis, plan, brief and assessment bodies. Classify other artifact kinds as restricted. | The Assay export policy describes an offline dataset and does not yet declare sensitivity kinds for these bodies. A separate policy makes the external disclosure choice explicit. The projection encoder includes public evidence content, withholds unclassified references, and gates raw build output, raw test output and repository content on explicit policy flags. |
 | Observation granularity (section 4.2) | Create one observation per selected occurrence/question package. | Each question has its own wording, version, input recipe and score name. Including question identity in the mapping key prevents two questions sharing an evidence set from colliding. |
 | Existing Oakridge human labels (section 6) | Report `authority.review_decision` and `authority.collaboration_thread` labels as a separate comparison series, apart from blinded annotation labels. | Existing operator feedback is valuable context, but its collection path and visibility differ from a held-out annotation sample. A separate series preserves both without implying that the historical labels were blinded. |
@@ -86,3 +86,48 @@ The Jev Score encoder retains a fractional expected rubric level, the full
 level distribution and probabilities in a structured answer. The stored
 `normalized_score` and decision policy fields remain null until a separately
 versioned decision policy is applied.
+
+## Phase A deployment probe status (2026-10-28)
+
+The checked-in `observation/scripts/langfuse-capability-spike.ts` was run in the
+cohort worktree with `env -u BUN_INSPECT bun observation/scripts/langfuse-capability-spike.ts`.
+It exited 2 with the disabled result because no `OBSERVATION_LANGFUSE_*`
+configuration was supplied. No Langfuse deployment or project credential was
+available in this environment, and no local deployment answered at
+`127.0.0.1:3000`. **Cloud versus self-hosted has not been selected.** The
+deployed version's OpenAPI, project scope, native Jev connection and model
+string, queue identifier, feature/license prerequisites, synthetic trace,
+score and annotation IDs, ingestion delay and retrieval path therefore remain
+unmeasured. There is no claim of a successful live Phase A run.
+
+The reference contract consulted during implementation is the
+[Langfuse public API and OpenAPI location](https://langfuse.com/docs/api-and-data-platform/features/public-api),
+not a deployed instance. Its current route versions are observations v2,
+scores v3, evaluators/evaluation rules v2, and annotation queues under
+`/api/public/annotation-queues`. The [OTLP trace endpoint](https://langfuse.com/docs/observability/get-started)
+uses `/api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`.
+These are reference versions, not measured deployment versions. The
+[score contract](https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk)
+allows an optional score ID, while the queue-item API returns its own ID.
+The current port requires all four IDs up front; a native evaluator score
+does not exist until the evaluator runs. The adapter keeps a mapping pending
+instead of inventing that score or its ID.
+
+The probe checks the deployment's own OpenAPI plus authenticated evaluator,
+queue, score and rule routes. Its default mode is read-only; the explicit
+`--write-synthetic` mode creates a synthetic OTLP observation, deterministic
+Boolean score and queue item, then polls readback and manual queue completion.
+It returns a typed unavailable capability, naming the route or missing pinned
+evaluator. Before enabling outbound projection, provision a project and
+least-privilege keys, choose a region or self-hosted endpoint, pin the Jev
+model and evaluator, run the synthetic write/readback exercise, and record the
+returned IDs and timing here. Until then, outbound projection remains pending.
+
+If the native Jev evaluator or evaluator API is unavailable, run the pinned
+Jev question through a direct grader in the observation service and store that
+result with its own evaluator identity; do not represent it as a Langfuse
+score. If queue automation is unavailable, use the existing tenant-bound
+human grade intake for manual labels, with its separate provenance. If score
+readback is unavailable, leave the external mapping pending and use only local
+grades for reports. These fallbacks do not turn integration telemetry into a
+correctness judgment.
