@@ -166,3 +166,27 @@ unmapped outcomes, rather than silently dropped. Historical labels and
 collaboration comments can be resumed with
 `bun run --filter oakridge-dbos ops -- observation-backfill <max_rows>`; the
 service stores its backfill position and active/archived counts after each row.
+
+### Langfuse outage and replay (local database, simulated remote outage)
+
+`observation/tests/langfuse-outage-replay.test.ts` ran against a scratch
+PostgreSQL database. It stored a deterministic grade, pinned one Langfuse
+mapping with external IDs, made the remote score endpoint return HTTP 503,
+and read the local grade during the outage. After restoring the stubbed remote
+score endpoint, it replayed the same mapping and reconciled twice. The grade
+observation ID was unchanged, one mapping retained the same trace, observation
+and score IDs, and the second reconciliation made no remote read. This tests
+local recovery and idempotency; it is not a measured outage of a live Langfuse
+deployment. The current projection method still refuses outbound writes until
+the Phase A synthetic write/readback gate is completed on a real deployment.
+
+### Langfuse adapter disabled (local database)
+
+The same test file created the service with the adapter disabled, called the
+external `POST /v1/evaluations` grading contract, read its raw grade, and
+created a frozen Assay export through `POST /v1/exports/assay`; each returned
+success and the export included the graded occurrence. `GET /v1/langfuse/status`
+returned `disabled`. The existing `langfuse-offline.test.ts` drill also ingested
+a revision, projected an item, read lineage, accepted a human grade and read it
+while Langfuse routes were disabled. These are local service drills. No live
+Oakridge workflow or production deployment was restarted for this cohort.

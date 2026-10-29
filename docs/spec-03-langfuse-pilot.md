@@ -270,3 +270,57 @@ only `noul` has a derived `false = 1 - noul` probability in the observation;
 `probability_provenance` marks the true value as `provider_noul` and the false
 value as `derived_complement`. If the provider returns its own probability map,
 the map is retained and marked `provider_returned`.
+
+## Phase C pilot report status (2026-10-29)
+
+The live Phase B pilot could not run in this worktree. The environment supplied
+no `OBSERVATION_DATABASE_URL`, observation service read/grade credentials,
+`OBSERVATION_LANGFUSE_*` deployment settings, or Fastino key; no observation
+service answered at `127.0.0.1:8791`. The adapter's `LangfuseBackend.project`
+also still returns the Phase A validation gate rather than creating a remote
+target. The checked-in runner and report scripts are therefore ready for an
+operator-supplied selection and deployment, but **no real item-level cases were
+selected or frozen, no dual export was performed, and no live grader or human
+label series was collected in this cohort**. The actual live sample count is
+0. Agreement, missing coverage, per-label disagreement, cost and latency for
+the live pilot are **not measured**; no threshold was fitted or reported as
+held-out validation. There are no live ambiguous cases to classify. This is a
+rollout boundary, and a numerical go decision would invent evidence.
+
+The local code and database drills did produce three concrete observations:
+
+1. The comparison fixture contains one answered, one missing and one failed
+   attempt against a frozen item/evidence pair. The report denominator is 3;
+   it records the missing and failed states separately. This is a fixture
+   assertion, not pilot coverage.
+2. A scratch-database grade remained readable while a stubbed Langfuse score
+   endpoint returned HTTP 503. Replaying the mapping after recovery left one
+   target mapping and one unchanged local grade, and a second reconcile made no
+   remote read. This is an observed local replay drill, not a live outage.
+3. With the adapter disabled, a scratch service accepted an external grade,
+   returned the raw grade, and froze an Assay export containing the occurrence.
+   Existing offline tests also exercised producer ingest and lineage reads.
+
+What Langfuse could not do in this environment is explicit: it could not be
+probed against a provisioned project, receive the selected revisioned
+occurrences, run or read back native Jev/Fastino evaluator scores, host a
+completed blinded annotation series, or demonstrate score retrieval after a
+real outage. Its score analytics could not produce measured agreement or
+coverage for this population. Independently of deployment availability, the
+native trace/score model does not itself encode Oakridge revision and lineage
+pins or a frozen Assay study; the adapter and manifest provide those links.
+The current adapter cannot write a real target until its Phase A gate is
+removed after validation. These are observed availability and implementation
+limits, not a claim that the Langfuse product lacks those features.
+
+The **assessment is no-go for rollout now**. Native Langfuse trace, score and
+annotation surfaces could save work on exploratory review if the selected
+deployment proves their ingestion and readback behavior. Item-level revision
+lineage remains awkward because it must be carried as pinned metadata and
+cross-checked against Oakridge rather than inferred from a chart. Operations
+would own project credentials, evaluator and queue configuration, retry/replay
+monitoring, redaction policy and the separate Assay freeze. The neutral adapter
+is viable in local contract and outage drills: Oakridge ingest, grades, reads
+and export did not depend on Langfuse. Viability against a real deployment,
+including native evaluator behavior and the full 10–30 case comparison,
+remains unmeasured. No grader superiority claim follows from these fixtures.

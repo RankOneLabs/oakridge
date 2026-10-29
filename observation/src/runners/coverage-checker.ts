@@ -2,6 +2,7 @@ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 import type { LinkReference, SelectedItem } from "../projection/extractor";
+import { CRITERION_SCOPE } from "../projection/catalogue/oakridge-development";
 
 /** The small link view mirrors brief.criteria and assessment.findings selections. */
 export interface CoverageCriterion {
@@ -21,10 +22,10 @@ export interface CoverageInput {
 
 export function coverageInput(briefCriterion: SelectedItem, assessmentFindings: readonly SelectedItem[])
   : Result<CoverageInput, GradingError> {
-  if (briefCriterion.item_kind !== "criterion" || !briefCriterion.item_scope?.startsWith("cohort/")
+  if (briefCriterion.item_kind !== "criterion" || briefCriterion.item_scope !== CRITERION_SCOPE
     || !briefCriterion.producer_local_id)
     return err({ operation: "coverage_input", entity_id: briefCriterion.item_id_or_path,
-      detail: "subject must be a cohort-scoped brief criterion" });
+      detail: "subject must be a run-scoped brief criterion" });
   if (assessmentFindings.some((finding) => finding.item_kind !== "assessment_finding"))
     return err({ operation: "coverage_input", entity_id: briefCriterion.item_id_or_path,
       detail: "all covering candidates must be assessment findings" });
@@ -38,7 +39,7 @@ export function coverageInput(briefCriterion: SelectedItem, assessmentFindings: 
 /** Missing criterion_id creates no assesses link; it never creates a miss by itself. */
 export function checkAssessmentCoverage(input: CoverageInput): Result<EvaluationOutcome, GradingError> {
   const criterion = input.brief_criterion;
-  if (criterion.item_kind !== "criterion" || !criterion.item_scope.startsWith("cohort/") || !criterion.producer_local_id)
+  if (criterion.item_kind !== "criterion" || criterion.item_scope !== CRITERION_SCOPE || !criterion.producer_local_id)
     return err({ operation: "assessment_coverage", entity_id: criterion.producer_local_id,
       detail: "invalid brief criterion identity" });
   if (input.assessment_findings.some((finding) => finding.item_kind !== "assessment_finding"))
