@@ -77,3 +77,12 @@ map is `unclassified_content` and is withheld; only fields declared `public`
 pass through a whole-body projection. This policy is separate from the frozen
 Assay export redaction policy. An explicit recipe can name bounded source
 references for grading while leaving source content in the observation store.
+
+The service coverage checker reads the selected brief criterion and the
+catalogue's assessment finding links as a small local link view. It answers
+`false` when no `assesses` link points to the criterion, including when the
+assessment has no findings. Unlinked integration findings do not add misses.
+The Jev Score encoder retains a fractional expected rubric level, the full
+level distribution and probabilities in a structured answer. The stored
+`normalized_score` and decision policy fields remain null until a separately
+versioned decision policy is applied.

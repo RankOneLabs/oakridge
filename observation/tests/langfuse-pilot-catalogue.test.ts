@@ -3,6 +3,8 @@ import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilo
 import { PILOT_EVIDENCE_RECIPES, projectPilotEvidence, type EvidenceSource } from "../src/langfuse/evidence-recipe";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
+import { listGrades, runGrade } from "../src/storage/grading-store";
+import { encodeJevScore } from "../src/langfuse/score-encoding";
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 test("each pilot question projects only its declared digest and deep-link references", () => {
@@ -40,4 +42,31 @@ integration("all three pilot definitions satisfy the stored question constraints
     && ["fail", "abstain"].includes(row.missing_evidence_policy)
     && row.abstain_semantics.length > 0 && row.unclear_semantics.length > 0 && row.interpretation_caveats.length > 0
     && (row.response_kind !== "choice" || (Array.isArray(row.allowed_values) && row.allowed_values.length > 0)))).toBe(true);
+}));
+
+integration("fractional Jev Score remains structured and unnormalized after storage", async () => scratchGrading(async (db, occurrence_id) => {
+  const question = { ...LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition,
+    question_id: "jev.score" as typeof LANGFUSE_PILOT_QUESTIONS["assessment.coverage"]["definition"]["question_id"],
+    target_item_kinds: ["cohort_criterion"], response_kind: "structured" as const, allowed_values: null };
+  const score = encodeJevScore({ expected_level: 2.25, rubric_level_distribution: [
+    { level: 1, probability: 0.25 }, { level: 2, probability: 0.25 }, { level: 3, probability: 0.5 },
+  ] });
+  expect(score.ok).toBe(true);
+  if (!score.ok) return;
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  const stored = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    evidence_set_id: evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "fractional" },
+    runner: { kind: "code", run: async () => score } });
+  expect(stored.ok).toBe(true);
+  if (!stored.ok) return;
+  const grade = (await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0];
+  expect(grade?.answer).toEqual({ state: "answered", kind: "structured", value: {
+    expected_level: 2.25, rubric_level_distribution: [
+      { level: 1, probability: 0.25 }, { level: 2, probability: 0.25 }, { level: 3, probability: 0.5 },
+    ], probabilities: { "1": 0.25, "2": 0.25, "3": 0.5 },
+  } });
+  expect(grade?.observation.probabilities).toEqual({ "1": 0.25, "2": 0.25, "3": 0.5 });
+  expect([grade?.observation.normalized_score, grade?.observation.decision_policy_id,
+    grade?.observation.decision_policy_version]).toEqual([null, null, null]);
 }));

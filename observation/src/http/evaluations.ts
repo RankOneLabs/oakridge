@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradingContext } from "../grading/runner";
 import { deterministicChecker } from "../runners/deterministic-checker";
+import { coverageChecker } from "../runners/coverage-checker";
 import { stubModelRunner } from "../runners/stub-model";
 import { registerGradingContext, runGrade } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
@@ -44,19 +45,20 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     let body: unknown;
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
-      runner: z.enum(["deterministic", "stub_model"]) }).safeParse(body);
+      runner: z.enum(["deterministic", "coverage", "stub_model"]) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
-      if ((parsed.data.runner === "deterministic" && context.evaluator.kind !== "code")
+      if (((parsed.data.runner === "deterministic" || parsed.data.runner === "coverage") && context.evaluator.kind !== "code")
         || (parsed.data.runner === "stub_model" && context.evaluator.kind !== "model"))
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
-    const runner = parsed.data.runner === "deterministic" ? deterministicChecker : stubModelRunner;
+    const runner = parsed.data.runner === "deterministic" ? deterministicChecker
+      : parsed.data.runner === "coverage" ? coverageChecker : stubModelRunner;
     const result = await runGrade(deps.db, credential, { identity, runner });
     return result.ok ? c.json(result.value, result.value.was_replay ? 200 : 201)
       : errorResponse(c, 422, "evaluation_refused", result.error.detail);

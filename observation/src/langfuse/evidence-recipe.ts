@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../domain/primitives";
+import { canonicalJson } from "../canonical/canonical-json";
 import type { QuestionDefinition } from "../grading/question";
 
 export type PilotQuestionId = "analysis.finding_relevance" | "brief.source_fidelity" | "assessment.coverage";
@@ -54,8 +55,10 @@ export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefiniti
 export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
   : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
   const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
-  if (!recipe || question.question_version !== recipe.recipe_version
-    || question.input_recipe.recipe_id !== recipe.recipe_id || question.input_recipe.recipe_version !== recipe.recipe_version)
+  const expected = recipe ? canonicalJson(pinnedInputRecipe(recipe)) : null;
+  const actual = canonicalJson(question.input_recipe);
+  if (!recipe || question.question_version !== recipe.recipe_version || !expected?.ok || !actual.ok
+    || expected.value !== actual.value)
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
   const slots = [...recipe.input, ...recipe.output];
   const allowed = new Set<EvidenceRole>(slots.map((slot) => slot.role));
@@ -65,7 +68,8 @@ export function projectPilotEvidence(question: QuestionDefinition, sources: read
     const matches = sources.filter((source) => source.role === slot.role);
     if (matches.length > slot.max_count || (slot.role !== "assessment_finding" && matches.length !== 1))
       return err({ operation: "project_pilot_evidence", entity_id: slot.role, detail: "evidence count differs from pinned recipe" });
-    if (matches.some((source) => !source.ref || !source.digest || !source.deep_link))
+    if (matches.some((source) => !source.ref || source.ref.length > 512 || !source.digest || source.digest.length > 128
+      || !source.deep_link || source.deep_link.length > 2048))
       return err({ operation: "project_pilot_evidence", entity_id: slot.role, detail: "evidence requires a ref, digest and deep link" });
     return ok(matches.map(({ role, ref, digest, deep_link }) => ({ role, ref, digest, deep_link })));
   };
