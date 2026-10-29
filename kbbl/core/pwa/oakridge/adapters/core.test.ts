@@ -3,7 +3,7 @@ import sample from "../__fixtures__/v2-adapter-sample.json";
 import cohortMerge from "../__fixtures__/v2-cohort-merge.json";
 import integrationMerge from "../__fixtures__/v2-integration-merge.json";
 import planningRevise from "../__fixtures__/v2-planning-revise.json";
-import { withUnitFields } from "../__fixtures__/read-models";
+import { retryUnit, withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorArtifactDetail, OperatorAttemptView, OperatorRunEvent, OperatorRunInboxBatchEntry, OperatorRunView, OperatorUnitView } from "../operator-contracts";
 import type { RunStatus, StageStatus } from "../types";
 import { artifactType, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, deriveStatus, developmentPullRequestUrl, isVisibleDevelopmentArtifact, latestAttemptPerSession, latestUnitAttemptPerSession, objectValue, parseCompositeId, repositoryKeyOf, reviewToGates, revisionToArtifact, runEventKind, runSnapshot, runSummary, selectAggregateStatus, statusInputOf, unitToStages } from "./core";
@@ -143,6 +143,11 @@ describe("v2 development adapters", () => {
       body: detail.value.revisions.at(-1)?.body,
     }).toEqual({ listed: ["workspace"], capabilities: { reviewable: false, commentable: false, atom_editable: false, review_items: false },
       body: prepare.artifacts.find((artifact) => artifact.artifact_key === "workspace")?.latest_revision?.body });
+  });
+  it("offers a retry on a stalled scalar stage's single unit", () => {
+    const analysis = withUnitFields(retryUnit("analysis"), { stage: "analysis", collection_key: null });
+    const stages = unitToStages([analysis]);
+    expect(stages.ok && stages.value[0]?.units?.map((unit) => [unit.unit_id, unit.is_retryable])).toEqual([["0", true]]);
   });
   it("shows the approved text specification as a reviewable artifact", () => {
     const analysis = units.find((unit) => unit.stage === "analysis");
