@@ -66,15 +66,17 @@ test("network-free test double implements project, fetch and reconcile through t
   const backend: EvaluationBackend = new TestEvaluationBackend();
   const projected = await backend.project(input);
   if (!projected.ok) throw new Error(projected.error.detail);
+  if (projected.value.status !== "complete") throw new Error("test double projects complete targets");
+  const external_ids = projected.value.external_ids;
   const digest = mappingKey({ occurrence_id: execution.subject_occurrence_id, evidence,
     question_id: question.question_id, question_version: question.question_version, projection_version: "1" });
   if (!digest.ok) throw new Error(digest.error.detail);
-  const selector = { mapping_key: digest.value.mapping_key, external_ids: projected.value };
+  const selector = { mapping_key: digest.value.mapping_key, external_ids };
   expect((await backend.project(input))).toEqual(projected);
   expect(await backend.fetch(selector)).toEqual({ ok: true, value: { scores: [], annotation_outcomes: [] } });
   const reconciled = await backend.reconcile({ ...selector, occurrence_id: execution.subject_occurrence_id,
     question_id: question.question_id, question_version: question.question_version });
-  expect(reconciled).toMatchObject({ ok: true, value: { external_ids: projected.value,
+  expect(reconciled).toMatchObject({ ok: true, value: { external_ids,
     sync_state: { status: "pending", mapping_key: selector.mapping_key } } });
 });
 

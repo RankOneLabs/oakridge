@@ -2,7 +2,7 @@ import { z } from "zod";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { CanonicalDigest } from "../domain/identity";
 import type { EvaluationBackend, ExternalTargetIds, FetchSelector, InboundEvaluation, LangfuseError,
-  LangfuseScore, ProjectionInput, ReconcileOutcome, ReconcileSelector } from "../ports/evaluation-backend";
+  LangfuseScore, ProjectionInput, ProjectionOutcome, ReconcileOutcome, ReconcileSelector } from "../ports/evaluation-backend";
 import { withTenant, type Database, type TenantScope } from "../storage/database";
 import { placeLangfuseInboundScore, quarantineLangfuseInbound, transitionLangfuseMapping,
   upsertLangfuseMapping } from "../storage/langfuse-store";
@@ -10,7 +10,9 @@ import { detectLangfuseFeatures, requireLangfuseCapability } from "./feature-det
 import type { LangfuseConfig } from "./config";
 import { withBoundedRetry, type LangfuseHttpClient } from "./http-client";
 import { mappingKey } from "./mapping";
+import { encodeOtlpTrace, otlpTargetIds } from "./otlp";
 import { encodeProjection } from "./projection";
+import { scoreConfigName } from "./score-config";
 import { reconcileLangfuseMapping } from "./reconcile";
 
 const scoreSchema = z.object({
@@ -22,7 +24,7 @@ const scoreSchema = z.object({
   queueId: z.string().nullable().optional(), authorUserId: z.string().nullable().optional(),
   subject: z.object({ kind: z.literal("observation"), id: z.string(), traceId: z.string() }),
   metadata: z.object({ mapping_key: z.string(), evaluator_definition_id: z.string(),
-    model: z.string().nullable(), grader_source: z.string() }).optional(),
+    model: z.string().nullable(), grader_source: z.string() }).nullable().optional().catch(null),
 });
 const scoresSchema = z.object({ data: z.array(z.json()) });
 const queueSchema = z.object({ id: z.string(), queueId: z.string(), objectId: z.string(),
@@ -35,12 +37,12 @@ function failure(operation: string, entity_id: string, detail: string): Result<n
   return err({ operation, entity_id, detail });
 }
 
-/** No target is written until the deployment has completed Phase A validation. */
+/** No target is written until a passing Phase A run on this project is recorded in configuration. */
 export class LangfuseBackend implements EvaluationBackend {
   constructor(private readonly db: Database, private readonly tenant: TenantScope,
     private readonly config: LangfuseConfig, private readonly client: LangfuseHttpClient) {}
 
-  async project(input: ProjectionInput): Promise<Result<ExternalTargetIds, LangfuseError>> {
+  async project(input: ProjectionInput): Promise<Result<ProjectionOutcome, LangfuseError>> {
     const shape = encodeProjection(input);
     if (!shape.ok) return shape;
     const digest = mappingKey({ occurrence_id: input.execution.subject_occurrence_id, evidence: input.evidence,
@@ -56,10 +58,10 @@ export class LangfuseBackend implements EvaluationBackend {
     });
     if (!row.ok) return row;
     if (row.value.trace_id && row.value.observation_id && row.value.score_id && row.value.queue_item_id)
-      return ok({ trace_id: row.value.trace_id as ExternalTargetIds["trace_id"],
+      return ok({ status: "complete", external_ids: { trace_id: row.value.trace_id as ExternalTargetIds["trace_id"],
         observation_id: row.value.observation_id as ExternalTargetIds["observation_id"],
         score_id: row.value.score_id as ExternalTargetIds["score_id"],
-        queue_item_id: row.value.queue_item_id as ExternalTargetIds["queue_item_id"] });
+        queue_item_id: row.value.queue_item_id as ExternalTargetIds["queue_item_id"] } });
     const key = row.value.mapping_key as CanonicalDigest;
     const pending = await transitionLangfuseMapping(this.db, this.tenant, key, "pending");
     if (!pending.ok) return pending;
@@ -69,7 +71,15 @@ export class LangfuseBackend implements EvaluationBackend {
       const available = requireLangfuseCapability(features.value, capability);
       if (!available.ok) return failure("project", key, `${available.error.capability}: ${available.error.detail}`);
     }
-    return failure("project", key, "Phase A synthetic write and readback have not been validated on this deployment; mapping remains pending");
+    if (!this.config.phase_a_trace_id)
+      return failure("project", key, "Phase A synthetic write and readback have not been validated on this deployment; mapping remains pending");
+    const ids = otlpTargetIds(key);
+    if (!ids.ok) return ids;
+    const written = await withBoundedRetry(() => this.client.request({ operation: "project_trace", entity_id: key,
+      method: "POST", path: "/api/public/otel/v1/traces", response: z.object({}),
+      body: encodeOtlpTrace(shape.value, ids.value, input.execution) }), this.config.retry);
+    if (!written.ok) return written;
+    return ok({ status: "written", ...ids.value });
   }
 
   private async quarantine(key: CanonicalDigest, raw_payload: JsonValue, reason: string,
@@ -169,7 +179,7 @@ export class LangfuseBackend implements EvaluationBackend {
         const score = parsed.data;
         if (score.queueId !== queue_id || score.source !== "ANNOTATION" || score.projectId !== this.config.project_id
           || score.subject.id !== row.observation_id || score.subject.traceId !== row.trace_id
-          || score.name !== `${row.question_id}@${row.question_version}` || !definition.question
+          || score.name !== scoreConfigName(row.question_id, row.question_version) || !definition.question
           || !valueInDomain(score.value, score.dataType, definition.question.response_kind,
             definition.question.allowed_values)) {
           const quarantined = await this.quarantine(selector.mapping_key, raw, "annotation score does not authenticate",

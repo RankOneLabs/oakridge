@@ -12,6 +12,8 @@ import { openDatabase, withTenant, type Database } from "../src/storage/database
 import { readLangfuseQuarantine, upsertLangfuseMapping } from "../src/storage/langfuse-store";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
+import { evaluator } from "./grading-fixture";
+import { registerGradingContext } from "../src/storage/grading-store";
 
 const tenant = { producer: "oakridge", namespace: "pilot" };
 const config: LangfuseConfig = { base_url: "https://example.langfuse.test", project_id: "project-1",
@@ -82,6 +84,61 @@ integration("projection replays one pending mapping and a new attempt stays dist
     evidence_set_digest: key.value.evidence_set_digest });
   expect(rows[0]?.mapping_key).not.toBe(rows[1]?.mapping_key);
   expect(requests.every((request) => request.startsWith("GET"))).toBe(true);
+}));
+
+const openapi = `info:\n  version: 4.36.0\npaths:\n  /api/public/v2/evaluators:\n  /api/public/annotation-queues:\n  /api/public/v3/scores:\n  /api/public/v2/evaluation-rules:\n`;
+
+integration("a recorded Phase A run lets projection write one span whose IDs a replay repeats", async () => scratch(async (db) => {
+  const posts: { url: string; body: unknown }[] = [];
+  const transport = async (request: string, init: RequestInit) => {
+    if (init?.method === "POST") { posts.push({ url: request, body: JSON.parse(String(init.body)) }); return Response.json({}); }
+    if (String(request).endsWith("/api/openapi.yaml")) return new Response(openapi);
+    return Response.json({ data: [] });
+  };
+  const gated = { ...config, phase_a_trace_id: "a".repeat(32) };
+  const backend = new LangfuseBackend(db, tenant, gated, createLangfuseHttpClient(gated, transport));
+  const first = await backend.project(input);
+  const replay = await backend.project(input);
+  if (!first.ok || first.value.status !== "written") throw new Error("projection did not write");
+  expect(replay).toEqual(first);
+  expect(posts.map((post) => post.url)).toEqual([`${config.base_url}/api/public/otel/v1/traces`,
+    `${config.base_url}/api/public/otel/v1/traces`]);
+  const span = (posts[0]?.body as { resourceSpans: { scopeSpans: { spans: { traceId: string; spanId: string; name: string }[] }[] }[] })
+    .resourceSpans[0]?.scopeSpans[0]?.spans[0];
+  expect(span).toMatchObject({ traceId: first.value.trace_id, spanId: first.value.observation_id, name: "pilot.boolean@v1" });
+  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.langfuse_mapping").selectAll().execute());
+  expect(rows.map((row) => [row.sync_state, row.trace_id])).toEqual([["pending", null]]);
+}));
+
+integration("an annotation is read under its score-config name; the projection-score name is quarantined", async () => scratch(async (db) => {
+  const digest = mappingKey({ occurrence_id: execution.subject_occurrence_id, evidence,
+    question_id: question.question_id, question_version: question.question_version, projection_version: "v1" });
+  if (!digest.ok) throw new Error(digest.error.detail);
+  const ids = { trace_id: "trace-1", observation_id: "observation-1", score_id: "score-1",
+    queue_item_id: "queue-item-1" } as ExternalTargetIds;
+  const mapping = await upsertLangfuseMapping(db, tenant, { base_mapping_key: digest.value.mapping_key,
+    occurrence_id: execution.subject_occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    evidence_set_digest: digest.value.evidence_set_digest, question_id: question.question_id,
+    question_version: question.question_version, projection_version: "v1",
+    execution_id: execution.execution_id, attempt_id: execution.attempt_label, external_ids: ids });
+  if (!mapping.ok) throw new Error(mapping.error.detail);
+  const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") });
+  if (!registered.ok) throw new Error("question was not registered");
+  const annotation = (name: string) => ({ id: `annotation-${name}`, projectId: config.project_id, name, value: true,
+    dataType: "BOOLEAN", source: "ANNOTATION", updatedAt: new Date().toISOString(), queueId: "queue-1",
+    authorUserId: "reviewer-1", metadata: null,
+    subject: { kind: "observation", id: ids.observation_id, traceId: ids.trace_id } });
+  const transport = async (url: string): Promise<Response> => url.includes("source=ANNOTATION")
+    ? Response.json({ data: [annotation("pilot.boolean@v1"), annotation("pilot.boolean.v1")] })
+    : url.includes("/v3/scores") ? Response.json({ data: [] })
+      : Response.json({ id: ids.queue_item_id, queueId: "queue-1", objectId: ids.observation_id,
+        objectType: "OBSERVATION", status: "COMPLETED", completedAt: new Date().toISOString() });
+  const backend = new LangfuseBackend(db, tenant, config, createLangfuseHttpClient(config, transport));
+  const inbound = await backend.fetch({ mapping_key: mapping.value.mapping_key as CanonicalDigest, external_ids: ids });
+  expect(inbound).toMatchObject({ ok: true, value: { annotation_outcomes: [{ status: "completed",
+    score_id: "annotation-pilot.boolean.v1", value: true }] } });
+  const quarantine = await readLangfuseQuarantine(db, tenant);
+  expect(quarantine.ok && quarantine.value.map((row) => row.score_id)).toEqual(["annotation-pilot.boolean@v1"]);
 }));
 
 test("transient HTTP failures retry with bounded exponential backoff and no credential disclosure", async () => {
