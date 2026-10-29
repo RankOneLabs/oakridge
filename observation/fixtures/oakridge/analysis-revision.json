@@ -1,0 +1,8 @@
+{
+  "summary": "Review",
+  "source_spec_refs": [],
+  "findings": [{ "id": "finding-a", "description": "Missing case", "severity": "warning" }],
+  "requirements": [{ "id": "req-a", "description": "Handle the case", "status": "implementable" }],
+  "risks": [{ "description": "Timing", "mitigation": "Test it" }],
+  "proposed_spec_updates": [{ "section": "Behavior", "change": "Clarify", "reason": "Finding", "finding_ids": ["finding-a"] }]
+}

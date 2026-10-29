@@ -1,0 +1,10 @@
+{
+  "head_sha": "1111111111111111111111111111111111111111",
+  "verdict": "pass_with_notes",
+  "findings": [
+    { "criterion_id": "criterion-lineage", "criterion": "Trace a shared criterion id", "status": "met", "evidence": [{ "kind": "test", "ref": "vertical-slice.test.ts" }] },
+    { "criterion_id": "missing-target", "criterion": "Unresolved producer link", "status": "partial", "evidence": [] },
+    { "criterion_id": null, "criterion": "Unlinked assessment note", "status": "met", "evidence": [] }
+  ],
+  "recommended_next_actions": []
+}

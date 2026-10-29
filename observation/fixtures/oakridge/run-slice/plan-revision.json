@@ -1,0 +1,20 @@
+{
+  "summary": "Plan the observation slice",
+  "cohorts": [{
+    "id": "slice",
+    "repository_key": "oakridge",
+    "title": "Observation slice",
+    "scope": "Capture and grade the slice",
+    "depends_on": [],
+    "files_in_scope": ["observation/tests/vertical-slice.test.ts"],
+    "decisions": [{ "id": "decision-capture", "text": "Keep captured bodies immutable" }],
+    "acceptance_criteria": [
+      { "id": "criterion-lineage", "text": "Lineage is explicit", "task_ids": [], "decision_ids": ["decision-capture"] },
+      { "id": "criterion-export", "text": "Export is frozen", "task_ids": [], "decision_ids": [] }
+    ]
+  }],
+  "dependency_order": ["slice"],
+  "scope": { "in_scope": ["observation"], "out_of_scope": [] },
+  "acceptance_criteria": ["Legacy operator wording without a producer id"],
+  "risks": [{ "description": "Missing evidence", "mitigation": "Record an incomplete evidence set" }]
+}

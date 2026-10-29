@@ -7,6 +7,7 @@ import { configuredBrowserWritePolicy } from "../http/browser-write-policy";
 import { createHttpApp } from "../http/app";
 import { openDatabase } from "../storage/database";
 import { KbblClient } from "../adapters/kbbl";
+import { startObservationPublisher, type ObservationOptions } from "../adapters/observation";
 import { createAgentProvider } from "../effects/agent-provider";
 import type { EffectProvider } from "../effects/provider";
 import { createOperationRunner, type OperationRunner } from "../operations/runner";
@@ -41,6 +42,7 @@ export interface ProductionOptions {
   readonly timing?: Partial<WorkflowTiming>;
   /** Defaults to the engine digest, or `DBOS_APPLICATION_VERSION` when set. */
   readonly application_version?: string;
+  readonly observation?: ObservationOptions | null;
 }
 export interface ProductionComposition { readonly app: Hono; readonly application_version: string; close(): Promise<void> }
 
@@ -74,8 +76,9 @@ export async function createProductionComposition(options: ProductionOptions): P
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
     const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));
+    const observation = options.observation ? startObservationPublisher(db, options.observation) : null;
     return { app, application_version, async close() {
-      try { await sweep.stop(); await parkRunningWorkflows(); }
+      try { await observation?.stop(); await sweep.stop(); await parkRunningWorkflows(); }
       finally { try { await DBOS.shutdown(); } finally { core.close(); await db.destroy(); } }
     } };
   } catch (cause) {
