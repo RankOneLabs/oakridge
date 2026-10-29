@@ -83,7 +83,12 @@ KBBL_DISPLAY_PORT="${KBBL_PORT:-8788}"
 KBBL_INTERNAL_PORT="$KBBL_DISPLAY_PORT"
 next_is_host=0
 next_is_port=0
+start_observation=0
+kbbl_args=()
 for arg in "$@"; do
+  # --observation is the launcher's own flag; every other argument belongs to kbbl.
+  if [ "$arg" = "--observation" ]; then start_observation=1; continue; fi
+  kbbl_args+=("$arg")
   if [ "$next_is_host" -eq 1 ]; then
     next_is_host=0
     if [[ -n "$arg" && "$arg" != -* ]]; then KBBL_DISPLAY_HOST="$arg"; continue; fi
@@ -190,6 +195,31 @@ fi
 if [ -n "${DBOS_APPLICATION_VERSION:-}" ]; then export DBOS_APPLICATION_VERSION; fi
 if [ -n "${OAKRIDGE_GITHUB_TOKEN:-}" ]; then export OAKRIDGE_GITHUB_TOKEN; fi
 
+# --observation starts the observation service from its own observation/.env and
+# points the DBOS publisher at it. Bun loads that file from the service's cwd, so
+# the check below reads the same environment the service will.
+OBSERVATION_ROOT="$OAKRIDGE_ROOT/observation"
+# Without the flag, a publisher URL and token exported for a separate deployment pass through.
+OBSERVATION_URL="${OAKRIDGE_OBSERVATION_URL:-}"
+OBSERVATION_INGEST_TOKEN="${OAKRIDGE_OBSERVATION_INGEST_TOKEN:-}"
+OBSERVATION_NAMESPACE="${OAKRIDGE_OBSERVATION_NAMESPACE:-default}"
+if [ "$start_observation" -eq 1 ]; then
+  if ! OBSERVATION_SERVICE_PORT="$(cd "$OBSERVATION_ROOT" && bun -e '
+    if (!process.env.OBSERVATION_DATABASE_URL) process.exit(1);
+    console.log(process.env.OBSERVATION_PORT ?? 8791);')"; then
+    echo "oakridge: --observation needs OBSERVATION_DATABASE_URL in $OBSERVATION_ROOT/.env" >&2
+    exit 1
+  fi
+  # One ingest token for the install's lifetime, shared by the service and the DBOS publisher.
+  INGEST_TOKEN_FILE="$STATE_DIR/observation-ingest.token"
+  if [ ! -s "$INGEST_TOKEN_FILE" ]; then
+    mkdir -p "$STATE_DIR"
+    (umask 077 && openssl rand -hex 32 > "$INGEST_TOKEN_FILE")
+  fi
+  OBSERVATION_INGEST_TOKEN="$(cat "$INGEST_TOKEN_FILE")"
+  OBSERVATION_URL="http://127.0.0.1:${OBSERVATION_SERVICE_PORT}"
+fi
+
 dbos_pid=""
 kbbl_pid=""
 observation_pid=""
@@ -209,11 +239,12 @@ stop_from_signal() {
 trap stop_from_signal INT TERM
 trap stop_services EXIT
 
-if [ -n "${OBSERVATION_DATABASE_URL:-}" ]; then
-  echo "oakridge: starting observation service"
+if [ "$start_observation" -eq 1 ]; then
+  echo "oakridge: starting observation service at $OBSERVATION_URL"
   (
-    cd "$OAKRIDGE_ROOT/observation"
-    bun run start
+    cd "$OBSERVATION_ROOT"
+    OBSERVATION_INGEST_CREDENTIALS="[{\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\",\"token\":\"$OBSERVATION_INGEST_TOKEN\"}]" \
+      bun run start
   ) &
   observation_pid=$!
 fi
@@ -230,6 +261,9 @@ echo "oakridge: starting DBOS backend at $DBOS_URL"
     OAKRIDGE_PUBLICATION_KEY="$OAKRIDGE_PUBLICATION_KEY" \
     OAKRIDGE_AGENT_WORKDIR="$AGENT_WORKDIR" \
     PORT="$DBOS_PORT" \
+    OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
+    OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
+    OAKRIDGE_OBSERVATION_INGEST_TOKEN="$OBSERVATION_INGEST_TOKEN" \
     bun run start
 ) &
 dbos_pid=$!
@@ -238,7 +272,7 @@ echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
 env -u ANTHROPIC_API_KEY \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
   OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
-  "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" "$@" &
+  "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" ${kbbl_args[@]+"${kbbl_args[@]}"} &
 kbbl_pid=$!
 
 echo "oakridge: open http://${KBBL_DISPLAY_HOST}:${KBBL_DISPLAY_PORT}/#oakridge"
