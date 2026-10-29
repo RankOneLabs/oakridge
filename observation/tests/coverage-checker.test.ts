@@ -42,7 +42,7 @@ const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI ===
 integration("the service runs the deterministic coverage checker over local link evidence", async () => scratchGrading(async (db, occurrence_id) => {
   const question = { ...LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition,
     target_item_kinds: ["cohort_criterion"] };
-  const links = { brief_criterion: { item_kind: "criterion", item_scope: "cohort/alpha/criterion",
+  const links = { brief_criterion: { item_kind: "criterion", item_scope: "criterion",
     producer_local_id: "crit-a" }, assessment_findings: [{ item_kind: "assessment_finding", links: [] }] };
   const context = { question, evidence: { ...evidence, references: [{ ref: "local-links", kind: "public" as const,
     content: links, digest: null }] }, evaluator: evaluator("code") };
