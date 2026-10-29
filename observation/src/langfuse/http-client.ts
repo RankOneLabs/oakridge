@@ -19,19 +19,20 @@ export interface LangfuseHttpClient {
   request<T>(input: LangfuseRequest<T>): Promise<Result<T, LangfuseHttpError>>;
   text(path: string, operation: string): Promise<Result<string, LangfuseHttpError>>;
 }
+export type LangfuseTransport = (url: string, init: RequestInit) => Promise<Response>;
 
 function failure(operation: string, entity_id: string, detail: string, status: number | null): LangfuseHttpError {
   return { operation, entity_id, detail, status, is_transient: status === null || status === 408 || status === 429 || status >= 500 };
 }
 
 /** One IO boundary; response bodies and exception messages are never copied into errors. */
-export function createLangfuseHttpClient(config: LangfuseConfig, transport: typeof fetch = fetch): LangfuseHttpClient {
+export function createLangfuseHttpClient(config: LangfuseConfig, transport: LangfuseTransport = fetch): LangfuseHttpClient {
   async function send(path: string, method: "GET" | "POST", operation: string,
     entity_id: string, body?: JsonValue): Promise<Result<Response, LangfuseHttpError>> {
     if (!(path.startsWith("/api/") || path === "/generated/api/openapi.yml") || path.startsWith("//"))
       return err(failure(operation, entity_id, "invalid API path", null));
-    const auth = btoa(`${config.credential.public_key}:${config.credential.secret_key}`);
     try {
+      const auth = btoa(`${config.credential.public_key}:${config.credential.secret_key}`);
       const response = await transport(`${config.base_url}${path}`, { method,
         headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json",
           ...(path === "/api/public/otel/v1/traces" ? { "x-langfuse-ingestion-version": "4" } : {}) },

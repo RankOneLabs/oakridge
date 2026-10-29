@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../domain/primitives";
 import type { LangfuseConfig } from "./config";
-import type { LangfuseHttpClient } from "./http-client";
+import { withBoundedRetry, type LangfuseHttpClient } from "./http-client";
 
 export type LangfuseCapability = "decision_model_evaluators" | "annotation_queues" | "score_readback" | "evaluator_api";
 export interface CapabilityFailure { readonly capability: LangfuseCapability; readonly detail: string }
@@ -23,7 +23,7 @@ export async function detectLangfuseFeatures(client: LangfuseHttpClient, config:
   Promise<Result<LangfuseFeatureReport, CapabilityFailure>> {
   const openapi_path = config.base_url.includes("cloud.langfuse.com")
     ? "/generated/api/openapi.yml" : "/api/openapi.yaml";
-  const spec = await client.text(openapi_path, "capability_openapi");
+  const spec = await withBoundedRetry(() => client.text(openapi_path, "capability_openapi"), config.retry);
   if (!spec.ok) return err({ capability: "evaluator_api", detail: `deployment OpenAPI unavailable: ${spec.error.detail}` });
   const version = /^\s*version:\s*['"]?([^\n'"]*)/m.exec(spec.value)?.[1]?.trim() ?? "unspecified";
   const capabilities: CapabilityStatus[] = [];
@@ -39,7 +39,7 @@ export async function detectLangfuseFeatures(client: LangfuseHttpClient, config:
     }
     const target = capability === "decision_model_evaluators"
       ? `${path}/${encodeURIComponent(config.decision_evaluator_id!)}` : `${path}?limit=1`;
-    const probe = await client.text(target, `capability_${capability}`);
+    const probe = await withBoundedRetry(() => client.text(target, `capability_${capability}`), config.retry);
     capabilities.push({ capability, available: probe.ok,
       detail: probe.ok ? "available" : probe.error.detail });
   }
