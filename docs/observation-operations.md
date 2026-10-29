@@ -1,5 +1,8 @@
 # Observation operations
 
+The [Langfuse pilot decision record](spec-03-langfuse-pilot.md) pins the
+external projection contract and the five operator recommendations.
+
 The observation service stores its own PostgreSQL data. Oakridge remains the
 workflow authority. Start the service with `OBSERVATION_DATABASE_URL` and
 `bun run --filter observation start`; it binds to `127.0.0.1:8791` unless
