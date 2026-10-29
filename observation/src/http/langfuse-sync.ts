@@ -8,6 +8,7 @@ import { LangfuseBackend } from "../langfuse/backend";
 import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
 import { scoreConfigFromQuestion, createScoreConfig } from "../langfuse/score-config";
 import { queueAnnotationTarget } from "../langfuse/annotation-queue";
+import { EVIDENCE_ROLES } from "../langfuse/evidence-recipe";
 import { importLangfuseAnnotation } from "../langfuse/annotation-import";
 import type { LangfuseConfiguration } from "../langfuse/config";
 import { createLangfuseHttpClient } from "../langfuse/http-client";
@@ -24,10 +25,10 @@ const digestSchema = z.string().regex(/^canonical-json\/v1:[0-9a-f]{64}$/);
 const projectionSchema = z.object({ execution_id: z.string().min(1), question_text: z.string().min(1),
   projection_version: z.string().min(1) });
 const reconcileSchema = z.object({ mapping_key: digestSchema });
-const scoreConfigSchema = z.object({ question_id: z.enum(["analysis.finding_relevance", "brief.source_fidelity"]) });
+const scoreConfigSchema = z.object({ question_id: z.enum(["analysis.finding_relevance", "plan.criterion_traceability",
+  "brief.source_fidelity"]) });
 const queueTargetSchema = z.object({ mapping_key: digestSchema, graded_artifact: z.enum(["report", "code"]),
-  sources: z.array(z.object({ role: z.enum(["requested_change", "relevant_excerpt", "analysis_finding",
-    "plan_criterion", "brief_criterion", "assessment_finding"]), ref: z.string().min(1),
+  sources: z.array(z.object({ role: z.enum(EVIDENCE_ROLES), ref: z.string().min(1),
     digest: z.string().min(1), deep_link: z.string().min(1) })) });
 const annotationImportSchema = z.object({ mapping_key: digestSchema, queue_item_id: z.string().min(1),
   score_id: z.string().min(1), allow_notes: z.boolean().default(false) });

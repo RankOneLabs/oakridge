@@ -50,7 +50,7 @@ the new shape.
 
 ## Pilot catalogue and evidence boundary
 
-The three `v1` definitions live in `observation/src/grading/catalogue/langfuse-pilot.ts`.
+The four `v1` definitions, one per stage, live in `observation/src/grading/catalogue/langfuse-pilot.ts`.
 Their pinned recipes live in `observation/src/langfuse/evidence-recipe.ts`.
 Each projected reference carries only its role, source ref, digest and deep link;
 whole artifact bodies, raw code and specification text remain in the observation
@@ -61,15 +61,30 @@ coverage miss rather than missing evidence.
 | Question | Selected item | Pinned input | Pinned output | Answer |
 | --- | --- | --- | --- | --- |
 | `analysis.finding_relevance/v1` | `analysis.findings` `finding` | Original requested change and relevant excerpt, each by source reference | One analysis finding reference | Choice: relevant, irrelevant or unclear/insufficient evidence |
-| `brief.source_fidelity/v1` | `brief.criteria` `criterion` | The identified plan criterion | Its brief criterion with the same cohort criterion id | Choice: faithful, changed meaning or unclear/insufficient evidence |
+| `plan.criterion_traceability/v1` | `plan.criteria` `criterion` | Up to 20 tasks and 20 plan decisions the criterion cites, by source reference; at least one in all | One plan criterion reference | Choice: traceable, unsupported or unclear/insufficient evidence |
+| `brief.source_fidelity/v1` | `brief.criteria` `criterion` | The identified plan criterion | Its brief criterion with the same criterion id | Choice: faithful, changed meaning or unclear/insufficient evidence |
 | `assessment.coverage/v1` | `brief.criteria` `criterion` | One brief criterion | Assessment finding references, possibly empty | Boolean: at least one explicit `assesses` link |
 
 For fidelity, the brief criterion's `derived_from` link uses the unchanged plan
-cohort criterion id; rewritten text preserves that identity. For coverage, the
+criterion id, which is unique within the run; rewritten text preserves that identity. For coverage, the
 catalogue creates an `assesses` link only when the assessment finding has a
 string `criterion_id`. A finding with no id has no link and is not itself a
 coverage miss. Only a brief criterion with no linked assessment finding is a
 miss.
+
+For traceability, the input references are only the criterion's own
+`derived_from` links to tasks and to decisions in its cohort; nothing is matched
+by text. `planCriterionEligibility` in `observation/src/langfuse/plan-traceability.ts`
+classifies a criterion before any grader runs. A criterion with empty `task_ids`
+and `decision_ids` is **uncited**, and one citing an id absent from its captured
+revision has a **dangling citation**; both are excluded from the population
+with a typed reason and never graded. A criterion citing tasks when the run's
+tasks revision was not captured is graded with incomplete evidence and abstains.
+The population manifest's `reason` is a typed union (`operator`, `uncited`,
+`dangling_citation`), and only an excluded member may carry an uncited or
+dangling reason. The comparison report lists excluded members per question
+pin, split by reason, outside every group denominator. Plan-wide
+`plan.acceptance_criteria` items carry no links and are not selected.
 
 `observation/src/langfuse/classification.ts` declares the top-level body field
 kinds for analysis, plan, brief and assessment. A field absent from its artifact
@@ -134,14 +149,14 @@ correctness judgment.
 
 ## Human annotation and held-out boundary
 
-The pilot's human score config names are `analysis.finding_relevance.v1` and
-`brief.source_fidelity.v1`. Langfuse's score-config API permits letters,
+The pilot's human score config names are `analysis.finding_relevance.v1`,
+`plan.criterion_traceability.v1` and `brief.source_fidelity.v1`. Langfuse's score-config API permits letters,
 numbers, underscores, spaces, periods, parentheses and hyphens in names, so
 the config name uses a period before the version. Each category label exactly
 matches its `QuestionDefinition.allowed_values`; Langfuse's numeric category
 value is only the wire representation. The pure transform also covers
 `assessment.coverage/v1`, whose Boolean domain is `false` and `true`.
-The queue accepts the three pinned pilot question recipes, which are
+The queue accepts the four pinned pilot question recipes, which are
 categorical or Boolean. The generic score-config transform and parity check
 also support a bounded numeric domain, but no numeric pilot evidence recipe
 is pinned, so numeric questions cannot be queued in this pilot.
@@ -150,7 +165,7 @@ the explicit `Graded artifact: report` declaration, abstain rule and unclear
 rule. The service validates each config request with the documented API shape
 before sending it through the adapter HTTP client.
 
-`POST /v1/langfuse/score-configs` provisions one of the two selected pilot
+`POST /v1/langfuse/score-configs` provisions one of the three selected pilot
 configs. The operator attaches their returned config IDs to a Langfuse
 annotation queue and configures that queue's ID for the service. A request to
 `POST /v1/langfuse/annotation-queue/items` names one existing projection

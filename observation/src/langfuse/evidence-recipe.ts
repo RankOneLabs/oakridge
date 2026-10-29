@@ -2,10 +2,12 @@ import { err, ok, type Result } from "../domain/primitives";
 import { canonicalJson } from "../canonical/canonical-json";
 import type { QuestionDefinition } from "../grading/question";
 
-export type PilotQuestionId = "analysis.finding_relevance" | "brief.source_fidelity" | "assessment.coverage";
-export type EvidenceRole = "requested_change" | "relevant_excerpt" | "analysis_finding" | "plan_criterion"
-  | "brief_criterion" | "assessment_finding";
-export interface EvidenceSlot { readonly role: EvidenceRole; readonly max_count: number }
+export type PilotQuestionId = "analysis.finding_relevance" | "plan.criterion_traceability" | "brief.source_fidelity"
+  | "assessment.coverage";
+export const EVIDENCE_ROLES = ["requested_change", "relevant_excerpt", "analysis_finding", "plan_task", "plan_decision",
+  "plan_criterion", "brief_criterion", "assessment_finding"] as const;
+export type EvidenceRole = typeof EVIDENCE_ROLES[number];
+export interface EvidenceSlot { readonly role: EvidenceRole; readonly min_count: number; readonly max_count: number }
 export interface PilotEvidenceRecipe {
   readonly recipe_id: PilotQuestionId;
   readonly recipe_version: "v1";
@@ -33,17 +35,21 @@ export interface ProjectedQuestionEvidence {
 }
 export interface EvidenceRecipeError { readonly operation: "project_pilot_evidence"; readonly entity_id: string; readonly detail: string }
 
-/** A bounded package of source addresses; full code, spec, and JSON stay in the observation store. */
+/** A bounded package of source addresses; full code, spec, and JSON stay in the observation store.
+ * Every package carries at least one input reference, whatever its slots' minimums. */
 export const PILOT_EVIDENCE_RECIPES: Readonly<Record<PilotQuestionId, PilotEvidenceRecipe>> = {
   "analysis.finding_relevance": { recipe_id: "analysis.finding_relevance", recipe_version: "v1",
-    input: [{ role: "requested_change", max_count: 1 }, { role: "relevant_excerpt", max_count: 1 }],
-    output: [{ role: "analysis_finding", max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
+    input: [{ role: "requested_change", min_count: 1, max_count: 1 }, { role: "relevant_excerpt", min_count: 1, max_count: 1 }],
+    output: [{ role: "analysis_finding", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
+  "plan.criterion_traceability": { recipe_id: "plan.criterion_traceability", recipe_version: "v1",
+    input: [{ role: "plan_task", min_count: 0, max_count: 20 }, { role: "plan_decision", min_count: 0, max_count: 20 }],
+    output: [{ role: "plan_criterion", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
   "brief.source_fidelity": { recipe_id: "brief.source_fidelity", recipe_version: "v1",
-    input: [{ role: "plan_criterion", max_count: 1 }],
-    output: [{ role: "brief_criterion", max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
+    input: [{ role: "plan_criterion", min_count: 1, max_count: 1 }],
+    output: [{ role: "brief_criterion", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
   "assessment.coverage": { recipe_id: "assessment.coverage", recipe_version: "v1",
-    input: [{ role: "brief_criterion", max_count: 1 }],
-    output: [{ role: "assessment_finding", max_count: 100 }], projected_fields: ["ref", "digest", "deep_link"] },
+    input: [{ role: "brief_criterion", min_count: 1, max_count: 1 }],
+    output: [{ role: "assessment_finding", min_count: 0, max_count: 100 }], projected_fields: ["ref", "digest", "deep_link"] },
 };
 
 export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefinition["input_recipe"] {
@@ -66,7 +72,7 @@ export function projectPilotEvidence(question: QuestionDefinition, sources: read
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "undeclared evidence role" });
   const selected = (slot: EvidenceSlot): Result<readonly ProjectedEvidence[], EvidenceRecipeError> => {
     const matches = sources.filter((source) => source.role === slot.role);
-    if (matches.length > slot.max_count || (slot.role !== "assessment_finding" && matches.length !== 1))
+    if (matches.length < slot.min_count || matches.length > slot.max_count)
       return err({ operation: "project_pilot_evidence", entity_id: slot.role, detail: "evidence count differs from pinned recipe" });
     if (matches.some((source) => !source.ref || source.ref.length > 512 || !source.digest || source.digest.length > 128
       || !source.deep_link || source.deep_link.length > 2048))
@@ -80,6 +86,8 @@ export function projectPilotEvidence(question: QuestionDefinition, sources: read
     if (!result.ok) return result;
     input.push(...result.value);
   }
+  if (input.length === 0)
+    return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "evidence requires at least one input reference" });
   for (const slot of recipe.output) {
     const result = selected(slot);
     if (!result.ok) return result;

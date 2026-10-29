@@ -1,9 +1,10 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
 import type { CanonicalDigest, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { EvaluationExecution } from "../grading/execution";
 import type { GradeAnswer, GradeObservation } from "../grading/observation";
-import type { PopulationManifest, PopulationMember } from "./population-manifest";
+import { exclusionCounts, type ExclusionCount, type PopulationManifest, type PopulationMember,
+  type PopulationReason } from "./population-manifest";
 
 export type PilotSplit = "exploratory" | "held_out";
 export type DisagreementCause = "machine_disagreement" | "evidence_insufficiency" | "ambiguous_rubric"
@@ -70,12 +71,19 @@ export interface ComparisonGroup {
 export interface ComparisonReport {
   readonly population_manifest_id: string;
   readonly population_membership_digest: CanonicalDigest;
+  /** Members excluded before grading never enter a group's denominator; they are counted here. */
+  readonly exclusions: readonly ExclusionCount[];
   readonly groups: readonly ComparisonGroup[];
 }
 export interface ComparisonError { readonly operation: "comparison_report"; readonly entity_id: string; readonly detail: string }
 
 function failure(entity_id: string, detail: string): Result<never, ComparisonError> {
   return err({ operation: "comparison_report", entity_id, detail });
+}
+function sameReason(left: PopulationReason, right: PopulationReason): boolean {
+  const a = canonicalJson(left);
+  const b = canonicalJson(right);
+  return a.ok && b.ok && a.value === b.value;
 }
 function answerLabel(answer: GradeAnswer): string {
   if (answer.state !== "answered") return answer.state;
@@ -151,7 +159,7 @@ export function makeComparisonReport(manifest: PopulationManifest,
     const identity = `${member.occurrence_id}\u0000${member.question_id}\u0000${member.question_version}`;
     const pinned = members.get(identity);
     if (!pinned || pinned.disposition !== "included" || pinned.evidence_set_digest !== member.evidence_set_digest
-      || pinned.stratum !== member.stratum || pinned.reason !== member.reason)
+      || pinned.stratum !== member.stratum || !sameReason(pinned.reason, member.reason))
       return failure(member.occurrence_id, "measurement does not match included frozen membership");
     if (!measurement.evaluator_version.trim() || !measurement.attempt_label.trim())
       return failure(member.occurrence_id, "evaluator version and attempt label are required");
@@ -178,7 +186,7 @@ export function makeComparisonReport(manifest: PopulationManifest,
     groups.set(encoded, group);
   }
   return ok({ population_manifest_id: manifest.manifest_id,
-    population_membership_digest: manifest.membership_digest,
+    population_membership_digest: manifest.membership_digest, exclusions: exclusionCounts(manifest),
     groups: [...groups.values()].sort((a, b) => JSON.stringify(a.key).localeCompare(JSON.stringify(b.key)))
       .map(({ key, rows }) => summarize(key, rows)) });
 }

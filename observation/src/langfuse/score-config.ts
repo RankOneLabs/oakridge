@@ -41,10 +41,11 @@ export function scoreConfigName(question_id: string, question_version: string): 
   return `${question_id}.${question_version}`;
 }
 
-/** The three pinned pilot recipes grade report artifacts, not repository code. */
+/** The four pinned pilot recipes grade report artifacts, not repository code. */
 export function pilotGradedArtifact(question_id: string, question_version: string): "report" | null {
   if (question_version !== "v1") return null;
-  return ["analysis.finding_relevance", "brief.source_fidelity", "assessment.coverage"].includes(question_id)
+  return ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"]
+    .includes(question_id)
     ? "report" : null;
 }
 
