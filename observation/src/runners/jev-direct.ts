@@ -68,7 +68,7 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
     let response: Response;
     const started = Date.now();
     try {
-      response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/v1/systemone`, {
+      response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/systemone`, {
         method: "POST", headers: { "Content-Type": "application/json",
           ...(config.auth_header === "x-api-key" ? { "X-API-Key": config.api_key } : { Authorization: `Bearer ${config.api_key}` }) },
         body: JSON.stringify(request.data),
@@ -87,8 +87,14 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
       if (!options.includes(answer.choice) || options.some((option) => !(option in answer.probabilities)))
         return failure(context, config.operation, "provider choice distribution omits an option");
     }
+    const is_abstain = answer.type === "choice" && answer.choice === "insufficient_evidence"
+      && context.question.allowed_values?.includes("insufficient_evidence");
+    const is_unclear = answer.type === "choice" && answer.choice === "unclear"
+      && context.question.allowed_values?.includes("unclear");
     const mapped = answer.type === "choice"
-      ? { answer: { state: "answered", kind: "choice", value: answer.choice } as const,
+      ? { answer: is_abstain || is_unclear
+        ? { state: is_abstain ? "abstain" : "unclear", kind: "choice", reason: answer.choice } as const
+        : { state: "answered", kind: "choice", value: answer.choice } as const,
         probabilities: answer.probabilities, confidence: answer.confidence }
       : answer.type === "score"
         ? { answer: { state: "answered", kind: "structured", value: {
@@ -101,11 +107,13 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
     return ok({ ...mapped, model_usage: parsed.data.usage, cost: parsed.data.cost ?? null,
       external_execution_id: parsed.data.id ?? null, provider_link: parsed.data.provider_link ?? null,
       reproducibility_metadata: { provider_model: parsed.data.model, raw_answer: answer,
+        probability_provenance: answer.type === "noul" && !answer.probabilities
+          ? { true: "provider_noul", false: "derived_complement" } : "provider_returned",
         latency_ms: Date.now() - started, runner: config.operation } });
   } };
 }
 
 export function createJevDirectRunner(api_key: string | undefined, transport?: SystemOneTransport): GradeRunner {
-  return createSystemOneRunner({ operation: "jev_direct", base_url: "https://api.typesafe.ai", api_key, transport });
+  return createSystemOneRunner({ operation: "jev_direct", base_url: "https://api.typesafe.ai/v1", api_key, transport });
 }
 export const jevDirectRunner = createJevDirectRunner(process.env.TYPESAFE_API_KEY);

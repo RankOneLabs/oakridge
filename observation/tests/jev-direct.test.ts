@@ -32,6 +32,17 @@ test("Jev Choice retains every raw option probability and provider confidence", 
   expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: answer });
 });
 
+test("Jev records an explicit insufficient_evidence selection as abstain", async () => {
+  const insufficient = { ...answer, choice: "insufficient_evidence" };
+  const runner = createJevDirectRunner("key", async () => response(provider(insufficient)));
+  const result = await runner.run(context);
+  expect(result.ok && result.value.answer).toEqual({ state: "abstain", kind: "choice", reason: "insufficient_evidence" });
+  if (!result.ok) return;
+  expect(result.value.probabilities).toEqual(insufficient.probabilities);
+  expect(result.value.confidence).toBe(insufficient.confidence);
+  expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: insufficient });
+});
+
 test("Jev Score keeps fractional level, legend and full level distribution", async () => {
   const score = { type: "score", score: 1.35, legend: { "0": "poor", "1": "partial", "2": "good" },
     probabilities: { "0": 0.05, "1": 0.55, "2": 0.4 }, confidence: 0.73 };
@@ -54,6 +65,17 @@ test("Jev Yes/No records P(true) rather than a boolean pass", async () => {
   if (!result.ok) return;
   expect(result.value.answer).toEqual({ state: "answered", kind: "numeric", value: 0.37 });
   expect(result.value.probabilities).toEqual({ true: 0.37, false: 0.63 });
+  expect(result.value.reproducibility_metadata).toMatchObject({
+    probability_provenance: { true: "provider_noul", false: "derived_complement" } });
+});
+
+test("Jev retains a provider-returned Yes/No distribution without deriving a complement", async () => {
+  const providerAnswer = { type: "noul", noul: 0.37, probabilities: { true: 0.37, false: 0.63 }, confidence: 0.48 };
+  const runner = createJevDirectRunner("key", async () => response(provider(providerAnswer)));
+  const result = await runner.run({ ...context, question: { ...context.question, response_kind: "numeric",
+    allowed_values: null, input_recipe: { system_one: { type: "noul", instructions: "Is it faithful?" } } } });
+  expect(result.ok && result.value.probabilities).toEqual(providerAnswer.probabilities);
+  if (result.ok) expect(result.value.reproducibility_metadata).toMatchObject({ probability_provenance: "provider_returned" });
 });
 
 test("transport, status and response validation failures are Result errors", async () => {

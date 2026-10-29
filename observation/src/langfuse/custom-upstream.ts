@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "../domain/primitives";
 import type { GradingError } from "../grading/runner";
 import { systemOneResponseSchema, type SystemOneTransport } from "../runners/jev-direct";
+import { FASTINO_SYSTEM_ONE_BASE_URL } from "../runners/fastino-glide";
 
 /** Settings to enter in Langfuse's TypeSafe (System One) Custom upstream connection. */
 export interface FastinoCustomUpstream {
@@ -10,7 +11,7 @@ export interface FastinoCustomUpstream {
   readonly extra_headers: Readonly<Record<string, string>>;
 }
 export function fastinoCustomUpstream(model: string, auth_method: "bearer" | "x-api-key"): FastinoCustomUpstream {
-  return { base_url: "https://api.fastino.ai/v1", model, auth_method,
+  return { base_url: FASTINO_SYSTEM_ONE_BASE_URL, model, auth_method,
     extra_headers: { "Content-Type": "application/json" } };
 }
 
@@ -33,7 +34,7 @@ export async function probeFastinoAuthentication(api_key: string, model: string,
   let accepted_model: string | null = null;
   for (const method of ["bearer", "x-api-key"] as const) {
     try {
-      const response = await transport("https://api.fastino.ai/v1/systemone", { method: "POST",
+      const response = await transport(`${FASTINO_SYSTEM_ONE_BASE_URL}/systemone`, { method: "POST",
         headers: { "Content-Type": "application/json",
           ...(method === "bearer" ? { Authorization: `Bearer ${api_key}` } : { "X-API-Key": api_key }) },
         body: JSON.stringify(request) });

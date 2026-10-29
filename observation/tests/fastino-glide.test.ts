@@ -42,6 +42,15 @@ test("a flat, low-confidence GLiDE distribution remains an answered choice", asy
   if (result.ok) expect(result.value.confidence).toBe(0.01);
 });
 
+test("GLiDE turns its explicit insufficient_evidence choice into an abstention", async () => {
+  const insufficient = { ...answer, choice: "insufficient_evidence" };
+  const runner = createFastinoGlideRunner("key", async () => Response.json({ ...payload,
+    answers: { [question.question_id]: insufficient } }));
+  const result = await runner.run(context);
+  expect(result.ok && result.value.answer).toEqual({ state: "abstain", kind: "choice", reason: "insufficient_evidence" });
+  if (result.ok) expect(result.value.probabilities).toEqual(insufficient.probabilities);
+});
+
 test("Fastino probe tries both authentication headers and reports measured results", async () => {
   const headers: string[] = [];
   const result = await probeFastinoAuthentication("key", "fastino/glide", async (_url, init) => {

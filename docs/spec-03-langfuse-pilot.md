@@ -166,3 +166,12 @@ through the Scores API; the local observation remains authoritative. The
 adapter's current Phase A projection gate leaves mappings pending until a
 deployment completes the synthetic write and readback validation above, so
 end-to-end score ingestion has not yet been demonstrated against Langfuse.
+
+When a pinned Choice question includes `insufficient_evidence` and a System One
+provider selects it, the local answer is an explicit abstention. The selected
+raw provider answer is also retained in execution reproducibility metadata;
+low confidence by itself never causes abstention. A Yes/No response that supplies
+only `noul` has a derived `false = 1 - noul` probability in the observation;
+`probability_provenance` marks the true value as `provider_noul` and the false
+value as `derived_complement`. If the provider returns its own probability map,
+the map is retained and marked `provider_returned`.
