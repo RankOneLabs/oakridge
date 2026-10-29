@@ -466,6 +466,39 @@ describe("RunDetail stage list", () => {
     expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
   });
 
+  it("retries a failed analysis author from its collapsed stage row", async () => {
+    const unit = withUnitFields(retryUnit("analysis"), { stage: "analysis", collection_key: null,
+      decisions: [{ key: "retry:author", label: "Retry author", payload_schema: "{}", fields: [], submit: { kind: "retry", worker: "author" } }] });
+    const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "analysis" });
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "running",
+      is_stuck: true,
+      stages: [{
+        stage_instance_id: stageId, name: "analysis", type: "analysis",
+        status: "failed", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{ unit_id: "0", repository_key: null, sid: null, worktree: null, status: "failed", gate: null, is_retryable: true, params: null }],
+      }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/units")) return json([unit]);
+      if (url.endsWith("/workers/author/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-author" }, 201);
+      if (url.includes("/gates")) return json([]);
+      return json(detail);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+    runSeed = detail;
+    wrap(<RunDetailOrganism runId="run-1" onRunDeleted={() => {}} onSelectArtifact={() => {}} />);
+
+    fireEvent.click(await screen.findByTestId("or-retry-unit-btn"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/oakridge/api/api/runs/run-1/units/${encodeURIComponent(unit.unit_id)}/workers/author/retry`,
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("request_id") }),
+    ));
+  });
+
   it("retries the single unit hidden behind a collapsed stage row", async () => {
     const unit = retryUnit("0");
     const stageId = compositeId({ kind: "stage", runId: "run-1", unitId: unit.unit_id, name: "cohort" });

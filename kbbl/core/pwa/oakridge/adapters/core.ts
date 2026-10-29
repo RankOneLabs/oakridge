@@ -251,6 +251,9 @@ export function latestUnitAttemptPerSession(units: readonly OperatorUnitView[]):
   return ok([...latest.values()]);
 }
 
+/** A scalar stage's one unit has no collection key; the PWA names it "0", as every stage-scoped consumer expects. */
+export const SCALAR_STAGE_UNIT_ID = "0";
+
 export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<StageDetail[]> {
   const stages = new Map<string, OperatorUnitView[]>();
   for (const unit of units) if (unit.stage) stages.set(unit.stage, [...(stages.get(unit.stage) ?? []), unit]);
@@ -258,7 +261,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
     const statuses = members.map((unit) => deriveStatus(statusInputOf(unit)).run);
     const status = selectAggregateStatus(statuses);
     const stageUnits: StageUnit[] = members.map((unit) => {
-      return { unit_id: unit.collection_key ?? unit.unit_key, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
+      return { unit_id: unit.collection_key ?? SCALAR_STAGE_UNIT_ID, sid: unit.attempts.find((attempt) => attempt.is_current)?.kbbl_session_id ?? null,
         repository_key: repositoryKeyOf(unit) as StageUnit["repository_key"],
         params: { unit_id: unit.collection_key ?? unit.unit_key, artifact: objectValue(unit.input)?.brief ?? unit.input },
         worktree: worktreeOf(unit), status: deriveStatus(statusInputOf(unit)).stage,
@@ -270,7 +273,7 @@ export function unitToStages(units: readonly OperatorUnitView[]): AdapterResult<
         id: artifactId(artifact), type_id: artifactType(artifact.schema).id, version: artifact.revision_count,
         label: unit.collection_key ?? unit.unit_key, created_at: artifact.latest_revision!.created_at }))),
       delegated_kbbl_sid: members.flatMap((unit) => unit.attempts.map((attempt) => attempt.kbbl_session_id)).find((sid) => sid) ?? null,
-      worktree: worktreeOf(members[0]), units: ["prepare", "brief", "cohort", "integration"].includes(name) ? stageUnits : undefined };
+      worktree: worktreeOf(members[0]), units: stageUnits };
   }));
 }
 const reviewGateId = (unit: OperatorUnitView): string | null => {

@@ -42,7 +42,7 @@ import type {
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, sentReviewFeedback, runSnapshot, runSummary, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, sentReviewFeedback, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
@@ -425,7 +425,7 @@ export async function retryRunUnit(stageInstanceId: string, unitId: string): Pro
   const stage = unwrapAdapter(stageInstanceId, parseCompositeId(stageInstanceId, "stage"));
   // A collection key repeats across stages (a brief and its cohort share one), so match within the stage.
   const unit = (await readUnits(stage.runId)).find((candidate) => candidate.stage === stage.name
-    && (candidate.collection_key === unitId || candidate.unit_key === unitId));
+    && (candidate.collection_key ?? SCALAR_STAGE_UNIT_ID) === unitId);
   if (!unit) throw new Error(`oakridge ${stageInstanceId}: unit ${unitId} unavailable`);
   const retry = unit.decisions.find((decision) => decision.submit.kind === "retry");
   if (!retry || retry.submit.kind !== "retry") throw new Error(`oakridge ${stageInstanceId}: retry unavailable`);
