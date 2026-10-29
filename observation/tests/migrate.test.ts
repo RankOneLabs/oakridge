@@ -36,6 +36,33 @@ integration("fresh baseline applies and a second apply is a no-op", async () => 
   } finally { await db.destroy(); }
 }));
 
+integration("populated 0001 through 0007 database upgrades additively to Langfuse storage", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
+    const digest = createHash("sha256").update(baseline).digest("hex");
+    await sql.raw(baseline).execute(db);
+    await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${digest})`.execute(db);
+    for (const name of ["0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql", "0004_cursor.sql",
+      "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql"]) {
+      const migration = await Bun.file(new URL(`../src/storage/migrations/${name}`, import.meta.url)).text();
+      await sql.raw(migration).execute(db);
+    }
+    await withTenant(db, { producer: "oakridge", namespace: "upgrade" }, (trx) => sql`
+      INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id, artifact_kind,
+        artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
+      VALUES ('oakridge', 'upgrade', 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'bundle', 'digest',
+        '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(trx));
+    await migrateEmptyDatabase(db);
+    const state = await sql<{ digest: string; mapping: string | null; revision_count: string }>`
+      SELECT (SELECT digest FROM observation.schema_baseline) AS digest,
+        to_regclass('observation.langfuse_mapping')::text AS mapping,
+        (SELECT count(*)::text FROM observation.source_revision) AS revision_count`.execute(db);
+    expect(state.rows[0]).toEqual({ digest, mapping: "observation.langfuse_mapping", revision_count: "1" });
+    await migrateEmptyDatabase(db);
+  } finally { await db.destroy(); }
+}));
+
 integration("an existing L0 plus projection database gains nullable revision links without changing its baseline", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
