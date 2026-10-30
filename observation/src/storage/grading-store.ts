@@ -206,6 +206,34 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
   } catch (cause) { return failure("evaluate", identity.subject_occurrence_id, String(cause)); }
 }
 
+/** Records an execution an external evaluator owns; it stays running until its score is ingested. */
+export async function startDelegatedExecution(db: Database, tenant: TenantScope, identity: EvaluationIdentity)
+  : Promise<Result<Selectable<ObservationEvaluationExecution>, GradingError>> {
+  const digest = evaluationDigest(identity);
+  if (!digest.ok) return failure("delegate", identity.subject_occurrence_id, digest.error.detail);
+  try {
+    return await withTenant(db, tenant, async (trx) => {
+      const existing = await trx.selectFrom("observation.evaluation_execution").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("idempotency_digest", "=", digest.value).executeTakeFirst();
+      if (existing) return ok(existing);
+      const checked = await validateIdentity(trx, tenant, identity);
+      if (!checked.ok) return checked;
+      if (checked.value.evaluator.kind !== "model")
+        return failure("delegate", identity.evaluator_definition_id, "only a model evaluator can be delegated");
+      const inserted = await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant),
+        execution_id: randomUUID(), ...identity, idempotency_digest: digest.value, attempts: 1, retries: 0,
+        started_at: new Date(), ended_at: null, status: "running", error: null, model_usage: null, cost: null,
+        external_execution_id: null, provider_link: null, reproducibility_metadata: null })
+        .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
+        .returningAll().executeTakeFirst();
+      return ok(inserted ?? await trx.selectFrom("observation.evaluation_execution").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("idempotency_digest", "=", digest.value).executeTakeFirstOrThrow());
+    });
+  } catch (cause) { return failure("delegate", identity.subject_occurrence_id, String(cause)); }
+}
+
 export interface HumanGradeInput extends EvaluationIdentity {
   readonly details: GradeDetails;
 }

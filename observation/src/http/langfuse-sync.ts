@@ -1,9 +1,6 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { CanonicalDigest } from "../domain/identity";
-import type { EvidenceSet } from "../grading/evidence";
-import type { EvaluationExecution } from "../grading/execution";
-import type { QuestionDefinition } from "../grading/question";
 import { LangfuseBackend } from "../langfuse/backend";
 import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
 import { scoreConfigFromQuestion, createScoreConfig } from "../langfuse/score-config";
@@ -12,8 +9,10 @@ import { EVIDENCE_ROLES } from "../langfuse/evidence-recipe";
 import { importLangfuseAnnotation } from "../langfuse/annotation-import";
 import type { LangfuseConfiguration } from "../langfuse/config";
 import { createLangfuseHttpClient } from "../langfuse/http-client";
+import { RESTRICTED_POLICY } from "../langfuse/projection";
 import type { ProjectionInput } from "../ports/evaluation-backend";
 import { withTenant } from "../storage/database";
+import { loadProjectionInput } from "../storage/projection-input";
 import type { SourceDependencies } from "./sources";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
@@ -32,53 +31,6 @@ const queueTargetSchema = z.object({ mapping_key: digestSchema, graded_artifact:
     digest: z.string().min(1), deep_link: z.string().min(1) })) });
 const annotationImportSchema = z.object({ mapping_key: digestSchema, queue_item_id: z.string().min(1),
   score_id: z.string().min(1), allow_notes: z.boolean().default(false) });
-const RESTRICTED_POLICY: ProjectionInput["policy"] = { body_sensitivity: {
-  analysis: "restricted", plan: "restricted", brief: "restricted", assessment: "restricted",
-}, allow_raw_build_output: false, allow_raw_test_output: false, allow_repository_content: false };
-
-async function projectionInput(deps: SourceDependencies, tenant: { producer: string; namespace: string },
-  request: z.infer<typeof projectionSchema>): Promise<ProjectionInput | null> {
-  return withTenant(deps.db, tenant, async (trx) => {
-    const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("execution_id", "=", request.execution_id).executeTakeFirst();
-    if (!execution) return null;
-    const evidence = await trx.selectFrom("observation.evidence_set").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("evidence_set_id", "=", execution.evidence_set_id).executeTakeFirst();
-    const question = await trx.selectFrom("observation.question_definition").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("question_id", "=", execution.question_id).where("question_version", "=", execution.question_version)
-      .executeTakeFirst();
-    const occurrence = await trx.selectFrom("observation.item_occurrence").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("occurrence_id", "=", execution.subject_occurrence_id).executeTakeFirst();
-    const revision = occurrence ? await trx.selectFrom("observation.source_revision").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("revision_id", "=", occurrence.revision_id).executeTakeFirst() : null;
-    if (!evidence || !question || !occurrence || !revision) return null;
-    return { execution: execution as unknown as EvaluationExecution,
-      evidence: { evidence_set_id: evidence.evidence_set_id,
-        references: evidence.evidence_refs as unknown as EvidenceSet["references"],
-        is_incomplete: evidence.is_incomplete, incompleteness_reason: evidence.incompleteness_reason } as EvidenceSet,
-      question: { ...question, question_id: question.question_id as QuestionDefinition["question_id"],
-        target_item_kinds: question.target_item_kinds as string[],
-        input_recipe: question.input_recipe as QuestionDefinition["input_recipe"],
-        response_kind: question.response_kind as QuestionDefinition["response_kind"],
-        allowed_values: question.allowed_values as QuestionDefinition["allowed_values"],
-        missing_evidence_policy: question.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] },
-      question_text: request.question_text,
-      source: { producer: tenant.producer, namespace: tenant.namespace,
-        run_id: occurrence.run_id as ProjectionInput["source"]["run_id"],
-        unit_id: revision.unit_id as ProjectionInput["source"]["unit_id"],
-        artifact_kind: revision.artifact_kind,
-        revision_id: revision.revision_id as ProjectionInput["source"]["revision_id"],
-        revision_digest: revision.body_digest as ProjectionInput["source"]["revision_digest"],
-        logical_item_id: occurrence.logical_item_id as ProjectionInput["source"]["logical_item_id"],
-        extractor_version: occurrence.extractor_version },
-      policy: RESTRICTED_POLICY, projection_version: request.projection_version };
-  });
-}
 
 export function registerLangfuseRoutes(app: Hono, deps: LangfuseRouteDependencies): void {
   const configuration = deps.langfuse ?? { status: "disabled" as const };
@@ -154,7 +106,7 @@ export function registerLangfuseRoutes(app: Hono, deps: LangfuseRouteDependencie
     if (configuration.status === "disabled") return c.json({ status: "disabled" });
     const parsed = projectionSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return errorResponse(c, 400, "invalid_projection", "execution_id, question_text and projection_version required");
-    const input = await projectionInput(deps, tenant, parsed.data);
+    const input = await loadProjectionInput(deps.db, tenant, { ...parsed.data, policy: RESTRICTED_POLICY });
     if (!input) return errorResponse(c, 404, "not_found", "projection inputs were not found in this tenant");
     const backend = new LangfuseBackend(deps.db, tenant, configuration.config,
       createLangfuseHttpClient(configuration.config));

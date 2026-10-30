@@ -5,14 +5,14 @@ import type { ExclusionReason } from "./population-manifest";
 
 /** Items a plan criterion may cite. Decisions share the criterion's own plan revision, so they are
  * always captured; `tasks` is null when the run's tasks revision was not captured. */
-export interface TraceabilitySources {
-  readonly tasks: readonly SelectedItem[] | null;
-  readonly plan_decisions: readonly SelectedItem[];
+export interface TraceabilitySources<T extends SelectedItem = SelectedItem> {
+  readonly tasks: readonly T[] | null;
+  readonly plan_decisions: readonly T[];
 }
-export type TraceabilityEligibility =
-  | { readonly kind: "eligible"; readonly tasks: readonly SelectedItem[]; readonly decisions: readonly SelectedItem[] }
+export type TraceabilityEligibility<T extends SelectedItem = SelectedItem> =
+  | { readonly kind: "eligible"; readonly tasks: readonly T[]; readonly decisions: readonly T[] }
   /** Cited tasks cannot be resolved because their revision is missing; graded as incomplete evidence. */
-  | { readonly kind: "tasks_uncaptured"; readonly decisions: readonly SelectedItem[] }
+  | { readonly kind: "tasks_uncaptured"; readonly decisions: readonly T[] }
   | { readonly kind: "uncited" }
   | { readonly kind: "dangling_citation"; readonly evidence_refs: readonly string[] };
 export interface TraceabilityError { readonly operation: "plan_traceability"; readonly entity_id: string; readonly detail: string }
@@ -21,8 +21,8 @@ function citations(criterion: SelectedItem, artifact_kind: "tasks" | "plan", ite
   return criterion.links.filter((link) => link.type === "derived_from" && link.target_artifact_kind === artifact_kind
     && link.target_item_kind === item_kind);
 }
-function resolve(links: readonly LinkReference[], item_kind: string, items: readonly SelectedItem[])
-  : { readonly resolved: readonly SelectedItem[]; readonly dangling: readonly string[] } {
+function resolve<T extends SelectedItem>(links: readonly LinkReference[], item_kind: string, items: readonly T[])
+  : { readonly resolved: readonly T[]; readonly dangling: readonly string[] } {
   const matches = links.map((link) => ({ link, item: items.find((item) => item.item_kind === item_kind
     && item.item_scope === link.target_scope && item.producer_local_id === link.target_local_id) }));
   return { resolved: matches.flatMap(({ item }) => item ? [item] : []),
@@ -30,8 +30,8 @@ function resolve(links: readonly LinkReference[], item_kind: string, items: read
 }
 
 /** Decide, before any grader runs, whether a plan criterion's own citations can be traced. */
-export function planCriterionEligibility(criterion: SelectedItem, sources: TraceabilitySources)
-  : Result<TraceabilityEligibility, TraceabilityError> {
+export function planCriterionEligibility<T extends SelectedItem>(criterion: SelectedItem, sources: TraceabilitySources<T>)
+  : Result<TraceabilityEligibility<T>, TraceabilityError> {
   if (criterion.item_kind !== "criterion" || criterion.item_scope !== CRITERION_SCOPE || !criterion.producer_local_id)
     return err({ operation: "plan_traceability", entity_id: criterion.item_id_or_path,
       detail: "subject must be a run-scoped plan criterion" });

@@ -81,6 +81,36 @@ lineage and previously stored grades continue through their existing routes.
 Restore the settings and restart to re-enable the adapter; pending mappings
 remain in the observation database for reconciliation.
 
+## Sending a captured run to native evaluators
+
+`bun scripts/langfuse-project-run.ts <run_id> [--dry-run]`, run from
+`observation/`, sends one captured run's gradeable items to Langfuse. It reads
+`OBSERVATION_DATABASE_URL` and the `OBSERVATION_LANGFUSE_*` settings from
+`observation/.env`, and uses tenant `oakridge` with
+`OAKRIDGE_OBSERVATION_NAMESPACE` (default `default`), as the DBOS publisher does.
+
+It re-selects the latest revision of each artifact in each unit with the
+catalogue and builds one evidence package per item:
+
+- `plan.criterion_traceability/v1`: each plan criterion with the tasks and
+  decisions it cites. Uncited criteria and criteria with a dangling citation
+  are excluded; cited tasks with no captured tasks revision make the evidence
+  incomplete.
+- `brief.source_fidelity/v1`: each brief criterion with the plan criterion its
+  `derived_from` link names; one without that plan criterion is excluded as a
+  dangling citation.
+
+Each reference is `kind: "public"` with the item's selected value as content,
+and its `ref` leads with its recipe role (`plan_criterion:crit-a`) so an
+evaluator can tell the subject from its sources. For every package the command
+registers the question, evidence and a `langfuse-native-jev:<question>` model
+evaluator, records a `running` execution delegated to Langfuse, and projects
+it. Re-running replays the same executions and span IDs. `--dry-run` prints
+the packages and exclusions without writing anything.
+`analysis.finding_relevance/v1` is not packaged: its recipe needs a relevant
+excerpt that no captured artifact defines. Assessment items wait for the
+repository reader.
+
 ## Sensitive inputs, redaction and export gating
 
 Captured L0 revision bodies and evidence references can contain prompts,

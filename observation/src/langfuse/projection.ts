@@ -100,3 +100,8 @@ export function encodeProjection(input: ProjectionInput): Result<ProjectionShape
       model_usage: execution.model_usage, cost: execution.cost },
   }, score_name: `${question.question_id}@${question.question_version}` });
 }
+
+/** The pilot's projection policy: only evidence classified `public` carries content to Langfuse. */
+export const RESTRICTED_POLICY: ProjectionPolicy = { body_sensitivity: {
+  analysis: "restricted", plan: "restricted", brief: "restricted", assessment: "restricted",
+}, allow_raw_build_output: false, allow_raw_test_output: false, allow_repository_content: false };
