@@ -81,3 +81,42 @@ integration("active cost reservations prevent concurrent claims from exceeding a
   expect(skipped?.job_id).toBe(second.job_id);
   expect(skipped?.state).toBe("skipped_budget");
 }));
+
+integration("unknown provider cost is charged at the admitted estimate", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+  const limits = { ...gradingLimits(), run_spend: 0.3, stage_spend: 1 };
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "unknown-cost-1" };
+  const noCost: GradeRunner = { kind: "model", async run() { return { ok: true, value: {
+    answer: { state: "answered", kind: "boolean", value: true }, external_execution_id: "request-no-cost" } }; } };
+  await enqueueJob(db, tenant, { identity, runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
+  await workOneJob(db, tenant, limits, "first", noCost);
+  const execution = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+    .selectAll().executeTakeFirstOrThrow());
+  expect(execution.provider_attempts).toMatchObject([{ cost: 0.2 }]);
+  await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "unknown-cost-2" },
+    runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
+  expect((await claimJob(db, tenant, "second", limits))?.state).toBe("skipped_budget");
+}));
+
+integration("budget refusal on retry closes the earlier running execution without launching again", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+  const limits = { ...gradingLimits(), run_spend: 1, stage_spend: 1 };
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "retry-budget" };
+  const job = await enqueueJob(db, tenant, { identity, runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
+  const failed: GradeRunner = { kind: "model", async run() { return { ok: false, error: {
+    operation: "provider", entity_id: "model", detail: "unavailable" } }; } };
+  await workOneJob(db, tenant, limits, "first", failed);
+  const denied = await claimJob(db, tenant, "second", { ...limits, run_spend: 0.3 });
+  expect(denied?.job_id).toBe(job.job_id);
+  expect(denied?.state).toBe("terminal");
+  expect(denied?.terminal_cause).toBe("budget_exceeded");
+  const execution = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+    .selectAll().executeTakeFirstOrThrow());
+  expect(execution.status).toBe("failed");
+  expect(execution.ended_at).not.toBeNull();
+  expect(execution.provider_attempts).toMatchObject([{ cost: 0.2, status: "failed" }]);
+}));

@@ -12,7 +12,8 @@ const runner: GradeRunner = { kind: "model", async run() { return { ok: true,
   value: { answer: { state: "answered", kind: "boolean", value: true } } }; } };
 
 integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db, occurrence_id) => {
-  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] },
+    gradingLimits: gradingLimits({ OBSERVATION_GRADING_RETRY_LIMIT: "7" }) });
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version,
     evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "http" };
@@ -30,6 +31,7 @@ integration("network runner requires the durable route and its pending job is re
   expect(result.state).toBe("queued");
   const readAs = (path: string) => app.request(path, { headers: { authorization: "Bearer read-token" } });
   expect((await readAs("/v1/evaluation-jobs/" + result.job_id)).status).toBe(200);
+  expect((await (await readAs("/v1/evaluation-jobs/" + result.job_id)).json()).retry_limit).toBe(7);
   expect((await readAs("/v1/items/" + encodeURIComponent(occurrence_id) + "/evaluation-jobs")).status).toBe(200);
   await workOneJob(db, tenant, gradingLimits(), "http-worker", runner);
   const job = await (await readAs("/v1/evaluation-jobs/" + result.job_id)).json();

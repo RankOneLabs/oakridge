@@ -5,6 +5,8 @@ import { purgeRun } from "../src/purge/purge";
 import { deletedRunId, handleOperatorEvent } from "../src/purge/trigger";
 import { withTenant, type Database } from "../src/storage/database";
 import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";
+import { enqueueJob } from "../src/storage/grading-job-store";
+import { gradingLimits } from "../src/grading/jobs/budget";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 import type { ItemOccurrenceId } from "../src/domain/identity";
 
@@ -37,6 +39,11 @@ test("only a run invalidation confirmed absent is a purge trigger", () => {
 integration("purge removes six layers and commits their audit counts", async () => {
   await scratchGrading(async (db, occurrence_id) => {
     await seedHumanGrade(db, occurrence_id);
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+    await enqueueJob(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: "model", config_digest: "config-1",
+      attempt_label: "purged" }, runner_name: "stub_model" }, gradingLimits());
     const issue_id = canonicalDigest(["purge issue"]);
     if (!issue_id.ok) throw new Error(issue_id.error.detail);
     await withTenant(db, tenant, async (trx) => {
@@ -54,7 +61,7 @@ integration("purge removes six layers and commits their audit counts", async () 
       item_relations_removed: 1, extraction_issues_removed: 1, evaluation_executions_removed: 1,
       grade_observations_removed: 1, trigger_event_id: "delete-event", operator_override: false });
     expect(await Promise.all(["source_revision", "item_occurrence", "item_relation", "extraction_issue",
-      "evaluation_execution", "grade_observation"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0]);
+      "evaluation_execution", "grade_observation", "grading_job"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(await count(db, "purge_event")).toBe(1);
   });
 });

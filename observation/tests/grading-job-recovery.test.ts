@@ -9,7 +9,7 @@ import type { GradeRunner } from "../src/ports/grade-runner";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-const limits = { ...gradingLimits(), lease_ms: 100, retry_limit: 3, run_spend: 10, stage_spend: 10 };
+const limits = { ...gradingLimits(), lease_ms: 1_000, retry_limit: 3, run_spend: 10, stage_spend: 10 };
 const good: GradeRunner = { kind: "model", async run() { return { ok: true, value: {
   answer: { state: "answered", kind: "boolean", value: true }, external_execution_id: "request-old", cost: 0.2 } }; } };
 const other: GradeRunner = { kind: "model", async run() { return { ok: true, value: {
@@ -127,18 +127,22 @@ integration("replay of a terminal execution terminalizes its claimed job without
 }));
 
 integration("retry limit makes an expired claim terminal with a typed cause", async () => scratchGrading(async (db, occurrence_id) => {
-  const { job } = await setup(db, occurrence_id, "retry bound");
+  const { identity, job } = await setup(db, occurrence_id, "retry bound");
   const bounded = { ...limits, retry_limit: 2 };
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
     .set({ retry_limit: 2 }).where("job_id", "=", job.job_id).execute());
   for (let attempt = 0; attempt < 2; attempt++) {
     expect((await claimJob(db, tenant, `owner-${attempt}`, bounded))?.state).toBe("claimed");
+    if (attempt === 0) expect((await startDelegatedExecution(db, tenant, identity)).ok).toBe(true);
     await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
       .set({ lease_expires_at: new Date(Date.now() - 1) }).where("job_id", "=", job.job_id).execute());
   }
   const exhausted = await claimJob(db, tenant, "last-owner", bounded);
   expect(exhausted?.state).toBe("terminal");
   expect(exhausted?.terminal_cause).toBe("retry_exhausted");
+  const stored = await outcome(db, job.job_id);
+  expect(stored.executions[0]?.status).toBe("failed");
+  expect(stored.executions[0]?.ended_at).not.toBeNull();
 }));
 
 integration("duplicate delivery retains one job while an evaluator regrade adds another", async () => scratchGrading(async (db, occurrence_id) => {
@@ -165,7 +169,7 @@ integration("restricted evidence terminates before runner invocation", async () 
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: restricted.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version,
     evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "restricted" };
-  const job = await enqueueJob(db, tenant, { identity, runner_name: "stub_model" }, limits);
+  const job = await enqueueJob(db, tenant, { identity, runner_name: "jev_direct", estimated_cost: 0.1 }, limits);
   let calls = 0;
   const forbidden: GradeRunner = { kind: "model", async run() { calls++; return good.run({} as never); } };
   await workOneJob(db, tenant, limits, "restricted-worker", forbidden);
@@ -175,4 +179,33 @@ integration("restricted evidence terminates before runner invocation", async () 
   expect(stored.job.terminal_cause).toBe("disclosure_refused");
   expect(stored.job.disclosure).toBeNull();
   expect(JSON.stringify(stored)).not.toContain("secret");
+}));
+
+integration("queued local runner can grade internal evidence without outbound disclosure", async () => scratchGrading(async (db, occurrence_id) => {
+  const internal = { ...evidence, evidence_set_id: "internal-evidence" as typeof evidence.evidence_set_id,
+    references: [{ ref: "local", kind: "internal" as const, content: "kept-local", digest: "digest" }] };
+  expect((await registerGradingContext(db, tenant, { question, evidence: internal,
+    evaluator: evaluator("model") })).ok).toBe(true);
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: internal.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "local-internal" };
+  const job = await enqueueJob(db, tenant, { identity, runner_name: "stub_model" }, limits);
+  await workOneJob(db, tenant, limits, "local-worker", good);
+  const stored = await outcome(db, job.job_id);
+  expect(stored.job.state).toBe("terminal");
+  expect(stored.job.disclosure).toBeNull();
+  expect(stored.grades).toHaveLength(1);
+}));
+
+integration("reviewed commit changes the queued and execution identities together", async () => scratchGrading(async (db, occurrence_id) => {
+  const { identity, job } = await setup(db, occurrence_id, "commit-aware");
+  const revised = await enqueueJob(db, tenant, { identity, runner_name: "stub_model",
+    reviewed_commit: "commit-2" }, limits);
+  expect(revised.job_id).not.toBe(job.job_id);
+  expect(revised.idempotency_digest).not.toBe(job.idempotency_digest);
+  await workOneJob(db, tenant, limits, "first", good);
+  await workOneJob(db, tenant, limits, "second", good);
+  const stored = await outcome(db, job.job_id);
+  expect(stored.grades).toHaveLength(2);
+  expect(stored.executions).toHaveLength(2);
 }));

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "../canonical/canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
-import { evaluationDigest, type EvaluationIdentity } from "../grading/execution";
+import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
@@ -145,12 +145,6 @@ export interface RunGradeInput {
   readonly reviewed_commit?: string;
 }
 export interface RunGradeResult { readonly execution: Selectable<ObservationEvaluationExecution>; readonly observation: Selectable<ObservationGradeObservation> | null; readonly was_replay: boolean }
-
-function runGradeDigest(identity: EvaluationIdentity, reviewed_commit: string | undefined) {
-  const base = evaluationDigest(identity);
-  return !base.ok || reviewed_commit === undefined ? base
-    : canonicalDigest(["evaluation-reviewed-commit/v1", base.value, reviewed_commit]);
-}
 
 /** Ingest and persist use separate short transactions; the runner is awaited between them. */
 export async function runGrade(db: Database, tenant: TenantScope, input: RunGradeInput & {

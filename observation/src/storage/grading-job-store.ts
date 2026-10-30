@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { evaluationDigest, type EvaluationIdentity } from "../grading/execution";
+import { runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import { budgetExceeded, type GradingLimits } from "../grading/jobs/budget";
 import { withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
@@ -12,7 +12,7 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
   if (["jev_direct", "fastino_glide", "llm_judge"].includes(input.runner_name)
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
-  const digest = evaluationDigest(input.identity);
+  const digest = runGradeDigest(input.identity, input.reviewed_commit);
   if (!digest.ok) throw new Error(digest.error.detail);
   return withTenant(db, tenant, async (trx) => {
     const item = await trx.selectFrom("observation.item_occurrence as i")
@@ -44,10 +44,16 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
         eb.and([eb("state", "=", "claimed"), eb("lease_expires_at", "<", new Date())])]))
       .orderBy("created_at").limit(1).forUpdate().skipLocked().executeTakeFirst();
     if (!job) return null;
-    if (job.attempts >= job.retry_limit) return trx.updateTable("observation.grading_job")
-      .set({ state: "terminal", terminal_cause: "retry_exhausted", lease_owner: null, lease_expires_at: null,
-        updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+    if (job.attempts >= job.retry_limit) {
+      await trx.updateTable("observation.evaluation_execution")
+        .set({ status: "failed", ended_at: new Date(), error: "retry_exhausted" })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
+      return trx.updateTable("observation.grading_job")
+        .set({ state: "terminal", terminal_cause: "retry_exhausted", lease_owner: null, lease_expires_at: null,
+          updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+    }
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenant.producer}:${tenant.namespace}:${job.run_id}:grading`}, 0))`.execute(trx);
     const active = await trx.selectFrom("observation.grading_job").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
@@ -78,7 +84,11 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
       stage_reserved: stage_active.reduce((sum, row) => sum + row.estimated_cost, 0) },
     job.estimated_cost, limits);
     if (exceeded) {
-      const skipped = await trx.updateTable("observation.grading_job").set({ state: "skipped_budget",
+      if (job.attempts > 0) await trx.updateTable("observation.evaluation_execution")
+        .set({ status: "failed", ended_at: new Date(), error: "budget_exceeded" })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
+      const skipped = await trx.updateTable("observation.grading_job").set({ state: job.attempts > 0 ? "terminal" : "skipped_budget",
         terminal_cause: "budget_exceeded", lease_owner: null, lease_expires_at: null, updated_at: new Date() })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();

@@ -102,7 +102,8 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
     }
     try {
       const job = await enqueueJob(deps.db, credential, { identity, runner_name: parsed.data.runner,
-        reviewed_commit: parsed.data.reviewed_commit, estimated_cost: parsed.data.estimated_cost }, gradingLimits());
+        reviewed_commit: parsed.data.reviewed_commit, estimated_cost: parsed.data.estimated_cost },
+      deps.gradingLimits ?? gradingLimits());
       return c.json({ job_id: job.job_id, state: job.state }, 201);
     } catch (cause) { return errorResponse(c, 422, "job_refused", String(cause)); }
   });

@@ -15,9 +15,10 @@ export async function startObservation(env: NodeJS.ProcessEnv = process.env): Pr
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
   try {
     await migrateEmptyDatabase(db);
-    const app = createApp({ db, credentials, langfuse: langfuse.value });
+    const limits = gradingLimits(env);
+    const app = createApp({ db, credentials, langfuse: langfuse.value, gradingLimits: limits });
     const server = Bun.serve({ fetch: app.fetch, hostname: env.OBSERVATION_HOST ?? "127.0.0.1", port: Number(env.OBSERVATION_PORT ?? 8791) });
-    const worker = startGradingWorker(db, credentials.grade ?? [], gradingLimits(env), env);
+    const worker = startGradingWorker(db, credentials.grade ?? [], limits, env);
     return { port: server.port ?? Number(env.OBSERVATION_PORT ?? 8791),
       stopWorker: () => worker.stop(),
       stop: async () => { server.stop(); await worker.stop(); await db.destroy(); } };

@@ -53,13 +53,15 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     execution_id = started.value.execution_id;
   }
   const guarded: GradeRunner = { kind: base.kind, async run(context) {
-    const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
-    if (!disclosure.ok) return err(disclosure.error);
-    await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
-      .set({ disclosure: sql`${JSON.stringify(disclosure.value)}::jsonb` })
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("job_id", "=", job.job_id).where("state", "=", "claimed")
-      .where("lease_owner", "=", owner).execute());
+    if (["jev_direct", "fastino_glide", "llm_judge"].includes(job.runner_name)) {
+      const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
+      if (!disclosure.ok) return err(disclosure.error);
+      await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
+        .set({ disclosure: sql`${JSON.stringify(disclosure.value)}::jsonb` })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("job_id", "=", job.job_id).where("state", "=", "claimed")
+        .where("lease_owner", "=", owner).execute());
+    }
     let response: RunnerResult;
     try { response = await base.run(context); }
     catch { response = err({ operation: "grade_runner", entity_id: context.evaluator.evaluator_definition_id,
@@ -69,7 +71,8 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
         status: response.ok ? "completed" : "failed",
         request_id: response.ok ? response.value.external_execution_id ?? null
           : response.error.external_execution_id ?? null,
-        cost: response.ok ? response.value.cost ?? 0 : response.error.cost ?? 0 };
+        cost: response.ok ? response.value.cost ?? job.estimated_cost
+          : response.error.cost ?? job.estimated_cost };
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
         .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([attempt])}::jsonb` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)

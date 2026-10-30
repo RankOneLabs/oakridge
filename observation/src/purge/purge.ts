@@ -55,6 +55,8 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
         return failure(request, "frozen_export", `run appears in frozen manifest(s): ${frozen_manifest_ids.join(", ")}`);
       await sql`SELECT set_config('observation.purge_run', ${run_id}, true)`.execute(trx);
       await sql`SELECT set_config('observation.purge_override', ${operator_override ? "true" : "false"}, true)`.execute(trx);
+      await sql`DELETE FROM observation.grading_job
+        WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       const grades = await sql`DELETE FROM observation.grade_observation g
         USING observation.item_occurrence i
         WHERE g.producer = ${tenant.producer} AND g.namespace = ${tenant.namespace}
