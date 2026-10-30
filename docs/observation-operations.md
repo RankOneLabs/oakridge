@@ -256,3 +256,11 @@ before persist, and during restart. The same file verifies that an expired
 response cannot replace the winner's grade. `grading-no-transaction.test.ts`
 traces transaction callbacks around both the manual and queued runner call.
 These are local deterministic drills, not a live provider rollout.
+
+### Direct Jev walkthrough status (2026-10-30)
+
+The captured Oakridge planning and brief fixture is in `observation/fixtures/oakridge/run-slice/`. The local pilot request test uses its unchanged pinned evidence recipe shape and confirms that evaluator-pinned instructions reach an injected System One transport. The answer-state database test records distinct `unclear` and `abstain` observations. The full observation suite exercises the captured fixture.
+
+No live TypeSafe request was sent in this workspace: `TYPESAFE_API_KEY` is not configured. The current [TypeSafe OpenAPI contract](https://api.typesafe.ai/openapi.json) documents Choice, Noul and Score responses with `model`, `answers` and `usage`. It does not document `cost` or `id` on the response. The runner preserves those fields when returned; a live run must verify whether this account receives them. Until then, a stored grade cannot be claimed to have provider-reported cost or request id. Fastino GLiDE and the LLM judge remain configuration-gated.
+
+Worker construction reads `TYPESAFE_API_KEY` and optional `TYPESAFE_BASE_URL` for Jev, or `FASTINO_API_KEY` and optional `FASTINO_BASE_URL` for GLiDE. Keys stay in the worker process. Set `OBSERVATION_EXTERNAL_PROCESSING_POLICY` to the selected provider processing agreement or policy identifier. Every provider attempt stores that value separately from local retention; if unset, the field is omitted.

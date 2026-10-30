@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
-import type { GradingContext, GradingError, RunnerResult } from "../grading/runner";
+import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 import { gradingLimits } from "../grading/jobs/budget";
 
@@ -42,13 +42,16 @@ export interface SystemOneRunnerConfig {
 }
 
 function failure(context: GradingContext, operation: string, detail: string,
-  external_execution_id?: string | null): RunnerResult {
+  category: ProviderFailureCategory, external_execution_id?: string | null): RunnerResult {
   return err({ operation, entity_id: context.evaluator.evaluator_definition_id, detail,
-    external_execution_id } satisfies GradingError);
+    category, external_execution_id } satisfies GradingError);
 }
 
 export function systemOneRequest(context: GradingContext): ReturnType<typeof systemOneRequestSchema.safeParse> {
-  const recipe = systemOneRecipeSchema.safeParse(context.question.input_recipe);
+  let instruction: unknown;
+  try { instruction = JSON.parse(context.evaluator.instruction_text); }
+  catch { return systemOneRequestSchema.safeParse(null); }
+  const recipe = systemOneRecipeSchema.safeParse(instruction);
   if (!recipe.success || !context.evaluator.model) return systemOneRequestSchema.safeParse(null);
   const state: Record<string, JsonValue> = { ...recipe.data.state_fields };
   for (const reference of context.evidence.references) {
@@ -59,46 +62,56 @@ export function systemOneRequest(context: GradingContext): ReturnType<typeof sys
     questions: { [context.question.question_id]: recipe.data.system_one } });
 }
 
+/** The question's own unclear semantics names its designated option. */
+export function unclearChoice(context: GradingContext): string | null {
+  const allowed = context.question.allowed_values?.filter((value): value is string => typeof value === "string") ?? [];
+  const tokens = new Set(context.question.unclear_semantics.split(/[^\p{L}\p{N}_]+/u));
+  const matches = allowed.filter((value) => tokens.has(value));
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunner {
   return { kind: "model", async run(context) {
-    if (!config.api_key) return failure(context, config.operation, "provider credential is not configured");
+    if (!config.api_key) return failure(context, config.operation, "provider credential is not configured", "unconfigured_credential");
     const request = systemOneRequest(context);
-    if (!request.success) return failure(context, config.operation, "question recipe, evidence or model is invalid");
+    if (!request.success) return failure(context, config.operation, "evaluator instruction, evidence or model is invalid", "invalid_request");
     const question = request.data.questions[context.question.question_id];
     if (!question || (question.type === "choice" && context.question.response_kind !== "choice")
       || (question.type === "score" && context.question.response_kind !== "structured")
       || (question.type === "noul" && context.question.response_kind !== "numeric"))
-      return failure(context, config.operation, "question response kind does not match System One type");
+      return failure(context, config.operation, "question response kind does not match System One type", "invalid_request");
     let response: Response;
     const started = Date.now();
+    const deadline = AbortSignal.timeout(config.deadline_ms);
     try {
       response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/systemone`, {
         method: "POST", headers: { "Content-Type": "application/json",
           ...(config.auth_header === "x-api-key" ? { "X-API-Key": config.api_key } : { Authorization: `Bearer ${config.api_key}` }) },
-        body: JSON.stringify(request.data), signal: AbortSignal.timeout(config.deadline_ms),
+        body: JSON.stringify(request.data), signal: deadline,
       });
-    } catch { return failure(context, config.operation, "provider transport failed"); }
+    } catch { return deadline.aborted
+      ? failure(context, config.operation, "provider timeout", "timeout")
+      : failure(context, config.operation, "provider transport failed", "transport"); }
     if (!response.ok) return failure(context, config.operation, `provider HTTP ${response.status}`,
-      response.headers.get("x-request-id"));
+      response.status === 429 ? "rate_limit" : "http_error", response.headers.get("x-request-id"));
     let raw: unknown;
     try { raw = await response.json(); }
-    catch { return failure(context, config.operation, "provider response is not JSON"); }
+    catch { return failure(context, config.operation, "provider response is not JSON", "invalid_response"); }
     const parsed = systemOneResponseSchema.safeParse(raw);
-    if (!parsed.success) return failure(context, config.operation, "provider response does not match System One schema");
+    if (!parsed.success) return failure(context, config.operation, "provider response does not match System One schema", "invalid_response");
     const answer = parsed.data.answers[context.question.question_id];
-    if (!answer || answer.type !== question.type) return failure(context, config.operation, "provider answer does not match question");
+    if (!answer || answer.type !== question.type) return failure(context, config.operation, "provider answer does not match question", "invalid_response");
     if (answer.type === "choice" && question.type === "choice") {
+      if (!context.question.allowed_values?.includes(answer.choice))
+        return failure(context, config.operation, "provider choice is outside question vocabulary", "invalid_choice");
       const options = Object.keys(question.criteria);
       if (!options.includes(answer.choice) || options.some((option) => !(option in answer.probabilities)))
-        return failure(context, config.operation, "provider choice distribution omits an option");
+        return failure(context, config.operation, "provider choice distribution omits an option", "invalid_response");
     }
-    const is_abstain = answer.type === "choice" && answer.choice === "insufficient_evidence"
-      && context.question.allowed_values?.includes("insufficient_evidence");
-    const is_unclear = answer.type === "choice" && answer.choice === "unclear"
-      && context.question.allowed_values?.includes("unclear");
+    const is_unclear = answer.type === "choice" && answer.choice === unclearChoice(context);
     const mapped = answer.type === "choice"
-      ? { answer: is_abstain || is_unclear
-        ? { state: is_abstain ? "abstain" : "unclear", kind: "choice", reason: answer.choice } as const
+      ? { answer: is_unclear
+        ? { state: "unclear", kind: "choice", reason: answer.choice } as const
         : { state: "answered", kind: "choice", value: answer.choice } as const,
         probabilities: answer.probabilities, confidence: answer.confidence }
       : answer.type === "score"
@@ -118,8 +131,13 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
   } };
 }
 
-export function createJevDirectRunner(api_key: string | undefined, transport?: SystemOneTransport): GradeRunner {
-  return createSystemOneRunner({ operation: "jev_direct", base_url: "https://api.typesafe.ai/v1", api_key,
-    deadline_ms: gradingLimits().provider_deadline_ms, transport });
+export interface JevDirectConfig {
+  readonly api_key: string | undefined;
+  readonly base_url: string;
+  readonly transport?: SystemOneTransport;
+  readonly deadline_ms?: number;
 }
-export const jevDirectRunner = createJevDirectRunner(process.env.TYPESAFE_API_KEY);
+export function createJevDirectRunner(config: JevDirectConfig): GradeRunner {
+  return createSystemOneRunner({ operation: "jev_direct", ...config,
+    deadline_ms: config.deadline_ms ?? gradingLimits().provider_deadline_ms });
+}
