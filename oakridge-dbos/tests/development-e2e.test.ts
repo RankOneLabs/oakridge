@@ -14,6 +14,11 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { scratchDatabase } from "./authority-fixture";
 import { addLocalOrigin, advanceOrigin } from "./local-origin";
 import { eventually, startStubKbbl, type AgentScript, type StubKbbl, type StubTurn } from "./stub-kbbl";
+import { sql } from "kysely";
+import { openDatabase as openObservationDatabase } from "../../observation/src/storage/database";
+import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
+import { INITIAL_SOURCE_CURSOR, type SourceEventCursor } from "../src/adapters/observation-wire";
+import { replayIntoObservation, type ReplayReport } from "../scripts/observation-replay";
 
 /**
  * The development workflow end to end (part 2 §1 D1, rescue spec R5): the
@@ -831,3 +836,30 @@ test("development artifact schemas and PWA viewer component IDs align", () => {
     registered: Object.entries(VIEWER_COMPONENTS),
   });
 });
+
+/** Replays this file's development runs into a fresh observation database, resuming after `start`. */
+async function replayDevelopmentStream(start: SourceEventCursor): Promise<ReplayReport> {
+  const target = await scratchDatabase();
+  const observation = openObservationDatabase(target.url);
+  try {
+    await migrateObservation(observation);
+    return await replayIntoObservation({ authority: db, observation, namespace: "development-e2e", start });
+  } finally { await observation.destroy(); await target.drop(); }
+}
+
+// Runs last, over every run above. Observation's tests use hand-written events,
+// so real artifact shapes (a markdown spec body) and a service started partway
+// through a run (a decision on a revision it never captured) are checked here.
+test("every committed development event reaches observation, from the start and from partway through", async () => {
+  const from_start = await replayDevelopmentStream(INITIAL_SOURCE_CURSOR);
+  const decision = await db.selectFrom("authority.event").select(["id", "commit_txid"])
+    .where(sql<string>`payload->>'kind'`, "=", "operator_decided").orderBy("commit_txid").orderBy("id").executeTakeFirstOrThrow();
+  // Resume just before the first decision: the revision it targets was published before observation began.
+  const before = await db.selectFrom("authority.event").select(["id", "commit_txid"])
+    .where(sql<boolean>`(commit_txid, id) < (${decision.commit_txid}::bigint, ${decision.id})`)
+    .orderBy("commit_txid", "desc").orderBy("id", "desc").executeTakeFirstOrThrow();
+  const partway = await replayDevelopmentStream({ commit_txid: String(before.commit_txid), id: before.id });
+  expect({ from_start: from_start.kind === "stopped" ? from_start.refused : from_start.kind,
+    partway: partway.kind === "stopped" ? partway.refused : partway.kind })
+    .toEqual({ from_start: "reached_head", partway: "reached_head" });
+}, 300_000);

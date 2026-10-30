@@ -466,9 +466,11 @@ export interface CommittedEventQuery { readonly after: CommittedEventCursor; rea
 /** Both authority event feeds use this one guarded, ordered tuple scan. */
 export async function readCommittedEventsAfter(db: Reader, table: "authority.event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event>[]>;
 export async function readCommittedEventsAfter(db: Reader, table: "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<OperatorEventPayload>[]>;
+// ORDER BY names the table's columns: the bare name would sort by the text output alias,
+// putting "1000005" before "100001" and skipping every event below a digit boundary.
 export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event | OperatorEventPayload>[]> {
   const rows = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: Event | OperatorEventPayload; created_at: Date;
-    commit_txid: string; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid, coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription FROM ${sql.table(table)} WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id}) AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY commit_txid, id LIMIT ${input.limit}`.execute(db);
+    commit_txid: string; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid, coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription FROM ${sql.table(table)} WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id}) AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY ${sql.table(table)}.commit_txid, ${sql.table(table)}.id LIMIT ${input.limit}`.execute(db);
   return rows.rows;
 }
 
