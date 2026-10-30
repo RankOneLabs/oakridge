@@ -16,6 +16,23 @@ import { claimJob, type GradingJob } from "../../storage/grading-job-store";
 import { withTenant, type Database, type TenantScope } from "../../storage/database";
 import { gradingLimits, type GradingLimits } from "./budget";
 
+/** One provider call's audit record, stored in `evaluation_execution.provider_attempts`. */
+export interface ProviderAttempt {
+  readonly job_id: string;
+  readonly attempt: number;
+  readonly status: "dispatched" | "completed" | "failed";
+  readonly request_id: string | null;
+  /** What the run was charged: the provider's reported cost, or the admitted estimate. */
+  readonly cost: number;
+  /** The estimate admission reserved, kept so an attempt explains its own charge. */
+  readonly estimated_cost: number;
+  /** Present only when the provider priced the call above its admitted estimate. The cap was
+   * already checked against the estimate, so this is the amount by which this one call
+   * overshot it; recorded spend carries the real cost, so later admissions self-correct. */
+  readonly cost_overage?: number;
+  readonly external_processing_policy?: string;
+}
+
 const localRunners: Readonly<Record<string, GradeRunner>> = { deterministic: deterministicChecker,
   coverage: coverageChecker, stub_model: stubModelRunner };
 function runnerFor(name: string, limits: GradingLimits, env: NodeJS.ProcessEnv): GradeRunner | undefined {
@@ -69,10 +86,11 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     // Budget admission counts a dispatched attempt at that estimate; settling it below replaces
     // the row with the real cost. Without this an interrupted call is invisible to both the spend
     // and the reservation once its lease expires, and the next call is admitted against zero.
+    const dispatched: ProviderAttempt = { job_id: job.job_id, attempt: job.attempts,
+      status: "dispatched", ...policy, request_id: null, cost: job.estimated_cost,
+      estimated_cost: job.estimated_cost };
     if (execution_id) await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
-      .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([{ job_id: job.job_id,
-        attempt: job.attempts, status: "dispatched", ...policy, request_id: null,
-        cost: job.estimated_cost }])}::jsonb` })
+      .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([dispatched])}::jsonb` })
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("execution_id", "=", execution_id).execute());
     let response: RunnerResult;
@@ -80,12 +98,17 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     catch { response = err({ operation: "grade_runner", entity_id: context.evaluator.evaluator_definition_id,
       detail: "runner failed" }); }
     if (execution_id) {
-      const attempt = { job_id: job.job_id, attempt: job.attempts,
+      // Only a provider-reported cost can overshoot, and only against a positive estimate:
+      // when no cost is reported the charge *is* the estimate, and a local runner enqueued
+      // without an estimate reserved nothing to overshoot. Network grading always carries one.
+      const reported_cost = response.ok ? response.value.cost ?? null : response.error.cost ?? null;
+      const overage = job.estimated_cost > 0 && reported_cost !== null && reported_cost > job.estimated_cost
+        ? { cost_overage: reported_cost - job.estimated_cost } : {};
+      const attempt: ProviderAttempt = { job_id: job.job_id, attempt: job.attempts,
         status: response.ok ? "completed" : "failed", ...policy,
         request_id: response.ok ? response.value.external_execution_id ?? null
           : response.error.external_execution_id ?? null,
-        cost: response.ok ? response.value.cost ?? job.estimated_cost
-          : response.error.cost ?? job.estimated_cost };
+        cost: reported_cost ?? job.estimated_cost, estimated_cost: job.estimated_cost, ...overage };
       // Settle in place: the dispatched row for this job and attempt becomes the real outcome,
       // so one call is charged once whether or not it reached the provider.
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")

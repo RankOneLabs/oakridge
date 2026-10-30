@@ -260,6 +260,14 @@ reservation already accounts for it, and once the lease lapses the attempt recor
 is the only thing standing between an interrupted paid call and a second admission
 against zero recorded spend. A worker that dies before the dispatch record is
 written never reached the provider, so nothing was paid.
+Each attempt also records the `estimated_cost` admission reserved, so it explains
+its own charge. When a provider reports a cost above that estimate, the attempt
+carries `cost_overage` with the difference: the cap was checked against the
+estimate, so that is the amount by which the single call overshot it. Recorded
+spend carries the real cost, so later admissions self-correct; the overage is not
+retractable and is recorded rather than prevented. No overage is recorded when the
+provider reports no cost, because then the charge is the estimate, nor for a local
+runner enqueued without an estimate, which reserved nothing to overshoot.
 When a provider does not report cost, the admitted estimate is charged to its
 attempt. If a retry is refused by a cap, the job becomes terminal and its
 earlier running execution is closed as failed; the retry does not call the

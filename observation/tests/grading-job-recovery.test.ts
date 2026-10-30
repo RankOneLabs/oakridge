@@ -91,8 +91,8 @@ integration("expired provider response is discarded after a second worker wins r
   expect(stored.grades).toHaveLength(1);
   expect(stored.grades[0]?.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
   expect(stored.executions[0]?.provider_attempts).toEqual([
-    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-new", cost: 0.3 },
-    { job_id: job.job_id, attempt: 1, status: "completed", request_id: "request-old", cost: 0.2 },
+    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-new", cost: 0.3, estimated_cost: 0 },
+    { job_id: job.job_id, attempt: 1, status: "completed", request_id: "request-old", cost: 0.2, estimated_cost: 0 },
   ]);
 }));
 
@@ -108,8 +108,8 @@ integration("failed provider request id and cost remain on the canonical executi
   expect(stored.executions).toHaveLength(1);
   expect(stored.grades).toHaveLength(1);
   expect(stored.executions[0]?.provider_attempts).toEqual([
-    { job_id: job.job_id, attempt: 1, status: "failed", request_id: "request-failed", cost: 0.04 },
-    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-old", cost: 0.2 },
+    { job_id: job.job_id, attempt: 1, status: "failed", request_id: "request-failed", cost: 0.04, estimated_cost: 0 },
+    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-old", cost: 0.2, estimated_cost: 0 },
   ]);
 }));
 

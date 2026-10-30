@@ -156,3 +156,45 @@ integration("a provider call is charged before it is dispatched, so an interrupt
       runner_name: "stub_model", estimated_cost: 0.3 }, limits);
     expect((await claimJob(db, tenant, "next-worker", limits))?.state).toBe("skipped_budget");
   }));
+
+integration("a provider price above the admitted estimate is recorded as an overage",
+  async () => scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+    const limits = { ...gradingLimits(), run_spend: 5, stage_spend: 5, run_concurrency: 4, stage_concurrency: 4 };
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "overage-1" };
+    const priced = (cost: number | undefined): GradeRunner => ({ kind: "model", async run() {
+      return { ok: true, value: { answer: { state: "answered", kind: "boolean", value: true },
+        ...(cost === undefined ? {} : { cost }), external_execution_id: "request-1" } };
+    } });
+    const attemptsFor = async (label: string): Promise<readonly Record<string, unknown>[]> => {
+      const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+        .selectAll().where("attempt_label", "=", label).execute());
+      return (rows[0]?.provider_attempts ?? []) as readonly Record<string, unknown>[];
+    };
+
+    // Priced above the estimate: charged the real cost, and the overshoot is on record.
+    await enqueueJob(db, tenant, { identity, runner_name: "stub_model", estimated_cost: 0.1 }, limits);
+    await workOneJob(db, tenant, limits, "over", priced(0.3));
+    const over = (await attemptsFor("overage-1"))[0];
+    expect(over?.cost).toBe(0.3);
+    expect(over?.estimated_cost).toBe(0.1);
+    expect(over?.cost_overage).toBeCloseTo(0.2, 10);
+
+    // Priced at or under the estimate: charged the real cost, no overage recorded.
+    await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "overage-2" },
+      runner_name: "stub_model", estimated_cost: 0.3 }, limits);
+    await workOneJob(db, tenant, limits, "under", priced(0.1));
+    const under = (await attemptsFor("overage-2"))[0];
+    expect(under?.cost).toBe(0.1);
+    expect(Object.hasOwn(under ?? {}, "cost_overage")).toBe(false);
+
+    // No reported cost: the charge is the estimate, so there is nothing to overshoot.
+    await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "overage-3" },
+      runner_name: "stub_model", estimated_cost: 0.2 }, limits);
+    await workOneJob(db, tenant, limits, "silent", priced(undefined));
+    const silent = (await attemptsFor("overage-3"))[0];
+    expect(silent?.cost).toBe(0.2);
+    expect(Object.hasOwn(silent ?? {}, "cost_overage")).toBe(false);
+  }));
