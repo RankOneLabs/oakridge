@@ -14,6 +14,7 @@ const langfuseSyncMigration = new URL("./migrations/0008_langfuse_sync.sql", imp
 const gradeLabelOriginMigration = new URL("./migrations/0009_grade_label_origin.sql", import.meta.url);
 const questionTextMigration = new URL("./migrations/0010_question_text_and_evaluator_instructions.sql", import.meta.url);
 const eligibilityMigration = new URL("./migrations/0011_evaluation_eligibility.sql", import.meta.url);
+const gradingJobMigration = new URL("./migrations/0012_grading_job.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -31,6 +32,7 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const gradeLabelOriginSql = await Bun.file(gradeLabelOriginMigration).text();
   const questionTextSql = await Bun.file(questionTextMigration).text();
   const eligibilitySql = await Bun.file(eligibilityMigration).text();
+  const gradingJobSql = await Bun.file(gradingJobMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -75,6 +77,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
     if (!questionText.rows[0]?.has_column) await sql.raw(questionTextSql).execute(trx);
     const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(trx);
     if (!eligibility.rows[0]?.name) await sql.raw(eligibilitySql).execute(trx);
+    const job = await sql<{ name: string | null }>`SELECT to_regclass('observation.grading_job')::text AS name`.execute(trx);
+    if (!job.rows[0]?.name) await sql.raw(gradingJobSql).execute(trx);
   });
 }
 

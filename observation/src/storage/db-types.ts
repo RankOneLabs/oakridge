@@ -178,6 +178,7 @@ export interface ObservationEvaluationExecution {
   external_execution_id: string | null;
   provider_link: string | null;
   reproducibility_metadata: JsonValue | null;
+  provider_attempts: Generated<JsonValue>;
 }
 
 export interface ObservationGradeObservation {
@@ -368,6 +369,35 @@ export interface ObservationEvaluationEligibility {
   tag: string;
   payload: JsonValue;
   recorded_at: Generated<Date>;
+  eligibility_id: Generated<string>;
+}
+
+export interface ObservationGradingJob {
+  producer: string;
+  namespace: string;
+  job_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  evaluator_definition_id: string;
+  config_digest: string;
+  attempt_label: string;
+  idempotency_digest: string;
+  reviewed_commit: string | null;
+  runner_name: string;
+  run_id: string;
+  stage_id: string;
+  state: string;
+  lease_owner: string | null;
+  lease_expires_at: Date | null;
+  attempts: Generated<number>;
+  retry_limit: number;
+  terminal_cause: string | null;
+  estimated_cost: Generated<number>;
+  disclosure: JsonValue | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 export interface DB {
@@ -397,4 +427,5 @@ export interface DB {
   "observation.langfuse_sync_transition": ObservationLangfuseSyncTransition;
   "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
   "observation.evaluation_eligibility": ObservationEvaluationEligibility;
+  "observation.grading_job": ObservationGradingJob;
 }

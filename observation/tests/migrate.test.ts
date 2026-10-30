@@ -32,6 +32,16 @@ integration("0010 and 0011 upgrade 0009 without changing pinned v1 question fiel
     await migrateEmptyDatabase(db);
     const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
     expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
+    const jobs = await sql<{ name: string | null; lease_owner: string | null; lease_expires_at: string | null; has_state_check: boolean }>`
+      SELECT to_regclass('observation.grading_job')::text AS name,
+        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grading_job' AND column_name = 'lease_owner') AS lease_owner,
+        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grading_job' AND column_name = 'lease_expires_at') AS lease_expires_at,
+        EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'observation.grading_job'::regclass
+          AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%queued%claimed%reclaimable%terminal%skipped_budget%') AS has_state_check`.execute(db);
+    expect(jobs.rows[0]).toEqual({ name: "observation.grading_job", lease_owner: "lease_owner",
+      lease_expires_at: "lease_expires_at", has_state_check: true });
     const after = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
       SELECT to_jsonb(q) - 'question_text' - 'evidence_recipe_provenance' AS row
       FROM observation.question_definition q ORDER BY question_id`.execute(trx));
