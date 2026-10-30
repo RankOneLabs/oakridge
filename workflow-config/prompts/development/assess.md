@@ -43,7 +43,12 @@ When the previous assessment is `none`, this is the first assessment of this coh
    - `pass` — all cohort acceptance criteria are met and there are no blocking known issues.
    - `pass_with_notes` — cohort criteria are met but there are warnings or minor gaps.
    - `fail` — one or more cohort acceptance criteria are not met, or a blocking known issue exists.
-5. Publish the artifact and stop.
+5. Publish the artifact.
+6. Set the pull request's draft state from your verdict, then stop. Call `mcp__gated-review__set_pr_draft` with the `repository` (`owner/name`) and `pullRequestNumber` from the pull request URL above:
+   - `pass` or `pass_with_notes`: `draft: false`, marking it ready for review.
+   - `fail`: `draft: true`, so a pull request an earlier assessment marked ready goes back to draft.
+
+   The call succeeds without change when the pull request is already in that state. It does not merge anything: merging stays with the operator.
 
 Set the required `assessment.head_sha` to the reviewed `build_result.head_sha` supplied as `{{subject}}`. On each cohort finding, set `criterion_id` to the id of the brief acceptance criterion assessed. Keep that id even if the criterion text is paraphrased. A finding without a criterion link is unlinked; never infer a link from prose.
 
