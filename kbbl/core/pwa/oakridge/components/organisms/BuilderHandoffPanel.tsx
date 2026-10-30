@@ -52,7 +52,7 @@ export function BuilderHandoffPanel({ assessment, body, gate, edit }: Props) {
                   Include
                 </label>
                 <div className="min-w-0 flex-1">
-                  <EditableBriefText anchor={`/recommended_next_actions/${item.index}`} value={item.text} edit={edit} />
+                  <EditableBriefText anchor={`/recommended_next_actions/${item.index}`} value={item.text} edit={edit} isMultiline />
                 </div>
                 <Button variant="danger" size="xsmall" disabled={edit.isPending} onClick={() => void submit(withItemRemoved(body, item.index))}
                   aria-label={`Remove action ${item.index + 1}`}>Remove</Button>

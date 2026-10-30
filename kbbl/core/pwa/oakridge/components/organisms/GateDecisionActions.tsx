@@ -50,7 +50,8 @@ export function GateDecisionActions(props: GateDecisionActionsProps) {
 function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
   const mutation = useResumeGate(gate.id, gate.run_id);
   const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
-  // An approval starts the next worker and cannot be taken back, so it asks twice.
+  // An approval starts the next worker and cannot be taken back, so the first
+  // click turns the Approve button into Confirm and only the second submits.
   const [isConfirmingApproval, setIsConfirmingApproval] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [completedAction, setCompletedAction] = useState<string | null>(null);
@@ -107,13 +108,15 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
   };
 
   const choose = (action: string, needsFeedback: boolean) => {
-    if (needsFeedback) {
-      setIsConfirmingApproval(false);
-      setFeedbackAction(action);
-    } else if (action === "approve") {
+    if (action === "approve") {
       setFeedbackAction(null);
-      setIsConfirmingApproval(true);
-    } else if (action === "confirm_merged") void checkAndConfirmMerge();
+      if (isConfirmingApproval) submit("approve");
+      else setIsConfirmingApproval(true);
+      return;
+    }
+    setIsConfirmingApproval(false);
+    if (needsFeedback) setFeedbackAction(action);
+    else if (action === "confirm_merged") void checkAndConfirmMerge();
     else submit(action);
   };
 
@@ -150,6 +153,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
           const needsFeedback = action === "request_revision" || action === "request_assessment_changes" || action === "request_build_changes"
             || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
+          const isConfirming = action === "approve" && isConfirmingApproval;
           return (
             <Button
               key={action}
@@ -157,28 +161,15 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
               className={`${decisionButtonClass} ${isPrimary ? "text-white!" : "text-[var(--text-primary)]!"}`}
               disabled={mutation.isPending || isCheckingMerge || disabled}
               onClick={() => choose(action, needsFeedback)}
+              onBlur={isConfirming && !mutation.isPending ? () => setIsConfirmingApproval(false) : undefined}
               data-testid={`or-decision-${action}`}
             >
               {isCheckingMerge && action === "confirm_merged" ? "Checking PR…" : mutation.isPending && mutation.variables?.action === action
-                ? "Saving…" : (actionLabels[action] ?? actionLabel(action))}
+                ? "Saving…" : isConfirming ? "Confirm approval" : (actionLabels[action] ?? actionLabel(action))}
             </Button>
           );
         })}
       </div>
-
-      {isConfirmingApproval && !disabled && (
-        <div className="or-decision-feedback" role="alert" data-testid="or-decision-approve-confirm">
-          <p>Approving cannot be undone. The run moves on to its next step as soon as you confirm.</p>
-          <div className="or-decision-feedback__buttons">
-            <Button variant="secondary" className={`${decisionButtonClass} text-[var(--text-primary)]!`}
-              onClick={() => setIsConfirmingApproval(false)} data-testid="or-decision-approve-cancel">Cancel</Button>
-            <Button variant="primary" className={`${decisionButtonClass} text-white!`} disabled={mutation.isPending}
-              onClick={() => submit("approve")} data-testid="or-decision-approve-confirmed">
-              {mutation.isPending ? "Saving…" : "Yes, approve"}
-            </Button>
-          </div>
-        </div>
-      )}
 
       {mergeStatus && !disabled && (
         <div className="or-decision-feedback" role="alert" data-testid="or-merge-warning">
