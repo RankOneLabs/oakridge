@@ -121,6 +121,29 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
 }
 
+const criterionKey = (scope: string | null, local_id: string | null): string => `${scope}\u0000${local_id}`;
+
+/** Every brief criterion an assessment's findings explicitly assess. */
+function assessedCriterionKeys(assessment: CapturedRevision): ReadonlySet<string> {
+  return new Set(assessment.items.flatMap((item) => item.links
+    .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
+      && link.target_item_kind === "criterion")
+    .map((link) => criterionKey(link.target_scope, link.target_local_id))));
+}
+
+/** A brief and its assessment sit in different units — `briefs/<cohort>` against
+ * `implementation/<cohort>` — and no captured revision links them structurally. Criterion
+ * identity is flat and run-unique, so an `assesses` link names exactly one brief revision's
+ * criterion and is the reliable key. An assessment that assesses no captured brief criterion
+ * at all cannot be placed that way; it is attributed by capture time, which is what lets a
+ * findings-free assessment still answer coverage negatively. */
+function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevision): boolean {
+  const assessed = assessedCriterionKeys(assessment);
+  if (assessed.size === 0) return true;
+  return brief.items.some((item) => item.item_kind === "criterion"
+    && assessed.has(criterionKey(item.item_scope, item.producer_local_id)));
+}
+
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
 function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
@@ -130,8 +153,12 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
   for (const [index, brief] of briefs.entries()) {
-    const next_brief = briefs[index + 1];
+    // A concurrent cohort's brief must not close this one's assessment window: a run can
+    // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
+    // supersedes this brief.
+    const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id);
     const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
+      && assessmentCoversBrief(revision, brief)
       && revision.recorded_at >= brief.recorded_at
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());

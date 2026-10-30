@@ -16,13 +16,23 @@ import { assayItemEvidenceDigest, makePopulationManifestFromEligibility, type Po
 import { evidenceSetDigest } from "../src/grading/evidence";
 import type { ComparisonMeasurement, DisagreementCause, PilotSplit } from "../src/langfuse/comparison-report";
 
+export type PilotRunner = "deterministic" | "coverage" | "jev_direct" | "fastino_glide" | "llm_judge";
+/** These runners leave the service, so they go through the durable queue and its budget gate,
+ * never the synchronous evaluation route, which refuses them with queued_evaluation_required. */
+const NETWORK_RUNNERS: readonly PilotRunner[] = ["jev_direct", "fastino_glide", "llm_judge"];
+export const isNetworkRunner = (runner: PilotRunner): boolean => NETWORK_RUNNERS.includes(runner);
+const JOB_POLL_INTERVAL_MS = 500;
+const JOB_POLL_ATTEMPTS = 240;
+
 export interface PilotAttempt {
   readonly identity: EvaluationIdentity;
   readonly context: GradingContext;
-  readonly runner: "deterministic" | "coverage" | "jev_direct" | "fastino_glide" | "llm_judge";
+  readonly runner: PilotRunner;
   readonly split: PilotSplit;
   readonly question_text: string;
   readonly disagreement_cause: DisagreementCause | null;
+  /** Required for a network runner: the queue admits one only against a positive estimate. */
+  readonly estimated_cost?: number;
 }
 export interface PilotHumanGrade { readonly identity: EvaluationIdentity; readonly context: GradingContext;
   readonly details: GradeDetails }
@@ -73,6 +83,53 @@ async function read(input: PilotHttpRequest): Promise<PilotHttpResponse> {
     { headers: { authorization: `Bearer ${input.token}` } });
   return { status: response.status, value: await response.json() };
 }
+interface PilotJobResponse { readonly job_id: string; readonly state: string; readonly idempotency_digest: string }
+interface QueuedAttemptOutcome { readonly operations: readonly PilotOperation[];
+  readonly execution_id: string | null }
+
+/** Enqueue one network attempt, wait for its job to leave the running states, then resolve the
+ * execution it recorded. A job that ends skipped_budget or terminal without an execution yields
+ * no measurement, and says so in its operation rather than failing the whole run. */
+async function queuedAttempt(input: { readonly base_url: string; readonly grade_token: string;
+  readonly read_token: string; readonly attempt: PilotAttempt }): Promise<QueuedAttemptOutcome> {
+  const { base_url, grade_token, read_token, attempt } = input;
+  const entity_id = attempt.identity.subject_occurrence_id;
+  const operations: PilotOperation[] = [];
+  if (!attempt.estimated_cost || attempt.estimated_cost <= 0)
+    throw new Error(`network attempt requires a positive estimated_cost: ${entity_id}`);
+  const enqueued = await request({ base_url, token: grade_token, path: "/v1/evaluation-jobs",
+    body: { identity: attempt.identity, context: attempt.context, runner: attempt.runner,
+      estimated_cost: attempt.estimated_cost } });
+  operations.push(operation("enqueue", entity_id, enqueued));
+  if (enqueued.status >= 300) return { operations, execution_id: null };
+  const job = enqueued.value as PilotJobResponse;
+  let state = job.state;
+  for (let poll = 0; poll < JOB_POLL_ATTEMPTS && state !== "terminal" && state !== "skipped_budget"; poll++) {
+    await Bun.sleep(JOB_POLL_INTERVAL_MS);
+    const polled = await read({ base_url, token: read_token, path: `/v1/evaluation-jobs/${encodeURIComponent(job.job_id)}` });
+    if (polled.status !== 200) {
+      operations.push(operation("await_job", entity_id, polled));
+      return { operations, execution_id: null };
+    }
+    state = (polled.value as PilotJobResponse).state;
+  }
+  if (state !== "terminal" && state !== "skipped_budget") {
+    operations.push({ operation: "await_job", entity_id, status: 504,
+      detail: `job did not settle within ${(JOB_POLL_ATTEMPTS * JOB_POLL_INTERVAL_MS) / 1000}s` });
+    return { operations, execution_id: null };
+  }
+  if (state === "skipped_budget") {
+    operations.push({ operation: "await_job", entity_id, status: 200, detail: "skipped_budget" });
+    return { operations, execution_id: null };
+  }
+  const settled = await read({ base_url, token: read_token,
+    path: `/v1/evaluations/by-digest/${encodeURIComponent(job.idempotency_digest)}` });
+  operations.push(operation("await_job", entity_id, settled));
+  if (settled.status !== 200) return { operations, execution_id: null };
+  const execution = (settled.value as PilotEvaluationWriteResponse).execution;
+  return { operations, execution_id: execution?.execution_id ?? null };
+}
+
 async function readAllGrades(input: PilotGradesReadRequest): Promise<GradePage["items"]> {
   const items: GradePage["items"][number][] = [];
   while (true) {
@@ -148,15 +205,22 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
     if (!catalogue || attempt.question_text !== catalogue.text || !planned.ok || !pinned?.ok
       || planned.value !== pinned.value)
       throw new Error(`attempt differs from pinned pilot question: ${attempt.identity.question_id}`);
-    const evaluated = await request({ base_url, token: grade_token, path: "/v1/evaluations", body: attempt });
-    operations.push(operation("evaluate", attempt.identity.subject_occurrence_id, evaluated));
-    if (evaluated.status >= 300) continue;
-    const result = evaluated.value as PilotEvaluationWriteResponse;
-    if (!result.execution?.execution_id) continue;
+    let execution_id: string | null;
+    if (isNetworkRunner(attempt.runner)) {
+      const queued = await queuedAttempt({ base_url, grade_token, read_token, attempt });
+      operations.push(...queued.operations);
+      execution_id = queued.execution_id;
+    } else {
+      const evaluated = await request({ base_url, token: grade_token, path: "/v1/evaluations", body: attempt });
+      operations.push(operation("evaluate", attempt.identity.subject_occurrence_id, evaluated));
+      if (evaluated.status >= 300) continue;
+      execution_id = (evaluated.value as PilotEvaluationWriteResponse).execution?.execution_id ?? null;
+    }
+    if (!execution_id) continue;
     const projected = await request({ base_url, token: grade_token, path: "/v1/langfuse/projections", body: {
-      execution_id: result.execution.execution_id, question_text: attempt.question_text,
+      execution_id, question_text: attempt.question_text,
       projection_version: population.value.projection_version } });
-    operations.push(operation("project", result.execution.execution_id, projected));
+    operations.push(operation("project", execution_id, projected));
   }
   for (const label of plan.human_grades) {
     const submitted = await request({ base_url, token: grade_token, path: "/v1/grades", body: label });

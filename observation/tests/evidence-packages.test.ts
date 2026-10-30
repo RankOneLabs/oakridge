@@ -74,6 +74,43 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect([...graph.values()].filter((node) => node.path.includes("/src/langfuse/") || node.packages.some((name) => name.includes("langfuse")))).toEqual([]);
 });
 
+test("a concurrent cohort's brief does not close another brief's assessment window", async () => {
+  const plan = await captured("plan", "2026-10-23T17:23:49Z");
+  const briefA = await captured("brief", "2026-10-23T17:29:56Z");
+  const assessmentA = await captured("assessment", "2026-10-23T17:40:00Z");
+  // Brief B belongs to a second cohort: its own unit, its own criterion ids, captured between
+  // brief A and A's assessment. Nothing of A's is assessed by B and vice versa.
+  const briefB: CapturedRevision = { revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
+    recorded_at: new Date("2026-10-23T17:32:00Z"),
+    items: briefA.items.map((item, index) => ({ ...item, revision_id: "brief-b",
+      occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
+      producer_local_id: item.producer_local_id === null ? null : `${item.producer_local_id}-b` })) };
+
+  const result = runPackages([plan, briefA, briefB, assessmentA]);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+
+  // A's criteria keep their assessment rather than being marked unevidenced.
+  const aOccurrences = new Set(briefA.items.filter((item) => item.item_kind === "criterion")
+    .map((item) => item.occurrence_id));
+  const aCoverage = result.value.eligibility.filter((row) => row.question_id === "assessment.coverage"
+    && aOccurrences.has(row.occurrence_id));
+  expect(aCoverage.length).toBeGreaterThan(0);
+  expect(aCoverage.every((row) => row.decision.tag === "eligible")).toBe(true);
+
+  // B's criteria are unevidenced: A's assessment assesses none of them, so it supplies no
+  // empty coverage package for B.
+  const bOccurrences = new Set(briefB.items.filter((item) => item.item_kind === "criterion")
+    .map((item) => item.occurrence_id));
+  const bCoverage = result.value.eligibility.filter((row) => row.question_id === "assessment.coverage"
+    && bOccurrences.has(row.occurrence_id));
+  expect(bCoverage.length).toBeGreaterThan(0);
+  expect(bCoverage.every((row) => row.decision.tag === "missing_evidence"
+    && row.decision.payload.kind === "unevidenced")).toBe(true);
+  expect(result.value.packages.filter((pack) => pack.question_id === "assessment.coverage"
+    && bOccurrences.has(pack.subject.occurrence_id))).toEqual([]);
+});
+
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
   const analysis = "analysis.finding_relevance" as const;
