@@ -5,9 +5,6 @@ import type { GradingContext } from "../grading/runner";
 import { deterministicChecker } from "../runners/deterministic-checker";
 import { coverageChecker } from "../runners/coverage-checker";
 import { stubModelRunner } from "../runners/stub-model";
-import { jevDirectRunner } from "../runners/jev-direct";
-import { fastinoGlideRunner } from "../runners/fastino-glide";
-import { llmJudgeRunner } from "../runners/llm-judge";
 import { ingestModelScore } from "../langfuse/score-ingestion";
 import { createLangfuseHttpClient } from "../langfuse/http-client";
 import type { GradeAnswer } from "../grading/observation";
@@ -50,9 +47,6 @@ export function contextMatchesIdentity(context: GradingContext, identity: Evalua
     && context.evaluator.config_digest === identity.config_digest;
 }
 
-const modelRunners = { stub_model: stubModelRunner, jev_direct: jevDirectRunner,
-  fastino_glide: fastinoGlideRunner, llm_judge: llmJudgeRunner } as const;
-
 export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependencies): void {
   app.post("/v1/evaluations", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
@@ -70,13 +64,13 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (((parsed.data.runner === "deterministic" || parsed.data.runner === "coverage") && context.evaluator.kind !== "code")
-        || (parsed.data.runner in modelRunners && context.evaluator.kind !== "model"))
+        || (parsed.data.runner === "stub_model" && context.evaluator.kind !== "model"))
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
     const runner = parsed.data.runner === "deterministic" ? deterministicChecker
-      : parsed.data.runner === "coverage" ? coverageChecker : modelRunners[parsed.data.runner];
+      : parsed.data.runner === "coverage" ? coverageChecker : stubModelRunner;
     const result = await runGrade(deps.db, credential, { identity, runner, reviewed_commit: parsed.data.reviewed_commit });
     return result.ok ? c.json(result.value, result.value.was_replay ? 200 : 201)
       : errorResponse(c, 422, "evaluation_refused", result.error.detail);

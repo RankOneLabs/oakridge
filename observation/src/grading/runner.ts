@@ -4,7 +4,10 @@ import type { EvaluatorDefinition } from "./evaluator";
 import type { GradeAnswer } from "./observation";
 import type { QuestionDefinition } from "./question";
 
+export type ProviderFailureCategory = "unconfigured_credential" | "invalid_request" | "invalid_unclear_designation" | "invalid_choice"
+  | "invalid_response" | "rate_limit" | "timeout" | "transport" | "http_error";
 export interface GradingError { readonly operation: string; readonly entity_id: string; readonly detail: string;
+  readonly category?: ProviderFailureCategory;
   readonly external_execution_id?: string | null; readonly cost?: number | null }
 export interface GradingContext {
   readonly question: QuestionDefinition;

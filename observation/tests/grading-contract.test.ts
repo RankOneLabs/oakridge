@@ -18,6 +18,15 @@ integration("registration rejects an instruction digest that does not match its 
   if (!result.ok) expect(result.error.detail).toContain("canonical instruction text digest");
 }));
 
+integration("registration rejects a choice question without allowed values", async () => scratchGrading(async (db) => {
+  const selected = { ...question, response_kind: "choice" as const, allowed_values: null };
+  const result = await registerGradingContext(db, tenant, { question: selected, evidence, evaluator: evaluator("model") });
+  expect(result).toMatchObject({ ok: false, error: { detail: "choice question requires allowed values" } });
+  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition")
+    .select("question_id").execute());
+  expect(rows).toHaveLength(0);
+}));
+
 integration("question text and recipe provenance are pinned on new definitions", async () => scratchGrading(async (db) => {
   const pinned = { ...question, question_text: "Is the fixture relevant?",
     evidence_recipe_provenance: { recipe_id: "fixture", recipe_version: "v1", source: "fixture" } };

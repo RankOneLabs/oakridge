@@ -7,8 +7,8 @@ import type { GradeRunner } from "../../ports/grade-runner";
 import { deterministicChecker } from "../../runners/deterministic-checker";
 import { coverageChecker } from "../../runners/coverage-checker";
 import { stubModelRunner } from "../../runners/stub-model";
-import { createSystemOneRunner } from "../../runners/jev-direct";
-import { FASTINO_SYSTEM_ONE_BASE_URL } from "../../runners/fastino-glide";
+import { createJevDirectRunner } from "../../runners/jev-direct";
+import { createFastinoGlideRunner, FASTINO_SYSTEM_ONE_BASE_URL } from "../../runners/fastino-glide";
 import { createLlmJudgeRunner } from "../../runners/llm-judge";
 import { err } from "../../domain/primitives";
 import { runGrade, startDelegatedExecution } from "../../storage/grading-store";
@@ -19,11 +19,11 @@ import { gradingLimits, type GradingLimits } from "./budget";
 const localRunners: Readonly<Record<string, GradeRunner>> = { deterministic: deterministicChecker,
   coverage: coverageChecker, stub_model: stubModelRunner };
 function runnerFor(name: string, limits: GradingLimits, env: NodeJS.ProcessEnv): GradeRunner | undefined {
-  if (name === "jev_direct") return createSystemOneRunner({ operation: name,
-    base_url: "https://api.typesafe.ai/v1", api_key: env.TYPESAFE_API_KEY,
+  if (name === "jev_direct") return createJevDirectRunner({
+    base_url: env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1", api_key: env.TYPESAFE_API_KEY,
     deadline_ms: limits.provider_deadline_ms });
-  if (name === "fastino_glide") return createSystemOneRunner({ operation: name,
-    base_url: FASTINO_SYSTEM_ONE_BASE_URL, api_key: env.FASTINO_API_KEY,
+  if (name === "fastino_glide") return createFastinoGlideRunner({
+    base_url: env.FASTINO_BASE_URL ?? FASTINO_SYSTEM_ONE_BASE_URL, api_key: env.FASTINO_API_KEY,
     deadline_ms: limits.provider_deadline_ms });
   if (name === "llm_judge") return createLlmJudgeRunner({ api_key: env.OBSERVATION_LLM_JUDGE_API_KEY,
     base_url: env.OBSERVATION_LLM_JUDGE_BASE_URL ?? "https://api.openai.com/v1",
@@ -69,6 +69,8 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     if (execution_id) {
       const attempt = { job_id: job.job_id, attempt: job.attempts,
         status: response.ok ? "completed" : "failed",
+        ...(env.OBSERVATION_EXTERNAL_PROCESSING_POLICY
+          ? { external_processing_policy: env.OBSERVATION_EXTERNAL_PROCESSING_POLICY } : {}),
         request_id: response.ok ? response.value.external_execution_id ?? null
           : response.error.external_execution_id ?? null,
         cost: response.ok ? response.value.cost ?? job.estimated_cost

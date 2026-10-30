@@ -32,6 +32,8 @@ function asJson(value: unknown): JsonValue { return value as JsonValue; }
 /** Definitions are immutable within their natural keys. */
 export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
   const { question, evidence, evaluator } = context;
+  if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
+    return failure("register_context", question.question_id, "choice question requires allowed values");
   const digest = evaluatorIdentity(evaluator);
   if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
   if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
