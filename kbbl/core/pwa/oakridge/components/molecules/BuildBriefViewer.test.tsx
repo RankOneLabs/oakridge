@@ -7,6 +7,8 @@ import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
 import type { StageUnit } from "../../types";
 import { CohortBrief } from "./CohortBrief";
 
+const saved = () => vi.fn().mockResolvedValue({ ok: true, value: undefined });
+
 const body = {
   cohort_id: "brief-ui",
   repository_key: "oakridge",
@@ -40,8 +42,8 @@ describe("BuildBriefViewer", () => {
     expect(screen.getByText("The brief remains readable.")).toBeTruthy();
   });
 
-  test("keeps legacy JSON pointer anchors for decision, rejection and criterion edits", () => {
-    const onEdit = vi.fn();
+  test("keeps legacy JSON pointer anchors for decision, rejection and criterion edits", async () => {
+    const onEdit = saved();
     render(<BuildBriefViewer body={legacyBrief} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
     for (const [name, newValue] of [
@@ -53,6 +55,7 @@ describe("BuildBriefViewer", () => {
       const input = screen.getByRole("textbox");
       fireEvent.change(input, { target: { value: newValue } });
       fireEvent.blur(input);
+      await screen.findByRole("button", { name: `Edit ${name}` });
     }
     expect(onEdit.mock.calls.map((call) => call[0])).toEqual(["/decisions_made/0/decision", "/approaches_rejected/0/reason", "/acceptance_criteria/0"]);
   });
@@ -68,7 +71,7 @@ describe("BuildBriefViewer", () => {
   });
 
   test("offers registered atom editing and submits an RFC-6901 anchor", () => {
-    const onEdit = vi.fn();
+    const onEdit = saved();
     render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
 
@@ -84,8 +87,8 @@ describe("BuildBriefViewer", () => {
     );
   });
 
-  test("edits nested array and object atoms", () => {
-    const onEdit = vi.fn();
+  test("edits nested array and object atoms", async () => {
+    const onEdit = saved();
     render(<BuildBriefViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit brief" }));
 
@@ -93,6 +96,7 @@ describe("BuildBriefViewer", () => {
     const fileInput = screen.getByDisplayValue("kbbl/core/pwa/oakridge");
     fireEvent.change(fileInput, { target: { value: "kbbl/core/pwa/oakridge/viewers" } });
     fireEvent.blur(fileInput);
+    await screen.findByRole("button", { name: "Edit files in scope/0" });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit decisions made/0/rationale" }));
     const rationaleInput = screen.getByDisplayValue("It is proven.");

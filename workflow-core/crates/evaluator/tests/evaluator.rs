@@ -560,6 +560,10 @@ fn a_review_repeating_its_body_about_a_new_subject_is_a_new_revision() {
 /// The review loop with an operator review of the critique that can send
 /// the draft back, as the development workflow's assessment review does.
 fn critique_check_program() -> CheckedWorkflow {
+    compile_critique_check(critique_check_source())
+}
+
+fn critique_check_source() -> Value {
     let mut source: Value =
         serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
     source["stages"]["document"]["workers"]["critic"]["prompts"]["revise"] =
@@ -572,6 +576,10 @@ fn critique_check_program() -> CheckedWorkflow {
             "request_build_changes": {"effect": "request_changes", "on": "draft", "label": "Request build changes", "fields": {"feedback": "What?"}}
         }
     });
+    source
+}
+
+fn compile_critique_check(source: Value) -> CheckedWorkflow {
     let prompts = [
         "review-loop/write.md",
         "review-loop/revise.md",
@@ -756,6 +764,57 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
             Some("run/document:critique:1"),
             &Some(serde_json::json!({"feedback":"Shorten it"})),
             Some("run/document:draft:2"),
+        )
+    );
+}
+
+#[test]
+fn a_retried_reassessment_still_reads_the_assessment_of_the_previous_build() {
+    let mut source = critique_check_source();
+    source["stages"]["document"]["artifacts"]["summary"] =
+        serde_json::json!({"schema": {"notes": "list(text)"}});
+    source["stages"]["document"]["workers"]["critic"]["creates"] =
+        serde_json::json!(["critique", "summary"]);
+    let program = compile_critique_check(source);
+    let retried = step_specs(
+        &program,
+        &snapshot(),
+        &[
+            serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"First","body":"Long"}}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Too long"]},"subject":"run/document:draft:1"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"summary","body":{"notes":["Long"]},"subject":"run/document:draft:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
+            serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_build_changes","target":"run/document:draft:1","payload":{"feedback":"Shorten it"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"Second","body":"Short"},"predecessor":"run/document:draft:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Fine"]},"subject":"run/document:draft:2","predecessor":"run/document:critique:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"failed"}),
+            serde_json::json!({"op":"retry","unit":"run/document","worker":"critic"}),
+        ],
+    );
+    let critic = retried
+        .wanted
+        .iter()
+        .find(|wanted| wanted.worker.0 == "critic")
+        .unwrap();
+    assert_eq!(
+        (
+            critic
+                .resolved
+                .previous
+                .as_ref()
+                .map(|revision| revision.id.0.as_str()),
+            &critic.resolved.feedback,
+        ),
+        (
+            Some("run/document:critique:1"),
+            &Some(serde_json::json!({"feedback":"Shorten it"})),
         )
     );
 }

@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
-import { randomUuid } from "../../../lib/random-uuid";
 import type { ViewerProps } from "../../artifactRegistry";
-import { useResumeGate } from "../../hooks/useResumeGate";
 import type { Assessment } from "../../lib/assessment";
-import { composeHandoffText, selectHandoffItems, withItemAdded, withItemRemoved, type HandoffItem } from "../../lib/assessment-handoff";
+import { composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffSendTarget, withItemAdded, withItemRemoved, type HandoffItem } from "../../lib/assessment-handoff";
+import type { EditOutcome } from "../../lib/edit-outcome";
 import type { ParkedGate } from "../../types";
 import { AddNextAction } from "../molecules/AddNextAction";
 import { ArtifactSection } from "../molecules/ArtifactSection";
 import { EditableBriefText } from "../molecules/EditableBriefText";
-
-/** The assessment review decision that sends the build back with feedback. */
-const REQUEST_BUILD_CHANGES = "request_build_changes";
+import { SendToBuilder } from "./SendToBuilder";
 
 interface Props {
   assessment: Assessment;
@@ -31,37 +28,13 @@ export function BuilderHandoffPanel({ assessment, body, gate, edit }: Props) {
       ...item, is_included: previous[item.index]?.is_included ?? true,
     })));
   }, [assessment]);
-
-  const decision = useResumeGate(gate?.id ?? "", gate?.run_id ?? null);
-  // One idempotency key per composed request, preserved across retries of it.
-  const request = useRef<{ readonly text: string; readonly key: string } | null>(null);
+  const [sentGateId, setSentGateId] = useState<string | null>(null);
+  const target = selectHandoffSendTarget(gate, sentGateId);
   const preview = composeHandoffText(items);
-  const reason = preview.length === 0 ? "Include at least one next action to send."
-    : !gate?.artifact_revision_id ? "This revision has no open assessment review to record the request on."
-    : !gate.actionable ? "The run has moved on, so this review can no longer take a decision."
-    : null;
 
-  function remove(index: number): void {
-    if (edit.isPending) return;
-    edit.onSubmitBody?.(body, withItemRemoved(body, index));
-  }
-
-  function add(text: string): void {
-    if (edit.isPending) return;
-    edit.onSubmitBody?.(body, withItemAdded(body, text));
-  }
-
-  function send(): void {
-    if (!gate?.artifact_revision_id || reason || decision.isPending) return;
-    if (request.current?.text !== preview) request.current = { text: preview, key: randomUuid() };
-    decision.mutate({
-      idempotency_key: request.current.key,
-      artifact_revision_id: gate.artifact_revision_id,
-      gate_step: gate.gate_step ?? gate.gate_type,
-      action: REQUEST_BUILD_CHANGES,
-      operator_comment: "Send to builder",
-      feedback: preview,
-    });
+  function submit(next: Assessment): Promise<EditOutcome> {
+    if (!edit.onSubmitBody) return Promise.resolve({ ok: false, error: "This assessment cannot be edited." });
+    return edit.onSubmitBody(body, next);
   }
 
   return (
@@ -81,23 +54,24 @@ export function BuilderHandoffPanel({ assessment, body, gate, edit }: Props) {
                 <div className="min-w-0 flex-1">
                   <EditableBriefText anchor={`/recommended_next_actions/${item.index}`} value={item.text} edit={edit} />
                 </div>
-                <Button variant="danger" size="xsmall" disabled={edit.isPending} onClick={() => remove(item.index)}
+                <Button variant="danger" size="xsmall" disabled={edit.isPending} onClick={() => void submit(withItemRemoved(body, item.index))}
                   aria-label={`Remove action ${item.index + 1}`}>Remove</Button>
               </div>
             </li>
           ))}
         </ol> : <FeedbackMessage>No recommended next actions remain.</FeedbackMessage>}
-        <AddNextAction isPending={edit.isPending} onAdd={add} />
+        <AddNextAction isPending={edit.isPending} onAdd={(text) => submit(withItemAdded(body, text))} />
 
         <div className="flex items-center gap-2"><strong className="text-sm">Builder prompt preview</strong><Chip tone="neutral">{items.filter((item) => item.is_included).length} included</Chip></div>
         <pre className="m-0 whitespace-pre-wrap rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-sm text-[var(--text-primary)]" data-testid="or-assessment-handoff-preview">{preview || "No actions included."}</pre>
         <p className="m-0 text-xs text-[var(--text-muted)]">Sending records a review decision. The builder revises, and the assessor reassesses the new build.</p>
-        {reason && !decision.isSuccess && <FeedbackMessage>{reason}</FeedbackMessage>}
-        {decision.isError && <FeedbackMessage tone="danger">{decision.error instanceof Error ? decision.error.message : String(decision.error)}</FeedbackMessage>}
-        {decision.isSuccess
-          ? <div className="flex items-center gap-2"><Chip tone="success">Sent</Chip><span className="text-sm text-[var(--text-secondary)]">Build changes requested. The builder will revise its work.</span></div>
-          : <Button variant="primary" disabled={Boolean(reason) || edit.isPending || decision.isPending}
-            onClick={send}>{decision.isPending ? "Sending…" : "Send to Builder"}</Button>}
+        {target.kind === "review" && <SendToBuilder key={target.gate.id} gate={target.gate} preview={preview}
+          isEditPending={edit.isPending} onSent={() => setSentGateId(target.gate.id)} />}
+        {target.kind === "sent" && <div className="flex items-center gap-2"><Chip tone="success">Sent</Chip><span className="text-sm text-[var(--text-secondary)]">Build changes requested. The builder will revise its work.</span></div>}
+        {target.kind === "no_review" && <>
+          <FeedbackMessage>{NO_REVIEW_REASON}</FeedbackMessage>
+          <Button variant="primary" disabled>Send to Builder</Button>
+        </>}
       </div>
     </ArtifactSection>
   );

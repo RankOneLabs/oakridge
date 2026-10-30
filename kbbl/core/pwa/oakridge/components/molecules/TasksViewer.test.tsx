@@ -34,7 +34,7 @@ describe("TasksViewer", () => {
   });
 
   test("edits a task atom through its JSON pointer", () => {
-    const onEdit = vi.fn();
+    const onEdit = vi.fn().mockResolvedValue({ ok: true, value: undefined });
     render(<TasksViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks/0/description" }));
@@ -45,7 +45,7 @@ describe("TasksViewer", () => {
   });
 
   test("adds a requirement link to an unlinked task", () => {
-    const onEdit = vi.fn();
+    const onEdit = vi.fn().mockResolvedValue({ ok: true, value: undefined });
     render(<TasksViewer body={body} edit={{ enabled: true, isPending: false, onEdit }} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Add link" })[1]!);

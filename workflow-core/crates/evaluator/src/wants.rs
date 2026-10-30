@@ -388,19 +388,6 @@ pub(super) fn resolve_run_worker(
                 .ok_or_else(|| invalid(format!("workspace of {} unresolved", action.worker)))?,
         ),
     };
-    let (previous, feedback) = match action.mode {
-        Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
-            Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload())),
-            None => (None, None),
-        },
-        Mode::Review => match reviewed_before(state, &unit.id, checked.creates()) {
-            Some((revision, decision)) => {
-                (Some(revision.clone()), decision.map(DecisionState::payload))
-            }
-            None => (None, None),
-        },
-        _ => (None, None),
-    };
     let subject = match (action.mode, checked) {
         (
             Mode::Review | Mode::Revise,
@@ -409,6 +396,24 @@ pub(super) fn resolve_run_worker(
             },
         ) => latest(state, &unit.id, of).cloned(),
         _ => None,
+    };
+    let (previous, feedback) = match action.mode {
+        Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
+            Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload())),
+            None => (None, None),
+        },
+        Mode::Review => match reviewed_before(
+            state,
+            &unit.id,
+            checked.creates(),
+            subject.as_ref().map(|revision| &revision.id),
+        ) {
+            Some((revision, decision)) => {
+                (Some(revision.clone()), decision.map(DecisionState::payload))
+            }
+            None => (None, None),
+        },
+        _ => (None, None),
     };
     Ok(ResolvedRunWorker {
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),
