@@ -79,8 +79,9 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   const row = await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
     run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_bundle_id: source.definition_bundle.id,
-    definition_bundle_digest: source.definition_bundle.digest, body, body_digest, predecessor_id, subject_id,
-    recorded_at: new Date(recorded_at) })
+    // Serialized explicitly: pg sends a JS string as-is, so a scalar body (a markdown spec) would reach jsonb unquoted.
+    definition_bundle_digest: source.definition_bundle.digest, body: sql<JsonValue>`${JSON.stringify(body)}::jsonb`,
+    body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) })
     .returningAll().executeTakeFirstOrThrow();
   await hooks.afterMirror?.();
   const response: CaptureResponse = { source_revision: sourceRead(row) };

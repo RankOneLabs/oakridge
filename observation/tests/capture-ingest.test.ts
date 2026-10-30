@@ -152,6 +152,26 @@ integration("absent and null bodies are refused while an empty object is stored"
   } finally { await db.destroy(); }
 }));
 
+integration("a string body, such as a markdown spec, is stored as a JSON string", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const app = createApp({ db, credentials });
+    const spec = "# Spec 3A\n\nStatus: draft";
+    expect((await post(app, envelope(spec))).status).toBe(201);
+    const read = await app.request("/v1/source-revisions/oakridge:local-dev:rev-123", { headers: { authorization: "Bearer read-secret" } });
+    expect((await read.json()).body).toBe(spec);
+    const live = envelope(spec, "oakridge:local-dev:rev-live");
+    const delivered = await app.request("/v1/sources/oakridge/events", { method: "POST",
+      headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
+      body: JSON.stringify({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" },
+        outcome: { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published",
+          run_id: "run-1", event_id: "event-1", definition_bundle: { id: "bundle-1", digest: "bundle-sha256:def" },
+          artifact_schema_version: "schema-sha256:abc", revision: live } }) });
+    expect(delivered.status).toBe(200);
+  } finally { await db.destroy(); }
+}));
+
 integration("crash between mirror and receipt rolls both back, then retry succeeds", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
