@@ -166,6 +166,43 @@ readback is unavailable, leave the external mapping pending and use only local
 grades for reports. These fallbacks do not turn integration telemetry into a
 correctness judgment.
 
+## Phase A live run (2026-10-29)
+
+`langfuse-capability-spike.ts --write-synthetic` passed against Langfuse Cloud
+US (`https://us.cloud.langfuse.com`), project `cmvtt9nhn00fiad0eu6em135c`, on
+2026-10-30 00:12 UTC. All four capabilities were available; the
+decision-model evaluator was detected through its evaluation rule.
+
+| Item | ID | Readable after |
+| --- | --- | --- |
+| Trace | `8c0c6e4c78a9ab005f4423931ea02ee5` | — |
+| Observation (OTLP v1, read on observations v2) | `1e7bc9c48c73b7c1` | 11.3 s |
+| API Boolean score `oakridge.phase_a.synthetic@v1` (scores v3) | `3f6f3cd3-0d19-4de1-a460-6d22860a78fd` | 27.3 s |
+| Native Jev score `phase_a.jev_synthetic` (`EVAL`) | `f457db66-cafa-5291-b004-c16bc3c16ad8` | 6.2 s |
+| Queue item, completed manually | `cmvu7x31400dead0hqy9r9tof` | 27.5 s |
+| Annotation score `phase_a.synthetic_check` (`ANNOTATION`, `true`) | `e5399c9a-2d9d-4a8a-94aa-bb4f99b485ac` | 27.5 s |
+
+`OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID` is set to that trace, which enables
+the projection write path. Measured behaviour:
+
+- A native Jev Yes/No score is `NUMERIC` P(true). Its metadata carries
+  `typesafe.model` (the evaluator was configured `jev-latest`, which the UI
+  offers as the only Jev model; it ran as `jev-1.14.0`), `typesafe.type`
+  (`noul`), `typesafe.questionId`, `evaluator_id`, `evaluator_version_id`,
+  `evaluation_rule_id`, `job_execution_id`, `target_trace_id` and
+  `target_observation_id`. It carries no Oakridge `mapping_key`, and no
+  option probabilities beyond the value.
+- One `EVAL` score is written per matching rule assignment. With two enabled
+  rules assigning the same evaluator, the synthetic observation received two
+  scores. The evaluator dialog's default rule is `isRootObservation = true`,
+  which matches every pilot observation; pilot rules instead filter
+  `name any of ["question_id@question_version"]`.
+- An annotation score takes its score config's name and has empty metadata.
+  A queue item can be completed without a score: the first run on
+  2026-10-29 did so and produced no `ANNOTATION` score.
+- Whether a re-sent span with the same IDs is upserted or duplicated remains
+  unmeasured.
+
 ## Human annotation and held-out boundary
 
 The pilot's human score config names are `analysis.finding_relevance.v1`,
