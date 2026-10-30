@@ -33,11 +33,27 @@ async function outcome(db: Database, job_id: string) {
 for (const phase of ["before claim", "mid-provider request", "after response before persist", "during restart"] as const) {
   integration(`crash ${phase} reclaims to one canonical grade`, async () => scratchGrading(async (db, occurrence_id) => {
     const { identity, job } = await setup(db, occurrence_id, phase);
+    let interrupted: Promise<unknown> | null = null;
+    const paused: { release?: () => void } = {};
     if (phase !== "before claim") {
-      const claimed = await claimJob(db, tenant, "crashed-worker", limits);
-      expect(claimed?.state).toBe("claimed");
-      if (phase === "after response before persist" || phase === "during restart")
+      if (phase === "mid-provider request") {
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        const waiting = new Promise<void>((resolve) => { paused.release = resolve; });
+        const suspended: GradeRunner = { kind: "model", async run() {
+          entered(); await waiting; return good.run({} as never);
+        } };
+        interrupted = workOneJob(db, tenant, limits, "crashed-worker", suspended);
+        await started;
+      } else {
+        const claimed = await claimJob(db, tenant, "crashed-worker", limits);
+        expect(claimed?.state).toBe("claimed");
+      }
+      if (phase === "after response before persist" || phase === "during restart") {
         expect((await startDelegatedExecution(db, tenant, identity)).ok).toBe(true);
+        if (phase === "after response before persist")
+          expect((await good.run({} as never)).ok).toBe(true);
+      }
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
         .set({ lease_expires_at: new Date(Date.now() - 1) }).where("job_id", "=", job.job_id).execute());
     }
@@ -49,6 +65,8 @@ for (const phase of ["before claim", "mid-provider request", "after response bef
       try { await workOneJob(restarted, tenant, limits, "recovered-worker", good); }
       finally { await restarted.destroy(); }
     } else await workOneJob(db, tenant, limits, "recovered-worker", good);
+    paused.release?.();
+    if (interrupted) await interrupted;
     const stored = await outcome(db, job.job_id);
     expect(stored.job.state).toBe("terminal");
     expect(stored.grades).toHaveLength(1);
