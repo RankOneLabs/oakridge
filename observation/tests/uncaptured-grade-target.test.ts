@@ -57,6 +57,11 @@ integration("a backfilled decision on an uncaptured revision is kept and the bac
       body: JSON.stringify({ previous: before, position: after,
         counts: { review_decision: { active: 1, archived: 0 }, collaboration_thread: { active: 0, archived: 0 } },
         outcome: decisionOn("review_decision:decision-2", "decision-2") }) });
-    expect(backfilled.status).toBe(200);
+    const stored = await (await app.request("/v1/sources/oakridge/human-grades", { headers: readHeaders })).json() as
+      { items: { decision_id: string }[] };
+    const checkpoint = await (await app.request("/v1/sources/oakridge/backfill",
+      { headers: { authorization: "Bearer ingest-fixture" } })).json() as { position: unknown };
+    expect({ status: backfilled.status, decisions: stored.items.map((item) => item.decision_id), position: checkpoint.position })
+      .toEqual({ status: 200, decisions: ["decision-2"], position: after });
   });
 });
