@@ -133,7 +133,10 @@ queue, score and rule routes. Its default mode is read-only; the explicit
 `--write-synthetic` mode creates a synthetic OTLP observation, deterministic
 Boolean score and queue item, then polls readback and manual queue completion.
 It returns a typed unavailable capability, naming the route or missing pinned
-evaluator. Before enabling outbound projection, provision a project and
+evaluator. Langfuse Cloud answers `GET /api/public/v2/evaluators/{id}` for a
+decision-model evaluator with HTTP 400 ("Decision-model evaluators are not
+available through the public API", measured 2026-10-29), so a pinned Jev
+evaluator counts as available when an enabled evaluation rule assigns it. Before enabling outbound projection, provision a project and
 least-privilege keys, choose a region or self-hosted endpoint, pin the Jev
 model and evaluator, run the synthetic write/readback exercise, and record the
 returned IDs and timing here. Until then, outbound projection remains pending.
