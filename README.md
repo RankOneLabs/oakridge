@@ -51,7 +51,11 @@ service from `observation/.env` and connects DBOS to it (see
 `~/.local/state/oakridge/publication.key`, generated on first start, and the
 agent workdir beside it. Unless `OAKRIDGE_ALLOWED_ORIGINS` is set, it allows
 browser writes from loopback and, with `--host=0.0.0.0`, from this machine's
-hostname, addresses and tailnet name, and prints the list. The baseline can be applied again when its
+hostname, addresses and tailnet name, and prints the list. `./scripts/oakridge-lan`
+wraps it for the LAN: `--host 0.0.0.0` with no control token
+(`ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`), a loopback-only Bun inspector, and
+output appended to `~/.local/state/oakridge/run-<date>.log`; other arguments,
+such as `--observation`, pass through. The baseline can be applied again when its
 recorded digest matches; a changed baseline file stops startup and reports both
 digests. Startup verifies the encryption key and existing intents, registers
 the provider and workflow services, launches DBOS, resumes active runs and

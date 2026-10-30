@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Starts Oakridge reachable on the LAN without a control token, with a localhost-only
+# inspector on each bun process (for heap snapshots), logging to the dated run log.
+# Pass --observation to also start the observation service; other args go to oakridge-start.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")/.."
+unset OAKRIDGE_CONTROL_TOKEN
+export ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1
+export BUN_INSPECT=127.0.0.1:0/oakinspect
+mkdir -p ~/.local/state/oakridge
+exec > >(tee -a ~/.local/state/oakridge/run-"$(date +%F)".log) 2>&1
+exec ./scripts/oakridge-start --host 0.0.0.0 "$@"
