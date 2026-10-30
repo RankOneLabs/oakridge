@@ -2,7 +2,7 @@
 
 L2 stores independent judgments about an L1 item occurrence. A question is identified by `(question_id, question_version)` within a `(producer, namespace)` pair. An evaluator definition identifies its kind (`model`, `code`, or `human`), backend, provider, model, prompt digest, configuration digest, and runtime revision. Evidence sets pin their references by content or digest and say explicitly when evidence is incomplete.
 
-The five grading tables live in `observation/src/storage/migrations/0003_grading.sql`. The migration runs after the existing revision-links migration. Every subject, question, evidence set, evaluator, execution, and superseded observation reference is constrained within the same producer and namespace. The store offers insertion and reading of grade observations; PostgreSQL also rejects direct updates and deletes. There is no consensus, aggregate, ground-truth, latest, or accepted column.
+The five grading tables live in `observation/src/storage/migrations/0003_grading.sql`. The migration runs after the existing revision-links migration. `0010_question_text_and_evaluator_instructions.sql` adds question text, recipe provenance and evaluator instruction text without updating pinned v1 rows. Registration checks that an evaluator's prompt digest is the canonical digest of its instruction text. `0011_evaluation_eligibility.sql` records one immutable decision per tenant, subject occurrence and question pin. Its six stable tags are `eligible`, `inapplicable`, `missing_evidence`, `invalid_reference`, `blocked_dependency` and `skipped_budget`; typed payloads retain distinct causes such as `uncited`, `dangling_citation`, `unlinked` and `unevidenced`. Every subject, question, evidence set, evaluator, execution, and superseded observation reference is constrained within the same producer and namespace. PostgreSQL rejects direct updates and deletes of grades and eligibility. There is no consensus, aggregate, ground-truth, latest, or accepted column.
 
 ## Answers and failures
 
@@ -10,7 +10,7 @@ An observation retains the evaluator's answer as `{state:"answered",kind,value}`
 
 This pass has no `DecisionPolicy` registry. Human intake checks that a normalized score has both a policy id and version, but does not verify that the policy exists or that its normalization produced the submitted score. Consumers must treat those stamps as caller-supplied provenance until a separately versioned policy registry and verification path are added.
 
-A failed grader or a repository snapshot question with incomplete evidence creates an `evaluation_execution` with `status:"failed"` and an error, but creates no grade observation. The failed execution is returned by the evaluation request and remains readable through the storage API. The grades read lists only observations.
+A failed grader or a repository snapshot question without qualifying references creates an `evaluation_execution` with `status:"failed"` and an error, but creates no grade observation. Snapshot eligibility requires the recipe's minimum number of repository-content references, explicit classification, the reviewed commit on each excerpt and a canonical digest; truncated or unreadable excerpts also need an incompleteness reason. The failed execution is returned by the evaluation request and remains readable through the storage API. The grades read lists only observations.
 
 ## HTTP routes
 

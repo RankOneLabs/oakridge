@@ -1,8 +1,13 @@
 import type { QuestionId } from "../../domain/identity";
 import type { QuestionDefinition } from "../question";
-import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe, type PilotQuestionId } from "../../langfuse/evidence-recipe";
+import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe, type PilotQuestionId } from "../evidence-packages/pilot-recipe";
 
 export interface PilotQuestion { readonly definition: QuestionDefinition; readonly text: string }
+function pinnedQuestion(definition: QuestionDefinition, text: string): PilotQuestion {
+  return { definition: { ...definition, question_text: text,
+    evidence_recipe_provenance: { recipe_id: definition.question_id, recipe_version: definition.question_version,
+      source: "observation/src/langfuse/evidence-recipe.ts" } }, text };
+}
 
 const relevance: QuestionDefinition = {
   question_id: "analysis.finding_relevance" as QuestionId, question_version: "v1", target_item_kinds: ["finding"],
@@ -46,8 +51,8 @@ const coverage: QuestionDefinition = {
 
 /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
 export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
-  "analysis.finding_relevance": { definition: relevance, text: "Is this analysis finding relevant to the originally requested change?" },
-  "plan.criterion_traceability": { definition: traceability, text: "Does this plan criterion follow from the tasks and decisions it cites?" },
-  "brief.source_fidelity": { definition: fidelity, text: "Does this brief criterion preserve the meaning of its identified plan criterion?" },
-  "assessment.coverage": { definition: coverage, text: "Does at least one assessment finding explicitly assess this brief criterion?" },
+  "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?"),
+  "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?"),
+  "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?"),
+  "assessment.coverage": pinnedQuestion(coverage, "Does at least one assessment finding explicitly assess this brief criterion?"),
 };

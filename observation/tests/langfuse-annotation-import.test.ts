@@ -20,7 +20,7 @@ integration("annotation imports through human intake, preserves score mapping, a
   const question = { ...LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].definition,
     target_item_kinds: ["cohort_criterion"] };
   const evidence = { evidence_set_id: "annotation-evidence" as EvidenceSetId,
-    references: [{ ref: "pinned-criterion", content: null, digest: "digest" }],
+    references: [{ ref: "pinned-criterion", kind: "public" as const, content: null, digest: "digest" }],
     is_incomplete: false, incompleteness_reason: null };
   const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") });
   expect(registered.ok).toBe(true);

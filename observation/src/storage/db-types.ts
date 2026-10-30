@@ -123,6 +123,8 @@ export interface ObservationQuestionDefinition {
   unclear_semantics: string;
   interpretation_caveats: string;
   requires_repository_snapshot: boolean;
+  question_text: string | null;
+  evidence_recipe_provenance: JsonValue | null;
 }
 
 export interface ObservationEvidenceSet {
@@ -150,6 +152,7 @@ export interface ObservationEvaluatorDefinition {
   seed: number | null;
   attempt_controls: JsonValue | null;
   identity_digest: string;
+  instruction_text: string | null;
 }
 
 export interface ObservationEvaluationExecution {
@@ -356,6 +359,17 @@ export interface ObservationLangfuseInboundQuarantine {
   recorded_at: Generated<Date>;
 }
 
+export interface ObservationEvaluationEligibility {
+  producer: string;
+  namespace: string;
+  subject_occurrence_id: string;
+  question_id: string;
+  question_version: string;
+  tag: string;
+  payload: JsonValue;
+  recorded_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -382,4 +396,5 @@ export interface DB {
   "observation.langfuse_mapping": ObservationLangfuseMapping;
   "observation.langfuse_sync_transition": ObservationLangfuseSyncTransition;
   "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
+  "observation.evaluation_eligibility": ObservationEvaluationEligibility;
 }

@@ -1,5 +1,5 @@
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
-import type { EvidenceReference } from "../grading/evidence";
+import type { StoredEvidenceReference } from "../grading/evidence";
 import type { EvaluationExecution } from "../grading/execution";
 import type { LangfuseError, PrivacyClassification, ProjectionInput, ProjectionPolicy,
   ProjectionSource } from "../ports/evaluation-backend";
@@ -22,7 +22,7 @@ export interface TraceMetadata {
 }
 export interface ProjectedEvidenceReference {
   readonly ref: string;
-  readonly kind?: EvidenceReference["kind"];
+  readonly kind?: StoredEvidenceReference["kind"];
   readonly content: JsonValue | null;
   readonly digest: string | null;
   readonly is_redacted: boolean;
@@ -56,7 +56,7 @@ function classification(kind: string, policy: ProjectionPolicy): PrivacyClassifi
   return "restricted";
 }
 
-function mayIncludeEvidence(reference: EvidenceReference, policy: ProjectionPolicy): boolean {
+function mayIncludeEvidence(reference: StoredEvidenceReference, policy: ProjectionPolicy): boolean {
   switch (reference.kind) {
     case "public": return true;
     case "raw_build_output": return policy.allow_raw_build_output;
@@ -66,7 +66,7 @@ function mayIncludeEvidence(reference: EvidenceReference, policy: ProjectionPoli
   }
 }
 
-function projectEvidence(reference: EvidenceReference, policy: ProjectionPolicy): ProjectedEvidenceReference {
+function projectEvidence(reference: StoredEvidenceReference, policy: ProjectionPolicy): ProjectedEvidenceReference {
   const is_redacted = !mayIncludeEvidence(reference, policy) && reference.content !== null;
   return { ref: reference.ref, ...(reference.kind === undefined ? {} : { kind: reference.kind }),
     content: is_redacted ? null : reference.content, digest: reference.digest, is_redacted };

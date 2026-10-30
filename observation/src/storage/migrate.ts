@@ -12,6 +12,8 @@ const exportGuardMigration = new URL("./migrations/0006_export_guard.sql", impor
 const purgeMigration = new URL("./migrations/0007_purge.sql", import.meta.url);
 const langfuseSyncMigration = new URL("./migrations/0008_langfuse_sync.sql", import.meta.url);
 const gradeLabelOriginMigration = new URL("./migrations/0009_grade_label_origin.sql", import.meta.url);
+const questionTextMigration = new URL("./migrations/0010_question_text_and_evaluator_instructions.sql", import.meta.url);
+const eligibilityMigration = new URL("./migrations/0011_evaluation_eligibility.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -27,6 +29,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const purgeSql = await Bun.file(purgeMigration).text();
   const langfuseSyncSql = await Bun.file(langfuseSyncMigration).text();
   const gradeLabelOriginSql = await Bun.file(gradeLabelOriginMigration).text();
+  const questionTextSql = await Bun.file(questionTextMigration).text();
+  const eligibilitySql = await Bun.file(eligibilityMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -65,6 +69,12 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
       SELECT 1 FROM information_schema.columns WHERE table_schema = 'observation'
       AND table_name = 'grade_observation' AND column_name = 'label_origin') AS has_column`.execute(trx);
     if (!labelOrigin.rows[0]?.has_column) await sql.raw(gradeLabelOriginSql).execute(trx);
+    const questionText = await sql<{ has_column: boolean }>`SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns WHERE table_schema = 'observation'
+      AND table_name = 'question_definition' AND column_name = 'question_text') AS has_column`.execute(trx);
+    if (!questionText.rows[0]?.has_column) await sql.raw(questionTextSql).execute(trx);
+    const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(trx);
+    if (!eligibility.rows[0]?.name) await sql.raw(eligibilitySql).execute(trx);
   });
 }
 

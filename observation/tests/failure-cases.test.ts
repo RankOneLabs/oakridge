@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "bun:test";
 import { Client } from "pg";
@@ -157,7 +158,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     references: [{ ref: "fixture", kind: "public", content: "matching", digest: null }],
     is_incomplete: incomplete, incompleteness_reason: incomplete ? cases.incomplete_evidence.reason : null });
   const evaluator = (kind: "code" | "human") => ({ evaluator_definition_id: `${kind}-failure`, kind,
-    backend_kind: "local", provider: "fixture", model: null, prompt_digest: "prompt",
+    backend_kind: "local", provider: "fixture", model: null, instruction_text: "prompt", prompt_digest: instructionDigest("prompt"),
     config_digest: "config", runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null });
   const identity = (question_id: string, evidence_set_id: string, kind: "code" | "human", attempt_label = "first") => ({
     subject_occurrence_id: subject.occurrence_id, evidence_set_id, question_id, question_version: "1",

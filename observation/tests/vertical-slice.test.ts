@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -183,7 +184,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       content: "matching evidence", digest: null }], is_incomplete: false, incompleteness_reason: null };
     const evaluator = (kind: "code" | "model" | "human") => ({ evaluator_definition_id: `slice-${kind}`, kind,
       backend_kind: "local", provider: `fixture-${kind}`, model: kind === "model" ? "pinned" : null,
-      prompt_digest: "fixture-prompt", config_digest: "fixture-config", runtime_revision: "1",
+      instruction_text: "fixture-prompt", prompt_digest: instructionDigest("fixture-prompt"), config_digest: "fixture-config", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: kind === "model"
         ? { answer: { state: "answered", kind: "boolean", value: false } } : null });
     const identity = { subject_occurrence_id: briefCriterion.occurrence_id, evidence_set_id: evidence.evidence_set_id,

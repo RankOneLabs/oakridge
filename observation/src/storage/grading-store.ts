@@ -5,7 +5,8 @@ import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
-import { evaluatorIdentity, type EvaluatorDefinition } from "../grading/evaluator";
+import { repositorySnapshotEligibility } from "../grading/eligibility";
+import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
@@ -33,8 +34,12 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
   const { question, evidence, evaluator } = context;
   const digest = evaluatorIdentity(evaluator);
   if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
+  if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
+    return failure("register_context", evaluator.evaluator_definition_id, "prompt digest differs from canonical instruction text digest");
   if (evidence.is_incomplete !== (evidence.incompleteness_reason !== null))
     return failure("register_context", evidence.evidence_set_id, "incompleteness reason must match flag");
+  if (evidence.references.some((reference) => !reference.kind))
+    return failure("register_context", evidence.evidence_set_id, "new evidence references require classification");
   try {
     return await withTenant(db, tenant, async (trx) => {
       const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
@@ -45,13 +50,18 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
           question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot]))
         return failure("register_context", question.question_id, "question definition identity conflict");
+      if (q && ((q.question_text !== null && q.question_text !== question.question_text)
+        || (q.evidence_recipe_provenance !== null && !same(q.evidence_recipe_provenance, question.evidence_recipe_provenance))))
+        return failure("register_context", question.question_id, "question text or recipe provenance conflict");
       if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
         question_id: question.question_id, question_version: question.question_version,
         target_item_kinds: json(asJson(question.target_item_kinds)), input_recipe: json(question.input_recipe),
         response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : json(asJson(question.allowed_values)),
         missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
         unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
-        requires_repository_snapshot: question.requires_repository_snapshot }).execute();
+        requires_repository_snapshot: question.requires_repository_snapshot,
+        question_text: question.question_text ?? null,
+        evidence_recipe_provenance: question.evidence_recipe_provenance ? json(asJson(question.evidence_recipe_provenance)) : null }).execute();
       const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
       if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],
@@ -62,8 +72,8 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         incompleteness_reason: evidence.incompleteness_reason }).execute();
       const d = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", evaluator.evaluator_definition_id).executeTakeFirst();
-      if (d && (d.identity_digest !== digest.value || !same([d.cost_metadata, d.seed, d.attempt_controls],
-        [evaluator.cost_metadata, evaluator.seed, evaluator.attempt_controls])))
+      if (d && (d.identity_digest !== digest.value || !same([d.cost_metadata, d.seed, d.attempt_controls, d.instruction_text],
+        [evaluator.cost_metadata, evaluator.seed, evaluator.attempt_controls, evaluator.instruction_text])))
         return failure("register_context", evaluator.evaluator_definition_id, "evaluator definition identity conflict");
       if (!d) await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant),
         evaluator_definition_id: evaluator.evaluator_definition_id, kind: evaluator.kind,
@@ -71,7 +81,7 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         prompt_digest: evaluator.prompt_digest, config_digest: evaluator.config_digest,
         runtime_revision: evaluator.runtime_revision, cost_metadata: evaluator.cost_metadata === null ? null : json(evaluator.cost_metadata),
         seed: evaluator.seed, attempt_controls: evaluator.attempt_controls === null ? null : json(evaluator.attempt_controls),
-        identity_digest: digest.value }).execute();
+        identity_digest: digest.value, instruction_text: evaluator.instruction_text }).execute();
       return ok(undefined);
     });
   } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
@@ -99,7 +109,7 @@ async function validateIdentity(trx: DatabaseTransaction, tenant: TenantScope, i
     response_kind: q.response_kind as QuestionDefinition["response_kind"], allowed_values: q.allowed_values as QuestionDefinition["allowed_values"],
     missing_evidence_policy: q.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] },
     evidence: { ...e, evidence_set_id: e.evidence_set_id as EvidenceSet["evidence_set_id"], references: e.evidence_refs as unknown as EvidenceSet["references"] },
-    evaluator: { ...d, kind: d.kind as EvaluatorDefinition["kind"] } });
+    evaluator: { ...d, kind: d.kind as EvaluatorDefinition["kind"], instruction_text: d.instruction_text ?? "" } });
 }
 
 function validAnswer(answer: GradeAnswer, question: QuestionDefinition): boolean {
@@ -158,11 +168,15 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         error: null, model_usage: null, cost: null, external_execution_id: null,
         provider_link: null, reproducibility_metadata: null };
       const { question, evidence, evaluator } = checked.value;
-      const blocked = question.requires_repository_snapshot && evidence.is_incomplete;
+      const snapshot = question.requires_repository_snapshot
+        ? repositorySnapshotEligibility(evidence, Number(question.input_recipe.minimum_repository_content ?? 1),
+          String(question.input_recipe.reviewed_commit ?? "")) : null;
+      const blocked = snapshot !== null && snapshot.tag !== "eligible";
       const missing = evidence.is_incomplete && question.missing_evidence_policy === "fail";
       let result: RunnerResult;
       if (blocked || missing) result = failure("evaluate", evidence.evidence_set_id,
-        evidence.incompleteness_reason ?? "evidence set is incomplete");
+        evidence.incompleteness_reason ?? (snapshot?.tag === "missing_evidence" ? snapshot.payload.kind === "missing_source"
+          ? snapshot.payload.detail : "repository evidence missing" : "evidence set is incomplete"));
       else if (evidence.is_incomplete && question.missing_evidence_policy === "abstain")
         result = ok({ answer: { state: "abstain", kind: question.response_kind, reason: evidence.incompleteness_reason ?? "incomplete evidence" } });
       else {
