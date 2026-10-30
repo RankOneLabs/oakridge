@@ -137,6 +137,17 @@ test("Jev maps the question-designated unclear choice to unclear", async () => {
   expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: insufficient });
 });
 
+test("ambiguous or missing unclear designation fails before a provider call", async () => {
+  let calls = 0;
+  const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1",
+    transport: async () => { calls++; return response(provider(answer)); } });
+  for (const unclear_semantics of ["Choose faithful or changed when uncertain", "Judge the evidence carefully"]) {
+    const result = await runner.run({ ...context, question: { ...context.question, unclear_semantics } });
+    expect(result).toMatchObject({ ok: false, error: { category: "invalid_unclear_designation" } });
+  }
+  expect(calls).toBe(0);
+});
+
 test("Jev Score keeps fractional level, legend and full level distribution", async () => {
   const score = { type: "score", score: 1.35, legend: { "0": "poor", "1": "partial", "2": "good" },
     probabilities: { "0": 0.05, "1": 0.55, "2": 0.4 }, confidence: 0.73 };
