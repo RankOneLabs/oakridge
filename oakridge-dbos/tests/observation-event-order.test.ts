@@ -44,3 +44,14 @@ test("a lower transaction id remains unread until it commits, then both rows are
       { after: { commit_txid: after.commit_txid, id: after.id }, limit: 10 }) }).toEqual({ ids: [older, newer], replay: [] });
   } finally { release(); await pending; await holder.destroy(); }
 });
+
+test("events are read in numeric commit order across a digit boundary", async () => {
+  const { bundle_id } = await pinSample(authority);
+  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "digits" } });
+  const event = (commit_txid: number) => ({ id: crypto.randomUUID(), run_id, unit_id: null, commit_txid,
+    payload: jsonText({ kind: "cancel_requested" as const }), writer: jsonText({ kind: "operator" as const, subject: "test" }) });
+  const [nines, boundary] = [event(99_999), event(100_000)];
+  await authority.db.insertInto("authority.event").values([boundary, nines]).execute();
+  const rows = await readCommittedEventsAfter(authority.db, "authority.event", { after: { commit_txid: "99998", id: "" }, limit: 2 });
+  expect(rows.map((row) => row.commit_txid)).toEqual(["99999", "100000"]);
+});
