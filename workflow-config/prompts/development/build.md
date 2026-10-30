@@ -29,7 +29,7 @@ Record the commit you built as the required `head_sha` in the `build_result` bod
 After all commits are complete, use the gated-review MCP tools to publish the branch:
 
 1. Push the branch: call `mcp__gated-review__git_push` with `repository` set to the repository's `owner/name` and `repo_path` set to your worktree's absolute path.
-2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch. Open it ready for review, not as a draft.
+2. Open a PR with `mcp__gated-review__open_pr`, setting its `base` to exactly `{{build_base}}` — the run's base branch. Open it as a draft (`draft: true`). The assessor marks it ready for review when the build passes assessment; never change its draft status yourself.
 3. Note the `url` returned by `open_pr` — you will include it in the `pr` artifact below.
 
 Never merge a pull request: merges belong to the operator.
@@ -38,7 +38,7 @@ Never merge a pull request: merges belong to the operator.
 
 Publish **in this order** (both must be published before stopping):
 
-1. `pr`: the URL returned by `open_pr`, the current branch name, a 1-2 sentence description of what the PR contains, and its review status.
+1. `pr`: the URL returned by `open_pr`, the current branch name, a 1-2 sentence description of what the PR contains, and `review_status: draft`.
 2. `build_result` (publish second — this hands the build to the assessor): a 2-4 sentence summary of what was built and any issues, the `repository_key`, the changed files as paths relative to the worktree root, the test counts with the last few lines of test output, and the known issues with their severity (`blocking`, `warning` or `info`).
 
 Empty arrays are valid for `changed_files` and `known_issues`. If all tests pass, `failed` should be 0. Do not publish `build_result` until `pr` is published.

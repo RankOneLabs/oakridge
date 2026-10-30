@@ -9,7 +9,7 @@ import type * as schema from "@agentclientprotocol/sdk";
 import { contextHintOf, withoutContextHint } from "../runtime";
 import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
-import { AcpClient } from "./client";
+import { AcpClient, selectGatedReviewRole } from "./client";
 import {
   projectConfigOptions,
   projectPermissionRequest,
@@ -299,10 +299,12 @@ export class AcpSessionController {
       { once: true },
     );
 
+    const role = selectGatedReviewRole(this.deps.store.getSession(this.deps.sid)?.workflow ?? null);
+    if (role !== null) console.info(`[acp] sid=${this.deps.sid} gated-review surface=${role}`);
     this.client = new AcpClient(this.deps.sid, this.child, {
       onSessionUpdate: (notification) => this.handleUpdate(notification),
       onPermissionRequest: (request) => this.handlePermissionRequest(request),
-    });
+    }, role);
 
     const initialized = await this.client.initialize();
     if (!initialized.ok) {

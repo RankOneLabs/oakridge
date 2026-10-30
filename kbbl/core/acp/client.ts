@@ -20,6 +20,7 @@ import {
   ok,
   type AcpError,
   type AcpFailureCode,
+  type AcpSessionWorkflowIdentity,
   type KbblSessionId,
   type Result,
 } from "./types";
@@ -31,21 +32,40 @@ export interface AcpClientHandlers {
   ): Promise<schema.RequestPermissionResponse>;
 }
 
-/** The MCP server supplied by the launcher, using ACP's session setup contract. */
-export function selectMcpServers(gatedReviewUrl: string | undefined): schema.McpServer[] {
-  return gatedReviewUrl ? [{ type: "http", name: "gated-review", url: gatedReviewUrl, headers: [] }] : [];
+/** A gated-review surface scoped to one worker role: builders only open drafts, assessors set draft state. */
+export type GatedReviewRole = "builder" | "assessor";
+
+const GATED_REVIEW_ROLES: ReadonlyMap<string, GatedReviewRole> = new Map([["builder", "builder"], ["assessor", "assessor"]]);
+
+/**
+ * The role a session's worker connects as. Only the cohort's builder and
+ * assessor are scoped; every other session, the integrator included, keeps
+ * the unscoped surface. A session key includes its worker, so the role is
+ * fixed for the session's life.
+ */
+export function selectGatedReviewRole(workflow: AcpSessionWorkflowIdentity | null): GatedReviewRole | null {
+  return workflow === null ? null : GATED_REVIEW_ROLES.get(workflow.worker) ?? null;
+}
+
+/** The MCP server supplied by the launcher, using ACP's session setup contract; a role gets its own endpoint under it. */
+export function selectMcpServers(gatedReviewUrl: string | undefined, role: GatedReviewRole | null): schema.McpServer[] {
+  if (!gatedReviewUrl) return [];
+  const url = role === null ? gatedReviewUrl : `${gatedReviewUrl.replace(/\/+$/, "")}/${role}`;
+  return [{ type: "http", name: "gated-review", url, headers: [] }];
 }
 
 export class AcpClient {
   private readonly connection: ClientConnection;
   private capabilities: schema.AgentCapabilities = {};
-  private readonly mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL);
+  private readonly mcpServers: schema.McpServer[];
 
   constructor(
     private readonly sid: KbblSessionId,
     child: AcpChildProcess,
     handlers: AcpClientHandlers,
+    role: GatedReviewRole | null,
   ) {
+    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, role);
     this.connection = client({ name: `kbbl:${sid}` })
       .onNotification("session/update", (ctx) => {
         handlers.onSessionUpdate(ctx.params);

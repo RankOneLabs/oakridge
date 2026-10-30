@@ -133,6 +133,27 @@ test("a configured gated-review server reaches the ACP agent", async () => {
   }
 }, 15000);
 
+test("a cohort builder session reaches the builder-scoped gated-review endpoint", async () => {
+  const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
+  process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
+  try {
+    const { stateDir, workdir } = await makeDirs();
+    const { service, store } = makeHarness({ stateDir });
+    const ensured = await service.ensureResumableSession("builder-wiring", spec(workdir),
+      { run_id: "run-1", unit_id: "run-1/implementation/a", worker: "builder" });
+    if (!ensured.ok) throw new Error("ensure failed");
+    const sid = ensured.value.session.sid;
+    await service.observeInitialTurn(sid, 8000);
+    const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
+    if (!agentSessionId) throw new Error("agent session missing");
+    const servers = JSON.parse(await readFile(join(stateDir, `${agentSessionId}.mcp-servers.json`), "utf8"));
+    expect(servers).toEqual([{ type: "http", name: "gated-review", url: "http://127.0.0.1:3555/mcp/builder", headers: [] }]);
+  } finally {
+    if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
+    else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
+  }
+}, 15000);
+
 function spec(workdir: string, prompt = "build the thing"): AcpSessionStartSpec {
   return { initial_prompt: prompt, workdir, runtime: "fake" };
 }
