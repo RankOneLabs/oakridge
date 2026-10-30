@@ -38,7 +38,9 @@ export type ReplayReport =
   | { readonly kind: "reached_head"; readonly delivered: number }
   /** Delivery reached the end, but fewer events than the stream holds in that range: the publisher skipped some. */
   | { readonly kind: "skipped_events"; readonly delivered: number; readonly expected: number }
-  | { readonly kind: "stopped"; readonly delivered: number; readonly refused: RefusedDelivery };
+  | { readonly kind: "stopped"; readonly delivered: number; readonly refused: RefusedDelivery }
+  /** Committed events past the reader's visibility horizon stayed hidden, likely behind an open transaction. */
+  | { readonly kind: "blocked"; readonly delivered: number; readonly remaining: number };
 
 export interface ReplayInput {
   readonly authority: Database;
@@ -46,6 +48,8 @@ export interface ReplayInput {
   readonly namespace: string;
   /** The position delivery resumes after; the initial cursor replays the whole history. */
   readonly start: SourceEventCursor;
+  /** How long delivery may stall short of the stream's end before the replay reports it blocked. */
+  readonly wait_ms?: number;
 }
 
 interface DeliveryShape {
@@ -77,11 +81,20 @@ export async function replayIntoObservation(input: ReplayInput): Promise<ReplayR
     return response;
   };
   const options: ObservationOptions = { url: "http://observation.replay", namespace: input.namespace, token: TOKEN, fetcher };
+  // The stream's end, read without the reader's visibility horizon: the replay is done only once it gets there.
+  const end = await readStreamEnd(input.authority);
+  const wait_ms = input.wait_ms ?? 30_000;
   let delivered = 0;
+  let stalled_since: number | null = null;
   for (;;) {
     try {
-      if (!await publishObservationOnce(input.authority, options)) return checkCompleteness(input, app, delivered);
-      delivered += 1;
+      if (await publishObservationOnce(input.authority, options)) { delivered += 1; stalled_since = null; continue; }
+      const cursor = await readServiceCursor(app);
+      const remaining = end === null ? 0 : await countEvents(input.authority, cursor, end);
+      if (remaining === 0) return checkCompleteness(input, cursor, delivered);
+      stalled_since ??= Date.now();
+      if (Date.now() - stalled_since >= wait_ms) return { kind: "blocked", delivered, remaining };
+      await Bun.sleep(500);
     } catch (error) {
       const detail = failure.exception ?? failure.response ?? (error instanceof Error ? error.message : String(error));
       return { kind: "stopped", delivered, refused: { cursor: failure.sent?.cursor ?? null, outcome_kind: failure.sent?.outcome?.kind ?? null,
@@ -90,17 +103,33 @@ export async function replayIntoObservation(input: ReplayInput): Promise<ReplayR
   }
 }
 
+/** The last committed event, whether or not the reader can see it yet. */
+async function readStreamEnd(authority: Database): Promise<SourceEventCursor | null> {
+  const row = await sql<{ txid: string; id: string }>`SELECT commit_txid::text AS txid, id FROM authority.event
+    ORDER BY commit_txid DESC, id DESC LIMIT 1`.execute(authority);
+  return row.rows[0] ? { commit_txid: row.rows[0].txid, id: row.rows[0].id } : null;
+}
+
+async function readServiceCursor(app: ReturnType<typeof createApp>): Promise<SourceEventCursor> {
+  const ack = await (await app.request("/v1/sources/oakridge/cursor", { headers: { authorization: `Bearer ${TOKEN}` } })).json() as
+    { readonly cursor: SourceEventCursor };
+  return ack.cursor;
+}
+
+/** Events strictly after `after` and up to and including `through`, in numeric commit order. */
+async function countEvents(authority: Database, after: SourceEventCursor, through: SourceEventCursor): Promise<number> {
+  const counted = await sql<{ count: string }>`SELECT count(*)::text AS count FROM authority.event
+    WHERE (commit_txid, id) > (${after.commit_txid}::bigint, ${after.id})
+    AND (commit_txid, id) <= (${through.commit_txid}::bigint, ${through.id})`.execute(authority);
+  return Number(counted.rows[0]?.count ?? 0);
+}
+
 /**
  * Counts the stream independently of the publisher: every event between the start
  * and the service's final position must have been delivered exactly once.
  */
-async function checkCompleteness(input: ReplayInput, app: ReturnType<typeof createApp>, delivered: number): Promise<ReplayReport> {
-  const ack = await (await app.request("/v1/sources/oakridge/cursor", { headers: { authorization: `Bearer ${TOKEN}` } })).json() as
-    { readonly cursor: SourceEventCursor };
-  const counted = await sql<{ count: string }>`SELECT count(*)::text AS count FROM authority.event
-    WHERE (commit_txid, id) > (${input.start.commit_txid}::bigint, ${input.start.id})
-    AND (commit_txid, id) <= (${ack.cursor.commit_txid}::bigint, ${ack.cursor.id})`.execute(input.authority);
-  const expected = Number(counted.rows[0]?.count ?? 0);
+async function checkCompleteness(input: ReplayInput, cursor: SourceEventCursor, delivered: number): Promise<ReplayReport> {
+  const expected = await countEvents(input.authority, input.start, cursor);
   return expected === delivered ? { kind: "reached_head", delivered } : { kind: "skipped_events", delivered, expected };
 }
 
