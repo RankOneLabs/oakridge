@@ -145,6 +145,31 @@ export interface RunGradeInput {
   readonly reviewed_commit?: string;
 }
 export interface RunGradeResult { readonly execution: Selectable<ObservationEvaluationExecution>; readonly observation: Selectable<ObservationGradeObservation> | null; readonly was_replay: boolean }
+export type ManualRecoveryResult = { readonly state: "recovered"; readonly execution_id: string }
+  | { readonly state: "missing" } | { readonly state: "not_running" } | { readonly state: "queued_job" };
+
+/** An operator can fence a stranded manual call before submitting a new attempt label. */
+export async function recoverManualExecution(db: Database, tenant: TenantScope, execution_id: string)
+  : Promise<Result<ManualRecoveryResult, GradingError>> {
+  try {
+    return await withTenant(db, tenant, async (trx) => {
+      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution_id).forUpdate().executeTakeFirst();
+      if (!execution) return ok({ state: "missing" });
+      if (execution.status !== "running") return ok({ state: "not_running" });
+      const job = await trx.selectFrom("observation.grading_job").select("job_id")
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("idempotency_digest", "=", execution.idempotency_digest).executeTakeFirst();
+      if (job) return ok({ state: "queued_job" });
+      await trx.updateTable("observation.evaluation_execution")
+        .set({ status: "failed", ended_at: new Date(), error: "operator_recovery" })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution_id).execute();
+      return ok({ state: "recovered", execution_id });
+    });
+  } catch (cause) { return failure("recover_manual_evaluation", execution_id, String(cause)); }
+}
 
 /** Ingest and persist use separate short transactions; the runner is awaited between them. */
 export async function runGrade(db: Database, tenant: TenantScope, input: RunGradeInput & {

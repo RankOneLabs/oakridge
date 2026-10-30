@@ -11,7 +11,7 @@ import { llmJudgeRunner } from "../runners/llm-judge";
 import { ingestModelScore } from "../langfuse/score-ingestion";
 import { createLangfuseHttpClient } from "../langfuse/http-client";
 import type { GradeAnswer } from "../grading/observation";
-import { registerGradingContext, runGrade } from "../storage/grading-store";
+import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
 import { gradingLimits } from "../grading/jobs/budget";
@@ -125,6 +125,17 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
       .selectAll().where("producer", "=", credential.producer).where("namespace", "=", credential.namespace)
       .where("execution_id", "=", c.req.param("id")).executeTakeFirst());
     return execution ? c.json(execution) : errorResponse(c, 404, "not_found", "execution not found");
+  });
+  app.post("/v1/evaluation-executions/:id/recover", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
+    if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
+    const result = await recoverManualExecution(deps.db, credential, c.req.param("id"));
+    if (!result.ok) return errorResponse(c, 500, "recovery_failed", result.error.detail);
+    if (result.value.state === "missing") return errorResponse(c, 404, "not_found", "execution not found");
+    if (result.value.state === "not_running") return errorResponse(c, 409, "not_running", "execution is already terminal");
+    if (result.value.state === "queued_job") return errorResponse(c, 409, "queued_job", "execution is owned by a grading job");
+    return c.json({ execution_id: result.value.execution_id, status: "failed",
+      next_action: "submit a new evaluation with a distinct attempt_label" });
   });
   app.post("/v1/langfuse/model-scores", async (c) => {
     const tenant = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);

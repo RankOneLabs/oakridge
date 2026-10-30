@@ -212,6 +212,12 @@ runners are accepted only on this route. `POST /v1/evaluations` remains for the
 local deterministic, coverage and stub runners. Read or grade credentials can
 read `GET /v1/evaluation-jobs/:id`, `GET /v1/evaluation-executions/:id`, and
 `GET /v1/items/:id/evaluation-jobs` to inspect pending and terminal work.
+If a manual request leaves an execution running after interruption, a grade
+operator can call `POST /v1/evaluation-executions/:id/recover`. The action
+marks that manual execution failed and fences out its late response. Submit
+a new manual evaluation with a distinct `attempt_label` to produce the grade.
+The recovery action refuses executions owned by a durable job and executions
+that are already terminal.
 
 The observation process starts a worker beside HTTP. It claims queued or
 expired jobs with `FOR UPDATE SKIP LOCKED`, checks run and stage caps, then
@@ -234,11 +240,15 @@ and a 45 second lease. Set `OBSERVATION_GRADING_RUN_CONCURRENCY`,
 them. The lease is never configured shorter than the provider deadline plus
 five seconds. Active jobs reserve their estimated cost; after a job releases
 its claim, its recorded provider cost remains in the spend total. Budget skips
-create no execution; they append a
+before a first attempt create no execution; they append a
 `skipped_budget` eligibility decision. The disclosure record stores provider,
 policy version, evidence digests and content types, with no raw content. Only
 public and classified repository content are permitted for outbound grading;
 unclassified, internal, raw build and raw test roles are refused.
+When a provider does not report cost, the admitted estimate is charged to its
+attempt. If a retry is refused by a cap, the job becomes terminal and its
+earlier running execution is closed as failed; the retry does not call the
+provider. Local runners do not pass through the outbound disclosure gate.
 
 The PostgreSQL drills in `observation/tests/grading-job-recovery.test.ts`
 simulate interruption before claim, during a provider call, after response
