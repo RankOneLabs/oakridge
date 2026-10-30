@@ -257,10 +257,43 @@ response cannot replace the winner's grade. `grading-no-transaction.test.ts`
 traces transaction callbacks around both the manual and queued runner call.
 These are local deterministic drills, not a live provider rollout.
 
-### Direct Jev walkthrough status (2026-10-30)
+### Direct Jev live walkthrough (2026-10-30)
 
-The captured Oakridge planning and brief fixture is in `observation/fixtures/oakridge/run-slice/`. The local pilot request test uses its unchanged pinned evidence recipe shape and confirms that evaluator-pinned instructions reach an injected System One transport. The answer-state database test records distinct `unclear` and `abstain` observations. The full observation suite exercises the captured fixture.
+Using the local `TYPESAFE_API_KEY`, `GET /v1/models` returned `jev-latest` and `jev-preview`. A single `plan.criterion_traceability/v1` grade used the `criterion-lineage` plan subject and its cited `decision-capture` from `observation/fixtures/oakridge/run-slice/plan-revision.json`. The source event IDs and transaction metadata came from a captured Oakridge run; the fixture's revision bodies are hand-written adaptations, as its `PROVENANCE.md` states. The plan revision was ingested through the Oakridge source-event route, and the subject was projected before registration and grading. The four pinned pilot `input_recipe` values were unchanged.
 
-No live TypeSafe request was sent in this workspace: `TYPESAFE_API_KEY` is not configured. The current [TypeSafe OpenAPI contract](https://api.typesafe.ai/openapi.json) documents Choice, Noul and Score responses with `model`, `answers` and `usage`. It does not document `cost` or `id` on the response. The runner preserves those fields when returned; a live run must verify whether this account receives them. Until then, a stored grade cannot be claimed to have provider-reported cost or request id. Fastino GLiDE and the LLM judge remain configuration-gated.
+The POST to `https://api.typesafe.ai/v1/systemone` used bearer authentication and this request shape (the full instruction text is stored on the evaluator):
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "plan_criterion": { "id": "criterion-lineage", "text": "Lineage is explicit", "task_ids": [], "decision_ids": ["decision-capture"] },
+    "plan_decision": { "id": "decision-capture", "text": "Keep captured bodies immutable" }
+  },
+  "questions": {
+    "plan.criterion_traceability": {
+      "type": "choice",
+      "instructions": "Does plan_criterion follow from its cited plan_decision? Choose traceable when the decision supports the criterion; unsupported when it does not; unclear_insufficient_evidence only when the present excerpts cannot settle the relationship. Do not infer uncited sources.",
+      "criteria": {
+        "traceable": "The cited decision supports the plan criterion",
+        "unsupported": "The cited decision does not support the plan criterion",
+        "unclear_insufficient_evidence": "The captured excerpts do not settle support"
+      }
+    }
+  }
+}
+```
+
+TypeSafe returned HTTP 200 with `model: "jev-1.14.0"`, choice `unsupported`, confidence `0.37`, probabilities `{traceable: 0.15, unsupported: 0.58, unclear_insufficient_evidence: 0.27}`, and usage `{input_tokens: 483, output_tokens: 55}`. The five requested execution fields were checked independently in the stored row:
+
+| Field | Stored value |
+| --- | --- |
+| Raw provider answer | `unsupported`, confidence `0.37`, and all three probabilities in `reproducibility_metadata.raw_answer` |
+| Provider model version | `jev-1.14.0` in `reproducibility_metadata.provider_model` |
+| Token usage | `input_tokens: 483`, `output_tokens: 55` in `model_usage` |
+| Provider-reported cost | `null`; absent from the JSON response |
+| Provider request ID | `null`; `id` was absent from the JSON response and `x-request-id` was absent from the headers |
+
+The isolated local PostgreSQL database `observation_jev_live_20261030_216a64c6`, tenant `oakridge/jev-live-walkthrough`, retains subject occurrence `canonical-json/v1:1314f7fa5f25a135235031a0e1a07c18fbf17d06ed18da552820025f93ca17e3`, execution `ca807f29-e78e-462d-beb8-9b90dada4622` (`completed`), and grade observation `65e400ee-6fd7-412b-bc5d-9bca3c4b8809` (`answered`, `unsupported`). A separate read verified the execution and grade persisted. The account's actual response matches the [public TypeSafe OpenAPI contract](https://api.typesafe.ai/openapi.json): it documents `model`, `answers`, and `usage`, but neither `cost` nor `id`. The requirement for provider-reported cost and request ID needs a provider contract or account agreement that supplies them; this runner does not substitute an estimate or invented ID. Fastino GLiDE and the LLM judge remain configuration-gated.
 
 Worker construction reads `TYPESAFE_API_KEY` and optional `TYPESAFE_BASE_URL` for Jev, or `FASTINO_API_KEY` and optional `FASTINO_BASE_URL` for GLiDE. Keys stay in the worker process. Set `OBSERVATION_EXTERNAL_PROCESSING_POLICY` to the selected provider processing agreement or policy identifier. Every provider attempt stores that value separately from local retention; if unset, the field is omitted.
