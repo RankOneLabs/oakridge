@@ -11,6 +11,13 @@ interface Props {
   isMultiline?: boolean;
 }
 
+/** Grows a textarea to its content so the whole value stays visible while it is edited. */
+function fitToContent(field: HTMLTextAreaElement | null): void {
+  if (!field) return;
+  field.style.height = "auto";
+  field.style.height = `${field.scrollHeight}px`;
+}
+
 /** One brief atom in edit mode: shows its value, swaps to a field on click, submits on blur. */
 export function EditableBriefText({ anchor, value, edit, isMultiline = false }: Props) {
   const [isEditing, setIsEditing] = useState(false);
@@ -35,7 +42,8 @@ export function EditableBriefText({ anchor, value, edit, isMultiline = false }: 
     setIsEditing(false);
   };
   return isMultiline ? (
-    <textarea className={`${fieldClass} min-h-32 resize-y`} value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={commit} autoFocus />
+    <textarea ref={fitToContent} className={`${fieldClass} min-h-32 resize-y`} value={draft} disabled={edit.isPending}
+      onChange={(event) => { setDraft(event.target.value); fitToContent(event.target); }} onBlur={commit} autoFocus />
   ) : (
     <input className={fieldClass} value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={commit} autoFocus />
   );
