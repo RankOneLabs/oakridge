@@ -24,6 +24,24 @@ export interface EvidenceSet {
   readonly incompleteness_reason: string | null;
 }
 
+export interface VisibleEvidenceReference {
+  readonly ref: string; readonly kind?: EvidenceKind; readonly digest: string | null;
+  readonly deep_link: string | null; readonly reviewed_commit: string | null;
+  readonly is_truncated: boolean; readonly is_unreadable: boolean;
+  readonly incompleteness_reason: string | null; readonly content?: JsonValue | null;
+}
+export function visibleEvidenceReferences(evidence: EvidenceSet): readonly VisibleEvidenceReference[] {
+  return evidence.references.map((reference) => {
+    const metadata = { ref: reference.ref, ...(reference.kind ? { kind: reference.kind } : {}),
+      digest: reference.digest, deep_link: reference.deep_link ?? null,
+      reviewed_commit: reference.reviewed_commit ?? null,
+      is_truncated: reference.is_truncated ?? false, is_unreadable: reference.is_unreadable ?? false,
+      incompleteness_reason: reference.incompleteness_reason ?? null };
+    return reference.kind === "public" || reference.kind === "repository_content"
+      ? { ...metadata, content: reference.content } : metadata;
+  });
+}
+
 export interface EvidenceDigestError { readonly operation: "evidence_set_digest"; readonly entity_id: string; readonly detail: string }
 /** Mirrors the Assay export digest input, including the captured reference content. */
 export function evidenceSetDigest(evidence: EvidenceSet): Result<CanonicalDigest, EvidenceDigestError> {

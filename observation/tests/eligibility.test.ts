@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import { createApp } from "../src/http/app";
 import type { ItemOccurrenceId, QuestionId, EvidenceSetId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import type { CapturedRevision } from "../src/grading/evidence-packages/capture";
 import { eligibilityExclusionCounts, exclusionReason, type EligibilityDecision } from "../src/grading/eligibility";
-import { recordEligibility, readEligibility } from "../src/storage/eligibility-store";
+import { recordEligibility, readEligibility, readOccurrenceEligibility } from "../src/storage/eligibility-store";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { sql } from "kysely";
@@ -71,6 +72,38 @@ test("run-slice exclusions share the eligibility denominator", async () => {
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
+integration("occurrence eligibility selects later timestamp and higher id on a tie", async () =>
+  scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+    const insert = async (eligibility_id: string, recorded_at: string, tag: string) =>
+      withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+        (producer, namespace, eligibility_id, subject_occurrence_id, question_id, question_version, tag, payload, recorded_at)
+        VALUES (${tenant.producer}, ${tenant.namespace}, ${eligibility_id}, ${occurrence_id},
+          ${question.question_id}, ${question.question_version}, ${tag}, ${JSON.stringify({ winner: tag })}::jsonb,
+          ${recorded_at}::timestamptz)`.execute(trx));
+    await insert("a", "2026-01-01T00:00:00Z", "inapplicable");
+    await insert("b", "2026-01-02T00:00:00Z", "eligible");
+    expect((await readOccurrenceEligibility(db, tenant, occurrence_id)).map((row) => row.tag)).toEqual(["eligible"]);
+    await insert("c", "2026-01-02T00:00:00Z", "missing_evidence");
+    expect((await readOccurrenceEligibility(db, tenant, occurrence_id)).map((row) => row.tag)).toEqual(["missing_evidence"]);
+    const app = createApp({ db, credentials: { ingest: [], grade: [], read: [{ ...tenant, token: "read" }] } });
+    const route = `/v1/items/${encodeURIComponent(occurrence_id)}/eligibility`;
+    const denied = await app.request(route);
+    expect([denied.status, (await denied.json()).error.code]).toEqual([403, "forbidden"]);
+    const read = await app.request(route, { headers: { authorization: "Bearer read" } });
+    expect((await read.json()).items).toMatchObject([{ tag: "missing_evidence", payload: { winner: "missing_evidence" } }]);
+    const filtered = await app.request("/v1/runs/run-1/items?revision_id=rev-1&item_id_or_path=criterion-1",
+      { headers: { authorization: "Bearer read" } });
+    expect((await filtered.json())).toMatchObject({ total: 1, items: [{ occurrence_id }] });
+    const missing = await app.request("/v1/runs/run-1/items?revision_id=rev-1&item_id_or_path=absent",
+      { headers: { authorization: "Bearer read" } });
+    expect((await missing.json())).toMatchObject({ total: 0, items: [], issues: [] });
+    for (const query of ["limit=0", "limit=201", "offset=-1"]) {
+      const invalid = await app.request(`/v1/runs/run-1/items?revision_id=rev-1&${query}`,
+        { headers: { authorization: "Bearer read" } });
+      expect([invalid.status, (await invalid.json()).error.code]).toEqual([400, "invalid_pagination"]);
+    }
+  }));
 integration("four exclusion causes persist as distinct typed eligibility rows", async () => scratchGrading(async (db, first) => {
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   const ids = [first, ...[2, 3, 4].map((index) => {

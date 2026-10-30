@@ -5,6 +5,36 @@ import type { EvidenceSetId } from "../src/domain/identity";
 import { listGrades, readExecution, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { createApp } from "../src/http/app";
+import { evidenceSetDigest } from "../src/grading/evidence";
+import { sql } from "kysely";
+import { withTenant } from "../src/storage/database";
+
+const evidenceReadIntegration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
+evidenceReadIntegration("evidence read preserves digest and hides restricted content in serialized JSON", async () =>
+  scratchGrading(async (db) => {
+    const references = ["public", "repository_content", "raw_build_output", "raw_test_output", "internal", undefined]
+      .map((kind, index) => ({ ref: `source:${index}`, ...(kind ? { kind } : {}),
+        content: `secret-${index}`, digest: `digest-${index}`, deep_link: `link-${index}`,
+        reviewed_commit: "abc", is_truncated: true, is_unreadable: false, incompleteness_reason: "partial" }));
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evidence_set
+      (producer, namespace, evidence_set_id, evidence_refs, is_incomplete, incompleteness_reason)
+      VALUES (${tenant.producer}, ${tenant.namespace}, 'mixed', ${JSON.stringify(references)}::jsonb, false, null)`.execute(trx));
+    const app = createApp({ db, credentials: { ingest: [], grade: [], read: [{ ...tenant, token: "read" }] } });
+    const route = "/v1/evidence-sets/mixed";
+    const unauthorized = await app.request(route);
+    expect([unauthorized.status, (await unauthorized.json()).error.code]).toEqual([403, "forbidden"]);
+    const missing = await app.request("/v1/evidence-sets/missing", { headers: { authorization: "Bearer read" } });
+    expect([missing.status, (await missing.json()).error.code]).toEqual([404, "not_found"]);
+    const response = await app.request(route, { headers: { authorization: "Bearer read" } });
+    const body = JSON.parse(await response.text());
+    const digest = evidenceSetDigest({ evidence_set_id: "mixed" as EvidenceSetId,
+      references: references as EvidenceSet["references"], is_incomplete: false, incompleteness_reason: null });
+    expect(body.digest).toBe(digest.ok ? digest.value : null);
+    expect(body.evidence_refs.map((ref: { content?: string }) => ref.content ?? null))
+      .toEqual(["secret-0", "secret-1", null, null, null, null]);
+    expect(body.evidence_refs[5]).toMatchObject({ ref: "source:5", digest: "digest-5", deep_link: "link-5",
+      reviewed_commit: "abc", is_truncated: true, is_unreadable: false, incompleteness_reason: "partial" });
+  }));
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 
