@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import { openDatabase, withTenant, type Database } from "../src/storage/database";
-import { registerGradingContext, startDelegatedExecution } from "../src/storage/grading-store";
+import { registerGradingContext, runGrade, startDelegatedExecution } from "../src/storage/grading-store";
 import { claimJob, enqueueJob } from "../src/storage/grading-job-store";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { gradingLimits } from "../src/grading/jobs/budget";
@@ -91,9 +91,39 @@ integration("expired provider response is discarded after a second worker wins r
   expect(stored.grades).toHaveLength(1);
   expect(stored.grades[0]?.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
   expect(stored.executions[0]?.provider_attempts).toEqual([
-    { job_id: job.job_id, attempt: 2, request_id: "request-new", cost: 0.3 },
-    { job_id: job.job_id, attempt: 1, request_id: "request-old", cost: 0.2 },
+    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-new", cost: 0.3 },
+    { job_id: job.job_id, attempt: 1, status: "completed", request_id: "request-old", cost: 0.2 },
   ]);
+}));
+
+integration("failed provider request id and cost remain on the canonical execution", async () => scratchGrading(async (db, occurrence_id) => {
+  const { job } = await setup(db, occurrence_id, "failed request");
+  const failed: GradeRunner = { kind: "model", async run() { return { ok: false, error: {
+    operation: "provider", entity_id: "model", detail: "HTTP 503",
+    external_execution_id: "request-failed", cost: 0.04 } }; } };
+  await workOneJob(db, tenant, limits, "first", failed);
+  expect((await outcome(db, job.job_id)).job.state).toBe("reclaimable");
+  await workOneJob(db, tenant, limits, "second", good);
+  const stored = await outcome(db, job.job_id);
+  expect(stored.executions).toHaveLength(1);
+  expect(stored.grades).toHaveLength(1);
+  expect(stored.executions[0]?.provider_attempts).toEqual([
+    { job_id: job.job_id, attempt: 1, status: "failed", request_id: "request-failed", cost: 0.04 },
+    { job_id: job.job_id, attempt: 2, status: "completed", request_id: "request-old", cost: 0.2 },
+  ]);
+}));
+
+integration("replay of a terminal execution terminalizes its claimed job without calling the runner", async () => scratchGrading(async (db, occurrence_id) => {
+  const { identity, job } = await setup(db, occurrence_id, "terminal replay");
+  expect((await runGrade(db, tenant, { identity, runner: good })).ok).toBe(true);
+  let calls = 0;
+  const unused: GradeRunner = { kind: "model", async run() { calls++; return good.run({} as never); } };
+  await workOneJob(db, tenant, limits, "replay-worker", unused);
+  const stored = await outcome(db, job.job_id);
+  expect(calls).toBe(0);
+  expect(stored.job.state).toBe("terminal");
+  expect(stored.job.terminal_cause).toBeNull();
+  expect(stored.grades).toHaveLength(1);
 }));
 
 integration("retry limit makes an expired claim terminal with a typed cause", async () => scratchGrading(async (db, occurrence_id) => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { EvaluationIdentity } from "../execution";
+import type { RunnerResult } from "../runner";
 import { checkDisclosure } from "../disclosure";
 import type { GradeRunner } from "../../ports/grade-runner";
 import { deterministicChecker } from "../../runners/deterministic-checker";
@@ -59,10 +60,16 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("job_id", "=", job.job_id).where("state", "=", "claimed")
       .where("lease_owner", "=", owner).execute());
-    const response = await base.run(context);
-    if (execution_id && response.ok) {
+    let response: RunnerResult;
+    try { response = await base.run(context); }
+    catch { response = err({ operation: "grade_runner", entity_id: context.evaluator.evaluator_definition_id,
+      detail: "runner failed" }); }
+    if (execution_id) {
       const attempt = { job_id: job.job_id, attempt: job.attempts,
-        request_id: response.value.external_execution_id ?? null, cost: response.value.cost ?? 0 };
+        status: response.ok ? "completed" : "failed",
+        request_id: response.ok ? response.value.external_execution_id ?? null
+          : response.error.external_execution_id ?? null,
+        cost: response.ok ? response.value.cost ?? 0 : response.error.cost ?? 0 };
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
         .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([attempt])}::jsonb` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)

@@ -18,8 +18,9 @@ const completionSchema = z.object({ id: z.string().min(1), model: z.string().min
 export type JudgeTransport = (url: string, init: RequestInit) => Promise<Response>;
 export interface JudgeConfig { readonly api_key: string | undefined; readonly base_url: string;
   readonly transport?: JudgeTransport; readonly deadline_ms?: number }
-function failure(context: GradingContext, detail: string): RunnerResult {
-  return err({ operation: "llm_judge", entity_id: context.evaluator.evaluator_definition_id, detail });
+function failure(context: GradingContext, detail: string, external_execution_id?: string | null): RunnerResult {
+  return err({ operation: "llm_judge", entity_id: context.evaluator.evaluator_definition_id, detail,
+    external_execution_id });
 }
 
 /** A single atomic, pinned rubric over an explicit, bounded evidence allowlist. */
@@ -52,7 +53,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       body: JSON.stringify({ model: context.evaluator.model, temperature: 0, response_format: { type: "json_object" },
         messages: [{ role: "user", content: JSON.stringify(prompt) }] }),
     }); } catch { return failure(context, "judge transport failed"); }
-    if (!response.ok) return failure(context, `judge HTTP ${response.status}`);
+    if (!response.ok) return failure(context, `judge HTTP ${response.status}`, response.headers.get("x-request-id"));
     let raw: unknown;
     try { raw = await response.json(); } catch { return failure(context, "judge response is not JSON"); }
     const completion = completionSchema.safeParse(raw);

@@ -4,7 +4,8 @@ import type { EvaluatorDefinition } from "./evaluator";
 import type { GradeAnswer } from "./observation";
 import type { QuestionDefinition } from "./question";
 
-export interface GradingError { readonly operation: string; readonly entity_id: string; readonly detail: string }
+export interface GradingError { readonly operation: string; readonly entity_id: string; readonly detail: string;
+  readonly external_execution_id?: string | null; readonly cost?: number | null }
 export interface GradingContext {
   readonly question: QuestionDefinition;
   readonly evidence: EvidenceSet;

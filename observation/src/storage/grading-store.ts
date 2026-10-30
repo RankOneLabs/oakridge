@@ -188,6 +188,19 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
           .where("execution_id", "=", execution.execution_id).executeTakeFirstOrThrow());
       }
       if (current.status === "running") return failure("evaluate", identity.subject_occurrence_id, "execution is still running");
+      const lease = input.lease;
+      if (lease) await withTenant(db, tenant, async (trx) => {
+        const claim = await trx.selectFrom("observation.grading_job").selectAll()
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("job_id", "=", lease.job_id).forUpdate().executeTakeFirst();
+        if (claim?.state === "claimed" && claim.lease_owner === lease.owner
+          && claim.lease_expires_at && claim.lease_expires_at.getTime() > Date.now())
+          await trx.updateTable("observation.grading_job").set({ state: "terminal",
+            terminal_cause: current.status === "completed" ? null : "runner_failed",
+            lease_owner: null, lease_expires_at: null, updated_at: new Date() })
+            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+            .where("job_id", "=", claim.job_id).execute();
+      });
       const observation = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
         .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("execution_id", "=", execution.execution_id).executeTakeFirst());

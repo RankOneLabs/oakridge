@@ -41,8 +41,10 @@ export interface SystemOneRunnerConfig {
   readonly deadline_ms: number;
 }
 
-function failure(context: GradingContext, operation: string, detail: string): RunnerResult {
-  return err({ operation, entity_id: context.evaluator.evaluator_definition_id, detail } satisfies GradingError);
+function failure(context: GradingContext, operation: string, detail: string,
+  external_execution_id?: string | null): RunnerResult {
+  return err({ operation, entity_id: context.evaluator.evaluator_definition_id, detail,
+    external_execution_id } satisfies GradingError);
 }
 
 export function systemOneRequest(context: GradingContext): ReturnType<typeof systemOneRequestSchema.safeParse> {
@@ -76,7 +78,8 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
         body: JSON.stringify(request.data), signal: AbortSignal.timeout(config.deadline_ms),
       });
     } catch { return failure(context, config.operation, "provider transport failed"); }
-    if (!response.ok) return failure(context, config.operation, `provider HTTP ${response.status}`);
+    if (!response.ok) return failure(context, config.operation, `provider HTTP ${response.status}`,
+      response.headers.get("x-request-id"));
     let raw: unknown;
     try { raw = await response.json(); }
     catch { return failure(context, config.operation, "provider response is not JSON"); }

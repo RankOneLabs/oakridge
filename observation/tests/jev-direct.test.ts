@@ -101,6 +101,15 @@ test("transport, status and response validation failures are Result errors", asy
   }
 });
 
+test("provider HTTP failure preserves its request id without storing the response body", async () => {
+  const runner = createJevDirectRunner("key", async () => new Response("secret response", {
+    status: 503, headers: { "x-request-id": "provider-request-1" } }));
+  const result = await runner.run(context);
+  expect(result).toMatchObject({ ok: false, error: {
+    external_execution_id: "provider-request-1", detail: "provider HTTP 503" } });
+  expect(JSON.stringify(result)).not.toContain("secret response");
+});
+
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("stored model grade has no normalized score and a failed call creates only a readable execution", async () => scratchGrading(async (db, occurrence_id) => {
   const registered = await registerGradingContext(db, tenant, context);

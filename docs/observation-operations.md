@@ -221,8 +221,9 @@ expiry before completing the execution and inserting the grade. An expired
 response is discarded. The worker can be stopped independently of HTTP by
 calling the returned worker's `stop()` method; process shutdown stops it before
 closing the database. Returned provider request IDs and costs are appended to
-`evaluation_execution.provider_attempts`, including a late response discarded
-for its expired lease.
+`evaluation_execution.provider_attempts` for successful and failed requests,
+including a late response discarded for its expired lease. Each entry records
+its attempt number and outcome.
 
 The default caps are two active jobs per run, one per stage, 1 unit of run
 spend, 0.5 units of stage spend, three attempts, a 30 second provider deadline
@@ -231,7 +232,9 @@ and a 45 second lease. Set `OBSERVATION_GRADING_RUN_CONCURRENCY`,
 `OBSERVATION_GRADING_STAGE_SPEND`, `OBSERVATION_GRADING_RETRY_LIMIT`,
 `OBSERVATION_PROVIDER_DEADLINE_MS`, and `OBSERVATION_GRADING_LEASE_MS` to adjust
 them. The lease is never configured shorter than the provider deadline plus
-five seconds. Budget skips create no execution; they append a
+five seconds. Active jobs reserve their estimated cost; after a job releases
+its claim, its recorded provider cost remains in the spend total. Budget skips
+create no execution; they append a
 `skipped_budget` eligibility decision. The disclosure record stores provider,
 policy version, evidence digests and content types, with no raw content. Only
 public and classified repository content are permitted for outbound grading;

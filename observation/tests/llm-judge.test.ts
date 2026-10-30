@@ -64,3 +64,12 @@ test("judge refuses an evidence recipe that exposes the original assessor verdic
       max_evidence_chars: 500, target: "report" } } } });
   expect(result).toMatchObject({ ok: false, error: { operation: "llm_judge" } });
 });
+
+test("judge HTTP failure preserves its provider request id", async () => {
+  const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
+    transport: async () => new Response("unavailable", { status: 503,
+      headers: { "x-request-id": "judge-request-1" } }) });
+  const result = await runner.run(context);
+  expect(result).toMatchObject({ ok: false, error: {
+    external_execution_id: "judge-request-1", detail: "judge HTTP 503" } });
+});
