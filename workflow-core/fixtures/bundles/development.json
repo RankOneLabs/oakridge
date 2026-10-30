@@ -704,7 +704,7 @@
         "merge_confirmation": {
           "of": "pr",
           "by": "operator",
-          "when": "pr_published and not merged_pr and not approved(pr)",
+          "when": "pr_published and approved(assessment) and not merged_pr and not approved(pr)",
           "prompt": "development/merge-confirmation.md",
           "inputs": {
             "pr": "latest(pr)",
