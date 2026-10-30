@@ -66,9 +66,11 @@ export async function claimBlindAssignment(db: Database, tenant: TenantScope, as
         .set({ claim_owner: reviewer_id, claimed_at: sql`clock_timestamp()`,
           expires_at: sql`clock_timestamp() + ${duration_seconds} * interval '1 second'` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("assignment_id", "=", assignment_id).where("claim_owner", "is", null)
+        .where("assignment_id", "=", assignment_id).where("submitted_observation_id", "is", null)
+        .where((eb) => eb.or([eb("claim_owner", "is", null),
+          eb("expires_at", "<=", sql<Date>`clock_timestamp()`)]))
         .returningAll().executeTakeFirst();
-      if (!row) return failure(assignment_id, "assignment already claimed or missing");
+      if (!row) return failure(assignment_id, "assignment already claimed, submitted, or missing");
       const question = await trx.selectFrom("observation.question_definition").select("question_text")
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("question_id", "=", row.question_id).where("question_version", "=", row.question_version)
@@ -101,7 +103,7 @@ export async function readBlindAssignment(db: Database, tenant: TenantScope, ass
   });
 }
 
-/** Bounded queue of unclaimed assignments; frozen identifiers are safe before a claim. */
+/** Bounded queue of unclaimed or expired assignments; frozen identifiers are safe before a claim. */
 export async function listUnclaimedBlindAssignments(db: Database, tenant: TenantScope, limit: number)
   : Promise<readonly BlindAssignmentView[]> {
   return withTenant(db, tenant, async (trx) => {
@@ -110,11 +112,17 @@ export async function listUnclaimedBlindAssignments(db: Database, tenant: Tenant
         .onRef("a.namespace", "=", "q.namespace").onRef("a.question_id", "=", "q.question_id")
         .onRef("a.question_version", "=", "q.question_version"))
       .select(["a.assignment_id", "a.subject_occurrence_id", "a.evidence_set_id", "a.question_id",
-        "a.question_version", "q.question_text"])
+        "a.question_version", "a.expires_at", "a.claim_owner", "q.question_text"])
       .where("a.producer", "=", tenant.producer).where("a.namespace", "=", tenant.namespace)
-      .where("a.claim_owner", "is", null).orderBy("a.created_at").orderBy("a.assignment_id")
+      .where("a.submitted_observation_id", "is", null)
+      .where((eb) => eb.or([eb("a.claim_owner", "is", null),
+        eb("a.expires_at", "<=", sql<Date>`clock_timestamp()`)]))
+      .orderBy("a.created_at").orderBy("a.assignment_id")
       .limit(limit).execute();
-    return rows.map((row) => ({ ...row, state: "unsubmitted" as const, claim_owner: null,
-      expires_at: null, submitted_observation_id: null }));
+    return rows.map((row) => ({ assignment_id: row.assignment_id,
+      subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: row.evidence_set_id,
+      question_id: row.question_id, question_version: row.question_version, question_text: row.question_text,
+      state: row.claim_owner ? "expired" as const : "unsubmitted" as const,
+      claim_owner: null, expires_at: row.expires_at, submitted_observation_id: null }));
   });
 }

@@ -1,6 +1,6 @@
 import type { EligibilityDecision } from "./eligibility";
 
-export const COVERAGE_QUERY_VERSION = "human-coverage/v1";
+export const COVERAGE_QUERY_VERSION = "human-coverage/v2";
 export type CoverageExclusionTag = Exclude<EligibilityDecision["tag"], "eligible">;
 export interface CoverageExclusions {
   readonly inapplicable: number;
@@ -14,6 +14,8 @@ export interface QuestionCoverage {
   readonly question_version: string;
   readonly eligible: number;
   readonly graded: number;
+  /** Distinct eligible subjects per mode. A subject with several kinds of label appears in several counts. */
+  readonly graded_by_collection_mode: { readonly blind: number; readonly in_context: number; readonly unknown: number };
   readonly excluded: number;
   readonly exclusion_reasons: CoverageExclusions;
   readonly lag_seconds: number | null;
