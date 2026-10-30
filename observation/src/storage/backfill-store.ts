@@ -22,13 +22,26 @@ const digest = (value: JsonValue): string => {
 const json = (value: JsonValue) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
 const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer, namespace: tenant.namespace });
 
+/**
+ * What became of a human decision's L2 grades. A decision on a revision published
+ * before capture began has nothing to grade: its source row is kept, no grade is
+ * derived, and delivery moves on rather than blocking every later event.
+ */
+export type HumanGradeStorage = { readonly kind: "graded" } | { readonly kind: "target_not_captured" };
+
 /** Both live and historical human decisions enter this exact L2 writer. */
 export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, tenant: TenantScope,
-  outcome: Extract<SourceEventOutcome, { kind: "human_grade" }>): Promise<void> {
+  outcome: Extract<SourceEventOutcome, { kind: "human_grade" }>): Promise<HumanGradeStorage> {
   const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "run_id"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("revision_id", "=", outcome.target).executeTakeFirst();
-  if (!revision || revision.run_id !== outcome.run_id) throw new Error(`target revision ${outcome.target} is not captured`);
+  if (!revision) {
+    console.warn("[observation] human grade target not captured", { ...scope(tenant), event_id: outcome.event_id,
+      run_id: outcome.run_id, target: outcome.target });
+    return { kind: "target_not_captured" };
+  }
+  if (revision.run_id !== outcome.run_id)
+    throw new Error(`target revision ${outcome.target} belongs to run ${revision.run_id}, not ${outcome.run_id}`);
   const occurrences = await trx.selectFrom("observation.item_occurrence")
     .select(["occurrence_id", "item_kind"]).where("producer", "=", tenant.producer)
     .where("namespace", "=", tenant.namespace).where("revision_id", "=", outcome.target).execute();
@@ -77,6 +90,7 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
       recorded_at: new Date(outcome.decided_at) })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "observation_id"]).doNothing()).execute();
   }
+  return { kind: "graded" };
 }
 
 async function storeCollaboration(trx: DatabaseTransaction, tenant: TenantScope,
