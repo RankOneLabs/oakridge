@@ -47,6 +47,12 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
       details: { answer: { state: "answered", kind: "boolean", value: true },
         collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
   expect(grade.status).toBe(201);
+  const graded = await grade.json() as { execution: { idempotency_digest: string } };
+  const readbackPath = `/v1/evaluations/by-digest/${encodeURIComponent(graded.execution.idempotency_digest)}`;
+  const readback = await app.request(readbackPath, { headers: { authorization: "Bearer read" } });
+  expect(readback.status).toBe(200);
+  expect((await readback.json()).observation).toBeTruthy();
+  expect((await app.request(readbackPath, { headers: { authorization: "Bearer grade" } })).status).toBe(403);
   const selection = { run_id: "run-1", revision_id: null, question_id: question.question_id, question_version: question.question_version };
   const full = await readCoverage(db, tenant, selection);
   expect(full.questions[0]).toMatchObject({ eligible: 2, graded: 1, excluded: 1,
@@ -93,24 +99,25 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
 }));
 
 integration("pilot manifest requires recorded eligibility before freezing selection", async () => scratchGrading(async (db, occurrence_id) => {
-  const database = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db);
-  const databaseUrl = new URL(process.env.OAKRIDGE_TEST_DATABASE_URL!);
-  databaseUrl.pathname = `/${database.rows[0]!.name}`;
-  const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-eligibility",
-    projection_version: "1", question_pins: [{ question_id: question.question_id,
-      question_version: question.question_version }], selected: [{ occurrence_id,
-      question_id: question.question_id, question_version: question.question_version,
-      evidence, stratum: "clearly_easy", disposition: "included",
-      reason: { kind: "operator", detail: "selected" } }] },
-    attempts: [], human_grades: [], annotation_imports: [], examples: [] };
-  const environment = { OBSERVATION_DATABASE_URL: databaseUrl.href,
-    OBSERVATION_PILOT_BASE_URL: "http://127.0.0.1:1",
-    OBSERVATION_PILOT_GRADE_TOKEN: "grade", OBSERVATION_PILOT_READ_TOKEN: "read" };
-  await expect(runPilot(plan, environment)).rejects.toThrow("recorded eligibility required");
-  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
-  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-    (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-    VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id},
-      ${question.question_version}, 'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
-  await expect(runPilot(plan, environment)).rejects.toThrow("pilot requires 10 to 30 included item-level cases");
+  const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }],
+    grade: [{ ...tenant, token: "grade", reviewer_id: "reviewer" }] } });
+  const server = Bun.serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+  try {
+    const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-eligibility",
+      projection_version: "1", question_pins: [{ question_id: question.question_id,
+        question_version: question.question_version }], selected: [{ occurrence_id,
+        question_id: question.question_id, question_version: question.question_version,
+        evidence, stratum: "clearly_easy", disposition: "included",
+        reason: { kind: "operator", detail: "selected" } }] },
+      attempts: [], human_grades: [], annotation_imports: [], examples: [] };
+    const environment = { OBSERVATION_PILOT_BASE_URL: `http://127.0.0.1:${server.port}`,
+      OBSERVATION_PILOT_GRADE_TOKEN: "grade", OBSERVATION_PILOT_READ_TOKEN: "read" };
+    await expect(runPilot(plan, environment)).rejects.toThrow("recorded eligibility required");
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id},
+        ${question.question_version}, 'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
+    await expect(runPilot(plan, environment)).rejects.toThrow("pilot requires 10 to 30 included item-level cases");
+  } finally { server.stop(); }
 }));

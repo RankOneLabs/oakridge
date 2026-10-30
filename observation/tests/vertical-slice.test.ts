@@ -85,6 +85,11 @@ test("the suite's reachable modules import no hosted grader, Langfuse, JIG or As
   expect([...graph.values()].flatMap((node) => node.packages.filter((name) => forbidden.test(name)))).toEqual([]);
 });
 
+test("default launch mounts no Langfuse routes", () => {
+  const app = createApp({ db: {} as Database, credentials });
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))).toEqual([]);
+});
+
 integration("an Oakridge revision flows through ingest, selection, lineage, independent grading, backfill, history and frozen export", async () => {
   const exportRoot = await mkdtemp(join(tmpdir(), "observation-slice-"));
   try { await scratch(async (db) => {

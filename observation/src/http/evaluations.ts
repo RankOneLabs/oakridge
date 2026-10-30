@@ -5,14 +5,12 @@ import type { GradingContext } from "../grading/runner";
 import { deterministicChecker } from "../runners/deterministic-checker";
 import { coverageChecker } from "../runners/coverage-checker";
 import { stubModelRunner } from "../runners/stub-model";
-import { ingestModelScore } from "../langfuse/score-ingestion";
-import { createLangfuseHttpClient } from "../langfuse/http-client";
-import type { GradeAnswer } from "../grading/observation";
 import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
+import { readEligibility } from "../storage/eligibility-store";
 import { gradingLimits } from "../grading/jobs/budget";
-import type { LangfuseRouteDependencies } from "./langfuse-sync";
+import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
 
@@ -47,7 +45,28 @@ export function contextMatchesIdentity(context: GradingContext, identity: Evalua
     && context.evaluator.config_digest === identity.config_digest;
 }
 
-export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependencies): void {
+export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/evaluation-eligibility", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const params = new URL(c.req.url).searchParams;
+    const question_id = params.get("question_id");
+    const question_version = params.get("question_version");
+    if (!question_id || !question_version) return errorResponse(c, 400, "invalid_selection", "question id and version required");
+    return c.json({ items: await readEligibility(deps.db, credential, question_id, question_version) });
+  });
+  app.get("/v1/evaluations/by-digest/:digest", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const execution = await withTenant(deps.db, credential, (trx) => trx.selectFrom("observation.evaluation_execution")
+      .selectAll().where("producer", "=", credential.producer).where("namespace", "=", credential.namespace)
+      .where("idempotency_digest", "=", c.req.param("digest")).executeTakeFirst());
+    if (!execution) return errorResponse(c, 404, "not_found", "evaluation not found");
+    const observation = await withTenant(deps.db, credential, (trx) => trx.selectFrom("observation.grade_observation")
+      .selectAll().where("producer", "=", credential.producer).where("namespace", "=", credential.namespace)
+      .where("execution_id", "=", execution.execution_id).executeTakeFirst());
+    return c.json({ execution, observation: observation ?? null });
+  });
   app.post("/v1/evaluations", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
@@ -130,43 +149,5 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
     if (result.value.state === "queued_job") return errorResponse(c, 409, "queued_job", "execution is owned by a grading job");
     return c.json({ execution_id: result.value.execution_id, status: "failed",
       next_action: "submit a new evaluation with a distinct attempt_label" });
-  });
-  app.post("/v1/langfuse/model-scores", async (c) => {
-    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
-    if (!tenant) return errorResponse(c, 403, "forbidden", "grade credential required");
-    if (!deps.langfuse || deps.langfuse.status === "disabled")
-      return errorResponse(c, 422, "langfuse_disabled", "Langfuse is disabled");
-    const parsed = z.object({ execution_id: z.string().min(1) }).safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return errorResponse(c, 400, "invalid_score_request", "execution_id required");
-    const source = await withTenant(deps.db, tenant, async (trx) => {
-      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", parsed.data.execution_id).executeTakeFirst();
-      if (!execution || execution.status !== "completed") return null;
-      const observation = await trx.selectFrom("observation.grade_observation").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution.execution_id).executeTakeFirst();
-      const mapping = await trx.selectFrom("observation.langfuse_mapping").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("execution_id", "=", execution.execution_id).where("trace_id", "is not", null)
-        .executeTakeFirst();
-      const evaluator = await trx.selectFrom("observation.evaluator_definition").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("evaluator_definition_id", "=", execution.evaluator_definition_id).executeTakeFirst();
-      return observation && mapping?.trace_id && mapping.observation_id && evaluator?.model
-        && evaluator.kind === "model" ? { execution, observation, mapping, evaluator } : null;
-    });
-    if (!source) return errorResponse(c, 409, "projection_pending", "completed model grade and mapped Langfuse observation required");
-    const client = createLangfuseHttpClient(deps.langfuse.config);
-    const result = await ingestModelScore(client, { score_id: source.observation.observation_id,
-      trace_id: source.mapping.trace_id!, external_observation_id: source.mapping.observation_id!,
-      question_id: source.execution.question_id, question_version: source.execution.question_version,
-      evaluator_definition_id: source.execution.evaluator_definition_id,
-      provider: source.evaluator.provider, model: source.evaluator.model!,
-      answer: source.observation.answer_payload as GradeAnswer,
-      probabilities: source.observation.probabilities as Record<string, number> | null,
-      confidence: source.observation.confidence });
-    return result.ok ? c.json({ score_id: result.value }, 200)
-      : errorResponse(c, 422, "score_ingestion_failed", result.error.detail);
   });
 }

@@ -1,5 +1,6 @@
-import type { EvidenceSetId } from "../domain/identity";
-import type { JsonValue } from "../domain/primitives";
+import { canonicalDigest } from "../canonical/canonical-json";
+import type { CanonicalDigest, EvidenceSetId } from "../domain/identity";
+import { err, type JsonValue, type Result } from "../domain/primitives";
 
 export type EvidenceKind = "raw_build_output" | "raw_test_output" | "repository_content" | "public" | "internal";
 export interface EvidenceReference {
@@ -21,4 +22,13 @@ export interface EvidenceSet {
   readonly references: readonly StoredEvidenceReference[];
   readonly is_incomplete: boolean;
   readonly incompleteness_reason: string | null;
+}
+
+export interface EvidenceDigestError { readonly operation: "evidence_set_digest"; readonly entity_id: string; readonly detail: string }
+/** Mirrors the Assay export digest input, including the captured reference content. */
+export function evidenceSetDigest(evidence: EvidenceSet): Result<CanonicalDigest, EvidenceDigestError> {
+  const result = canonicalDigest({ evidence_refs: evidence.references, is_incomplete: evidence.is_incomplete,
+    incompleteness_reason: evidence.incompleteness_reason });
+  return result.ok ? result : err({ operation: "evidence_set_digest", entity_id: evidence.evidence_set_id,
+    detail: result.error.detail });
 }
