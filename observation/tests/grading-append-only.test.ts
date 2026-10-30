@@ -31,6 +31,7 @@ integration("three evaluators coexist and a human correction leaves its predeces
     expect(result.ok).toBe(true);
   }
   const details = { answer: { state: "answered", kind: "boolean", value: false } as const,
+    collection_mode: "in_context" as const, model_answers_visible: true, workflow_decisions_visible: false,
     probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
     decision_policy_version: null, reviewer_id: "reviewer-1", reviewer_details: null,
     comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };

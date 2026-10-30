@@ -12,7 +12,7 @@ import { dropScratchDatabase } from "./database-fixture";
 
 const tenant = { producer: "oakridge", namespace: "langfuse-offline" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-token" }],
-  read: [{ ...tenant, token: "read-token" }], grade: [{ ...tenant, token: "grade-token" }], export_raw: [] };
+  read: [{ ...tenant, token: "read-token" }], grade: [{ ...tenant, token: "grade-token", reviewer_id: "offline-operator" }], export_raw: [] };
 
 async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
   const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -69,7 +69,8 @@ integration("missing configuration preserves ingest, projection, lineage and gra
       evaluator: { evaluator_definition_id: "offline-human", kind: "human", backend_kind: "local",
         provider: "offline-fixture", model: null, instruction_text: "fixture", prompt_digest: instructionDigest("fixture"), config_digest: "offline-config",
         runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null } },
-    details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "offline-operator" },
+    details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "offline-operator",
+      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false },
   }) });
   expect(grade.status).toBe(201);
   const history = await app.request(`/v1/items/${encodeURIComponent(criterion.occurrence_id)}/grades`,

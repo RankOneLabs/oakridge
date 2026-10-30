@@ -9,8 +9,9 @@ import type { GradeObservation } from "../src/grading/observation";
 import type { GradingContext } from "../src/grading/runner";
 import type { GradeDetails } from "../src/storage/grading-store";
 import { openDatabase, withTenant } from "../src/storage/database";
+import { readEligibility } from "../src/storage/eligibility-store";
 import type { ExportManifest } from "../src/export/manifest";
-import { assayItemEvidenceDigest, makePopulationManifest, type PopulationManifest,
+import { assayItemEvidenceDigest, makePopulationManifestFromEligibility, type PopulationManifest,
   type PopulationSelection } from "../src/langfuse/population-manifest";
 import { evidenceSetDigest } from "../src/langfuse/mapping";
 import type { ComparisonMeasurement, DisagreementCause, PilotSplit } from "../src/langfuse/comparison-report";
@@ -67,30 +68,32 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
   const read_token = environment.OBSERVATION_PILOT_READ_TOKEN;
   if (!database_url || !base_url || !grade_token || !read_token)
     throw new Error("OBSERVATION_DATABASE_URL, OBSERVATION_PILOT_BASE_URL, GRADE_TOKEN and READ_TOKEN are required");
-  const population = makePopulationManifest(plan.population);
-  if (!population.ok) throw new Error(population.error.detail);
-  if (population.value.membership.filter((member) => member.disposition === "included").length < 10
-    || population.value.membership.filter((member) => member.disposition === "included").length > 30)
-    throw new Error("pilot requires 10 to 30 included item-level cases");
-  const included = population.value.membership.filter((member) => member.disposition === "included");
-  for (const stratum of ["clearly_easy", "borderline", "known_failure"] as const)
-    if (!included.some((member) => member.stratum === stratum)) throw new Error(`pilot lacks ${stratum} cases`);
-  for (const pin of population.value.question_pins) {
-    const catalogue = LANGFUSE_PILOT_QUESTIONS[pin.question_id as PilotQuestionId];
-    if (!catalogue || catalogue.definition.question_version !== pin.question_version)
-      throw new Error(`question pin is outside pilot catalogue: ${pin.question_id}@${pin.question_version}`);
-  }
-  for (const member of included) if (!plan.attempts.some((attempt) =>
-    attempt.identity.subject_occurrence_id === member.occurrence_id
-      && attempt.identity.question_id === member.question_id
-      && attempt.identity.question_version === member.question_version))
-    throw new Error(`included case has no planned measurement: ${member.occurrence_id}`);
-  for (const example of plan.examples) if (!population.value.membership.some((member) =>
-    member.disposition === "included" && member.occurrence_id === example.occurrence_id))
-    throw new Error(`example is outside frozen population: ${example.occurrence_id}`);
   const db = openDatabase(database_url);
-  const operations: PilotOperation[] = [];
   try {
+    const eligibility = (await Promise.all(plan.population.question_pins.map((pin) =>
+      readEligibility(db, plan.tenant, pin.question_id, pin.question_version)))).flat();
+    const population = makePopulationManifestFromEligibility(plan.population, eligibility);
+    if (!population.ok) throw new Error(population.error.detail);
+    if (population.value.membership.filter((member) => member.disposition === "included").length < 10
+      || population.value.membership.filter((member) => member.disposition === "included").length > 30)
+      throw new Error("pilot requires 10 to 30 included item-level cases");
+    const included = population.value.membership.filter((member) => member.disposition === "included");
+    for (const stratum of ["clearly_easy", "borderline", "known_failure"] as const)
+      if (!included.some((member) => member.stratum === stratum)) throw new Error(`pilot lacks ${stratum} cases`);
+    for (const pin of population.value.question_pins) {
+      const catalogue = LANGFUSE_PILOT_QUESTIONS[pin.question_id as PilotQuestionId];
+      if (!catalogue || catalogue.definition.question_version !== pin.question_version)
+        throw new Error(`question pin is outside pilot catalogue: ${pin.question_id}@${pin.question_version}`);
+    }
+    for (const member of included) if (!plan.attempts.some((attempt) =>
+      attempt.identity.subject_occurrence_id === member.occurrence_id
+        && attempt.identity.question_id === member.question_id
+        && attempt.identity.question_version === member.question_version))
+      throw new Error(`included case has no planned measurement: ${member.occurrence_id}`);
+    for (const example of plan.examples) if (!population.value.membership.some((member) =>
+      member.disposition === "included" && member.occurrence_id === example.occurrence_id))
+      throw new Error(`example is outside frozen population: ${example.occurrence_id}`);
+    const operations: PilotOperation[] = [];
     for (const member of population.value.membership) {
       const source = await withTenant(db, plan.tenant, (trx) => trx.selectFrom("observation.item_occurrence")
         .innerJoin("observation.source_revision", (join) => join.onRef("observation.source_revision.producer", "=", "observation.item_occurrence.producer")

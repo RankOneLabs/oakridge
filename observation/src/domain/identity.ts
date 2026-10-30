@@ -8,4 +8,5 @@ export type EvidenceSetId = Brand<string, "ObservationEvidenceSetId">;
 export type QuestionId = Brand<string, "ObservationQuestionId">;
 export type ExecutionId = Brand<string, "ObservationExecutionId">;
 export type GradeObservationId = Brand<string, "ObservationGradeObservationId">;
+export type BlindAssignmentId = Brand<string, "ObservationBlindAssignmentId">;
 export type CanonicalDigest = Brand<`canonical-json/v1:${string}`, "CanonicalDigest">;

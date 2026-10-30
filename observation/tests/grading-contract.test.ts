@@ -57,7 +57,7 @@ integration("new evidence needs classification while stored older references rem
 }));
 
 integration("all grading routes serve raw answers, distributions, evaluator identity, and stable pages", async () => scratchGrading(async (db, occurrence_id) => {
-  const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: readToken }], grade: [{ ...tenant, token: gradeToken }] } });
+  const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: readToken }], grade: [{ ...tenant, token: gradeToken, reviewer_id: "reviewer" }] } });
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version,
     evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "first" };
@@ -72,14 +72,16 @@ integration("all grading routes serve raw answers, distributions, evaluator iden
   const human = await app.request("/v1/grades", { method: "POST", headers,
     body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "human" },
       context: { question: { ...question, input_recipe: { expected: "sample" } }, evidence, evaluator: evaluator("human") },
-      details: { answer: { state: "answered", kind: "boolean", value: false }, reviewer_id: "reviewer" } }) });
+      details: { answer: { state: "answered", kind: "boolean", value: false }, reviewer_id: "reviewer",
+        collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
   expect(human.status).toBe(201);
   const initialHuman = await human.json();
   const correction = await app.request("/v1/grades", { method: "POST", headers,
     body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "human", attempt_label: "correction" },
       details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "reviewer",
         normalized_score: 1, decision_policy_id: "human-acceptance", decision_policy_version: "1",
-        supersedes_observation_id: initialHuman.observation.observation_id } }) });
+        supersedes_observation_id: initialHuman.observation.observation_id,
+        collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
   expect(correction.status).toBe(201);
   const choiceQuestion = { ...question, question_id: "handoff", response_kind: "choice", allowed_values: ["yes", "no"] } as const;
   const model = { ...evaluator("model"), attempt_controls: { answer: { state: "answered", kind: "choice", value: "yes" },
@@ -114,7 +116,7 @@ integration("all grading routes serve raw answers, distributions, evaluator iden
 }));
 
 integration("missing and cross-namespace references refuse grades without partial observations", async () => scratchGrading(async (db, occurrence_id) => {
-  const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: gradeToken }] } });
+  const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: gradeToken, reviewer_id: "reviewer" }] } });
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
   const beta = { producer: "oakridge", namespace: "other" };
   expect((await registerGradingContext(db, beta, { question, evidence: { ...evidence, evidence_set_id: "beta-evidence" as typeof evidence.evidence_set_id },
@@ -143,7 +145,8 @@ integration("missing and cross-namespace references refuse grades without partia
   ]) {
     const response = await app.request("/v1/grades", { method: "POST", headers,
       body: JSON.stringify({ identity: { ...identity, ...changed },
-        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "reviewer" } }) });
+        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "reviewer",
+          collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
     expect(response.status).toBe(422);
   }
   expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.total).toBe(0);

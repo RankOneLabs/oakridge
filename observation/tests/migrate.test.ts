@@ -9,7 +9,7 @@ import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
 
-integration("0010 and 0011 upgrade 0009 without changing pinned v1 question fields", async () => scratch(async (url) => {
+integration("0010 through 0013 upgrade 0009 without changing pinned v1 question fields or generated origin", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     const names = ["0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
@@ -21,6 +21,9 @@ integration("0010 and 0011 upgrade 0009 without changing pinned v1 question fiel
       if (name === "0001_observation.sql") await sql`INSERT INTO observation.schema_baseline (digest)
         VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
     }
+    const originBefore = await sql<{ definition: string }>`SELECT generation_expression AS definition
+      FROM information_schema.columns WHERE table_schema = 'observation'
+      AND table_name = 'grade_observation' AND column_name = 'label_origin'`.execute(db);
     for (const question_id of ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"])
       await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql`INSERT INTO observation.question_definition
         (producer, namespace, question_id, question_version, target_item_kinds, input_recipe, response_kind,
@@ -30,6 +33,14 @@ integration("0010 and 0011 upgrade 0009 without changing pinned v1 question fiel
     const before = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
       SELECT to_jsonb(q) AS row FROM observation.question_definition q ORDER BY question_id`.execute(trx));
     await migrateEmptyDatabase(db);
+    const humanCollection = await sql<{ collection_mode: string | null; assignment: string | null; definition: string }>`
+      SELECT (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+        AND table_name = 'grade_observation' AND column_name = 'collection_mode') AS collection_mode,
+        to_regclass('observation.blind_assignment')::text AS assignment,
+        (SELECT generation_expression FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grade_observation' AND column_name = 'label_origin') AS definition`.execute(db);
+    expect(humanCollection.rows[0]).toEqual({ collection_mode: "collection_mode",
+      assignment: "observation.blind_assignment", definition: originBefore.rows[0]?.definition });
     const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
     expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
     const jobs = await sql<{ name: string | null; lease_owner: string | null; lease_expires_at: string | null; has_state_check: boolean }>`
