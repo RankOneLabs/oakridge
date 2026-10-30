@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { TenantScope } from "../storage/database";
 
-export interface Credential extends TenantScope { readonly token: string }
+export interface Credential extends TenantScope { readonly token: string; readonly reviewer_id?: string }
 export interface Credentials { readonly ingest: readonly Credential[]; readonly read: readonly Credential[];
   readonly grade?: readonly Credential[]; readonly export_raw?: readonly Credential[] }
 
@@ -19,6 +19,10 @@ export function credentialFor(header: string | undefined, credentials: readonly 
   if (!token) return null;
   return credentials.find((credential) => sameSecret(token, credential.token)) ?? null;
 }
+/** A token has one immutable reviewer identity, including legacy in-process credentials. */
+export function boundReviewer(credential: Credential): string {
+  return credential.reviewer_id ?? `credential:${createHash("sha256").update(credential.token).digest("hex")}`;
+}
 
 function configuredCredentials(raw: string | undefined): readonly Credential[] {
   if (!raw) return [];
@@ -33,6 +37,8 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv): Credentials {
   const ingest = configuredCredentials(env.OBSERVATION_INGEST_CREDENTIALS);
   const read = configuredCredentials(env.OBSERVATION_READ_CREDENTIALS);
   const grade = configuredCredentials(env.OBSERVATION_GRADE_CREDENTIALS);
+  if (grade.some((credential) => !credential.reviewer_id?.trim()))
+    throw new Error("grade credentials require a reviewer_id binding");
   const export_raw = configuredCredentials(env.OBSERVATION_EXPORT_RAW_CREDENTIALS);
   const all = [...ingest, ...read, ...grade, ...export_raw];
   if (all.some((item, index) => all.findIndex((candidate) => sameSecret(item.token, candidate.token)) !== index))

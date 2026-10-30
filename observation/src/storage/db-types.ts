@@ -123,6 +123,8 @@ export interface ObservationQuestionDefinition {
   unclear_semantics: string;
   interpretation_caveats: string;
   requires_repository_snapshot: boolean;
+  question_text: string | null;
+  evidence_recipe_provenance: JsonValue | null;
 }
 
 export interface ObservationEvidenceSet {
@@ -150,6 +152,7 @@ export interface ObservationEvaluatorDefinition {
   seed: number | null;
   attempt_controls: JsonValue | null;
   identity_digest: string;
+  instruction_text: string | null;
 }
 
 export interface ObservationEvaluationExecution {
@@ -175,6 +178,7 @@ export interface ObservationEvaluationExecution {
   external_execution_id: string | null;
   provider_link: string | null;
   reproducibility_metadata: JsonValue | null;
+  provider_attempts: Generated<JsonValue>;
 }
 
 export interface ObservationGradeObservation {
@@ -203,6 +207,10 @@ export interface ObservationGradeObservation {
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
   label_origin: Generated<string>;
+  collection_mode: string | null;
+  blind_assignment_id: string | null;
+  model_answers_visible: boolean | null;
+  workflow_decisions_visible: boolean | null;
 }
 
 export interface ObservationSourceEventCursor {
@@ -356,6 +364,61 @@ export interface ObservationLangfuseInboundQuarantine {
   recorded_at: Generated<Date>;
 }
 
+export interface ObservationEvaluationEligibility {
+  producer: string;
+  namespace: string;
+  subject_occurrence_id: string;
+  question_id: string;
+  question_version: string;
+  tag: string;
+  payload: JsonValue;
+  recorded_at: Generated<Date>;
+  eligibility_id: Generated<string>;
+}
+
+export interface ObservationGradingJob {
+  producer: string;
+  namespace: string;
+  job_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  evaluator_definition_id: string;
+  config_digest: string;
+  attempt_label: string;
+  idempotency_digest: string;
+  reviewed_commit: string | null;
+  runner_name: string;
+  run_id: string;
+  stage_id: string;
+  state: string;
+  lease_owner: string | null;
+  lease_expires_at: Date | null;
+  attempts: Generated<number>;
+  retry_limit: number;
+  terminal_cause: string | null;
+  estimated_cost: Generated<number>;
+  disclosure: JsonValue | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ObservationBlindAssignment {
+  producer: string;
+  namespace: string;
+  assignment_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  claim_owner: string | null;
+  claimed_at: Date | null;
+  expires_at: Date | null;
+  submitted_observation_id: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -382,4 +445,7 @@ export interface DB {
   "observation.langfuse_mapping": ObservationLangfuseMapping;
   "observation.langfuse_sync_transition": ObservationLangfuseSyncTransition;
   "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
+  "observation.evaluation_eligibility": ObservationEvaluationEligibility;
+  "observation.grading_job": ObservationGradingJob;
+  "observation.blind_assignment": ObservationBlindAssignment;
 }

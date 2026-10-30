@@ -36,7 +36,7 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
   const config_digest = "oakridge-operator/v1";
   await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant), evaluator_definition_id,
     kind: "human", backend_kind: "local", provider: "oakridge", model: null,
-    prompt_digest: "oakridge-review/v1", config_digest, runtime_revision: "1",
+    prompt_digest: digest("oakridge-review/v1"), instruction_text: "oakridge-review/v1", config_digest, runtime_revision: "1",
     cost_metadata: null, seed: null, attempt_controls: null,
     identity_digest: digest(["oakridge", "operator", "human", "1"]) })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "evaluator_definition_id"]).doNothing()).execute();

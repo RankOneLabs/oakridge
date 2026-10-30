@@ -6,6 +6,7 @@ import { storeHumanGradeInTransaction } from "../src/storage/backfill-store";
 import { withTenant } from "../src/storage/database";
 import { scratchGrading, tenant } from "./grading-fixture";
 import { createApp } from "../src/http/app";
+import { langfuseConfigFromEnv } from "../src/langfuse/config";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 
@@ -30,7 +31,11 @@ integration("Oakridge operator verdicts carry an observation origin and remain o
     expect(series.held_out).toHaveLength(0);
     expect(series.oakridge_operator_unblinded.map((item) => item.observation_id)).toEqual(grade ? [grade.observation_id] : []);
     expect(series.collaboration_unblinded).toHaveLength(1);
-    const app = createApp({ db, credentials: { ingest: [], grade: [], read: [{ ...tenant, token: "read" }] } });
+    const configuration = langfuseConfigFromEnv({ OBSERVATION_LANGFUSE_BASE_URL: "http://127.0.0.1:3000/",
+      OBSERVATION_LANGFUSE_PROJECT_ID: "pilot", OBSERVATION_LANGFUSE_PUBLIC_KEY: "public",
+      OBSERVATION_LANGFUSE_SECRET_KEY: "secret" });
+    if (!configuration.ok) throw new Error(configuration.error.detail);
+    const app = createApp({ db, credentials: { ingest: [], grade: [], read: [{ ...tenant, token: "read" }] }, langfuse: configuration.value });
     const response = await app.request("/v1/langfuse/label-series", { headers: { Authorization: "Bearer read" } });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ held_out: { count: 0 },

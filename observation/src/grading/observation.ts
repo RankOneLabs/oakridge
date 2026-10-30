@@ -30,6 +30,10 @@ export interface GradeObservation {
 
 /** The grades read contract mirrors the joined grading rows after JSON serialization. */
 export interface GradeObservationListing extends Omit<GradeObservation, "answer" | "probabilities" | "quality_flags"> {
+  readonly collection_mode: "blind" | "in_context" | "unknown";
+  readonly blind_assignment_id: string | null;
+  readonly model_answers_visible: boolean | null;
+  readonly workflow_decisions_visible: boolean | null;
   readonly label_origin: "oakridge_operator_unblinded" | "langfuse_annotation_blinded" | "other";
   readonly producer: string;
   readonly namespace: string;

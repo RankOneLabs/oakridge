@@ -88,6 +88,7 @@ test("the comparison report counts each kind of exclusion apart, outside every d
     member("occ-4", "included", { kind: "operator", detail: "revisioned borderline criterion" })]);
   if (!frozen.ok) throw new Error(frozen.error.detail);
   expect(exclusionCounts(frozen.value)).toEqual([{ question_id, question_version: "v1", operator: 1, uncited: 1,
+    unlinked: 0, unevidenced: 0, skipped_budget: 0,
     dangling_citation: 1 }]);
   const report = makeComparisonReport(frozen.value, []);
   expect(report.ok && report.value.exclusions).toEqual(exclusionCounts(frozen.value));

@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -5,13 +6,18 @@ import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { createApp } from "../src/http/app";
 import { langfuseConfigFromEnv } from "../src/langfuse/config";
+import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import type { EvidenceSet } from "../src/grading/evidence";
+import type { EvaluatorDefinition } from "../src/grading/evaluator";
+import type { ItemOccurrenceId } from "../src/domain/identity";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { runPilot, type PilotRunPlan } from "../scripts/langfuse-pilot-run";
 import { dropScratchDatabase } from "./database-fixture";
 
 const tenant = { producer: "oakridge", namespace: "langfuse-offline" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-token" }],
-  read: [{ ...tenant, token: "read-token" }], grade: [{ ...tenant, token: "grade-token" }], export_raw: [] };
+  read: [{ ...tenant, token: "read-token" }], grade: [{ ...tenant, token: "grade-token", reviewer_id: "offline-operator" }], export_raw: [] };
 
 async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
   const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -29,7 +35,7 @@ async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
 }
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-integration("missing configuration preserves ingest, projection, lineage and grade reads while sync routes are disabled", async () => scratch(async (db) => {
+integration("missing configuration preserves ingest, projection, lineage and grade reads while sync routes are absent", async () => scratch(async (db) => {
   const configuration = langfuseConfigFromEnv({});
   expect(configuration).toEqual({ ok: true, value: { status: "disabled" } });
   if (!configuration.ok) return;
@@ -66,30 +72,108 @@ integration("missing configuration preserves ingest, projection, lineage and gra
       evidence: { evidence_set_id: "offline-evidence", references: [], is_incomplete: false,
         incompleteness_reason: null },
       evaluator: { evaluator_definition_id: "offline-human", kind: "human", backend_kind: "local",
-        provider: "offline-fixture", model: null, prompt_digest: "fixture", config_digest: "offline-config",
+        provider: "offline-fixture", model: null, instruction_text: "fixture", prompt_digest: instructionDigest("fixture"), config_digest: "offline-config",
         runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null } },
-    details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "offline-operator" },
+    details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "offline-operator",
+      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false },
   }) });
   expect(grade.status).toBe(201);
   const history = await app.request(`/v1/items/${encodeURIComponent(criterion.occurrence_id)}/grades`,
     { headers: { authorization: "Bearer read-token" } });
   expect(history.status).toBe(200);
   expect((await history.json() as { total: number }).total).toBe(1);
-  for (const [method, path, token] of [
-    ["GET", "/v1/langfuse/status", "read-token"],
-    ["POST", "/v1/langfuse/projections", "grade-token"],
-    ["POST", "/v1/langfuse/reconcile", "grade-token"],
-  ] as const) {
-    const response = await app.request(path, { method, headers: { Authorization: `Bearer ${token}` } });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "disabled" });
-  }
-  const forbidden = await app.request("/v1/langfuse/status", { headers: { Authorization: "Bearer grade-token" } });
-  expect(forbidden.status).toBe(403);
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))).toEqual([]);
+  const absent = await app.request("/v1/langfuse/status", { headers: { Authorization: "Bearer read-token" } });
+  expect(absent.status).toBe(404);
 }));
 
 test("partial configuration reports only field names, never supplied secret material", () => {
   const parsed = langfuseConfigFromEnv({ OBSERVATION_LANGFUSE_SECRET_KEY: "sensitive-value" });
   expect(parsed.ok).toBe(false);
   expect(JSON.stringify(parsed)).not.toContain("sensitive-value");
+});
+
+
+test("enabled configuration mounts all eight Langfuse routes", () => {
+  const configuration = langfuseConfigFromEnv({ OBSERVATION_LANGFUSE_BASE_URL: "http://127.0.0.1:3000/",
+    OBSERVATION_LANGFUSE_PROJECT_ID: "pilot", OBSERVATION_LANGFUSE_PUBLIC_KEY: "public",
+    OBSERVATION_LANGFUSE_SECRET_KEY: "secret", OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID: "a".repeat(32) });
+  expect(configuration.ok).toBe(true);
+  if (!configuration.ok) return;
+  const app = createApp({ db: {} as Database, credentials, langfuse: configuration.value });
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))
+    .map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /v1/langfuse/label-series", "GET /v1/langfuse/status",
+      "POST /v1/langfuse/annotation-queue/items", "POST /v1/langfuse/annotations/import",
+      "POST /v1/langfuse/model-scores", "POST /v1/langfuse/projections",
+      "POST /v1/langfuse/reconcile", "POST /v1/langfuse/score-configs",
+    ]);
+});
+
+
+test("pilot runner uses authenticated HTTP instead of opening observation storage", async () => {
+  const source = await Bun.file(new URL("../scripts/langfuse-pilot-run.ts", import.meta.url)).text();
+  expect(source).not.toMatch(/openDatabase\s*\(|withTenant\s*\(|from ["']\.\.\/src\/storage\/database["']/);
+});
+
+test("pilot reads tenant-qualified source revisions with a read credential", async () => {
+  const catalogue = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"];
+  const question = catalogue.definition;
+  const evidence: EvidenceSet = { evidence_set_id: "pilot-evidence" as EvidenceSet["evidence_set_id"],
+    references: [], is_incomplete: false, incompleteness_reason: null };
+  const evaluator: EvaluatorDefinition = { evaluator_definition_id: "pilot-code", kind: "code",
+    backend_kind: "local", provider: "pilot-test", model: null,
+    prompt_digest: instructionDigest("pilot-test"), instruction_text: "pilot-test", config_digest: "pilot-config",
+    runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
+  const occurrence_ids = Array.from({ length: 10 }, (_, index) => `occurrence-${index}` as ItemOccurrenceId);
+  const strata = ["clearly_easy", "borderline", "known_failure"] as const;
+  const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-http", projection_version: "1",
+    question_pins: [{ question_id: question.question_id, question_version: question.question_version }],
+    selected: occurrence_ids.map((occurrence_id, index) => ({ occurrence_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evidence, stratum: strata[index % strata.length]!, disposition: "included", reason: { kind: "operator", detail: "selected" } })) },
+    attempts: occurrence_ids.map((occurrence_id) => ({ identity: { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
+      config_digest: evaluator.config_digest, attempt_label: "first" },
+      context: { question, evidence, evaluator }, runner: "deterministic", split: "exploratory",
+      question_text: catalogue.text, disagreement_cause: null })),
+    human_grades: [], annotation_imports: [], examples: [] };
+  const revision_reads: string[] = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    const token = request.headers.get("authorization");
+    const expected = request.method === "GET" || path === "/v1/exports/assay"
+      ? "Bearer read-token" : "Bearer grade-token";
+    if (token !== expected) return Response.json({ error: "forbidden" }, { status: 403 });
+    if (path === "/v1/evaluation-eligibility") return Response.json({ items: occurrence_ids.map((occurrence_id) => ({
+      ...tenant, subject_occurrence_id: occurrence_id, question_id: question.question_id,
+      question_version: question.question_version, tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } })) });
+    if (path.startsWith("/v1/items/") && path.endsWith("/grades"))
+      return Response.json({ items: [], total: 0, limit: 200, offset: 0 });
+    if (path.startsWith("/v1/items/")) return Response.json({ ...tenant, revision_id: "local-revision" });
+    if (path.startsWith("/v1/source-revisions/")) {
+      const identity = decodeURIComponent(path.slice("/v1/source-revisions/".length));
+      if (identity !== `${tenant.producer}:${tenant.namespace}:local-revision`)
+        return Response.json({ error: "not_found" }, { status: 404 });
+      revision_reads.push(identity);
+      return Response.json({ revision_id: "local-revision" });
+    }
+    if (path.startsWith("/v1/evaluations/by-digest/"))
+      return Response.json({ error: "not_found" }, { status: 404 });
+    if (path === "/v1/evaluations") return Response.json({ error: "not_graded" }, { status: 422 });
+    if (path === "/v1/exports/assay") return Response.json({ error: "not_exported" }, { status: 409 });
+    return Response.json({ error: "not_found" }, { status: 404 });
+  } });
+  try {
+    const environment = { OBSERVATION_PILOT_BASE_URL: `http://127.0.0.1:${server.port}`,
+      OBSERVATION_PILOT_GRADE_TOKEN: "grade-token", OBSERVATION_PILOT_READ_TOKEN: "read-token" };
+    await expect(runPilot(plan, { ...environment, OBSERVATION_PILOT_READ_TOKEN: "wrong-token" }))
+      .rejects.toThrow("eligibility read failed: 403");
+    let did_freeze = false;
+    const result = await runPilot(plan, environment, async () => { did_freeze = true; });
+    expect(did_freeze).toBe(true);
+    expect(revision_reads).toHaveLength(10);
+    expect(result.measurements).toHaveLength(10);
+  } finally { server.stop(); }
 });

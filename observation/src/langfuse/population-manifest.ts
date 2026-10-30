@@ -2,17 +2,15 @@ import { canonicalDigest } from "../canonical/canonical-json";
 import type { CanonicalDigest, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { ExportManifest } from "../export/manifest";
-import type { EvidenceSet } from "../grading/evidence";
-import { evidenceSetDigest } from "./mapping";
+import { evidenceSetDigest, type EvidenceSet } from "../grading/evidence";
+import { eligibilityExclusionCounts, type EligibilityRow, type ExclusionReason } from "../grading/eligibility";
 
 export interface PopulationError { readonly operation: "population_manifest"; readonly entity_id: string; readonly detail: string }
 export interface QuestionPin { readonly question_id: QuestionId; readonly question_version: string }
 export type PopulationStratum = "clearly_easy" | "borderline" | "known_failure";
 export type PopulationDisposition = "included" | "excluded";
 /** Exclusions decided by a deterministic check are typed so reports can count them apart. */
-export type ExclusionReason =
-  | { readonly kind: "uncited" }
-  | { readonly kind: "dangling_citation"; readonly evidence_refs: readonly string[] };
+export type { ExclusionReason } from "../grading/eligibility";
 export type PopulationReason = { readonly kind: "operator"; readonly detail: string } | ExclusionReason;
 export interface SelectedOccurrence extends QuestionPin {
   readonly occurrence_id: ItemOccurrenceId;
@@ -32,6 +30,9 @@ export interface ExclusionCount extends QuestionPin {
   readonly operator: number;
   readonly uncited: number;
   readonly dangling_citation: number;
+  readonly unlinked: number;
+  readonly unevidenced: number;
+  readonly skipped_budget: number;
 }
 export interface PopulationManifest {
   readonly manifest_id: string;
@@ -65,6 +66,9 @@ function reasonIssue(selected: SelectedOccurrence): string | null {
     case "uncited": return selected.disposition === "excluded" ? null : "an uncited occurrence must be excluded";
     case "dangling_citation": return selected.disposition !== "excluded" ? "a dangling citation must be excluded"
       : reason.evidence_refs.length > 0 ? null : "a dangling citation names its evidence refs";
+    case "unlinked":
+    case "unevidenced":
+    case "skipped_budget": return selected.disposition === "excluded" ? null : `${reason.kind} occurrence must be excluded`;
   }
 }
 export function sharedItemEvidenceDigest(membership: readonly Pick<PopulationMember,
@@ -121,13 +125,41 @@ export function makePopulationManifest(input: PopulationSelection): Result<Popul
     membership_digest: membershipDigest.value, shared_item_evidence_digest: shared.value });
 }
 
+/** Build the selected denominator from the same persisted eligibility decisions used by run coverage. */
+export function makePopulationManifestFromEligibility(input: PopulationSelection,
+  eligibility: readonly EligibilityRow[]): Result<PopulationManifest, PopulationError> {
+  const decisions = new Map(eligibility.map((row) =>
+    [`${row.subject_occurrence_id}\u0000${row.question_id}\u0000${row.question_version}`, row]));
+  const selected: SelectedOccurrence[] = [];
+  for (const candidate of input.selected) {
+    const row = decisions.get(`${candidate.occurrence_id}\u0000${candidate.question_id}\u0000${candidate.question_version}`);
+    if (!row) return failure(candidate.occurrence_id, "recorded eligibility required for population member");
+    if (row.tag === "eligible") {
+      if (row.payload.evidence_set_id !== candidate.evidence.evidence_set_id)
+        return failure(candidate.occurrence_id, "eligible evidence set differs from frozen selection");
+      selected.push({ ...candidate, disposition: "included", reason: { kind: "operator", detail: "eligible" } });
+      continue;
+    }
+    const reason: PopulationReason = row.tag === "invalid_reference" || row.tag === "skipped_budget"
+      ? row.payload : row.tag === "missing_evidence" && row.payload.kind !== "missing_source"
+        ? row.payload : { kind: "operator", detail: row.tag };
+    selected.push({ ...candidate, disposition: "excluded", reason });
+  }
+  return makePopulationManifest({ ...input, selected });
+}
+
 /** Excluded members per question pin, split by why they left the population. */
 export function exclusionCounts(manifest: PopulationManifest): readonly ExclusionCount[] {
   return manifest.question_pins.map((pin) => {
     const excluded = manifest.membership.filter((member) => member.disposition === "excluded"
       && member.question_id === pin.question_id && member.question_version === pin.question_version);
     const count = (kind: PopulationReason["kind"]) => excluded.filter((member) => member.reason.kind === kind).length;
-    return { question_id: pin.question_id, question_version: pin.question_version, operator: count("operator"),
-      uncited: count("uncited"), dangling_citation: count("dangling_citation") };
+    const eligibility = eligibilityExclusionCounts(excluded.flatMap((member) => member.reason.kind === "operator" ? [] : [
+      member.reason.kind === "dangling_citation" || member.reason.kind === "unlinked"
+        ? { tag: "invalid_reference" as const, payload: member.reason }
+        : member.reason.kind === "skipped_budget" ? { tag: "skipped_budget" as const, payload: member.reason }
+          : { tag: "missing_evidence" as const, payload: member.reason },
+    ]));
+    return { question_id: pin.question_id, question_version: pin.question_version, operator: count("operator"), ...eligibility };
   });
 }

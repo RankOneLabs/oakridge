@@ -1,7 +1,7 @@
 import { canonicalDigest } from "../canonical/canonical-json";
 import type { CanonicalDigest, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
-import type { EvidenceSet } from "../grading/evidence";
+import { evidenceSetDigest, type EvidenceSet } from "../grading/evidence";
 import type { ExternalTargetIds, LangfuseError } from "../ports/evaluation-backend";
 import type { LangfuseSyncState } from "./sync-state";
 
@@ -26,13 +26,7 @@ export interface LangfuseMappingRecord extends MappingDigests {
   readonly sync_state: LangfuseSyncState;
 }
 
-/** Mirrors the Assay export digest input, including the captured reference content. */
-export function evidenceSetDigest(evidence: EvidenceSet): Result<CanonicalDigest, LangfuseError> {
-  const result = canonicalDigest({ evidence_refs: evidence.references, is_incomplete: evidence.is_incomplete,
-    incompleteness_reason: evidence.incompleteness_reason });
-  return result.ok ? result : err({ operation: "evidence_set_digest", entity_id: evidence.evidence_set_id,
-    detail: result.error.detail });
-}
+export { evidenceSetDigest } from "../grading/evidence";
 
 /** A new shape version makes a new key; prior keys remain computable unchanged. */
 export function mappingKey(input: MappingKeyInput): Result<MappingDigests, LangfuseError> {

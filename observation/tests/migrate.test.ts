@@ -9,6 +9,63 @@ import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
 
+integration("0010 through 0013 upgrade 0009 without changing pinned v1 question fields or generated origin", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    const names = ["0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
+      "0004_cursor.sql", "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql",
+      "0008_langfuse_sync.sql", "0009_grade_label_origin.sql"];
+    for (const name of names) {
+      const source = await Bun.file(new URL(`../src/storage/migrations/${name}`, import.meta.url)).text();
+      await sql.raw(source).execute(db);
+      if (name === "0001_observation.sql") await sql`INSERT INTO observation.schema_baseline (digest)
+        VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
+    }
+    const originBefore = await sql<{ definition: string }>`SELECT generation_expression AS definition
+      FROM information_schema.columns WHERE table_schema = 'observation'
+      AND table_name = 'grade_observation' AND column_name = 'label_origin'`.execute(db);
+    for (const question_id of ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"])
+      await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql`INSERT INTO observation.question_definition
+        (producer, namespace, question_id, question_version, target_item_kinds, input_recipe, response_kind,
+         allowed_values, missing_evidence_policy, abstain_semantics, unclear_semantics, interpretation_caveats, requires_repository_snapshot)
+        VALUES ('oakridge', 'pin', ${question_id}, 'v1', '["criterion"]'::jsonb, '{}'::jsonb,
+          'boolean', NULL, 'fail', '', '', '', false)`.execute(trx));
+    const before = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
+      SELECT to_jsonb(q) AS row FROM observation.question_definition q ORDER BY question_id`.execute(trx));
+    await migrateEmptyDatabase(db);
+    const humanCollection = await sql<{ collection_mode: string | null; assignment: string | null; definition: string }>`
+      SELECT (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+        AND table_name = 'grade_observation' AND column_name = 'collection_mode') AS collection_mode,
+        to_regclass('observation.blind_assignment')::text AS assignment,
+        (SELECT generation_expression FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grade_observation' AND column_name = 'label_origin') AS definition`.execute(db);
+    expect(humanCollection.rows[0]).toEqual({ collection_mode: "collection_mode",
+      assignment: "observation.blind_assignment", definition: originBefore.rows[0]?.definition });
+    const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
+    expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
+    const jobs = await sql<{ name: string | null; lease_owner: string | null; lease_expires_at: string | null; has_state_check: boolean }>`
+      SELECT to_regclass('observation.grading_job')::text AS name,
+        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grading_job' AND column_name = 'lease_owner') AS lease_owner,
+        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grading_job' AND column_name = 'lease_expires_at') AS lease_expires_at,
+        EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'observation.grading_job'::regclass
+          AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%queued%claimed%reclaimable%terminal%skipped_budget%') AS has_state_check`.execute(db);
+    expect(jobs.rows[0]).toEqual({ name: "observation.grading_job", lease_owner: "lease_owner",
+      lease_expires_at: "lease_expires_at", has_state_check: true });
+    const after = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
+      SELECT to_jsonb(q) - 'question_text' - 'evidence_recipe_provenance' AS row
+      FROM observation.question_definition q ORDER BY question_id`.execute(trx));
+    expect(after.rows).toEqual(before.rows);
+    const columns = await sql<{ question_text: string | null; eligibility: string | null }>`
+      SELECT (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
+        AND table_name = 'question_definition' AND column_name = 'question_text') AS question_text,
+        to_regclass('observation.evaluation_eligibility')::text AS eligibility`.execute(db);
+    expect(columns.rows[0]).toEqual({ question_text: "question_text", eligibility: "observation.evaluation_eligibility" });
+    await migrateEmptyDatabase(db);
+  } finally { await db.destroy(); }
+}));
+
 async function scratch(work: (url: string) => Promise<void>): Promise<void> {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
   const name = `observation_test_${randomBytes(6).toString("hex")}`;

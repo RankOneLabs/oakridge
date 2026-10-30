@@ -3,6 +3,7 @@ import { listRunItems, readItem, readLineage, type Page } from "../storage/proje
 import type { SourceDependencies } from "./sources";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
+import { readCoverage } from "../storage/coverage-store";
 
 function pagination(url: string): Page | null {
   const params = new URL(url).searchParams;
@@ -13,6 +14,16 @@ function pagination(url: string): Page | null {
 }
 
 export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/runs/:run_id/coverage", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const params = new URL(c.req.url).searchParams;
+    const question_id = params.get("question_id"); const question_version = params.get("question_version");
+    if (Boolean(question_id) !== Boolean(question_version))
+      return errorResponse(c, 400, "invalid_selection", "question id and version must be supplied together");
+    return c.json(await readCoverage(deps.db, credential, { run_id: c.req.param("run_id"),
+      revision_id: params.get("revision_id"), question_id, question_version }));
+  });
   app.get("/v1/runs/:run_id/items", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");

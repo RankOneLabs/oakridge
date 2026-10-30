@@ -66,7 +66,7 @@ coverage miss rather than missing evidence.
 | `assessment.coverage/v1` | `brief.criteria` `criterion` | One brief criterion | Assessment finding references, possibly empty | Boolean: at least one explicit `assesses` link |
 
 For fidelity, the brief criterion's `derived_from` link uses the unchanged plan
-criterion id, which is unique within the run; rewritten text preserves that identity. For coverage, the
+criterion id, which is flat and unique within the run (not scoped to its cohort); rewritten text preserves that identity. For coverage, the
 catalogue creates an `assesses` link only when the assessment finding has a
 string `criterion_id`. A finding with no id has no link and is not itself a
 coverage miss. Only a brief criterion with no linked assessment finding is a
@@ -74,7 +74,7 @@ miss.
 
 For traceability, the input references are only the criterion's own
 `derived_from` links to tasks and to decisions in its cohort; nothing is matched
-by text. `planCriterionEligibility` in `observation/src/langfuse/plan-traceability.ts`
+by text. `planCriterionEligibility` in `observation/src/producers/oakridge/plan-traceability.ts`
 classifies a criterion before any grader runs. A criterion with empty `task_ids`
 and `decision_ids` is **uncited**, and one citing an id absent from its captured
 revision has a **dangling citation**; both are excluded from the population

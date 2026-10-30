@@ -5,6 +5,9 @@ import { purgeRun } from "../src/purge/purge";
 import { deletedRunId, handleOperatorEvent } from "../src/purge/trigger";
 import { withTenant, type Database } from "../src/storage/database";
 import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";
+import { claimBlindAssignment, createBlindAssignment } from "../src/storage/blind-assignment-store";
+import { enqueueJob } from "../src/storage/grading-job-store";
+import { gradingLimits } from "../src/grading/jobs/budget";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 import type { ItemOccurrenceId } from "../src/domain/identity";
 
@@ -19,6 +22,7 @@ export async function seedHumanGrade(db: Database, occurrence_id: ItemOccurrence
     evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
     question_version: question.question_version, evaluator_definition_id: "human", config_digest: "config-1",
     attempt_label: "one", details: { answer: { state: "answered", kind: "boolean", value: true },
+      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
       probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
       decision_policy_version: null, reviewer_id: "operator", reviewer_details: null,
       comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
@@ -37,6 +41,11 @@ test("only a run invalidation confirmed absent is a purge trigger", () => {
 integration("purge removes six layers and commits their audit counts", async () => {
   await scratchGrading(async (db, occurrence_id) => {
     await seedHumanGrade(db, occurrence_id);
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+    await enqueueJob(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: "model", config_digest: "config-1",
+      attempt_label: "purged" }, runner_name: "stub_model" }, gradingLimits());
     const issue_id = canonicalDigest(["purge issue"]);
     if (!issue_id.ok) throw new Error(issue_id.error.detail);
     await withTenant(db, tenant, async (trx) => {
@@ -54,8 +63,58 @@ integration("purge removes six layers and commits their audit counts", async () 
       item_relations_removed: 1, extraction_issues_removed: 1, evaluation_executions_removed: 1,
       grade_observations_removed: 1, trigger_event_id: "delete-event", operator_override: false });
     expect(await Promise.all(["source_revision", "item_occurrence", "item_relation", "extraction_issue",
-      "evaluation_execution", "grade_observation"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0]);
+      "evaluation_execution", "grade_observation", "grading_job"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(await count(db, "purge_event")).toBe(1);
+  });
+});
+
+integration("purge removes a submitted blind assignment with its grade", async () => {
+  await scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
+        'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version };
+    const assignment = await createBlindAssignment(db, tenant, identity);
+    expect(assignment.ok).toBe(true);
+    if (!assignment.ok) throw new Error(assignment.error.detail);
+    const claimed = await claimBlindAssignment(db, tenant, {
+      assignment_id: assignment.value.assignment_id, reviewer_id: "reviewer-a", duration_seconds: 900 });
+    expect(claimed.ok).toBe(true);
+    const grade = await recordHumanGrade(db, tenant, { ...identity,
+      evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "blind-purge",
+      details: { answer: { state: "answered", kind: "boolean", value: true },
+        collection_mode: "blind", blind_assignment_id: assignment.value.assignment_id,
+        model_answers_visible: false, workflow_decisions_visible: false,
+        probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
+        decision_policy_version: null, reviewer_id: "reviewer-a", reviewer_details: null,
+        comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
+    expect(grade.ok && grade.value.observation).toBeTruthy();
+    const purged = await purgeRun(db, request);
+    if (!purged.ok) throw new Error(purged.error.detail);
+    expect(purged.ok && purged.value).toMatchObject({ item_occurrences_removed: 1, grade_observations_removed: 1 });
+    expect(await Promise.all(["blind_assignment", "grade_observation", "item_occurrence"].map((table) => count(db, table))))
+      .toEqual([0, 0, 0]);
+  });
+});
+
+integration("purge removes an unsubmitted blind assignment", async () => {
+  await scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
+        'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
+    const assignment = await createBlindAssignment(db, tenant, { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version });
+    expect(assignment.ok).toBe(true);
+    const purged = await purgeRun(db, request);
+    if (!purged.ok) throw new Error(purged.error.detail);
+    expect(purged.ok && purged.value).toMatchObject({ item_occurrences_removed: 1, grade_observations_removed: 0 });
+    expect(await count(db, "blind_assignment")).toBe(0);
   });
 });
 

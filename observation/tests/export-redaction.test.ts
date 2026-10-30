@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { expect, test } from "bun:test";
 import { prepareRows, type ExportRows } from "../src/storage/export-store";
 import type { RedactionPolicy } from "../src/export/manifest";
@@ -64,7 +65,7 @@ test("grade intake preserves declared evidence content kinds", () => {
     evidence: { evidence_set_id: "evidence", references: [{ ref: "repo", kind: "repository_content",
       content: "PRIVATE SOURCE", digest: null }], is_incomplete: false, incompleteness_reason: null },
     evaluator: { evaluator_definition_id: "human", kind: "human", backend_kind: "local", provider: "fixture",
-      model: null, prompt_digest: "", config_digest: "", runtime_revision: "1", cost_metadata: null,
+      model: null, instruction_text: "", prompt_digest: instructionDigest(""), config_digest: "", runtime_revision: "1", cost_metadata: null,
       seed: null, attempt_controls: null },
   });
   expect(parsed.evidence.references[0]?.kind).toBe("repository_content");

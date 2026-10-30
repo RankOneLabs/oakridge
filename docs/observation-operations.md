@@ -75,11 +75,18 @@ under the restrictive policy. The status
 route lists the latest 100 mapping states for the caller's tenant.
 
 Removing all `OBSERVATION_LANGFUSE_*` settings and restarting selects the
-disabled variant. The three Langfuse routes then return `{ "status":
-"disabled" }` to authorized operators. Producer ingest, local projections,
+disabled variant. No `/v1/langfuse/*` route is mounted; authenticated reads
+to those paths receive `404`. Producer ingest, local projections,
 lineage and previously stored grades continue through their existing routes.
 Restore the settings and restart to re-enable the adapter; pending mappings
 remain in the observation database for reconciliation.
+
+The historical `langfuse-pilot-run.ts` script uses `OBSERVATION_PILOT_BASE_URL`,
+`OBSERVATION_PILOT_GRADE_TOKEN` and `OBSERVATION_PILOT_READ_TOKEN`. It reads
+eligibility through `GET /v1/evaluation-eligibility`, execution and grade
+readback through `GET /v1/evaluations/by-digest/:digest` and
+`GET /v1/items/:id/grades`, and item provenance through authenticated item
+and source-revision routes. It does not connect to PostgreSQL directly.
 
 ## Sensitive inputs, redaction and export gating
 
@@ -199,7 +206,101 @@ The same test file created the service with the adapter disabled, called the
 external `POST /v1/evaluations` grading contract, read its raw grade, and
 created a frozen Assay export through `POST /v1/exports/assay`; each returned
 success and the export included the graded occurrence. `GET /v1/langfuse/status`
-returned `disabled`. The existing `langfuse-offline.test.ts` drill also ingested
+now returns `404` with the adapter disabled. The existing `langfuse-offline.test.ts` drill also ingested
 a revision, projected an item, read lineage, accepted a human grade and read it
 while Langfuse routes were disabled. These are local service drills. No live
 Oakridge workflow or production deployment was restarted for this cohort.
+
+## Durable grading queue
+
+`POST /v1/evaluation-jobs` accepts a pinned evaluation identity, optional context,
+runner name and estimated cost, then returns a durable `job_id`. Network-backed
+runners are accepted only on this route. `POST /v1/evaluations` remains for the
+local deterministic, coverage and stub runners. Read or grade credentials can
+read `GET /v1/evaluation-jobs/:id`, `GET /v1/evaluation-executions/:id`, and
+`GET /v1/items/:id/evaluation-jobs` to inspect pending and terminal work.
+If a manual request leaves an execution running after interruption, a grade
+operator can call `POST /v1/evaluation-executions/:id/recover`. The action
+marks that manual execution failed and fences out its late response. Submit
+a new manual evaluation with a distinct `attempt_label` to produce the grade.
+The recovery action refuses executions owned by a durable job and executions
+that are already terminal.
+
+The observation process starts a worker beside HTTP. It claims queued or
+expired jobs with `FOR UPDATE SKIP LOCKED`, checks run and stage caps, then
+starts one canonical running execution before calling the runner outside every
+database transaction. The persist transaction rechecks the lease owner and
+expiry before completing the execution and inserting the grade. An expired
+response is discarded. The worker can be stopped independently of HTTP by
+calling the returned worker's `stop()` method; process shutdown stops it before
+closing the database. Returned provider request IDs and costs are appended to
+`evaluation_execution.provider_attempts` for successful and failed requests,
+including a late response discarded for its expired lease. Each entry records
+its attempt number and outcome.
+
+The default caps are two active jobs per run, one per stage, 1 unit of run
+spend, 0.5 units of stage spend, three attempts, a 30 second provider deadline
+and a 45 second lease. Set `OBSERVATION_GRADING_RUN_CONCURRENCY`,
+`OBSERVATION_GRADING_STAGE_CONCURRENCY`, `OBSERVATION_GRADING_RUN_SPEND`,
+`OBSERVATION_GRADING_STAGE_SPEND`, `OBSERVATION_GRADING_RETRY_LIMIT`,
+`OBSERVATION_PROVIDER_DEADLINE_MS`, and `OBSERVATION_GRADING_LEASE_MS` to adjust
+them. The lease is never configured shorter than the provider deadline plus
+five seconds. Active jobs reserve their estimated cost; after a job releases
+its claim, its recorded provider cost remains in the spend total. Budget skips
+before a first attempt create no execution; they append a
+`skipped_budget` eligibility decision. The disclosure record stores provider,
+policy version, evidence digests and content types, with no raw content. Only
+public and classified repository content are permitted for outbound grading;
+unclassified, internal, raw build and raw test roles are refused.
+When a provider does not report cost, the admitted estimate is charged to its
+attempt. If a retry is refused by a cap, the job becomes terminal and its
+earlier running execution is closed as failed; the retry does not call the
+provider. Local runners do not pass through the outbound disclosure gate.
+
+The PostgreSQL drills in `observation/tests/grading-job-recovery.test.ts`
+simulate interruption before claim, during a provider call, after response
+before persist, and during restart. The same file verifies that an expired
+response cannot replace the winner's grade. `grading-no-transaction.test.ts`
+traces transaction callbacks around both the manual and queued runner call.
+These are local deterministic drills, not a live provider rollout.
+
+### Direct Jev live walkthrough (2026-10-30)
+
+Using the local `TYPESAFE_API_KEY`, `GET /v1/models` returned `jev-latest` and `jev-preview`. A single `plan.criterion_traceability/v1` grade used the `criterion-lineage` plan subject and its cited `decision-capture` from `observation/fixtures/oakridge/run-slice/plan-revision.json`. The source event IDs and transaction metadata came from a captured Oakridge run; the fixture's revision bodies are hand-written adaptations, as its `PROVENANCE.md` states. The plan revision was ingested through the Oakridge source-event route, and the subject was projected before registration and grading. The four pinned pilot `input_recipe` values were unchanged.
+
+The POST to `https://api.typesafe.ai/v1/systemone` used bearer authentication and this request shape (the full instruction text is stored on the evaluator):
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "plan_criterion": { "id": "criterion-lineage", "text": "Lineage is explicit", "task_ids": [], "decision_ids": ["decision-capture"] },
+    "plan_decision": { "id": "decision-capture", "text": "Keep captured bodies immutable" }
+  },
+  "questions": {
+    "plan.criterion_traceability": {
+      "type": "choice",
+      "instructions": "Does plan_criterion follow from its cited plan_decision? Choose traceable when the decision supports the criterion; unsupported when it does not; unclear_insufficient_evidence only when the present excerpts cannot settle the relationship. Do not infer uncited sources.",
+      "criteria": {
+        "traceable": "The cited decision supports the plan criterion",
+        "unsupported": "The cited decision does not support the plan criterion",
+        "unclear_insufficient_evidence": "The captured excerpts do not settle support"
+      }
+    }
+  }
+}
+```
+
+TypeSafe returned HTTP 200 with `model: "jev-1.14.0"`, choice `unsupported`, confidence `0.37`, probabilities `{traceable: 0.15, unsupported: 0.58, unclear_insufficient_evidence: 0.27}`, and usage `{input_tokens: 483, output_tokens: 55}`. The five requested execution fields were checked independently in the stored row:
+
+| Field | Stored value |
+| --- | --- |
+| Raw provider answer | `unsupported`, confidence `0.37`, and all three probabilities in `reproducibility_metadata.raw_answer` |
+| Provider model version | `jev-1.14.0` in `reproducibility_metadata.provider_model` |
+| Token usage | `input_tokens: 483`, `output_tokens: 55` in `model_usage` |
+| Provider-reported cost | `null`; absent from the JSON response |
+| Provider request ID | `null`; `id` was absent from the JSON response and `x-request-id` was absent from the headers |
+
+The isolated local PostgreSQL database `observation_jev_live_20261030_216a64c6`, tenant `oakridge/jev-live-walkthrough`, retains subject occurrence `canonical-json/v1:1314f7fa5f25a135235031a0e1a07c18fbf17d06ed18da552820025f93ca17e3`, execution `ca807f29-e78e-462d-beb8-9b90dada4622` (`completed`), and grade observation `65e400ee-6fd7-412b-bc5d-9bca3c4b8809` (`answered`, `unsupported`). A separate read verified the execution and grade persisted. The account's actual response matches the [public TypeSafe OpenAPI contract](https://api.typesafe.ai/openapi.json): it documents `model`, `answers`, and `usage`, but neither `cost` nor `id`. The requirement for provider-reported cost and request ID needs a provider contract or account agreement that supplies them; this runner does not substitute an estimate or invented ID. Fastino GLiDE and the LLM judge remain configuration-gated.
+
+Worker construction reads `TYPESAFE_API_KEY` and optional `TYPESAFE_BASE_URL` for Jev, or `FASTINO_API_KEY` and optional `FASTINO_BASE_URL` for GLiDE. Keys stay in the worker process. Set `OBSERVATION_EXTERNAL_PROCESSING_POLICY` to the selected provider processing agreement or policy identifier. Every provider attempt stores that value separately from local retention; if unset, the field is omitted.

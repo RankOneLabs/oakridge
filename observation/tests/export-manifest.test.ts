@@ -107,6 +107,7 @@ integration("the assay route freezes files and membership when another grade is 
         question_id: question.question_id, question_version: question.question_version,
         evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "first",
         details: { answer: { state: "answered", kind: "boolean", value: true } as const,
+          collection_mode: "in_context" as const, model_answers_visible: false, workflow_decisions_visible: false,
           probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
           decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null, comments: null,
           rationale: null, quality_flags: [], supersedes_observation_id: null } };
