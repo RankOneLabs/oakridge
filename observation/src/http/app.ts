@@ -6,11 +6,9 @@ import { registerItemRoutes } from "./items";
 import { registerEvaluationRoutes } from "./evaluations";
 import { registerGradeRoutes } from "./grades";
 import { registerExportRoutes } from "./exports";
-import { registerLangfuseRoutes } from "./langfuse-sync";
-import type { LangfuseConfiguration } from "../langfuse/config";
-import type { SourceDependencies } from "./sources";
+import { registerLangfuseRoutes, type LangfuseRouteDependencies } from "./langfuse-sync";
 
-export function createApp(deps: SourceDependencies & { readonly langfuse?: LangfuseConfiguration }): Hono {
+export function createApp(deps: LangfuseRouteDependencies): Hono {
   const app = new Hono();
   registerSourceRoutes(app, deps);
   registerItemRoutes(app, deps);

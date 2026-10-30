@@ -150,5 +150,4 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     return c.json({ execution_id: result.value.execution_id, status: "failed",
       next_action: "submit a new evaluation with a distinct attempt_label" });
   });
-
 }
