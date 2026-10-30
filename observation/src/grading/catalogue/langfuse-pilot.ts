@@ -6,7 +6,7 @@ export interface PilotQuestion { readonly definition: QuestionDefinition; readon
 function pinnedQuestion(definition: QuestionDefinition, text: string): PilotQuestion {
   return { definition: { ...definition, question_text: text,
     evidence_recipe_provenance: { recipe_id: definition.question_id, recipe_version: definition.question_version,
-      source: "observation/src/langfuse/evidence-recipe.ts" } }, text };
+      source: "observation/src/grading/evidence-packages/pilot-recipe.ts" } }, text };
 }
 
 const relevance: QuestionDefinition = {

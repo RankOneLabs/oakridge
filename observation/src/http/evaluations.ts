@@ -58,6 +58,7 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
     let body: unknown;
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
+      reviewed_commit: z.string().min(1).optional(),
       runner: z.enum(["deterministic", "coverage", "stub_model", "jev_direct", "fastino_glide", "llm_judge"]) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
     const identity = parsed.data.identity as EvaluationIdentity;
@@ -72,7 +73,7 @@ export function registerEvaluationRoutes(app: Hono, deps: LangfuseRouteDependenc
     }
     const runner = parsed.data.runner === "deterministic" ? deterministicChecker
       : parsed.data.runner === "coverage" ? coverageChecker : modelRunners[parsed.data.runner];
-    const result = await runGrade(deps.db, credential, { identity, runner });
+    const result = await runGrade(deps.db, credential, { identity, runner, reviewed_commit: parsed.data.reviewed_commit });
     return result.ok ? c.json(result.value, result.value.was_replay ? 200 : 201)
       : errorResponse(c, 422, "evaluation_refused", result.error.detail);
   });

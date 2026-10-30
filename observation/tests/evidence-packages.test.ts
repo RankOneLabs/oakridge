@@ -52,8 +52,22 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
     ? { ...item, links: [] } : item) }]);
   expect(missingLink.ok && missingLink.value.exclusions.every((excluded) => excluded.reason.kind !== "dangling_citation")).toBe(true);
   expect(missingLink.ok && missingLink.value.exclusions.some((excluded) => excluded.reason.kind === "unlinked")).toBe(true);
+  const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
+  expect(coverage.map((pack) => pack.evidence.references.map((ref) => ref.ref.split(":")[0]))
+    .sort((a, b) => b.length - a.length)).toEqual([
+    ["brief_criterion", "assessment_finding"], ["brief_criterion"],
+  ]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
-    .every((row) => row.decision.tag === "blocked_dependency" && row.decision.payload.dependency === "ArtifactSource.collect")).toBe(true);
+    .every((row) => row.decision.tag === "eligible")).toBe(true);
+  const withoutAssessment = runPackages([plan, brief]);
+  expect(withoutAssessment.ok && withoutAssessment.value.eligibility.filter((row) => row.question_id === "assessment.coverage")
+    .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
+  const laterAssessment: CapturedRevision = { ...assessment, revision_id: "assessment-later",
+    recorded_at: new Date("2026-10-23T17:45:00Z"), items: assessment.items.map((item, index) => ({ ...item,
+      revision_id: "assessment-later", occurrence_id: `assessment-later-${index}` as ItemOccurrenceId })) };
+  const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment]);
+  expect(repeatedCoverage.ok && repeatedCoverage.value.packages.filter((pack) => pack.question_id === "assessment.coverage").length).toBe(4);
+  expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
     && row.decision.tag === "missing_evidence")).toBe(true);
   const graph = buildGraph([resolve(import.meta.dir, "../src/producers/oakridge/evidence-packages.ts")]);
@@ -61,11 +75,12 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-integration("deferred pilot questions persist missing evidence and blocked dependency", async () => scratchGrading(async (db, occurrence_id) => {
+integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
   const analysis = "analysis.finding_relevance" as const;
   const assessment = "assessment.coverage" as const;
   for (const question_id of [analysis, assessment]) {
-    const pinned = { ...question, question_id: question_id as QuestionId, question_version: "v1" };
+    const pinned = { ...question, question_id: question_id as QuestionId, question_version: "v1",
+      requires_repository_snapshot: question_id === assessment };
     expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   }
   const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [

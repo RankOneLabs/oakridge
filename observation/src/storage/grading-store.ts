@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
@@ -138,13 +138,24 @@ function validOutcome(outcome: EvaluationOutcome, question: QuestionDefinition):
   return true;
 }
 
-export interface RunGradeInput { readonly identity: EvaluationIdentity; readonly runner: GradeRunner }
+export interface RunGradeInput {
+  readonly identity: EvaluationIdentity;
+  readonly runner: GradeRunner;
+  /** Commit selected for this execution, independently of the pinned recipe descriptor. */
+  readonly reviewed_commit?: string;
+}
 export interface RunGradeResult { readonly execution: Selectable<ObservationEvaluationExecution>; readonly observation: Selectable<ObservationGradeObservation> | null; readonly was_replay: boolean }
+
+function runGradeDigest(identity: EvaluationIdentity, reviewed_commit: string | undefined) {
+  const base = evaluationDigest(identity);
+  return !base.ok || reviewed_commit === undefined ? base
+    : canonicalDigest(["evaluation-reviewed-commit/v1", base.value, reviewed_commit]);
+}
 
 /** One transaction owns the idempotency claim, execution result, and optional immutable observation. */
 export async function runGrade(db: Database, tenant: TenantScope, input: RunGradeInput): Promise<Result<RunGradeResult, GradingError>> {
   const { identity } = input;
-  const digest = evaluationDigest(identity);
+  const digest = runGradeDigest(identity, input.reviewed_commit);
   if (!digest.ok) return failure("evaluate", identity.subject_occurrence_id, digest.error.detail);
   try {
     return await withTenant(db, tenant, async (trx) => {
@@ -170,7 +181,7 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
       const { question, evidence, evaluator } = checked.value;
       const snapshot = question.requires_repository_snapshot
         ? repositorySnapshotEligibility(evidence, Number(question.input_recipe.minimum_repository_content ?? 1),
-          String(question.input_recipe.reviewed_commit ?? "")) : null;
+          input.reviewed_commit ?? "") : null;
       const blocked = snapshot !== null && snapshot.tag !== "eligible";
       const missing = evidence.is_incomplete && question.missing_evidence_policy === "fail";
       let result: RunnerResult;

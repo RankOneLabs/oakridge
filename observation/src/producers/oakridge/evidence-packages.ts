@@ -6,6 +6,7 @@ import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type
 import { planCriterionEligibility } from "./plan-traceability";
 import type { EligibilityDecision, ExclusionReason } from "../../grading/eligibility";
 import type { PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import { LANGFUSE_PILOT_QUESTIONS } from "../../grading/catalogue/langfuse-pilot";
 
 export interface PilotPackage {
   readonly question_id: PilotQuestionId;
@@ -112,6 +113,53 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
 }
 
+/** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
+function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+  const packages: PilotPackage[] = [];
+  const exclusions: PackageExclusion[] = [];
+  const eligibility: PackageEligibility[] = [];
+  const needs_repository = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
+  const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
+    .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
+  for (const [index, brief] of briefs.entries()) {
+    const next_brief = briefs[index + 1];
+    const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
+      && revision.recorded_at >= brief.recorded_at
+      && (!next_brief || revision.recorded_at < next_brief.recorded_at))
+      .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
+    for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
+      if (needs_repository) {
+        eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+          decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",
+            detail: "no repository-content implementor of ArtifactSource.collect exists" } } });
+        continue;
+      }
+      if (assessments.length === 0) {
+        exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+          reason: { kind: "unevidenced" } });
+        continue;
+      }
+      for (const assessment of assessments) {
+        const findings = assessment.items.filter((item) => item.item_kind === "assessment_finding"
+          && item.links.some((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
+            && link.target_item_kind === "criterion" && link.target_scope === criterion.item_scope
+            && link.target_local_id === criterion.producer_local_id));
+        const references = collectReferences([reference("brief_criterion", criterion),
+          ...findings.map((finding) => reference("assessment_finding", finding))]);
+        if (!references.ok) return references;
+        const evidence = packagedEvidenceSet("assessment.coverage", references.value, null);
+        if (!evidence.ok) return evidence;
+        packages.push({ question_id: "assessment.coverage", subject: criterion,
+          revision_id: assessment.revision_id, evidence: evidence.value });
+      }
+      const latest = packages.at(-1)!;
+      eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+        decision: { tag: "eligible", payload: { evidence_set_id: latest.evidence.evidence_set_id } } });
+    }
+  }
+  return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility });
+}
+
 export function runPackages(revisions: readonly CapturedRevision[], policy: RevisionSelection["policy"] = "live_all_revisions")
   : Result<RunPackages, RunPackageError> {
   const selected = selectCapturedRevisions(revisions, policy);
@@ -119,10 +167,12 @@ export function runPackages(revisions: readonly CapturedRevision[], policy: Revi
   if (!plan.ok) return plan;
   const brief = briefPackages(selected.revisions);
   if (!brief.ok) return brief;
-  const packages = [...plan.value.packages, ...brief.value.packages];
-  const exclusions = [...plan.value.exclusions, ...brief.value.exclusions];
+  const assessment = assessmentPackages(selected.revisions);
+  if (!assessment.ok) return assessment;
+  const packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
+  const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
   const eligibility: PackageEligibility[] = [
-    ...packages.map((pack): PackageEligibility => ({ question_id: pack.question_id,
+    ...[...plan.value.packages, ...brief.value.packages].map((pack): PackageEligibility => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
     ...exclusions.map((excluded): PackageEligibility => ({ question_id: excluded.question_id,
@@ -135,11 +185,7 @@ export function runPackages(revisions: readonly CapturedRevision[], policy: Revi
       question_id: "analysis.finding_relevance", occurrence_id: subject.occurrence_id,
       decision: { tag: "missing_evidence", payload: { kind: "missing_source", detail: "no relevant excerpt source is scheduled" } },
     })),
-    ...itemsOf(selected.revisions, "brief", "criterion").map((subject): PackageEligibility => ({
-      question_id: "assessment.coverage", occurrence_id: subject.occurrence_id,
-      decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",
-        detail: "no repository-content implementor of ArtifactSource.collect exists" } },
-    })),
+    ...assessment.value.eligibility,
   ];
   return ok({ selection_policy: policy, packages, exclusions, eligibility });
 }
