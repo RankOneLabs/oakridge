@@ -19,7 +19,7 @@ const sources = [
   { role: "brief_criterion" as const, ref: "revision:brief#/criterion", digest: "brief-digest", deep_link: "https://example.test/brief" },
 ];
 const evidence: EvidenceSet = { evidence_set_id: "queue-evidence" as EvidenceSetId,
-  references: sources.map((source) => ({ ref: source.ref, digest: source.digest, content: null })),
+  references: sources.map((source) => ({ ref: source.ref, kind: "public" as const, digest: source.digest, content: null })),
   is_incomplete: false, incompleteness_reason: null };
 const config = { base_url: "https://example.langfuse.test", project_id: "project",
   credential: { public_key: "public", secret_key: "private" }, annotation_queue_id: "queue",

@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -66,7 +67,7 @@ integration("missing configuration preserves ingest, projection, lineage and gra
       evidence: { evidence_set_id: "offline-evidence", references: [], is_incomplete: false,
         incompleteness_reason: null },
       evaluator: { evaluator_definition_id: "offline-human", kind: "human", backend_kind: "local",
-        provider: "offline-fixture", model: null, prompt_digest: "fixture", config_digest: "offline-config",
+        provider: "offline-fixture", model: null, instruction_text: "fixture", prompt_digest: instructionDigest("fixture"), config_digest: "offline-config",
         runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null } },
     details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "offline-operator" },
   }) });

@@ -15,7 +15,7 @@ import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
 import type { PilotQuestionId } from "./evidence-recipe";
 import type { CanonicalDigest, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvidenceSet } from "../grading/evidence";
-import type { EvaluatorDefinition } from "../grading/evaluator";
+import { instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
 
 export interface AnnotationImportInput { readonly mapping_key: CanonicalDigest; readonly queue_item_id: string;
   readonly score_id: string; readonly allow_notes: boolean }
@@ -54,7 +54,7 @@ function answerForScore(question: QuestionDefinition, score: z.infer<typeof scor
 }
 
 const HUMAN_EVALUATOR: EvaluatorDefinition = { evaluator_definition_id: "langfuse-annotation-human", kind: "human",
-  backend_kind: "langfuse", provider: "langfuse", model: null, prompt_digest: "langfuse-annotation/v1",
+  backend_kind: "langfuse", provider: "langfuse", model: null, instruction_text: "langfuse-annotation/v1", prompt_digest: instructionDigest("langfuse-annotation/v1"),
   config_digest: "langfuse-annotation/v1", runtime_revision: "1", cost_metadata: null, seed: null,
   attempt_controls: null };
 

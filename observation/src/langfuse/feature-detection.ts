@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { err, ok, type Result } from "../domain/primitives";
 import type { LangfuseConfig } from "./config";
-import { withBoundedRetry, type LangfuseHttpClient } from "./http-client";
+import { withBoundedRetry, type LangfuseHttpClient, type LangfuseHttpError } from "./http-client";
 
 export type LangfuseCapability = "decision_model_evaluators" | "annotation_queues" | "score_readback" | "evaluator_api";
 export interface CapabilityFailure { readonly capability: LangfuseCapability; readonly detail: string }
@@ -31,8 +31,8 @@ async function assignedToEnabledRule(client: LangfuseHttpClient, config: Langfus
   : Promise<CapabilityStatus> {
   let cursor: string | null = null;
   for (let page = 0; page < MAX_RULE_PAGES; page++) {
-    const query = new URLSearchParams({ limit: "100", ...(cursor ? { cursor } : {}) });
-    const rules = await withBoundedRetry(() => client.request({ operation: "capability_decision_model_evaluators",
+    const query: URLSearchParams = new URLSearchParams({ limit: "100", ...(cursor ? { cursor } : {}) });
+    const rules: Result<z.infer<typeof rulesPageSchema>, LangfuseHttpError> = await withBoundedRetry(() => client.request({ operation: "capability_decision_model_evaluators",
       entity_id: evaluator_id, method: "GET", path: `/api/public/v2/evaluation-rules?${query}`,
       response: rulesPageSchema }), config.retry);
     if (!rules.ok) return { capability: "decision_model_evaluators", available: false, detail: rules.error.detail };

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createApp } from "../src/http/app";
 import { listGrades, registerGradingContext } from "../src/storage/grading-store";
+import { runGrade } from "../src/storage/grading-store";
 import { sql } from "kysely";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import { withTenant } from "../src/storage/database";
@@ -9,6 +10,42 @@ import { tenant, question, evidence, evaluator, scratchGrading } from "./grading
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 const gradeToken = "grade-token"; const readToken = "read-token";
 const headers = { authorization: `Bearer ${gradeToken}`, "content-type": "application/json" };
+
+integration("registration rejects an instruction digest that does not match its text", async () => scratchGrading(async (db) => {
+  const result = await registerGradingContext(db, tenant, { question, evidence,
+    evaluator: { ...evaluator("code"), prompt_digest: "forged" } });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.detail).toContain("canonical instruction text digest");
+}));
+
+integration("question text and recipe provenance are pinned on new definitions", async () => scratchGrading(async (db) => {
+  const pinned = { ...question, question_text: "Is the fixture relevant?",
+    evidence_recipe_provenance: { recipe_id: "fixture", recipe_version: "v1", source: "fixture" } };
+  expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition")
+    .select(["question_text", "evidence_recipe_provenance"])
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("question_id", "=", question.question_id).executeTakeFirstOrThrow());
+  expect(row).toEqual({ question_text: pinned.question_text, evidence_recipe_provenance: pinned.evidence_recipe_provenance });
+  expect((await registerGradingContext(db, tenant, { question: { ...pinned, question_text: "Changed" },
+    evidence, evaluator: evaluator("code") })).ok).toBe(false);
+}));
+
+integration("new evidence needs classification while stored older references remain readable", async () => scratchGrading(async (db, occurrence_id) => {
+  const unclassified = { ...evidence, evidence_set_id: "unclassified" as typeof evidence.evidence_set_id,
+    references: [{ ref: "fixture", content: "sample", digest: null }] };
+  expect((await registerGradingContext(db, tenant, { question, evidence: unclassified, evaluator: evaluator("code") })).ok).toBe(false);
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evidence_set
+    (producer, namespace, evidence_set_id, evidence_refs, is_incomplete, incompleteness_reason)
+    VALUES (${tenant.producer}, ${tenant.namespace}, 'old-evidence', '[{"ref":"fixture","content":"sample","digest":null}]'::jsonb,
+      false, NULL)`.execute(trx));
+  const result = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    evidence_set_id: "old-evidence" as typeof evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "old-reference" },
+    runner: { kind: "code", run: async () => ({ ok: true, value: { answer: { state: "answered", kind: "boolean", value: true } } }) } });
+  expect(result.ok && result.value.observation !== null).toBe(true);
+}));
 
 integration("all grading routes serve raw answers, distributions, evaluator identity, and stable pages", async () => scratchGrading(async (db, occurrence_id) => {
   const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: readToken }], grade: [{ ...tenant, token: gradeToken }] } });

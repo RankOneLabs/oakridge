@@ -5,6 +5,8 @@ export type ResponseKind = "boolean" | "choice" | "ordinal" | "numeric" | "text"
 export interface QuestionDefinition {
   readonly question_id: QuestionId;
   readonly question_version: string;
+  readonly question_text?: string | null;
+  readonly evidence_recipe_provenance?: JsonValue | null;
   readonly target_item_kinds: readonly string[];
   readonly input_recipe: { readonly [key: string]: JsonValue };
   readonly response_kind: ResponseKind;

@@ -1,9 +1,28 @@
 import { expect, test } from "bun:test";
+import { repositorySnapshotEligibility } from "../src/grading/eligibility";
+import type { EvidenceSet } from "../src/grading/evidence";
+import type { EvidenceSetId } from "../src/domain/identity";
 import { listGrades, readExecution, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { createApp } from "../src/http/app";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
+
+test("repository snapshot eligibility checks presence, classification, commit and excerpt provenance", () => {
+  const valid: EvidenceSet = { evidence_set_id: "repository-evidence" as EvidenceSetId,
+    references: [{ ref: "relevant_excerpt:src/main.ts", kind: "repository_content", content: null,
+      digest: `canonical-json/v1:${"a".repeat(64)}`, reviewed_commit: "abc123" }],
+    is_incomplete: false, incompleteness_reason: null };
+  const decide = (value: EvidenceSet, minimum = 1) => repositorySnapshotEligibility(value, minimum, "abc123").tag;
+  expect(decide({ ...valid, references: [] })).toBe("missing_evidence");
+  expect(decide(valid, 2)).toBe("missing_evidence");
+  expect(decide({ ...valid, references: [{ ...valid.references[0]!, kind: "public" }] })).toBe("missing_evidence");
+  expect(decide({ ...valid, references: [{ ...valid.references[0]!, reviewed_commit: undefined }] })).toBe("missing_evidence");
+  expect(decide({ ...valid, references: [{ ...valid.references[0]!, digest: null }] })).toBe("missing_evidence");
+  expect(decide({ ...valid, references: [{ ...valid.references[0]!, is_truncated: true }] })).toBe("missing_evidence");
+  expect(decide({ ...valid, references: [{ ...valid.references[0]!, is_unreadable: true }] })).toBe("missing_evidence");
+  expect(decide(valid)).toBe("eligible");
+});
 
 integration("incomplete repository evidence records a failed execution and no grade", async () => scratchGrading(async (db, occurrence_id) => {
   const context = { question: { ...question, requires_repository_snapshot: true },
@@ -20,6 +39,46 @@ integration("incomplete repository evidence records a failed execution and no gr
   expect(result.value.execution.error).toBe("repository snapshot missing");
   expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.total).toBe(0);
   expect((await readExecution(db, tenant, result.value.execution.execution_id))?.status).toBe("failed");
+}));
+
+integration("runGrade checks each repository snapshot condition using the per-run reviewed commit", async () => scratchGrading(async (db, occurrence_id) => {
+  const snapshotQuestion = { ...question, requires_repository_snapshot: true,
+    input_recipe: { ...question.input_recipe, minimum_repository_content: 2 } };
+  const source = { ref: "relevant_excerpt:src/main.ts", kind: "repository_content" as const, content: null,
+    digest: `canonical-json/v1:${"a".repeat(64)}`, reviewed_commit: "abc123" };
+  const sources = [source, { ...source, ref: "relevant_excerpt:src/lib.ts" }];
+  const cases: readonly { name: string; references: EvidenceSet["references"]; reviewed_commit?: string;
+    expected: "completed" | "failed" }[] = [
+    { name: "too-few", references: [sources[0]!], reviewed_commit: "abc123", expected: "failed" },
+    { name: "classification", references: [sources[0]!, { ...sources[1]!, kind: "public" }], reviewed_commit: "abc123", expected: "failed" },
+    { name: "source-commit", references: [sources[0]!, { ...sources[1]!, reviewed_commit: undefined }], reviewed_commit: "abc123", expected: "failed" },
+    { name: "no-run-commit", references: sources, expected: "failed" },
+    { name: "requested-commit", references: sources, reviewed_commit: "different", expected: "failed" },
+    { name: "digest", references: [sources[0]!, { ...sources[1]!, digest: null }], reviewed_commit: "abc123", expected: "failed" },
+    { name: "truncation", references: [sources[0]!, { ...sources[1]!, is_truncated: true }], reviewed_commit: "abc123", expected: "failed" },
+    { name: "complete", references: sources, reviewed_commit: "abc123", expected: "completed" },
+  ];
+  let runner_calls = 0;
+  for (const entry of cases) {
+    const snapshotEvidence: EvidenceSet = { evidence_set_id: `repository-${entry.name}` as EvidenceSetId,
+      references: entry.references, is_incomplete: false, incompleteness_reason: null };
+    expect((await registerGradingContext(db, tenant, { question: snapshotQuestion, evidence: snapshotEvidence,
+      evaluator: evaluator("code") })).ok).toBe(true);
+    const result = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+      evidence_set_id: snapshotEvidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: "code", config_digest: "config-1",
+      attempt_label: entry.name }, reviewed_commit: entry.reviewed_commit,
+      runner: { kind: "code", run: async () => { runner_calls++; return { ok: true as const,
+        value: { answer: { state: "answered" as const, kind: "boolean" as const, value: true } } }; } } });
+    expect(result.ok && result.value.execution.status).toBe(entry.expected);
+  }
+  expect(runner_calls).toBe(1);
+  const changedCommit = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    evidence_set_id: "repository-complete" as EvidenceSetId, question_id: question.question_id,
+    question_version: question.question_version, evaluator_definition_id: "code", config_digest: "config-1",
+    attempt_label: "complete" }, reviewed_commit: "different",
+    runner: { kind: "code", run: async () => { throw new Error("must not execute"); } } });
+  expect(changedCommit.ok && changedCommit.value.execution.status === "failed" && !changedCommit.value.was_replay).toBe(true);
 }));
 
 integration("runner failure remains queryable only as an execution", async () => scratchGrading(async (db, occurrence_id) => {

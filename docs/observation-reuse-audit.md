@@ -14,6 +14,17 @@ This audit precedes observation lineage, content hashing, grader, and experiment
 
 The producer contract for artifact revisions and item addresses is `workflow-config/development.yaml`, `oakridge-dbos/src/storage/migrations/0001_core.sql`, and `docs/spec-02-handoff.md` at the Oakridge commit above. The `observation/src/wire/envelope.ts` types use those sources for revision fields and stable-id/JSON-pointer/text-span item addressing. Evaluation variants take their vocabulary from the audited JIG, Jev, and Assay contracts; a later capture API must validate any producer-specific body before it can claim one of those variants.
 
+## Observation-internal reuse and retirement
+
+| Source and commit | Audited path | Classification | Reason and observation decision |
+| --- | --- | --- | --- |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`latestRevisions`) | adapted | Retained as an explicitly selected historical-backfill policy in `grading/evidence-packages/capture.ts`. Live selection keeps every revision. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`reference`, `evidenceSet`, `collect`) | adapted | Lifted into `grading/evidence-packages/references.ts`. References require classification, carry canonical digests, and do not inline captured bodies. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`planPackages`, `briefPackages`, `runPackages`) | adapted | Lifted into `producers/oakridge/evidence-packages.ts`. Citation resolution stays with the producer; brief sources are pinned to the plan available at brief capture, and missing links are distinct from broken links. |
+| Oakridge `58ca81e4` | `observation/src/storage/run-capture-store.ts` (`loadRunCapture`) | adapted | Reused as the Oakridge capture reader with neutral captured-item types. It retains stored occurrence IDs for selected items. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/plan-traceability.ts` (`planCriterionEligibility`) | adapted | Generic source parameters preserve captured occurrence IDs. The implementation lives under the Oakridge producer; the Langfuse path remains a compatibility re-export. |
+| Oakridge `58ca81e4` | Langfuse native evaluator, mapping identity and projection code | retired | Direct Jev calls replace the hosted evaluator path. No provider mapping or UI identity enters the neutral evidence package. |
+
 ## L3 export compatibility check
 
 These conclusions were checked in the sibling checkouts at the stated commits. The paths are relative to each checkout. The classification describes the observation service's relationship to the sibling implementation; it does not introduce a runtime dependency.

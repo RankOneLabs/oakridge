@@ -10,11 +10,17 @@ export interface EvaluatorDefinition {
   readonly provider: string;
   readonly model: string | null;
   readonly prompt_digest: string;
+  readonly instruction_text: string;
   readonly config_digest: string;
   readonly runtime_revision: string;
   readonly cost_metadata: JsonValue | null;
   readonly seed: number | null;
   readonly attempt_controls: JsonValue | null;
+}
+export function instructionDigest(text: string): string {
+  const digest = canonicalDigest(text);
+  if (!digest.ok) throw new Error(digest.error.detail);
+  return digest.value;
 }
 export function evaluatorIdentity(definition: EvaluatorDefinition): Result<string, CanonicalizationError> {
   return canonicalDigest([definition.kind, definition.backend_kind, definition.provider, definition.model,
