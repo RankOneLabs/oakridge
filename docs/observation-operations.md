@@ -252,6 +252,14 @@ before a first attempt create no execution; they append a
 policy version, evidence digests and content types, with no raw content. Only
 public and classified repository content are permitted for outbound grading;
 unclassified, internal, raw build and raw test roles are refused.
+A provider attempt is recorded as `dispatched` at its admitted estimate *before*
+the provider is called, and settled in place with the real outcome afterwards, so
+one call is charged once whether or not it reached the provider. Budget admission
+counts a `dispatched` attempt only while its job holds no live lease: in flight the
+reservation already accounts for it, and once the lease lapses the attempt record
+is the only thing standing between an interrupted paid call and a second admission
+against zero recorded spend. A worker that dies before the dispatch record is
+written never reached the provider, so nothing was paid.
 When a provider does not report cost, the admitted estimate is charged to its
 attempt. If a retry is refused by a cap, the job becomes terminal and its
 earlier running execution is closed as failed; the retry does not call the

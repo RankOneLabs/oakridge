@@ -120,3 +120,39 @@ integration("budget refusal on retry closes the earlier running execution withou
   expect(execution.ended_at).not.toBeNull();
   expect(execution.provider_attempts).toMatchObject([{ cost: 0.2, status: "failed" }]);
 }));
+
+integration("a provider call is charged before it is dispatched, so an interrupted worker leaves it charged",
+  async () => scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+    // Cap 0.5 against two 0.3 calls: the second must be refused on the first call's cost alone.
+    const limits = { ...gradingLimits(), run_spend: 0.5, stage_spend: 1, run_concurrency: 2, stage_concurrency: 2 };
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "crashed-1" };
+
+    // A worker that dies mid-call persists nothing after the fact, so the charge has to be on
+    // record before the provider is reached. The runner observes the state at that moment.
+    let inFlight: readonly Record<string, unknown>[] = [];
+    const observing: GradeRunner = { kind: "model", async run() {
+      const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+        .selectAll().execute());
+      inFlight = (rows[0]?.provider_attempts ?? []) as readonly Record<string, unknown>[];
+      return { ok: true, value: { answer: { state: "answered", kind: "boolean", value: true },
+        cost: 0.3, external_execution_id: "request-1" } };
+    } };
+    await enqueueJob(db, tenant, { identity, runner_name: "stub_model", estimated_cost: 0.3 }, limits);
+    await workOneJob(db, tenant, limits, "crashing-worker", observing);
+
+    // Already charged at the admitted estimate while the call was still outstanding.
+    expect(inFlight.some((attempt) => attempt.status === "dispatched" && attempt.cost === 0.3)).toBe(true);
+    // Settled in place, so the one call is charged once rather than twice.
+    const settled = (await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
+      .selectAll().execute()))[0]?.provider_attempts as readonly Record<string, unknown>[];
+    expect(settled.filter((attempt) => attempt.job_id === inFlight[0]?.job_id)).toHaveLength(1);
+    expect(settled.every((attempt) => attempt.status !== "dispatched")).toBe(true);
+
+    // A second call of the same size no longer fits under the cap.
+    await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "crashed-2" },
+      runner_name: "stub_model", estimated_cost: 0.3 }, limits);
+    expect((await claimJob(db, tenant, "next-worker", limits))?.state).toBe("skipped_budget");
+  }));

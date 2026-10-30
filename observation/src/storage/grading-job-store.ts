@@ -68,10 +68,17 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
       .select(["e.cost", "e.provider_attempts", "r.unit_id"]).where("e.producer", "=", tenant.producer)
       .where("e.namespace", "=", tenant.namespace).where("i.run_id", "=", job.run_id)
       .execute();
+    // A dispatched attempt is a call in flight or interrupted. While its job still holds a live
+    // lease the reservation already accounts for it, so counting it here too would charge one
+    // call twice; once the lease lapses the reservation is gone and the dispatched record is the
+    // only thing standing between an interrupted paid call and a second admission against zero.
+    const leased = new Set(active.map((row) => row.job_id));
+    const counts = (attempt: Record<string, unknown>): boolean =>
+      attempt.status !== "dispatched" || !leased.has(String(attempt.job_id));
     const spent = (row: typeof completed[number]): number => Array.isArray(row.provider_attempts) && row.provider_attempts.length > 0
       ? row.provider_attempts.reduce<number>((sum, attempt) => sum + (
         attempt && typeof attempt === "object" && !Array.isArray(attempt) && "cost" in attempt
-          && typeof attempt.cost === "number" ? attempt.cost : 0), 0)
+          && typeof attempt.cost === "number" && counts(attempt as Record<string, unknown>) ? attempt.cost : 0), 0)
       : row.cost ?? 0;
     const spend = completed.reduce((sum, row) => sum + spent(row), 0);
     const stage_spend = completed.filter((row) => row.unit_id === job.stage_id)

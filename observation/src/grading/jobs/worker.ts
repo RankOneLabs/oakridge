@@ -62,21 +62,40 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
         .where("job_id", "=", job.job_id).where("state", "=", "claimed")
         .where("lease_owner", "=", owner).execute());
     }
+    const policy = env.OBSERVATION_EXTERNAL_PROCESSING_POLICY
+      ? { external_processing_policy: env.OBSERVATION_EXTERNAL_PROCESSING_POLICY } : {};
+    // A paid call whose worker dies before persisting its outcome must still be charged, so the
+    // attempt is recorded as dispatched at its admitted estimate *before* the provider is called.
+    // Budget admission counts a dispatched attempt at that estimate; settling it below replaces
+    // the row with the real cost. Without this an interrupted call is invisible to both the spend
+    // and the reservation once its lease expires, and the next call is admitted against zero.
+    if (execution_id) await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
+      .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([{ job_id: job.job_id,
+        attempt: job.attempts, status: "dispatched", ...policy, request_id: null,
+        cost: job.estimated_cost }])}::jsonb` })
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("execution_id", "=", execution_id).execute());
     let response: RunnerResult;
     try { response = await base.run(context); }
     catch { response = err({ operation: "grade_runner", entity_id: context.evaluator.evaluator_definition_id,
       detail: "runner failed" }); }
     if (execution_id) {
       const attempt = { job_id: job.job_id, attempt: job.attempts,
-        status: response.ok ? "completed" : "failed",
-        ...(env.OBSERVATION_EXTERNAL_PROCESSING_POLICY
-          ? { external_processing_policy: env.OBSERVATION_EXTERNAL_PROCESSING_POLICY } : {}),
+        status: response.ok ? "completed" : "failed", ...policy,
         request_id: response.ok ? response.value.external_execution_id ?? null
           : response.error.external_execution_id ?? null,
         cost: response.ok ? response.value.cost ?? job.estimated_cost
           : response.error.cost ?? job.estimated_cost };
+      // Settle in place: the dispatched row for this job and attempt becomes the real outcome,
+      // so one call is charged once whether or not it reached the provider.
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
-        .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([attempt])}::jsonb` })
+        .set({ provider_attempts: sql`(
+          SELECT COALESCE(jsonb_agg(entry ORDER BY ordinality), '[]'::jsonb)
+          FROM jsonb_array_elements(provider_attempts) WITH ORDINALITY AS t(entry, ordinality)
+          WHERE NOT (entry->>'job_id' = ${job.job_id}
+            AND (entry->>'attempt')::int = ${job.attempts}
+            AND entry->>'status' = 'dispatched')
+        ) || ${JSON.stringify([attempt])}::jsonb` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("execution_id", "=", execution_id).execute());
     }
