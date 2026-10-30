@@ -3,7 +3,7 @@ import type { CanonicalDigest, ItemOccurrenceId, QuestionId } from "../domain/id
 import { err, ok, type Result } from "../domain/primitives";
 import type { ExportManifest } from "../export/manifest";
 import type { EvidenceSet } from "../grading/evidence";
-import { eligibilityExclusionCounts, type ExclusionReason } from "../grading/eligibility";
+import { eligibilityExclusionCounts, type EligibilityRow, type ExclusionReason } from "../grading/eligibility";
 import { evidenceSetDigest } from "./mapping";
 
 export interface PopulationError { readonly operation: "population_manifest"; readonly entity_id: string; readonly detail: string }
@@ -124,6 +124,29 @@ export function makePopulationManifest(input: PopulationSelection): Result<Popul
     question_pins: [...input.question_pins].sort((a, b) => a.question_id.localeCompare(b.question_id)
       || a.question_version.localeCompare(b.question_version)), membership,
     membership_digest: membershipDigest.value, shared_item_evidence_digest: shared.value });
+}
+
+/** Build the selected denominator from the same persisted eligibility decisions used by run coverage. */
+export function makePopulationManifestFromEligibility(input: PopulationSelection,
+  eligibility: readonly EligibilityRow[]): Result<PopulationManifest, PopulationError> {
+  const decisions = new Map(eligibility.map((row) =>
+    [`${row.subject_occurrence_id}\u0000${row.question_id}\u0000${row.question_version}`, row]));
+  const selected: SelectedOccurrence[] = [];
+  for (const candidate of input.selected) {
+    const row = decisions.get(`${candidate.occurrence_id}\u0000${candidate.question_id}\u0000${candidate.question_version}`);
+    if (!row) return failure(candidate.occurrence_id, "recorded eligibility required for population member");
+    if (row.tag === "eligible") {
+      if (row.payload.evidence_set_id !== candidate.evidence.evidence_set_id)
+        return failure(candidate.occurrence_id, "eligible evidence set differs from frozen selection");
+      selected.push({ ...candidate, disposition: "included", reason: { kind: "operator", detail: "eligible" } });
+      continue;
+    }
+    const reason: PopulationReason = row.tag === "invalid_reference" || row.tag === "skipped_budget"
+      ? row.payload : row.tag === "missing_evidence" && row.payload.kind !== "missing_source"
+        ? row.payload : { kind: "operator", detail: row.tag };
+    selected.push({ ...candidate, disposition: "excluded", reason });
+  }
+  return makePopulationManifest({ ...input, selected });
 }
 
 /** Excluded members per question pin, split by why they left the population. */

@@ -207,6 +207,10 @@ export interface ObservationGradeObservation {
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
   label_origin: Generated<string>;
+  collection_mode: string | null;
+  blind_assignment_id: string | null;
+  model_answers_visible: boolean | null;
+  workflow_decisions_visible: boolean | null;
 }
 
 export interface ObservationSourceEventCursor {
@@ -400,6 +404,21 @@ export interface ObservationGradingJob {
   updated_at: Generated<Date>;
 }
 
+export interface ObservationBlindAssignment {
+  producer: string;
+  namespace: string;
+  assignment_id: string;
+  subject_occurrence_id: string;
+  evidence_set_id: string;
+  question_id: string;
+  question_version: string;
+  claim_owner: string | null;
+  claimed_at: Date | null;
+  expires_at: Date | null;
+  submitted_observation_id: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -428,4 +447,5 @@ export interface DB {
   "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
   "observation.evaluation_eligibility": ObservationEvaluationEligibility;
   "observation.grading_job": ObservationGradingJob;
+  "observation.blind_assignment": ObservationBlindAssignment;
 }

@@ -24,7 +24,7 @@ test("vertical slice requires OAKRIDGE_TEST_DATABASE_URL", () => {
 });
 const tenant = { producer: "oakridge", namespace: "run-slice" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
-  grade: [{ ...tenant, token: "grade-fixture" }] };
+  grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
 const fixtureRoot = new URL("../fixtures/oakridge/run-slice/", import.meta.url);
 
 interface EventMetadata { readonly id: string; readonly commit_txid: string; readonly created_at: string;
@@ -207,7 +207,8 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     const human = await app.request("/v1/grades", { method: "POST", headers: gradeHeaders,
       body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "slice-human" },
         context: { question, evidence, evaluator: evaluator("human") },
-        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator" } }) });
+        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator",
+          collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
     expect(human.status).toBe(201);
     const preExistingOutcome = { format: "observation.source-event/v1", definition_bundle: null,
       artifact_schema_version: "development-v1", kind: "human_grade", event_kind: "operator_decided",

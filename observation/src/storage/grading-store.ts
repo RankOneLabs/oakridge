@@ -15,7 +15,12 @@ import type { ObservationEvaluationExecution, ObservationGradeObservation } from
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
 
-export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {}
+export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
+  readonly collection_mode: "blind" | "in_context";
+  readonly blind_assignment_id?: string | null;
+  readonly model_answers_visible: boolean;
+  readonly workflow_decisions_visible: boolean;
+}
 export interface GradePage extends Page { readonly total: number; readonly items: readonly GradeListingItem[] }
 
 const json = (value: JsonValue) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
@@ -338,12 +343,34 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
       if (existing) {
         const observation = await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", tenant.producer)
           .where("namespace", "=", tenant.namespace).where("execution_id", "=", existing.execution_id).executeTakeFirst();
+        if (observation && (observation.reviewer_id !== details.reviewer_id
+          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
+          return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution: existing, observation: observation ?? null, was_replay: true });
       }
       const checked = await validateIdentity(trx, tenant, identity);
       if (!checked.ok) return checked;
       if (checked.value.evaluator.kind !== "human") return failure("human_grade", identity.evaluator_definition_id, "human evaluator required");
       if (!details.reviewer_id) return failure("human_grade", identity.subject_occurrence_id, "reviewer id required");
+      if (!details.collection_mode || details.model_answers_visible === undefined || details.workflow_decisions_visible === undefined)
+        return failure("human_grade", identity.subject_occurrence_id, "collection mode and visibility required");
+      if (details.collection_mode === "blind") {
+        const is_imported_annotation = identity.evaluator_definition_id === "langfuse-annotation-human";
+        if ((!details.blind_assignment_id && !is_imported_annotation) || details.model_answers_visible || details.workflow_decisions_visible)
+          return failure("human_grade", identity.subject_occurrence_id, "blind submission requires a hidden claimed assignment");
+        if (details.blind_assignment_id) {
+          const assignment = await trx.selectFrom("observation.blind_assignment").selectAll()
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("assignment_id", "=", details.blind_assignment_id).forUpdate().executeTakeFirst();
+          if (!assignment || assignment.claim_owner !== details.reviewer_id || !assignment.expires_at
+          || assignment.expires_at <= new Date() || assignment.submitted_observation_id
+          || assignment.subject_occurrence_id !== identity.subject_occurrence_id
+          || assignment.evidence_set_id !== identity.evidence_set_id || assignment.question_id !== identity.question_id
+          || assignment.question_version !== identity.question_version)
+            return failure("human_grade", identity.subject_occurrence_id, "blind assignment is unclaimed, expired, or mismatched");
+        }
+      } else if (details.blind_assignment_id) return failure("human_grade", identity.subject_occurrence_id, "in-context grade cannot use a blind assignment");
       if (!validAnswer(details.answer, checked.value.question)) return failure("human_grade", identity.question_id, "invalid answer");
       if (!validOutcome({ answer: details.answer, probabilities: details.probabilities, confidence: details.confidence }, checked.value.question))
         return failure("human_grade", identity.question_id, "invalid probability or confidence");
@@ -365,6 +392,10 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         const observation = await trx.selectFrom("observation.grade_observation").selectAll()
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("execution_id", "=", execution.execution_id).executeTakeFirst();
+        if (observation && (observation.reviewer_id !== details.reviewer_id
+          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
+          return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution, observation: observation ?? null, was_replay: true });
       }
       const execution = inserted;
@@ -377,8 +408,15 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         confidence: details.confidence, normalized_score: details.normalized_score,
         decision_policy_id: details.decision_policy_id, decision_policy_version: details.decision_policy_version,
         reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : json(details.reviewer_details),
+        collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
+        model_answers_visible: details.model_answers_visible,
+        workflow_decisions_visible: details.workflow_decisions_visible,
         comments: details.comments, rationale: details.rationale, quality_flags: json(asJson(details.quality_flags)),
         supersedes_observation_id: details.supersedes_observation_id }).returningAll().executeTakeFirstOrThrow();
+      if (details.blind_assignment_id) await trx.updateTable("observation.blind_assignment")
+        .set({ submitted_observation_id: observation.observation_id })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("assignment_id", "=", details.blind_assignment_id).execute();
       return ok({ execution, observation, was_replay: false });
     });
   } catch (cause) { return failure("human_grade", identity.subject_occurrence_id, String(cause)); }
@@ -412,7 +450,8 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
       .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
-      observation, answer: observation.answer_payload, evaluator, execution,
+      observation: { ...observation, collection_mode: observation.collection_mode ?? "unknown" },
+      answer: observation.answer_payload, evaluator, execution,
     }));
     return { items, total: Number(count.count), ...page };
   });

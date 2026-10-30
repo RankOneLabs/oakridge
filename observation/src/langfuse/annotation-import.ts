@@ -161,6 +161,7 @@ export async function importLangfuseAnnotation(db: Database, tenant: TenantScope
   const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: HUMAN_EVALUATOR });
   if (!registered.ok) return failure(score.id, registered.error.detail);
   const details: GradeDetails = { answer: answer.value, probabilities: null, confidence: null,
+    collection_mode: "blind", model_answers_visible: false, workflow_decisions_visible: false,
     normalized_score: null, decision_policy_id: null, decision_policy_version: null,
     reviewer_id: score.authorUserId, reviewer_details: { source: "langfuse", action: previous.latest ? "revision" : "create",
       score_id: score.id, queue_item_id: input.queue_item_id, score_timestamp: score.timestamp,

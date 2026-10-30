@@ -28,7 +28,7 @@ export async function readEligibility(db: Database, tenant: TenantScope, questio
   const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
     .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("question_id", "=", question_id).where("question_version", "=", question_version)
-    .orderBy("subject_occurrence_id").execute());
+    .orderBy("subject_occurrence_id").orderBy("recorded_at").orderBy("eligibility_id").execute());
   return rows.map((row) => ({ producer: row.producer, namespace: row.namespace,
     subject_occurrence_id: row.subject_occurrence_id as EligibilityRow["subject_occurrence_id"],
     question_id: row.question_id as EligibilityRow["question_id"], question_version: row.question_version,

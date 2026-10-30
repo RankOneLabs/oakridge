@@ -18,7 +18,7 @@ test("failure cases require OAKRIDGE_TEST_DATABASE_URL", () => {
 const tenant = { producer: "oakridge", namespace: "failure-cases" };
 const run_id = "run-failure-fixtures";
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
-  grade: [{ ...tenant, token: "grade-fixture" }] };
+  grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
 const fixture = async (name: string): Promise<JsonValue> => Bun.file(new URL(`../fixtures/oakridge/run-slice/${name}-revision.json`, import.meta.url)).json() as Promise<JsonValue>;
 interface PlanCriterion { id: string; text: string; task_ids: string[]; decision_ids: string[] }
 interface PlanBody { summary: string; cohorts: { acceptance_criteria: PlanCriterion[] }[] }
@@ -182,14 +182,16 @@ integration("incomplete evidence, runner failure and human correction preserve g
   const base = { identity: identity("human-correction", "complete", "human"),
     context: { question: question("human-correction", "matching"), evidence: evidence("complete", false),
       evaluator: evaluator("human") },
-    details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.first }, reviewer_id: "operator" } };
+    details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.first }, reviewer_id: "operator",
+      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } };
   const first = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify(base) });
   expect(first.status).toBe(201);
   const initial = await first.json() as { observation: { observation_id: string } };
   const correction = await app.request("/v1/grades", { method: "POST", headers,
     body: JSON.stringify({ ...base, identity: { ...base.identity, attempt_label: "correction" },
       context: undefined, details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.corrected },
-        reviewer_id: "operator", supersedes_observation_id: initial.observation.observation_id } }) });
+        reviewer_id: "operator", supersedes_observation_id: initial.observation.observation_id,
+        collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
   expect(correction.status).toBe(201);
   const corrected = await correction.json() as { observation: { observation_id: string; supersedes_observation_id: string } };
   expect(corrected.observation.supersedes_observation_id).toBe(initial.observation.observation_id);
