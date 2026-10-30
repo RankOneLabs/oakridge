@@ -423,6 +423,9 @@ describe("a read the workspace cannot complete", () => {
     // the first guard — which makes the recovered read the only pass that will
     // ever get to find out the run does not contain `sid-gone`.
     await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
+    // Validation prunes the stored arrangement and the persist effect rewrites it,
+    // which can land a tick after the overview renders: wait for the rewrite.
+    await waitFor(() => expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toBeNull());
     expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-gone");
   });
 
