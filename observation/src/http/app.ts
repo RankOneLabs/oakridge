@@ -19,6 +19,9 @@ export function createApp(deps: LangfuseRouteDependencies): Hono {
   app.notFound((c) => credentialFor(c.req.header("authorization"), deps.credentials.ingest)
     ? errorResponse(c, 403, "forbidden", "ingest credential cannot use this route")
     : errorResponse(c, 404, "not_found", "route not found"));
-  app.onError((_error, c) => errorResponse(c, 500, "internal_error", "internal service error"));
+  app.onError((error, c) => {
+    console.error("[observation] internal error", { method: c.req.method, path: c.req.path, error });
+    return errorResponse(c, 500, "internal_error", "internal service error");
+  });
   return app;
 }
