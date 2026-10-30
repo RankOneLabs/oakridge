@@ -23,9 +23,10 @@ export function gradingLimits(env: NodeJS.ProcessEnv = process.env): GradingLimi
     stage_spend: positive(env.OBSERVATION_GRADING_STAGE_SPEND, 0.5) };
 }
 export interface BudgetUsage { readonly run_claimed: number; readonly stage_claimed: number;
-  readonly run_spend: number; readonly stage_spend: number }
+  readonly run_spend: number; readonly stage_spend: number;
+  readonly run_reserved: number; readonly stage_reserved: number }
 export function budgetExceeded(usage: BudgetUsage, estimated_cost: number, caps: GradingLimits): boolean {
   return usage.run_claimed >= caps.run_concurrency || usage.stage_claimed >= caps.stage_concurrency
-    || usage.run_spend + estimated_cost > caps.run_spend
-    || usage.stage_spend + estimated_cost > caps.stage_spend;
+    || usage.run_spend + usage.run_reserved + estimated_cost > caps.run_spend
+    || usage.stage_spend + usage.stage_reserved + estimated_cost > caps.stage_spend;
 }

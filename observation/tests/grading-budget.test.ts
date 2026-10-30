@@ -4,6 +4,8 @@ import { enqueueJob, claimJob } from "../src/storage/grading-job-store";
 import { gradingLimits } from "../src/grading/jobs/budget";
 import { readEligibility, recordEligibility } from "../src/storage/eligibility-store";
 import { eligibilityExclusionCounts } from "../src/grading/eligibility";
+import { exclusionReason } from "../src/grading/eligibility";
+import { exclusionCounts, makePopulationManifest } from "../src/langfuse/population-manifest";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { workOneJob } from "../src/grading/jobs/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
@@ -27,6 +29,20 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
     const rows = await readEligibility(db, tenant, question.question_id, question.question_version);
     expect(rows).toHaveLength(2);
     expect(eligibilityExclusionCounts(rows).skipped_budget).toBe(1);
+    const skipped = rows.find((row) => row.tag === "skipped_budget");
+    if (!skipped) throw new Error("stored budget exclusion missing");
+    const reason = exclusionReason(skipped);
+    if (!reason) throw new Error("stored budget exclusion has no population reason");
+    const manifest = makePopulationManifest({ manifest_id: `budget-${cap}`, projection_version: "v1",
+      question_pins: [{ question_id: question.question_id, question_version: question.question_version }],
+      selected: [{ occurrence_id: skipped.subject_occurrence_id, question_id: skipped.question_id,
+        question_version: skipped.question_version, evidence, stratum: "known_failure",
+        disposition: "excluded", reason }] });
+    expect(manifest.ok).toBe(true);
+    if (manifest.ok) {
+      expect(manifest.value.membership[0]?.reason.kind).toBe("skipped_budget");
+      expect(exclusionCounts(manifest.value)[0]?.skipped_budget).toBe(1);
+    }
     expect(claimed?.job_id).toBe(job.job_id);
   }));
 }
@@ -38,14 +54,30 @@ integration("recorded provider cost consumes the next run budget", async () => s
     question_id: question.question_id, question_version: question.question_version,
     evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "paid-1" };
   const paid: GradeRunner = { kind: "model", async run() { return { ok: true, value: {
-    answer: { state: "answered", kind: "boolean", value: true }, cost: 0.2,
+    answer: { state: "answered", kind: "boolean", value: true }, cost: 0.25,
     external_execution_id: "request-1" } }; } };
-  await enqueueJob(db, tenant, { identity, runner_name: "stub_model", estimated_cost: 0.2 }, limits);
+  await enqueueJob(db, tenant, { identity, runner_name: "stub_model", estimated_cost: 0.1 }, limits);
   await workOneJob(db, tenant, limits, "first", paid);
   const next = await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "paid-2" },
-    runner_name: "stub_model", estimated_cost: 0.2 }, limits);
+    runner_name: "stub_model", estimated_cost: 0.1 }, limits);
   expect((await claimJob(db, tenant, "second", limits))?.state).toBe("skipped_budget");
   expect((await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
     .selectAll().execute()))).toHaveLength(1);
   expect(next.job_id).toBeTruthy();
+}));
+
+integration("active cost reservations prevent concurrent claims from exceeding a spend cap", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+  const limits = { ...gradingLimits(), run_spend: 0.3, stage_spend: 1,
+    run_concurrency: 2, stage_concurrency: 2 };
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "reserved-1" };
+  const first = await enqueueJob(db, tenant, { identity, runner_name: "stub_model", estimated_cost: 0.2 }, limits);
+  const second = await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "reserved-2" },
+    runner_name: "stub_model", estimated_cost: 0.2 }, limits);
+  expect((await claimJob(db, tenant, "first", limits))?.job_id).toBe(first.job_id);
+  const skipped = await claimJob(db, tenant, "second", limits);
+  expect(skipped?.job_id).toBe(second.job_id);
+  expect(skipped?.state).toBe("skipped_budget");
 }));

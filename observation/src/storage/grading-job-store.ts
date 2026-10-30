@@ -42,7 +42,7 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where((eb) => eb.or([eb("state", "in", ["queued", "reclaimable"]),
         eb.and([eb("state", "=", "claimed"), eb("lease_expires_at", "<", new Date())])]))
-      .orderBy("created_at").forUpdate().skipLocked().executeTakeFirst();
+      .orderBy("created_at").limit(1).forUpdate().skipLocked().executeTakeFirst();
     if (!job) return null;
     if (job.attempts >= job.retry_limit) return trx.updateTable("observation.grading_job")
       .set({ state: "terminal", terminal_cause: "retry_exhausted", lease_owner: null, lease_expires_at: null,
@@ -70,9 +70,13 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
     const spend = completed.reduce((sum, row) => sum + spent(row), 0);
     const stage_spend = completed.filter((row) => row.unit_id === job.stage_id)
       .reduce((sum, row) => sum + spent(row), 0);
-    const exceeded = budgetExceeded({ run_claimed: active.filter((row) => row.run_id === job.run_id).length,
-      stage_claimed: active.filter((row) => row.run_id === job.run_id && row.stage_id === job.stage_id).length,
-      run_spend: spend, stage_spend }, job.estimated_cost, limits);
+    const run_active = active.filter((row) => row.run_id === job.run_id);
+    const stage_active = run_active.filter((row) => row.stage_id === job.stage_id);
+    const exceeded = budgetExceeded({ run_claimed: run_active.length, stage_claimed: stage_active.length,
+      run_spend: spend, stage_spend,
+      run_reserved: run_active.reduce((sum, row) => sum + row.estimated_cost, 0),
+      stage_reserved: stage_active.reduce((sum, row) => sum + row.estimated_cost, 0) },
+    job.estimated_cost, limits);
     if (exceeded) {
       const skipped = await trx.updateTable("observation.grading_job").set({ state: "skipped_budget",
         terminal_cause: "budget_exceeded", lease_owner: null, lease_expires_at: null, updated_at: new Date() })
