@@ -30,7 +30,7 @@ async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
 }
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-integration("missing configuration preserves ingest, projection, lineage and grade reads while sync routes are disabled", async () => scratch(async (db) => {
+integration("missing configuration preserves ingest, projection, lineage and grade reads while sync routes are absent", async () => scratch(async (db) => {
   const configuration = langfuseConfigFromEnv({});
   expect(configuration).toEqual({ ok: true, value: { status: "disabled" } });
   if (!configuration.ok) return;
@@ -77,21 +77,36 @@ integration("missing configuration preserves ingest, projection, lineage and gra
     { headers: { authorization: "Bearer read-token" } });
   expect(history.status).toBe(200);
   expect((await history.json() as { total: number }).total).toBe(1);
-  for (const [method, path, token] of [
-    ["GET", "/v1/langfuse/status", "read-token"],
-    ["POST", "/v1/langfuse/projections", "grade-token"],
-    ["POST", "/v1/langfuse/reconcile", "grade-token"],
-  ] as const) {
-    const response = await app.request(path, { method, headers: { Authorization: `Bearer ${token}` } });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "disabled" });
-  }
-  const forbidden = await app.request("/v1/langfuse/status", { headers: { Authorization: "Bearer grade-token" } });
-  expect(forbidden.status).toBe(403);
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))).toEqual([]);
+  const absent = await app.request("/v1/langfuse/status", { headers: { Authorization: "Bearer read-token" } });
+  expect(absent.status).toBe(404);
 }));
 
 test("partial configuration reports only field names, never supplied secret material", () => {
   const parsed = langfuseConfigFromEnv({ OBSERVATION_LANGFUSE_SECRET_KEY: "sensitive-value" });
   expect(parsed.ok).toBe(false);
   expect(JSON.stringify(parsed)).not.toContain("sensitive-value");
+});
+
+
+test("enabled configuration mounts all eight Langfuse routes", () => {
+  const configuration = langfuseConfigFromEnv({ OBSERVATION_LANGFUSE_BASE_URL: "http://127.0.0.1:3000/",
+    OBSERVATION_LANGFUSE_PROJECT_ID: "pilot", OBSERVATION_LANGFUSE_PUBLIC_KEY: "public",
+    OBSERVATION_LANGFUSE_SECRET_KEY: "secret", OBSERVATION_LANGFUSE_PHASE_A_TRACE_ID: "a".repeat(32) });
+  expect(configuration.ok).toBe(true);
+  if (!configuration.ok) return;
+  const app = createApp({ db: {} as Database, credentials, langfuse: configuration.value });
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))
+    .map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /v1/langfuse/label-series", "GET /v1/langfuse/status",
+      "POST /v1/langfuse/annotation-queue/items", "POST /v1/langfuse/annotations/import",
+      "POST /v1/langfuse/model-scores", "POST /v1/langfuse/projections",
+      "POST /v1/langfuse/reconcile", "POST /v1/langfuse/score-configs",
+    ]);
+});
+
+
+test("pilot runner uses authenticated HTTP instead of opening observation storage", async () => {
+  const source = await Bun.file(new URL("../scripts/langfuse-pilot-run.ts", import.meta.url)).text();
+  expect(source).not.toMatch(/openDatabase\s*\(|withTenant\s*\(|from ["']\.\.\/src\/storage\/database["']/);
 });

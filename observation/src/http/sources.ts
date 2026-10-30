@@ -10,9 +10,10 @@ import { sql } from "kysely";
 import { withTenant } from "../storage/database";
 import { handleOperatorEvent, type OperatorEventDelivery } from "../purge/trigger";
 import { deliverBackfill, readBackfillCheckpoint, type BackfillDelivery, type BackfillPosition } from "../storage/backfill-store";
+import type { GradingLimits } from "../grading/jobs/budget";
 
 export interface SourceDependencies { readonly db: Database; readonly credentials: Credentials; readonly captureHooks?: CaptureHooks;
-  readonly exportRoot?: string }
+  readonly exportRoot?: string; readonly gradingLimits?: GradingLimits }
 interface OperatorCursor { readonly commit_txid: string; readonly id: string }
 interface OperatorDelivery { readonly previous: OperatorCursor; readonly cursor: OperatorCursor; readonly event: OperatorEventDelivery }
 const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>

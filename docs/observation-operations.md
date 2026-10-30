@@ -75,11 +75,18 @@ under the restrictive policy. The status
 route lists the latest 100 mapping states for the caller's tenant.
 
 Removing all `OBSERVATION_LANGFUSE_*` settings and restarting selects the
-disabled variant. The three Langfuse routes then return `{ "status":
-"disabled" }` to authorized operators. Producer ingest, local projections,
+disabled variant. No `/v1/langfuse/*` route is mounted; authenticated reads
+to those paths receive `404`. Producer ingest, local projections,
 lineage and previously stored grades continue through their existing routes.
 Restore the settings and restart to re-enable the adapter; pending mappings
 remain in the observation database for reconciliation.
+
+The historical `langfuse-pilot-run.ts` script uses `OBSERVATION_PILOT_BASE_URL`,
+`OBSERVATION_PILOT_GRADE_TOKEN` and `OBSERVATION_PILOT_READ_TOKEN`. It reads
+eligibility through `GET /v1/evaluation-eligibility`, execution and grade
+readback through `GET /v1/evaluations/by-digest/:digest` and
+`GET /v1/items/:id/grades`, and item provenance through authenticated item
+and source-revision routes. It does not connect to PostgreSQL directly.
 
 ## Sensitive inputs, redaction and export gating
 
@@ -199,7 +206,7 @@ The same test file created the service with the adapter disabled, called the
 external `POST /v1/evaluations` grading contract, read its raw grade, and
 created a frozen Assay export through `POST /v1/exports/assay`; each returned
 success and the export included the graded occurrence. `GET /v1/langfuse/status`
-returned `disabled`. The existing `langfuse-offline.test.ts` drill also ingested
+now returns `404` with the adapter disabled. The existing `langfuse-offline.test.ts` drill also ingested
 a revision, projected an item, read lineage, accepted a human grade and read it
 while Langfuse routes were disabled. These are local service drills. No live
 Oakridge workflow or production deployment was restarted for this cohort.

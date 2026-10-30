@@ -2,9 +2,8 @@ import { canonicalDigest } from "../canonical/canonical-json";
 import type { CanonicalDigest, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { ExportManifest } from "../export/manifest";
-import type { EvidenceSet } from "../grading/evidence";
+import { evidenceSetDigest, type EvidenceSet } from "../grading/evidence";
 import { eligibilityExclusionCounts, type EligibilityRow, type ExclusionReason } from "../grading/eligibility";
-import { evidenceSetDigest } from "./mapping";
 
 export interface PopulationError { readonly operation: "population_manifest"; readonly entity_id: string; readonly detail: string }
 export interface QuestionPin { readonly question_id: QuestionId; readonly question_version: string }

@@ -107,6 +107,6 @@ integration("disabled adapter leaves external grading route, raw grades and Assa
       const manifest = (await exported.json() as { manifest: { membership: { disposition: string }[] } }).manifest;
       expect(manifest.membership.some((member) => member.disposition === "included")).toBe(true);
       const disabled = await app.request("/v1/langfuse/status", { headers: { authorization: "Bearer read" } });
-      expect(await disabled.json()).toEqual({ status: "disabled" });
+      expect(disabled.status).toBe(404);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }));
