@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +24,7 @@ test("vertical slice requires OAKRIDGE_TEST_DATABASE_URL", () => {
 });
 const tenant = { producer: "oakridge", namespace: "run-slice" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
-  grade: [{ ...tenant, token: "grade-fixture" }] };
+  grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
 const fixtureRoot = new URL("../fixtures/oakridge/run-slice/", import.meta.url);
 
 interface EventMetadata { readonly id: string; readonly commit_txid: string; readonly created_at: string;
@@ -82,6 +83,11 @@ test("the suite's reachable modules import no hosted grader, Langfuse, JIG or As
   const graph = buildGraph([resolve(here, "vertical-slice.test.ts"), resolve(here, "failure-cases.test.ts")]);
   const forbidden = /^(?:@langfuse\/|langfuse(?:\/|$)|@openai\/|openai(?:\/|$)|@anthropic-ai\/|anthropic(?:\/|$)|@google\/generative-ai(?:\/|$)|jig(?:\/|$)|assay(?:\/|$))/i;
   expect([...graph.values()].flatMap((node) => node.packages.filter((name) => forbidden.test(name)))).toEqual([]);
+});
+
+test("default launch mounts no Langfuse routes", () => {
+  const app = createApp({ db: {} as Database, credentials });
+  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))).toEqual([]);
 });
 
 integration("an Oakridge revision flows through ingest, selection, lineage, independent grading, backfill, history and frozen export", async () => {
@@ -183,7 +189,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       content: "matching evidence", digest: null }], is_incomplete: false, incompleteness_reason: null };
     const evaluator = (kind: "code" | "model" | "human") => ({ evaluator_definition_id: `slice-${kind}`, kind,
       backend_kind: "local", provider: `fixture-${kind}`, model: kind === "model" ? "pinned" : null,
-      prompt_digest: "fixture-prompt", config_digest: "fixture-config", runtime_revision: "1",
+      instruction_text: "fixture-prompt", prompt_digest: instructionDigest("fixture-prompt"), config_digest: "fixture-config", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: kind === "model"
         ? { answer: { state: "answered", kind: "boolean", value: false } } : null });
     const identity = { subject_occurrence_id: briefCriterion.occurrence_id, evidence_set_id: evidence.evidence_set_id,
@@ -206,7 +212,8 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     const human = await app.request("/v1/grades", { method: "POST", headers: gradeHeaders,
       body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "slice-human" },
         context: { question, evidence, evaluator: evaluator("human") },
-        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator" } }) });
+        details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator",
+          collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
     expect(human.status).toBe(201);
     const preExistingOutcome = { format: "observation.source-event/v1", definition_bundle: null,
       artifact_schema_version: "development-v1", kind: "human_grade", event_kind: "operator_decided",

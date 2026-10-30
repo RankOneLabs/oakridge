@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -74,7 +75,7 @@ integration("reconcile reads an authenticated HTTP score once and preserves an e
           interpretation_caveats: "reconcile test", requires_repository_snapshot: false },
           evidence: { evidence_set_id, references: [], is_incomplete: false, incompleteness_reason: null },
           evaluator: { evaluator_definition_id: "eval-1", kind: "model", backend_kind: "local",
-            provider: "fixture", model: "pinned", prompt_digest: "fixture", config_digest: "config",
+            provider: "fixture", model: "pinned", instruction_text: "fixture", prompt_digest: instructionDigest("fixture"), config_digest: "config",
             runtime_revision: "1", cost_metadata: null, seed: null,
             attempt_controls: { answer: { state: "answered", kind: "boolean", value: true } } } },
         runner: "stub_model" }) });

@@ -31,3 +31,8 @@ export function evaluationDigest(identity: EvaluationIdentity): Result<string, C
   return canonicalDigest([identity.subject_occurrence_id, identity.evidence_set_id, identity.question_id,
     identity.question_version, identity.evaluator_definition_id, identity.config_digest, identity.attempt_label]);
 }
+export function runGradeDigest(identity: EvaluationIdentity, reviewed_commit: string | undefined): Result<string, CanonicalizationError> {
+  const base = evaluationDigest(identity);
+  return !base.ok || reviewed_commit === undefined ? base
+    : canonicalDigest(["evaluation-reviewed-commit/v1", base.value, reviewed_commit]);
+}

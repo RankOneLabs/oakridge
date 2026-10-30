@@ -15,7 +15,8 @@ import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
 import type { PilotQuestionId } from "./evidence-recipe";
 import type { CanonicalDigest, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvidenceSet } from "../grading/evidence";
-import type { EvaluatorDefinition } from "../grading/evaluator";
+import { instructionDigest, LANGFUSE_ANNOTATION_EVALUATOR_ID,
+  type EvaluatorDefinition } from "../grading/evaluator";
 
 export interface AnnotationImportInput { readonly mapping_key: CanonicalDigest; readonly queue_item_id: string;
   readonly score_id: string; readonly allow_notes: boolean }
@@ -53,8 +54,8 @@ function answerForScore(question: QuestionDefinition, score: z.infer<typeof scor
   return failure(score.id, "annotation value is outside the question domain");
 }
 
-const HUMAN_EVALUATOR: EvaluatorDefinition = { evaluator_definition_id: "langfuse-annotation-human", kind: "human",
-  backend_kind: "langfuse", provider: "langfuse", model: null, prompt_digest: "langfuse-annotation/v1",
+const HUMAN_EVALUATOR: EvaluatorDefinition = { evaluator_definition_id: LANGFUSE_ANNOTATION_EVALUATOR_ID, kind: "human",
+  backend_kind: "langfuse", provider: "langfuse", model: null, instruction_text: "langfuse-annotation/v1", prompt_digest: instructionDigest("langfuse-annotation/v1"),
   config_digest: "langfuse-annotation/v1", runtime_revision: "1", cost_metadata: null, seed: null,
   attempt_controls: null };
 
@@ -161,6 +162,7 @@ export async function importLangfuseAnnotation(db: Database, tenant: TenantScope
   const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: HUMAN_EVALUATOR });
   if (!registered.ok) return failure(score.id, registered.error.detail);
   const details: GradeDetails = { answer: answer.value, probabilities: null, confidence: null,
+    collection_mode: "blind", model_answers_visible: false, workflow_decisions_visible: false,
     normalized_score: null, decision_policy_id: null, decision_policy_version: null,
     reviewer_id: score.authorUserId, reviewer_details: { source: "langfuse", action: previous.latest ? "revision" : "create",
       score_id: score.id, queue_item_id: input.queue_item_id, score_timestamp: score.timestamp,

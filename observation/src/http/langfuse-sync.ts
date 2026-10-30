@@ -12,6 +12,8 @@ import { EVIDENCE_ROLES } from "../langfuse/evidence-recipe";
 import { importLangfuseAnnotation } from "../langfuse/annotation-import";
 import type { LangfuseConfiguration } from "../langfuse/config";
 import { createLangfuseHttpClient } from "../langfuse/http-client";
+import { ingestModelScore } from "../langfuse/score-ingestion";
+import type { GradeAnswer } from "../grading/observation";
 import type { ProjectionInput } from "../ports/evaluation-backend";
 import { withTenant } from "../storage/database";
 import type { SourceDependencies } from "./sources";
@@ -180,5 +182,43 @@ export function registerLangfuseRoutes(app: Hono, deps: LangfuseRouteDependencie
       question_id: row.question_id as ProjectionInput["question"]["question_id"],
       question_version: row.question_version, external_ids: null });
     return result.ok ? c.json(result.value) : errorResponse(c, 422, "langfuse_reconcile_failed", result.error.detail);
+  });
+  app.post("/v1/langfuse/model-scores", async (c) => {
+    const tenant = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
+    if (!tenant) return errorResponse(c, 403, "forbidden", "grade credential required");
+    if (!deps.langfuse || deps.langfuse.status === "disabled")
+      return errorResponse(c, 422, "langfuse_disabled", "Langfuse is disabled");
+    const parsed = z.object({ execution_id: z.string().min(1) }).safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return errorResponse(c, 400, "invalid_score_request", "execution_id required");
+    const source = await withTenant(deps.db, tenant, async (trx) => {
+      const execution = await trx.selectFrom("observation.evaluation_execution").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", parsed.data.execution_id).executeTakeFirst();
+      if (!execution || execution.status !== "completed") return null;
+      const observation = await trx.selectFrom("observation.grade_observation").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution.execution_id).executeTakeFirst();
+      const mapping = await trx.selectFrom("observation.langfuse_mapping").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("execution_id", "=", execution.execution_id).where("trace_id", "is not", null)
+        .executeTakeFirst();
+      const evaluator = await trx.selectFrom("observation.evaluator_definition").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("evaluator_definition_id", "=", execution.evaluator_definition_id).executeTakeFirst();
+      return observation && mapping?.trace_id && mapping.observation_id && evaluator?.model
+        && evaluator.kind === "model" ? { execution, observation, mapping, evaluator } : null;
+    });
+    if (!source) return errorResponse(c, 409, "projection_pending", "completed model grade and mapped Langfuse observation required");
+    const client = createLangfuseHttpClient(deps.langfuse.config);
+    const result = await ingestModelScore(client, { score_id: source.observation.observation_id,
+      trace_id: source.mapping.trace_id!, external_observation_id: source.mapping.observation_id!,
+      question_id: source.execution.question_id, question_version: source.execution.question_version,
+      evaluator_definition_id: source.execution.evaluator_definition_id,
+      provider: source.evaluator.provider, model: source.evaluator.model!,
+      answer: source.observation.answer_payload as GradeAnswer,
+      probabilities: source.observation.probabilities as Record<string, number> | null,
+      confidence: source.observation.confidence });
+    return result.ok ? c.json({ score_id: result.value }, 200)
+      : errorResponse(c, 422, "score_ingestion_failed", result.error.detail);
   });
 }

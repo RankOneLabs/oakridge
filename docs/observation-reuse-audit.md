@@ -14,6 +14,23 @@ This audit precedes observation lineage, content hashing, grader, and experiment
 
 The producer contract for artifact revisions and item addresses is `workflow-config/development.yaml`, `oakridge-dbos/src/storage/migrations/0001_core.sql`, and `docs/spec-02-handoff.md` at the Oakridge commit above. The `observation/src/wire/envelope.ts` types use those sources for revision fields and stable-id/JSON-pointer/text-span item addressing. Evaluation variants take their vocabulary from the audited JIG, Jev, and Assay contracts; a later capture API must validate any producer-specific body before it can claim one of those variants.
 
+## Observation-internal reuse and retirement
+
+| Source and commit | Audited path | Classification | Reason and observation decision |
+| --- | --- | --- | --- |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`latestRevisions`) | adapted | Retained as an explicitly selected historical-backfill policy in `grading/evidence-packages/capture.ts`. Live selection keeps every revision. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`reference`, `evidenceSet`, `collect`) | adapted | Lifted into `grading/evidence-packages/references.ts`. References require classification, carry canonical digests, and do not inline captured bodies. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/run-packages.ts` (`planPackages`, `briefPackages`, `runPackages`) | adapted | Lifted into `producers/oakridge/evidence-packages.ts`. Citation resolution stays with the producer; brief sources are pinned to the plan available at brief capture, and missing links are distinct from broken links. |
+| Oakridge `58ca81e4` | `observation/src/storage/run-capture-store.ts` (`loadRunCapture`) | adapted | Reused as the Oakridge capture reader with neutral captured-item types. It retains stored occurrence IDs for selected items. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/plan-traceability.ts` (`planCriterionEligibility`) | adapted | Generic source parameters preserve captured occurrence IDs. The implementation lives under the Oakridge producer; the Langfuse path remains a compatibility re-export. |
+| Oakridge `58ca81e4` | Langfuse native evaluator, mapping identity and projection code | retired from neutral grading; retained as optional adapter | Direct Jev calls replace hosted evaluation. Historical mapping and one-way projection remain readable and callable with enabled configuration and the Phase A write gate. No provider identity enters the neutral evidence package. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/evidence-recipe.ts`, `plan-traceability.ts`, `classification.ts` | adapted | Pure evidence, eligibility and classification rules live in `grading/evidence-packages/` and `producers/oakridge/`. The old paths remain compatibility re-exports for the pilot. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/mapping.ts` (`evidenceSetDigest`) | adapted | The pure evidence digest now lives in `grading/evidence.ts`; `mapping.ts` re-exports it so historical mapping keys remain computable. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/population-manifest.ts`, `comparison-report.ts`, `blinding.ts` | retained | These encode the historical pilot's selection, measurement and blinded review policy. They are used by optional pilot scripts, not the default grading path. |
+| Oakridge `58ca81e4` | `observation/src/langfuse/config.ts`, `http-client.ts`, `backend.ts`, `otlp.ts`, `projection.ts`, `reconcile.ts`, `annotation-queue.ts`, `annotation-import.ts`, `score-config.ts`, `score-encoding.ts`, `score-ingestion.ts`, `sync-state.ts`, `test-double.ts`, `custom-upstream.ts`, `feature-detection.ts` | retained behind gate | These implement the optional Langfuse adapter or its tests. The existing Phase A trace id remains the write gate. |
+
+Legacy Langfuse tables, rows, migration `0008_langfuse_sync.sql`, mappings and all eight route handlers are retained for historical readback and optional reconciliation. A future retirement requires a separate explicit deprecation and data migration plan. This route split drops or truncates no historical data.
+
 ## L3 export compatibility check
 
 These conclusions were checked in the sibling checkouts at the stated commits. The paths are relative to each checkout. The classification describes the observation service's relationship to the sibling implementation; it does not introduce a runtime dependency.

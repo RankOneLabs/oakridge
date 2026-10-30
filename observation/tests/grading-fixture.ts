@@ -1,3 +1,4 @@
+import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
@@ -18,10 +19,10 @@ export const question: QuestionDefinition = {
   interpretation_caveats: "relevance is not acceptance", requires_repository_snapshot: false,
 };
 export const evidence: EvidenceSet = { evidence_set_id: "evidence-1" as EvidenceSetId,
-  references: [{ ref: "fixture", content: "sample", digest: null }], is_incomplete: false, incompleteness_reason: null };
+  references: [{ ref: "fixture", kind: "public", content: "sample", digest: null }], is_incomplete: false, incompleteness_reason: null };
 export function evaluator(kind: "code" | "model" | "human"): EvaluatorDefinition {
   return { evaluator_definition_id: kind, kind, backend_kind: "local", provider: `fixture-${kind}`,
-    model: kind === "model" ? "pinned" : null, prompt_digest: "prompt-1", config_digest: "config-1",
+    model: kind === "model" ? "pinned" : null, instruction_text: "prompt-1", prompt_digest: instructionDigest("prompt-1"), config_digest: "config-1",
     runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
 }
 export async function scratchGrading(work: (db: Database, occurrence_id: ItemOccurrenceId) => Promise<void>): Promise<void> {

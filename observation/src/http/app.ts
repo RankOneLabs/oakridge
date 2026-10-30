@@ -15,7 +15,7 @@ export function createApp(deps: LangfuseRouteDependencies): Hono {
   registerEvaluationRoutes(app, deps);
   registerGradeRoutes(app, deps);
   registerExportRoutes(app, deps);
-  registerLangfuseRoutes(app, deps);
+  if (deps.langfuse?.status === "enabled") registerLangfuseRoutes(app, deps);
   app.notFound((c) => credentialFor(c.req.header("authorization"), deps.credentials.ingest)
     ? errorResponse(c, 403, "forbidden", "ingest credential cannot use this route")
     : errorResponse(c, 404, "not_found", "route not found"));

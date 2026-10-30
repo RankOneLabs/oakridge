@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { classifyProjectionField, projectClassifiedBody, type ProjectionArtifactKind } from "../src/langfuse/classification";
+import { classifyProjectionField, evidenceKindForCapturedPath, projectClassifiedBody,
+  type ProjectionArtifactKind } from "../src/langfuse/classification";
 
 const inheritedFields = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"] as const;
 
@@ -28,3 +29,30 @@ for (const [kind, field] of [
     }
   });
 }
+
+// Evidence classification is derived from the source body field, never hardcoded at the
+// packaging site, so reclassifying a field changes what may be disclosed.
+for (const [artifact_kind, path, expected] of [
+  ["plan", "/dependency_order/0", "public"],
+  ["brief", "/cohort_id", "public"],
+  ["assessment", "/head_sha", "public"],
+  ["plan", "/cohorts/0/acceptance_criteria/1", "internal"],
+  ["brief", "/acceptance_criteria/0", "internal"],
+  ["assessment", "/findings/2", "internal"],
+  ["brief", "/files_in_scope/0", "internal"],
+  ["plan", "/benign_new_field/0", "internal"],
+  ["tasks", "/tasks/0", "internal"],
+  ["", "/findings/0", "internal"],
+  ["plan", "/", "internal"],
+] as const satisfies readonly (readonly [string, string, string])[]) {
+  test(`${artifact_kind || "<undeclared>"} ${path} classifies as ${expected}`, () => {
+    expect(evidenceKindForCapturedPath(artifact_kind, path)).toEqual({ ok: true, value: expected });
+  });
+}
+
+test("a field declared repository content maps to repository content, not internal", () => {
+  // No development field is classified repository_content today; the mapping must still
+  // carry that kind through rather than failing it closed with restricted content.
+  expect(classifyProjectionField("brief", "files_in_scope")).toEqual({ ok: true, value: "restricted" });
+  expect(evidenceKindForCapturedPath("brief", "/files_in_scope/0")).toEqual({ ok: true, value: "internal" });
+});
