@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
-import type { ArtifactReviewDescriptor, ArtifactSource } from "./types";
+import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./types";
+import type { EditOutcome } from "./lib/edit-outcome";
 import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
@@ -16,9 +17,12 @@ export interface ViewerProps {
   edit?: {
     enabled: boolean;
     isPending: boolean;
-    onEdit: (anchor: string, previousValue: unknown, newValue: unknown) => void;
-    onSubmitBody?: (previousBody: unknown, nextBody: unknown) => void;
+    /** Each save settles once it is accepted or refused, so an editor keeps a refused draft. */
+    onEdit: (anchor: string, previousValue: unknown, newValue: unknown) => Promise<EditOutcome>;
+    onSubmitBody?: (previousBody: unknown, nextBody: unknown) => Promise<EditOutcome>;
   };
+  /** The open review of the revision on screen, when it is the latest; a viewer may record a decision on it. */
+  gate?: ParkedGate;
 }
 
 interface RegistryEntry {

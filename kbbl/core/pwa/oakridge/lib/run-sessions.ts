@@ -166,8 +166,3 @@ export const selectRunSessionRows = (attempts: readonly RunSessionAttempt[]): re
     };
   });
 };
-
-/** The current builder session for one cohort collection key. */
-export const selectCohortBuilderSession = (attempts: readonly RunSessionAttempt[], cohortLabel: string): RunSessionAttempt | null =>
-  selectRunSessionRows(attempts).find((row) => row.is_current && row.attempt.stage_key === "builder"
-    && row.attempt.unit_id === cohortLabel)?.attempt ?? null;

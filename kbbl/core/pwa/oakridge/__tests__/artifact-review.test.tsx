@@ -5,12 +5,7 @@ import type { ReactElement } from "react";
 
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import type { ArtifactDetail, ParkedGate } from "../types";
-import type { Assessment } from "../lib/assessment";
-import type { RunSessionAttempt } from "../types";
-import type { Sid } from "../../lib/ids";
-import type { SessionSnapshot } from "../../types";
-import { useStore } from "../../state/store";
-import { BuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
+import { invalidateCachedRunUnits } from "../client";
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review
 // organism now has two hosts, and its cases outgrew the shared file.
@@ -33,34 +28,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
-
-const HANDOFF_ASSESSMENT: Assessment = {
-  head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
-  recommended_next_actions: ["Fix the first issue", "Add coverage"],
-};
-const BUILDER_ATTEMPT: RunSessionAttempt = {
-  work_order_id: "work-builder", session_id: "builder-sid", stage_instance_id: "cohort-stage",
-  stage_key: "builder", unit_id: "alpha", reason: "initial", work_order_state: "completed",
-  created_at: "2026-10-01 00:00:00+00", completed_at: null, executor_health_kind: null,
-  cleanup_state: "not_needed",
-};
-
-function renderHandoff(status: SessionSnapshot["status"] | null = "idle", attempts: RunSessionAttempt[] = [BUILDER_ATTEMPT], hasSessionInventory = true) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(["oakridge", "run", "run-1", "sessions"], attempts);
-  useStore.setState({
-    sessions: status === null ? new Map() : new Map([["builder-sid" as Sid, { sid: "builder-sid", status } as SessionSnapshot]]),
-    hasInboxSnapshot: hasSessionInventory,
-    hasSessionSeed: hasSessionInventory,
-  });
-  const onEdit = vi.fn();
-  const onSubmitBody = vi.fn();
-  render(<QueryClientProvider client={client}><BuilderHandoffPanel assessment={HANDOFF_ASSESSMENT}
-    body={HANDOFF_ASSESSMENT} runId="run-1" cohortLabel="alpha"
-    edit={{ enabled: true, isPending: false, onEdit, onSubmitBody }} /></QueryClientProvider>);
-  return { onEdit, onSubmitBody };
-}
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 const PARKED_GATE_FIXTURE: ParkedGate = {
   id: "gate-1",
@@ -224,96 +192,8 @@ describe("navigation inside the review", () => {
   });
 });
 
-describe("assessment builder handoff", () => {
-  it("unticks without publishing, then sends the exact preview once without a review decision", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ turn_key: "turn-1", status: "accepted" }));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include action 2" }));
-    const preview = screen.getByTestId("or-assessment-handoff-preview").textContent;
-    expect(preview).toBe("Recommended next actions for the builder:\n\n1. Fix the first issue");
-    expect(fetch).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    await screen.findByText("Sent");
-    const calls = fetch.mock.calls.filter(([url]) => String(url).includes("/input"));
-    expect(calls).toHaveLength(1);
-    expect(String(calls[0]?.[0])).toBe("/sessions/builder-sid/input");
-    expect(JSON.parse(String(calls[0]?.[1]?.body))).toMatchObject({ text: preview, client_message_id: expect.any(String) });
-    expect(fetch.mock.calls.some(([url]) => String(url).includes("/decide"))).toBe(false);
-  });
-
-  it("submits an anchor edit and a whole-body removal through distinct handles", () => {
-    const { onEdit, onSubmitBody } = renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Edit recommended next actions/0" }));
-    const input = screen.getByDisplayValue("Fix the first issue");
-    expect(input.tagName).toBe("TEXTAREA");
-    fireEvent.change(input, { target: { value: "Fix the revised issue" } });
-    fireEvent.blur(input);
-    expect(onEdit).toHaveBeenCalledWith("/recommended_next_actions/0", "Fix the first issue", "Fix the revised issue");
-    fireEvent.click(screen.getByRole("button", { name: "Remove action 2" }));
-    expect(onSubmitBody).toHaveBeenCalledWith(HANDOFF_ASSESSMENT,
-      { ...HANDOFF_ASSESSMENT, recommended_next_actions: ["Fix the first issue"] });
-  });
-
-  it.each(["provisioning", "ended", "fenced", "failed"] as const)("blocks send for a %s builder session", (status) => {
-    renderHandoff(status);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(status === "provisioning" ? /still starting/ : /Use Resume/)).toBeTruthy();
-  });
-
-  it("explains a builder session missing from a completed inventory without claiming it ended", () => {
-    renderHandoff(null);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/missing from the session inventory.*use Resume if/)).toBeTruthy();
-  });
-
-  it("waits for the session inventory before diagnosing a missing builder session", () => {
-    renderHandoff(null, [BUILDER_ATTEMPT], false);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Waiting for the builder session inventory.")).toBeTruthy();
-  });
-
-  it("blocks send when there is no matching builder session", () => {
-    renderHandoff("idle", [{ ...BUILDER_ATTEMPT, unit_id: "beta" }]);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/No builder session exists/)).toBeTruthy();
-  });
-
-  it("blocks send when every action is excluded", () => {
-    renderHandoff();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include action 1" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Include action 2" }));
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/Include at least one next action/)).toBeTruthy();
-  });
-
-  it("keeps the same message id after a definitive rejection", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ error: "session busy" }, 409))
-      .mockResolvedValueOnce(json({ turn_key: "turn-1", status: "prompting" }));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    await screen.findByText("session busy");
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    await screen.findByText("Sent");
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).client_message_id)
-      .toBe(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).client_message_id);
-  });
-
-  it("marks a thrown fetch as uncertain delivery", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection dropped"));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    expect(await screen.findByText(/delivery status unknown; check the transcript before retrying/)).toBeTruthy();
-  });
-
-  it.each([
-    { turn_key: "", status: "accepted", error: "invalid turn" },
-    { turn_key: "turn-1", status: "queued", error: "not prompting" },
-  ])("shows the server's error for an invalid send receipt", async (receipt) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(receipt));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    expect(await screen.findByText(receipt.error)).toBeTruthy();
-  });
+describe("assessment builder handoff inside the review", () => {
+  const ASSESSMENT_BODY = { head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null, recommended_next_actions: ["Fix it"] };
 
   it("hides controls when assessment editing is unavailable or a historical revision is selected", async () => {
     const artifact: ArtifactDetail = {
@@ -321,8 +201,8 @@ describe("assessment builder handoff", () => {
       producing_stage: "assessor", label: "alpha",
       capabilities: { reviewable: true, commentable: false, atom_editable: true, review_items: false },
       revisions: [
-        { ...ARTIFACT_FIXTURE.revisions[0]!, body: HANDOFF_ASSESSMENT },
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: HANDOFF_ASSESSMENT },
+        { ...ARTIFACT_FIXTURE.revisions[0]!, body: ASSESSMENT_BODY },
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: ASSESSMENT_BODY },
       ],
     };
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));

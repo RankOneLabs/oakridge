@@ -8,7 +8,7 @@ import { AssessmentViewer } from "../molecules/AssessmentViewer";
 import { BuilderHandoffPanel } from "./BuilderHandoffPanel";
 
 /** Loads the cohort's brief and build result, so the assessment reads against what was asked and what was built. */
-export function AssessmentReview({ body, source, edit }: ViewerProps) {
+export function AssessmentReview({ body, source, edit, gate }: ViewerProps) {
   const parsed = useMemo(() => parseAssessment(body), [body]);
   const isIntegration = source?.producing_stage === "integration";
   const cohortLabel = isIntegration ? null : source?.label ?? null;
@@ -22,6 +22,6 @@ export function AssessmentReview({ body, source, edit }: ViewerProps) {
     cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration}
     handoff={!isIntegration && source && cohortLabel && edit?.enabled && edit.onSubmitBody
       ? <BuilderHandoffPanel assessment={parsed.value} body={body as typeof parsed.value}
-          runId={source.run_id} cohortLabel={cohortLabel} edit={edit} />
+          gate={gate ?? null} edit={edit} />
       : undefined} />;
 }

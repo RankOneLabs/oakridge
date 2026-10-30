@@ -370,6 +370,36 @@ pub(super) fn answered_decision<'a>(
         .find(|revision| &revision.id == decision.target())?;
     Some((revision, decision))
 }
+/// What a reviewer reviewing a newer subject published last time: the latest
+/// revision of the first artifact it creates, in `creates` order, that has
+/// one, with the newest request for changes on the subject that revision
+/// reviewed. Revisions about the current subject are skipped: a retried
+/// review may already have published part of its output about it.
+pub(super) fn reviewed_before<'a>(
+    state: &'a StepSnapshot,
+    unit: &UnitId,
+    artifacts: &[SymbolKey],
+    subject: Option<&RevisionId>,
+) -> Option<(&'a RevisionState, Option<&'a DecisionState>)> {
+    let revision = artifacts.iter().find_map(|artifact| {
+        state
+            .revisions
+            .iter()
+            .filter(|r| r.unit == *unit && r.artifact == *artifact && r.subject.as_ref() != subject)
+            .max_by_key(|r| r.seq)
+    })?;
+    let decision = revision.subject.as_ref().and_then(|subject| {
+        state.decisions.iter().rev().find(|decision| {
+            decision.unit() == unit
+                && decision.target() == subject
+                && matches!(
+                    decision.effect(),
+                    Some(DecisionEffect::RequestChanges { .. })
+                )
+        })
+    });
+    Some((revision, decision))
+}
 pub(super) fn group_for<'a>(
     program: &'a CheckedWorkflow,
     state: &StepSnapshot,

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "../../../components/atoms/Button";
+import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { ViewerProps } from "../../artifactRegistry";
 
 const fieldClass = "w-full rounded-md border border-[var(--accent-blue)] bg-[var(--bg-surface)] px-2.5 py-2 text-sm! text-[var(--text-primary)]";
@@ -18,10 +19,11 @@ function fitToContent(field: HTMLTextAreaElement | null): void {
   field.style.height = `${field.scrollHeight}px`;
 }
 
-/** One brief atom in edit mode: shows its value, swaps to a field on click, submits on blur. */
+/** One brief atom in edit mode: shows its value, swaps to a field on click, submits on blur, and stays open with the draft when the save is refused. */
 export function EditableBriefText({ anchor, value, edit, isMultiline = false }: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isEditing) {
     return (
@@ -30,21 +32,29 @@ export function EditableBriefText({ anchor, value, edit, isMultiline = false }: 
         aria-label={`Edit ${anchor.slice(1).replaceAll("_", " ")}`}
         // The secondary variant centres a single line; an atom is wrapped, left-aligned prose.
         className="review-shell__tap-target w-full items-start! justify-start! whitespace-pre-wrap px-2.5! py-2! text-left text-sm!"
-        onClick={() => { setDraft(value); setIsEditing(true); }}
+        onClick={() => { setDraft(value); setError(null); setIsEditing(true); }}
       >
         {value}
       </Button>
     );
   }
 
-  const commit = () => {
-    if (draft !== value) edit.onEdit(anchor, value, draft);
-    setIsEditing(false);
+  const commit = async () => {
+    if (draft === value) { setIsEditing(false); return; }
+    const outcome = await edit.onEdit(anchor, value, draft);
+    if (outcome.ok) setIsEditing(false);
+    else setError(outcome.error);
   };
-  return isMultiline ? (
+  const field = isMultiline ? (
     <textarea ref={fitToContent} className={`${fieldClass} min-h-32 resize-y`} value={draft} disabled={edit.isPending}
-      onChange={(event) => { setDraft(event.target.value); fitToContent(event.target); }} onBlur={commit} autoFocus />
+      onChange={(event) => { setDraft(event.target.value); fitToContent(event.target); }} onBlur={() => void commit()} autoFocus />
   ) : (
-    <input className={fieldClass} value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={commit} autoFocus />
+    <input className={fieldClass} value={draft} disabled={edit.isPending} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commit()} autoFocus />
+  );
+  return error === null ? field : (
+    <div className="flex flex-col gap-1">
+      {field}
+      <FeedbackMessage tone="danger">Not saved: {error}. Leave the field to try again.</FeedbackMessage>
+    </div>
   );
 }

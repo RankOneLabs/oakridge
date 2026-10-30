@@ -10,6 +10,7 @@ import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { useArtifactBody } from "../../hooks/useArtifactBody";
+import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
 import type { ArtifactRevision } from "../../types";
@@ -211,14 +212,15 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
               edit={caps?.atom_editable ? {
                 enabled: revIdx === revisions.length - 1,
                 isPending: atomEdit.isPending || bodyEdit.isPending,
-                onEdit: (anchor, previousValue, newValue) => atomEdit.mutate({
+                onEdit: (anchor, previousValue, newValue) => settleEdit(atomEdit.mutateAsync({
                   anchor,
                   prev_value: previousValue,
                   new_value: newValue,
                   author: "operator",
-                }),
-                onSubmitBody: (_previousBody, nextBody) => bodyEdit.mutate(nextBody),
+                })),
+                onSubmitBody: (_previousBody, nextBody) => settleEdit(bodyEdit.mutateAsync(nextBody)),
               } : undefined}
+              gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
