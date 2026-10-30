@@ -1,4 +1,5 @@
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
+import type { EvidenceKind } from "../../grading/evidence";
 
 /** Declared sensitivity of fields in development artifact bodies. Unknown fields fail closed. */
 export type ProjectionArtifactKind = "analysis" | "plan" | "brief" | "assessment";
@@ -36,6 +37,31 @@ const BODY_FIELDS: Readonly<Record<ProjectionArtifactKind, Readonly<Record<strin
 export function classifyProjectionField(artifactKind: ProjectionArtifactKind, field: string): Result<ProjectionFieldKind, ClassificationError> {
   const declaredFields = BODY_FIELDS[artifactKind];
   return ok(Object.hasOwn(declaredFields, field) ? declaredFields[field] : "unclassified_content");
+}
+
+const CLASSIFIED_ARTIFACT_KINDS: readonly ProjectionArtifactKind[] = ["analysis", "plan", "brief", "assessment"];
+
+/** Only the four development artifact kinds declare field sensitivity. */
+function projectionArtifactKind(artifact_kind: string): ProjectionArtifactKind | null {
+  return CLASSIFIED_ARTIFACT_KINDS.find((candidate) => candidate === artifact_kind) ?? null;
+}
+
+/** A captured item inherits the declared sensitivity of the top-level body field it was selected from. */
+function topLevelField(path: string): string | null {
+  const field = path.split("/")[1];
+  return field ? field : null;
+}
+
+/** Only public and classified repository content may leave the service. Every other declared
+ * kind, and any undeclared artifact kind or field, fails closed to internal. */
+export function evidenceKindForCapturedPath(artifact_kind: string, path: string): Result<EvidenceKind, ClassificationError> {
+  const kind = projectionArtifactKind(artifact_kind);
+  const field = topLevelField(path);
+  if (!kind || !field) return ok("internal");
+  const classified = classifyProjectionField(kind, field);
+  if (!classified.ok) return classified;
+  return ok(classified.value === "public" ? "public"
+    : classified.value === "repository_content" ? "repository_content" : "internal");
 }
 
 /** Only fields explicitly declared public can enter a whole-body projection. */

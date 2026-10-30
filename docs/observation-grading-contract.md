@@ -14,6 +14,30 @@ A failed grader or a repository snapshot question without qualifying references 
 
 The pinned `assessment.coverage/v1` question uses the captured brief criterion and assessment findings that explicitly assess it. A captured assessment with no matching findings supplies evidence for a negative coverage answer. If no assessment was captured for the brief revision, eligibility records `missing_evidence` with the `unevidenced` cause. `blocked_dependency` applies only to questions that require repository content.
 
+## Evidence classification
+
+`EvidenceReference.kind` is derived, never hardcoded at the packaging site.
+`evidenceKindForCapturedPath` takes a captured item's artifact kind and body path,
+reads the declared sensitivity of the top-level body field through
+`classifyProjectionField`, and maps it to an evidence kind: a `public` field becomes
+`public`, a `repository_content` field becomes `repository_content`, and `internal`,
+`restricted` and `unclassified_content` all fail closed to `internal`. An artifact kind
+with no declared policy, such as `tasks`, and a field absent from the policy also fail
+closed. Reclassifying a body field therefore changes what may be disclosed without
+editing the Oakridge evidence producer.
+
+On the current development body schemas this derivation classifies every pilot evidence
+role as `internal`: plan criteria and decisions are selected from the plan's `cohorts`
+field, brief criteria from the brief's `acceptance_criteria`, assessment findings from
+the assessment's `findings`, and all four are declared `internal`. Plan tasks come from
+the unclassified `tasks` artifact kind. No development field is declared
+`repository_content` today, so that branch of the mapping is currently unreachable from
+this producer. Because `checkDisclosure` admits only `public` and `repository_content`,
+an evidence set built by `runPackages` cannot be dispatched to an external provider as
+the bodies stand; a live external grade supplies its own classified references through
+the evaluation context, as the direct Jev walkthrough in
+`docs/observation-operations.md` does.
+
 ## HTTP routes
 
 `POST /v1/evaluations` accepts `{identity, context?, runner, reviewed_commit?}`. Snapshot questions supply `reviewed_commit` on each request. `identity` contains `subject_occurrence_id`, `evidence_set_id`, `question_id`, `question_version`, `evaluator_definition_id`, `config_digest`, and `attempt_label`. `context`, when supplied, contains the complete immutable `question`, `evidence`, and `evaluator` definitions and registers them before evaluation. A caller may omit it when those definitions already exist. The deterministic checker compares the question's `input_recipe.expected` with the first evidence reference's `content` using canonical JSON equality and answers a boolean question. The stub model uses a pinned `attempt_controls.answer` and optional `attempt_controls.probabilities` from its evaluator definition.

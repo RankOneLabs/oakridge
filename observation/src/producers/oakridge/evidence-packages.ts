@@ -1,9 +1,10 @@
 import { err, ok, type Result } from "../../domain/primitives";
 import type { ItemOccurrenceId } from "../../domain/identity";
-import type { EvidenceKind, EvidenceSet } from "../../grading/evidence";
+import type { EvidenceSet } from "../../grading/evidence";
 import { collectReferences, capturedReference, packagedEvidenceSet, type EvidencePackageError } from "../../grading/evidence-packages/references";
 import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { planCriterionEligibility } from "./plan-traceability";
+import { evidenceKindForCapturedPath } from "./classification";
 import type { EligibilityDecision, ExclusionReason } from "../../grading/eligibility";
 import type { PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
 import { LANGFUSE_PILOT_QUESTIONS } from "../../grading/catalogue/langfuse-pilot";
@@ -43,9 +44,15 @@ function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevi
     .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
 }
 
-/** The item body is withheld; a later disclosure gate can only project addresses and digests. */
-function reference(role: string, item: CapturedItem, kind: EvidenceKind = "internal") {
-  return capturedReference(role, item, kind);
+/** The item body is withheld; a later disclosure gate can only project addresses and
+ * digests. Classification is derived from the declared sensitivity of the source body
+ * field, so a field reclassified as public or repository content becomes disclosable
+ * without touching this producer. */
+function reference(role: string, artifact_kind: string, item: CapturedItem) {
+  const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
+  if (!kind.ok) return err({ operation: "evidence_packages" as const, entity_id: item.occurrence_id,
+    detail: kind.error.detail });
+  return capturedReference(role, item, kind.value);
 }
 
 function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
@@ -67,9 +74,9 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
         continue;
       }
       const cited = outcome.kind === "eligible" ? outcome.tasks : [];
-      const references = collectReferences([reference("plan_criterion", criterion),
-        ...cited.map((task) => reference("plan_task", task)),
-        ...outcome.decisions.map((decision) => reference("plan_decision", decision))]);
+      const references = collectReferences([reference("plan_criterion", revision.artifact_kind, criterion),
+        ...cited.map((task) => reference("plan_task", task_revision?.artifact_kind ?? "tasks", task)),
+        ...outcome.decisions.map((decision) => reference("plan_decision", revision.artifact_kind, decision))]);
       if (!references.ok) return references;
       const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value,
         outcome.kind === "tasks_uncaptured" ? "the run's tasks revision was not captured" : null);
@@ -102,7 +109,8 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
           reason: { kind: "dangling_citation", evidence_refs: [link.evidence_ref] } });
         continue;
       }
-      const references = collectReferences([reference("plan_criterion", source), reference("brief_criterion", criterion)]);
+      const references = collectReferences([reference("plan_criterion", plan?.artifact_kind ?? "plan", source),
+        reference("brief_criterion", revision.artifact_kind, criterion)]);
       if (!references.ok) return references;
       const evidence = packagedEvidenceSet("brief.source_fidelity", references.value, null);
       if (!evidence.ok) return evidence;
@@ -144,8 +152,8 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
           && item.links.some((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
             && link.target_item_kind === "criterion" && link.target_scope === criterion.item_scope
             && link.target_local_id === criterion.producer_local_id));
-        const references = collectReferences([reference("brief_criterion", criterion),
-          ...findings.map((finding) => reference("assessment_finding", finding))]);
+        const references = collectReferences([reference("brief_criterion", brief.artifact_kind, criterion),
+          ...findings.map((finding) => reference("assessment_finding", assessment.artifact_kind, finding))]);
         if (!references.ok) return references;
         const evidence = packagedEvidenceSet("assessment.coverage", references.value, null);
         if (!evidence.ok) return evidence;

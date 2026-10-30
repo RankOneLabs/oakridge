@@ -303,4 +303,49 @@ TypeSafe returned HTTP 200 with `model: "jev-1.14.0"`, choice `unsupported`, con
 
 The isolated local PostgreSQL database `observation_jev_live_20261030_216a64c6`, tenant `oakridge/jev-live-walkthrough`, retains subject occurrence `canonical-json/v1:1314f7fa5f25a135235031a0e1a07c18fbf17d06ed18da552820025f93ca17e3`, execution `ca807f29-e78e-462d-beb8-9b90dada4622` (`completed`), and grade observation `65e400ee-6fd7-412b-bc5d-9bca3c4b8809` (`answered`, `unsupported`). A separate read verified the execution and grade persisted. The account's actual response matches the [public TypeSafe OpenAPI contract](https://api.typesafe.ai/openapi.json): it documents `model`, `answers`, and `usage`, but neither `cost` nor `id`. The requirement for provider-reported cost and request ID needs a provider contract or account agreement that supplies them; this runner does not substitute an estimate or invented ID. Fastino GLiDE and the LLM judge remain configuration-gated.
 
+### Direct Jev live brief grade (2026-10-30)
+
+`observation/scripts/jev-live-walkthrough.ts` is the repeatable form of this walkthrough;
+the plan grade above was performed by hand before it existed. It ingests the checked-in
+run-slice revisions through the Oakridge source-event route, projects their criteria,
+enqueues one `jev_direct` job and runs a single worker attempt. Run it with
+`OAKRIDGE_TEST_DATABASE_URL` and `TYPESAFE_API_KEY` set:
+
+```bash
+bun scripts/jev-live-walkthrough.ts --question brief.source_fidelity
+```
+
+`--question plan.criterion_traceability` reproduces the plan half. The queue admits a
+network grade only against a positive `estimated_cost`, which `--estimated-cost` sets and
+which defaults to `0.01`; that reservation is what the spend caps charge, because TypeSafe
+reports no cost of its own.
+
+This completes the planning-and-brief pass: the brief half graded
+`brief.source_fidelity/v1` on brief criterion `criterion-lineage` ("Trace a shared
+criterion id") against the plan criterion it derives from ("Lineage is explicit"), both
+supplied as `public` references with content. TypeSafe returned HTTP 200 with
+`model: "jev-1.14.0"`, choice `changed_meaning`, confidence `0.61`, probabilities
+`{faithful: 0.21, changed_meaning: 0.74, unclear_insufficient_evidence: 0.05}`, and usage
+`{input_tokens: 524, output_tokens: 58}`. The same five execution fields were read back
+from the stored row:
+
+| Field | Stored value |
+| --- | --- |
+| Raw provider answer | `changed_meaning`, confidence `0.61`, and all three probabilities in `reproducibility_metadata.raw_answer` |
+| Provider model version | `jev-1.14.0` in `reproducibility_metadata.provider_model` |
+| Token usage | `input_tokens: 524`, `output_tokens: 58` in `model_usage` |
+| Provider-reported cost | `null`; absent from the JSON response, so the attempt is charged the admitted `0.01` estimate |
+| Provider request ID | `null`; `id` was absent from the JSON response and `x-request-id` was absent from the headers |
+
+The local PostgreSQL database `observation_jev_live_20261030_cdffbb0f`, tenant
+`oakridge/jev-live-walkthrough`, retains subject occurrence
+`canonical-json/v1:a7af73b35f7b86f6484af0c648d4f018a4be20ff17521dd296888c59e3964b8c`,
+execution `a36592fc-0193-48e1-ae93-a9ea8a454671` (`completed`) and grade observation
+`0761f5cd-235a-4292-bd72-63bab9da8eb9` (`answered`, `changed_meaning`); its job reached
+`terminal` in one attempt. Two runs of the same question returned `changed_meaning` both
+times with confidence `0.66` and `0.61`, so the provider is not deterministic across
+attempts and a repeat measurement needs its own attempt label. The cost and request ID
+findings match the plan grade above: the account's responses still omit both, as the
+public TypeSafe OpenAPI contract does.
+
 Worker construction reads `TYPESAFE_API_KEY` and optional `TYPESAFE_BASE_URL` for Jev, or `FASTINO_API_KEY` and optional `FASTINO_BASE_URL` for GLiDE. Keys stay in the worker process. Set `OBSERVATION_EXTERNAL_PROCESSING_POLICY` to the selected provider processing agreement or policy identifier. Every provider attempt stores that value separately from local retention; if unset, the field is omitted.
