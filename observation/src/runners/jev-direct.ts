@@ -2,6 +2,7 @@ import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
 import type { GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
+import { gradingLimits } from "../grading/jobs/budget";
 
 const probability = z.number().finite().min(0).max(1);
 const probabilities = z.record(z.string(), probability);
@@ -37,6 +38,7 @@ export interface SystemOneRunnerConfig {
   readonly api_key: string | undefined;
   readonly auth_header?: "bearer" | "x-api-key";
   readonly transport?: SystemOneTransport;
+  readonly deadline_ms: number;
 }
 
 function failure(context: GradingContext, operation: string, detail: string): RunnerResult {
@@ -71,7 +73,7 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
       response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/systemone`, {
         method: "POST", headers: { "Content-Type": "application/json",
           ...(config.auth_header === "x-api-key" ? { "X-API-Key": config.api_key } : { Authorization: `Bearer ${config.api_key}` }) },
-        body: JSON.stringify(request.data),
+        body: JSON.stringify(request.data), signal: AbortSignal.timeout(config.deadline_ms),
       });
     } catch { return failure(context, config.operation, "provider transport failed"); }
     if (!response.ok) return failure(context, config.operation, `provider HTTP ${response.status}`);
@@ -114,6 +116,7 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
 }
 
 export function createJevDirectRunner(api_key: string | undefined, transport?: SystemOneTransport): GradeRunner {
-  return createSystemOneRunner({ operation: "jev_direct", base_url: "https://api.typesafe.ai/v1", api_key, transport });
+  return createSystemOneRunner({ operation: "jev_direct", base_url: "https://api.typesafe.ai/v1", api_key,
+    deadline_ms: gradingLimits().provider_deadline_ms, transport });
 }
 export const jevDirectRunner = createJevDirectRunner(process.env.TYPESAFE_API_KEY);

@@ -203,3 +203,43 @@ returned `disabled`. The existing `langfuse-offline.test.ts` drill also ingested
 a revision, projected an item, read lineage, accepted a human grade and read it
 while Langfuse routes were disabled. These are local service drills. No live
 Oakridge workflow or production deployment was restarted for this cohort.
+
+## Durable grading queue
+
+`POST /v1/evaluation-jobs` accepts a pinned evaluation identity, optional context,
+runner name and estimated cost, then returns a durable `job_id`. Network-backed
+runners are accepted only on this route. `POST /v1/evaluations` remains for the
+local deterministic, coverage and stub runners. Read or grade credentials can
+read `GET /v1/evaluation-jobs/:id`, `GET /v1/evaluation-executions/:id`, and
+`GET /v1/items/:id/evaluation-jobs` to inspect pending and terminal work.
+
+The observation process starts a worker beside HTTP. It claims queued or
+expired jobs with `FOR UPDATE SKIP LOCKED`, checks run and stage caps, then
+starts one canonical running execution before calling the runner outside every
+database transaction. The persist transaction rechecks the lease owner and
+expiry before completing the execution and inserting the grade. An expired
+response is discarded. The worker can be stopped independently of HTTP by
+calling the returned worker's `stop()` method; process shutdown stops it before
+closing the database. Returned provider request IDs and costs are appended to
+`evaluation_execution.provider_attempts`, including a late response discarded
+for its expired lease.
+
+The default caps are two active jobs per run, one per stage, 1 unit of run
+spend, 0.5 units of stage spend, three attempts, a 30 second provider deadline
+and a 45 second lease. Set `OBSERVATION_GRADING_RUN_CONCURRENCY`,
+`OBSERVATION_GRADING_STAGE_CONCURRENCY`, `OBSERVATION_GRADING_RUN_SPEND`,
+`OBSERVATION_GRADING_STAGE_SPEND`, `OBSERVATION_GRADING_RETRY_LIMIT`,
+`OBSERVATION_PROVIDER_DEADLINE_MS`, and `OBSERVATION_GRADING_LEASE_MS` to adjust
+them. The lease is never configured shorter than the provider deadline plus
+five seconds. Budget skips create no execution; they append a
+`skipped_budget` eligibility decision. The disclosure record stores provider,
+policy version, evidence digests and content types, with no raw content. Only
+public and classified repository content are permitted for outbound grading;
+unclassified, internal, raw build and raw test roles are refused.
+
+The PostgreSQL drills in `observation/tests/grading-job-recovery.test.ts`
+simulate interruption before claim, during a provider call, after response
+before persist, and during restart. The same file verifies that an expired
+response cannot replace the winner's grade. `grading-no-transaction.test.ts`
+traces transaction callbacks around both the manual and queued runner call.
+These are local deterministic drills, not a live provider rollout.

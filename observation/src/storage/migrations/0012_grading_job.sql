@@ -19,7 +19,7 @@ CREATE TABLE observation.grading_job (
   lease_expires_at timestamptz,
   attempts integer NOT NULL DEFAULT 0,
   retry_limit integer NOT NULL,
-  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'disclosure_refused', 'invalid_outcome', 'budget_exceeded')),
+  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'disclosure_refused', 'invalid_outcome', 'ineligible', 'budget_exceeded')),
   estimated_cost double precision NOT NULL DEFAULT 0,
   disclosure jsonb,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
