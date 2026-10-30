@@ -34,3 +34,18 @@ export async function readEligibility(db: Database, tenant: TenantScope, questio
     question_id: row.question_id as EligibilityRow["question_id"], question_version: row.question_version,
     tag: row.tag, payload: row.payload } as EligibilityRow));
 }
+
+/** The current decision for each question on one captured occurrence. */
+export async function readOccurrenceEligibility(db: Database, tenant: TenantScope, occurrence_id: string)
+  : Promise<readonly EligibilityRow[]> {
+  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+    .distinctOn(["question_id", "question_version"]).selectAll()
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("subject_occurrence_id", "=", occurrence_id)
+    .orderBy("question_id").orderBy("question_version")
+    .orderBy("recorded_at", "desc").orderBy("eligibility_id", "desc").execute());
+  return rows.map((row) => ({ producer: row.producer, namespace: row.namespace,
+    subject_occurrence_id: row.subject_occurrence_id as EligibilityRow["subject_occurrence_id"],
+    question_id: row.question_id as EligibilityRow["question_id"], question_version: row.question_version,
+    tag: row.tag, payload: row.payload } as EligibilityRow));
+}

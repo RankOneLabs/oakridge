@@ -39,3 +39,11 @@ export const LANGFUSE_ANNOTATION_EVALUATOR_IDS = ["langfuse-annotation-human",
 export const LANGFUSE_ANNOTATION_EVALUATOR_ID = "langfuse-annotation-human/v2";
 export const isLangfuseAnnotationEvaluator = (evaluator_definition_id: string): boolean =>
   (LANGFUSE_ANNOTATION_EVALUATOR_IDS as readonly string[]).includes(evaluator_definition_id);
+
+/** Service-owned definition for native reviewer submissions. */
+export const NATIVE_HUMAN_EVALUATOR: EvaluatorDefinition = {
+  evaluator_definition_id: "oakridge-native-human/v1", kind: "human", backend_kind: "local",
+  provider: "oakridge", model: null, instruction_text: "Native human review",
+  prompt_digest: instructionDigest("Native human review"), config_digest: "oakridge-native-human/v1",
+  runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null,
+};

@@ -11,6 +11,7 @@ import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSou
 
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
 export interface Page { readonly limit: number; readonly offset: number }
+export interface ItemLookup { readonly revision_id?: string; readonly item_id_or_path?: string }
 export interface ItemsPage { readonly items: readonly Selectable<ObservationItemOccurrence>[];
   readonly issues: readonly ExtractionIssue[]; readonly total: number; readonly limit: number; readonly offset: number }
 export interface Republication { readonly predecessor_revision_id: string; readonly is_republication: boolean }
@@ -187,10 +188,13 @@ export function recordHumanRelation(db: Database, tenant: TenantScope, source_oc
   });
 }
 
-export function listRunItems(db: Database, tenant: TenantScope, run_id: string, page: Page): Promise<ItemsPage> {
+export function listRunItems(db: Database, tenant: TenantScope, run_id: string, page: Page,
+  lookup: ItemLookup = {}): Promise<ItemsPage> {
   return withTenant(db, tenant, async (trx) => {
-    const query = trx.selectFrom("observation.item_occurrence").where("producer", "=", tenant.producer)
+    let query = trx.selectFrom("observation.item_occurrence").where("producer", "=", tenant.producer)
       .where("namespace", "=", tenant.namespace).where("run_id", "=", run_id);
+    if (lookup.revision_id !== undefined) query = query.where("revision_id", "=", lookup.revision_id);
+    if (lookup.item_id_or_path !== undefined) query = query.where("item_id_or_path", "=", lookup.item_id_or_path);
     const count = await query.select(sql<string>`count(*)::text`.as("count")).executeTakeFirstOrThrow();
     const items = await query.selectAll().orderBy("revision_id", "asc").orderBy("occurrence_id", "asc")
       .limit(page.limit).offset(page.offset).execute();

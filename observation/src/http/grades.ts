@@ -4,9 +4,12 @@ import type { BlindAssignmentId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer } from "../grading/observation";
 import type { GradingContext } from "../grading/runner";
-import { isLangfuseAnnotationEvaluator } from "../grading/evaluator";
+import { isLangfuseAnnotationEvaluator, NATIVE_HUMAN_EVALUATOR } from "../grading/evaluator";
+import { blindEvidence, blindReferenceAddresses } from "../langfuse/blinding";
+import { PILOT_EVIDENCE_RECIPES, type EvidenceRole } from "../langfuse/evidence-recipe";
 import { acceptHumanGrade } from "../runners/human-intake";
-import { listGrades, registerGradingContext, type GradeDetails } from "../storage/grading-store";
+import { ensureNativeHumanEvaluator, listGrades, readEvidenceSet, readQuestionDefinition,
+  registerGradingContext, type GradeDetails } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
 import { contextMatchesIdentity, contextSchema, identitySchema, responseKindSchema } from "./evaluations";
 import { boundReviewer, credentialFor } from "./ingest-auth";
@@ -64,7 +67,23 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
     const assignment = await readBlindAssignment(deps.db, credential,
       c.req.param("id") as BlindAssignmentId, boundReviewer(credential));
-    return assignment ? c.json(assignment) : errorResponse(c, 404, "not_found", "assignment not found");
+    if (!assignment) return errorResponse(c, 404, "not_found", "assignment not found");
+    const [question, evidence] = await Promise.all([
+      readQuestionDefinition(deps.db, credential, assignment.question_id, assignment.question_version),
+      readEvidenceSet(deps.db, credential, assignment.evidence_set_id),
+    ]);
+    if (!question || !evidence) return errorResponse(c, 404, "not_found", "pinned grading context not found");
+    const addresses = blindReferenceAddresses(evidence.references);
+    if (!addresses.ok) return errorResponse(c, 422, "blind_evidence_refused", addresses.error.detail);
+    const isPilot = Object.hasOwn(PILOT_EVIDENCE_RECIPES, question.question_id);
+    if (isPilot && addresses.value.some((address) => !address.digest || !address.deep_link))
+      return errorResponse(c, 422, "blind_evidence_refused", "pinned evidence address lacks digest or deep link");
+    const sources = addresses.value.map((address) => ({ ref: address.ref,
+      digest: address.digest!, deep_link: address.deep_link!,
+      role: address.ref.split(":", 1)[0] as EvidenceRole }));
+    const blinded = isPilot ? blindEvidence(question, sources, "report") : null;
+    if (blinded && !blinded.ok) return errorResponse(c, 422, "blind_evidence_refused", blinded.error.detail);
+    return c.json({ ...assignment, blinded_evidence: blinded?.ok ? blinded.value : { references: addresses.value } });
   });
   app.post("/v1/grades", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
@@ -89,6 +108,10 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
       if (context.evaluator.kind !== "human") return errorResponse(c, 400, "invalid_evaluator", "human evaluator required");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
+    }
+    if (identity.evaluator_definition_id === NATIVE_HUMAN_EVALUATOR.evaluator_definition_id) {
+      const registered = await ensureNativeHumanEvaluator(deps.db, credential);
+      if (!registered.ok) return errorResponse(c, 422, "invalid_evaluator", registered.error.detail);
     }
     const result = await acceptHumanGrade(deps.db, credential, { ...identity,
       details: { ...parsed.data.details, reviewer_id, answer: parsed.data.details.answer as GradeAnswer } as GradeDetails });
