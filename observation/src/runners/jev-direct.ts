@@ -62,11 +62,11 @@ export function systemOneRequest(context: GradingContext): ReturnType<typeof sys
     questions: { [context.question.question_id]: recipe.data.system_one } });
 }
 
-/** The question's own unclear semantics names its designated option. */
+/** The question's "Choose <value> when ..." instruction designates one exact option. */
 export function unclearChoice(context: GradingContext): string | null {
   const allowed = context.question.allowed_values?.filter((value): value is string => typeof value === "string") ?? [];
-  const tokens = new Set(context.question.unclear_semantics.split(/[^\p{L}\p{N}_]+/u));
-  const matches = allowed.filter((value) => tokens.has(value));
+  const designated = /^\s*Choose\s+(.+?)\s+when\b/iu.exec(context.question.unclear_semantics)?.[1]?.trim();
+  const matches = allowed.filter((value) => value === designated);
   return matches.length === 1 ? matches[0]! : null;
 }
 
@@ -100,7 +100,9 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
       response.status === 429 ? "rate_limit" : "http_error", response.headers.get("x-request-id"));
     let raw: unknown;
     try { raw = await response.json(); }
-    catch { return failure(context, config.operation, "provider response is not JSON", "invalid_response"); }
+    catch { return deadline.aborted
+      ? failure(context, config.operation, "provider timeout", "timeout")
+      : failure(context, config.operation, "provider response is not JSON", "invalid_response"); }
     const parsed = systemOneResponseSchema.safeParse(raw);
     if (!parsed.success) return failure(context, config.operation, "provider response does not match System One schema", "invalid_response");
     const answer = parsed.data.answers[context.question.question_id];

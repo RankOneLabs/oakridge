@@ -31,6 +31,17 @@ test("System One transport receives a required abort deadline", async () => {
   expect(result).toMatchObject({ ok: false, error: { category: "timeout" } });
 });
 
+test("a deadline while reading the provider body is a timeout", async () => {
+  const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1", deadline_ms: 10,
+    transport: async (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        init.signal!.addEventListener("abort", () => controller.error(new Error("body aborted")), { once: true });
+      },
+    })) });
+  const result = await runner.run(context);
+  expect(result).toMatchObject({ ok: false, error: { category: "timeout" } });
+});
+
 test("a pinned pilot recipe reaches the provider using evaluator instructions", async () => {
   const pilot = LANGFUSE_PILOT_QUESTIONS["plan.criterion_traceability"].definition;
   const criteria = Object.fromEntries((pilot.allowed_values ?? []).map((value) => [String(value), String(value)]));
@@ -135,6 +146,20 @@ test("Jev maps the question-designated unclear choice to unclear", async () => {
   expect(result.value.probabilities).toEqual(insufficient.probabilities);
   expect(result.value.confidence).toBe(insufficient.confidence);
   expect(result.value.reproducibility_metadata).toMatchObject({ raw_answer: insufficient });
+});
+
+test("a choice with spaces and punctuation is designated even when other options are mentioned", async () => {
+  const choice = "not-enough evidence";
+  const choices = ["yes", "no", choice];
+  const text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge evidence",
+    criteria: Object.fromEntries(choices.map((value) => [value, value])) } });
+  const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1",
+    transport: async () => response(provider({ type: "choice", choice,
+      probabilities: { yes: 0.1, no: 0.2, [choice]: 0.7 }, confidence: 0.7 })) });
+  const result = await runner.run({ ...context, question: { ...context.question, allowed_values: choices,
+    unclear_semantics: "Choose not-enough evidence when unclear; choose yes or no only when settled." },
+    evaluator: { ...context.evaluator, instruction_text: text, prompt_digest: instructionDigest(text) } });
+  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: choice });
 });
 
 test("ambiguous or missing unclear designation fails before a provider call", async () => {
