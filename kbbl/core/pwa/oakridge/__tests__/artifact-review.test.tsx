@@ -245,6 +245,7 @@ describe("assessment builder handoff", () => {
     const { onEdit, onSubmitBody } = renderHandoff();
     fireEvent.click(screen.getByRole("button", { name: "Edit recommended next actions/0" }));
     const input = screen.getByDisplayValue("Fix the first issue");
+    expect(input.tagName).toBe("TEXTAREA");
     fireEvent.change(input, { target: { value: "Fix the revised issue" } });
     fireEvent.blur(input);
     expect(onEdit).toHaveBeenCalledWith("/recommended_next_actions/0", "Fix the first issue", "Fix the revised issue");
