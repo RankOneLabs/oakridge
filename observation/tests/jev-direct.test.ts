@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createJevDirectRunner } from "../src/runners/jev-direct";
+import { createJevDirectRunner, createSystemOneRunner } from "../src/runners/jev-direct";
 import { listGrades, readExecution, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import type { GradingContext } from "../src/grading/runner";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
@@ -15,6 +15,16 @@ const answer = { type: "choice", choice: "faithful", probabilities: {
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const provider = (value: unknown) => ({ model: "jev-1.13.0", answers: { [question.question_id]: value },
   usage: { input_tokens: 31, output_tokens: 7 } });
+
+test("System One transport receives a required abort deadline", async () => {
+  const runner = createSystemOneRunner({ operation: "deadline-test", base_url: "https://example.invalid",
+    api_key: "key", deadline_ms: 10, transport: async (_url, init) => new Promise<Response>((_resolve, reject) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }) });
+  const result = await runner.run(context);
+  expect(result.ok).toBe(false);
+});
 
 test("Jev Choice retains every raw option probability and provider confidence", async () => {
   const runner = createJevDirectRunner("key", async (_url, init) => {
@@ -89,6 +99,15 @@ test("transport, status and response validation failures are Result errors", asy
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatchObject({ operation: "jev_direct", entity_id: "jev" });
   }
+});
+
+test("provider HTTP failure preserves its request id without storing the response body", async () => {
+  const runner = createJevDirectRunner("key", async () => new Response("secret response", {
+    status: 503, headers: { "x-request-id": "provider-request-1" } }));
+  const result = await runner.run(context);
+  expect(result).toMatchObject({ ok: false, error: {
+    external_execution_id: "provider-request-1", detail: "provider HTTP 503" } });
+  expect(JSON.stringify(result)).not.toContain("secret response");
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;

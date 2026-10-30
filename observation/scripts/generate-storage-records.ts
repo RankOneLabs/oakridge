@@ -4,14 +4,14 @@ import { resolve } from "node:path";
 
 const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql",
   "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql", "0008_langfuse_sync.sql",
-  "0011_evaluation_eligibility.sql"]
+  "0011_evaluation_eligibility.sql", "0012_grading_job.sql"]
   .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
 const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
 const gradeLabelOriginPath = resolve(import.meta.dir, "../src/storage/migrations/0009_grade_label_origin.sql");
 const questionTextPath = resolve(import.meta.dir, "../src/storage/migrations/0010_question_text_and_evaluator_instructions.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 26) throw new Error(`expected twenty-six observation tables, found ${tables.length}`);
+if (tables.length !== 27) throw new Error(`expected twenty-seven observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',
@@ -54,6 +54,8 @@ for (const [, tableName, definition] of tables) {
       throw new Error("grade label origin migration is missing");
     lines.push("  label_origin: Generated<string>;");
   }
+  if (tableName === "evaluation_eligibility") lines.push("  eligibility_id: Generated<string>;");
+  if (tableName === "evaluation_execution") lines.push("  provider_attempts: Generated<JsonValue>;");
   lines.push("}", "");
 }
 lines.push("export interface DB {", ...names, "}", "");

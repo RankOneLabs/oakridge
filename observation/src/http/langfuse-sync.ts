@@ -15,11 +15,13 @@ import { createLangfuseHttpClient } from "../langfuse/http-client";
 import type { ProjectionInput } from "../ports/evaluation-backend";
 import { withTenant } from "../storage/database";
 import type { SourceDependencies } from "./sources";
+import type { GradingLimits } from "../grading/jobs/budget";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 
 export interface LangfuseRouteDependencies extends SourceDependencies {
   readonly langfuse?: LangfuseConfiguration;
+  readonly gradingLimits?: GradingLimits;
 }
 const digestSchema = z.string().regex(/^canonical-json\/v1:[0-9a-f]{64}$/);
 const projectionSchema = z.object({ execution_id: z.string().min(1), question_text: z.string().min(1),
