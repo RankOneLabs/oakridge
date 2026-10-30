@@ -19,7 +19,7 @@ export interface BriefBody { readonly cohort_id: string; readonly decisions_made
   readonly acceptance_criteria: readonly PlanCriterion[] }
 export interface AssessmentFinding { readonly criterion_id?: string; readonly evidence: readonly JsonValue[] }
 
-const VERSION = "1";
+export const VERSION = "1";
 type Mapping = (value: JsonValue, path: string) => Result<SelectedItem, ExtractionFailure>;
 
 function pathItem(item_kind: string, item_selector: string, path: string, selected_value: JsonValue,
