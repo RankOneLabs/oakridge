@@ -4,6 +4,7 @@ import type { BlindAssignmentId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer } from "../grading/observation";
 import type { GradingContext } from "../grading/runner";
+import { isLangfuseAnnotationEvaluator } from "../grading/evaluator";
 import { acceptHumanGrade } from "../runners/human-intake";
 import { listGrades, registerGradingContext, type GradeDetails } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
@@ -79,7 +80,8 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
       (parsed.data.details.model_answers_visible || parsed.data.details.workflow_decisions_visible || !parsed.data.details.blind_assignment_id))
       return errorResponse(c, 400, "invalid_blind_grade", "blind submission requires a hidden assignment");
     const identity = parsed.data.identity as EvaluationIdentity;
-    if (["oakridge-operator-human", "langfuse-annotation-human"].includes(identity.evaluator_definition_id))
+    if (identity.evaluator_definition_id === "oakridge-operator-human"
+      || isLangfuseAnnotationEvaluator(identity.evaluator_definition_id))
       return errorResponse(c, 400, "reserved_evaluator", "evaluator is reserved for its authenticated import path");
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;

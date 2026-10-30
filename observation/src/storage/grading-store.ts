@@ -6,7 +6,8 @@ import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { repositorySnapshotEligibility } from "../grading/eligibility";
-import { evaluatorIdentity, instructionDigest, type EvaluatorDefinition } from "../grading/evaluator";
+import { evaluatorIdentity, instructionDigest, isLangfuseAnnotationEvaluator,
+  type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
@@ -358,7 +359,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
       if (!details.collection_mode || details.model_answers_visible === undefined || details.workflow_decisions_visible === undefined)
         return failure("human_grade", identity.subject_occurrence_id, "collection mode and visibility required");
       if (details.collection_mode === "blind") {
-        const is_imported_annotation = identity.evaluator_definition_id === "langfuse-annotation-human";
+        const is_imported_annotation = isLangfuseAnnotationEvaluator(identity.evaluator_definition_id);
         if ((!details.blind_assignment_id && !is_imported_annotation) || details.model_answers_visible || details.workflow_decisions_visible)
           return failure("human_grade", identity.subject_occurrence_id, "blind submission requires a hidden claimed assignment");
         if (details.blind_assignment_id) {

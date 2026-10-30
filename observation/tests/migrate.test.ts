@@ -9,7 +9,7 @@ import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
 
-integration("0010 through 0013 upgrade 0009 without changing pinned v1 question fields or generated origin", async () => scratch(async (url) => {
+integration("0010 through 0014 upgrade 0009 without changing pinned v1 question fields, and extend the generated origin to the v2 annotation evaluator", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     const names = ["0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
@@ -39,8 +39,14 @@ integration("0010 through 0013 upgrade 0009 without changing pinned v1 question 
         to_regclass('observation.blind_assignment')::text AS assignment,
         (SELECT generation_expression FROM information_schema.columns WHERE table_schema = 'observation'
           AND table_name = 'grade_observation' AND column_name = 'label_origin') AS definition`.execute(db);
-    expect(humanCollection.rows[0]).toEqual({ collection_mode: "collection_mode",
-      assignment: "observation.blind_assignment", definition: originBefore.rows[0]?.definition });
+    expect(humanCollection.rows[0]?.collection_mode).toBe("collection_mode");
+    expect(humanCollection.rows[0]?.assignment).toBe("observation.blind_assignment");
+    // 0014 rebuilds the generated origin to recognise 'langfuse-annotation-human/v2' alongside
+    // v1. The two historical classifications are unchanged; only the annotation arm widens.
+    expect(originBefore.rows[0]?.definition).not.toContain("langfuse-annotation-human/v2");
+    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human/v2");
+    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human'");
+    expect(humanCollection.rows[0]?.definition).toContain("oakridge_operator_unblinded");
     const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
     expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
     const jobs = await sql<{ name: string | null; lease_owner: string | null; lease_expires_at: string | null; has_state_check: boolean }>`

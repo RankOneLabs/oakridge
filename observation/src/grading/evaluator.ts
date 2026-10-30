@@ -26,3 +26,16 @@ export function evaluatorIdentity(definition: EvaluatorDefinition): Result<strin
   return canonicalDigest([definition.kind, definition.backend_kind, definition.provider, definition.model,
     definition.prompt_digest, definition.config_digest, definition.runtime_revision]);
 }
+
+/** The imported-annotation evaluator identities, oldest first.
+ *
+ * v2 carries the instruction text and its canonical digest. v1 rows written before migration
+ * 0010 hold the literal config string as their prompt digest and no instruction text, and 0010
+ * leaves them untouched, so new imports register under v2 rather than conflict with them.
+ * Both ids stay reserved for the authenticated import path, both count as blind imported
+ * annotations, and migration 0014 makes the generated label origin recognise both. */
+export const LANGFUSE_ANNOTATION_EVALUATOR_IDS = ["langfuse-annotation-human",
+  "langfuse-annotation-human/v2"] as const;
+export const LANGFUSE_ANNOTATION_EVALUATOR_ID = "langfuse-annotation-human/v2";
+export const isLangfuseAnnotationEvaluator = (evaluator_definition_id: string): boolean =>
+  (LANGFUSE_ANNOTATION_EVALUATOR_IDS as readonly string[]).includes(evaluator_definition_id);
