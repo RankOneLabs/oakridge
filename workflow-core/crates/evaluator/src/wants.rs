@@ -393,6 +393,12 @@ pub(super) fn resolve_run_worker(
             Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload())),
             None => (None, None),
         },
+        Mode::Review => match reviewed_before(state, &unit.id, checked.creates()) {
+            Some((revision, decision)) => {
+                (Some(revision.clone()), decision.map(DecisionState::payload))
+            }
+            None => (None, None),
+        },
         _ => (None, None),
     };
     let subject = match (action.mode, checked) {

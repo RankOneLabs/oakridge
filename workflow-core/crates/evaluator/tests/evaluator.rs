@@ -557,8 +557,9 @@ fn a_review_repeating_its_body_about_a_new_subject_is_a_new_revision() {
     ));
 }
 
-#[test]
-fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
+/// The review loop with an operator review of the critique that can send
+/// the draft back, as the development workflow's assessment review does.
+fn critique_check_program() -> CheckedWorkflow {
     let mut source: Value =
         serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
     source["stages"]["document"]["workers"]["critic"]["prompts"]["revise"] =
@@ -581,8 +582,12 @@ fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
     .into_iter()
     .map(|path| (path.to_owned(), String::new()))
     .collect();
-    let program =
-        compile_workflow(&serde_json::from_value(source).unwrap(), &[], &prompts).unwrap();
+    compile_workflow(&serde_json::from_value(source).unwrap(), &[], &prompts).unwrap()
+}
+
+#[test]
+fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
+    let program = critique_check_program();
     let first = step_specs(
         &program,
         &snapshot(),
@@ -689,6 +694,70 @@ fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
         ),
     );
     assert!(stale_accept.is_err());
+}
+
+#[test]
+fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_its_subject() {
+    let program = critique_check_program();
+    let first_review = step_specs(
+        &program,
+        &snapshot(),
+        &[
+            serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"First","body":"Long"}}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+        ],
+    );
+    let first = resolved_for(&first_review, "critic");
+    assert_eq!((&first.previous, &first.feedback), (&None, &None));
+    let reassessment = step_specs(
+        &program,
+        &first_review.snapshot,
+        &[
+            serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Too long"]},"subject":"run/document:draft:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
+            serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_build_changes","target":"run/document:draft:1","payload":{"feedback":"Shorten it"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer","artifact":"draft","body":{"title":"Second","body":"Short"},"predecessor":"run/document:draft:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"writer","result":"succeeded"}),
+        ],
+    );
+    let critic = reassessment
+        .wanted
+        .iter()
+        .find(|wanted| wanted.worker.0 == "critic")
+        .unwrap();
+    assert_eq!(
+        (
+            &critic.action,
+            critic
+                .resolved
+                .previous
+                .as_ref()
+                .map(|revision| revision.id.0.as_str()),
+            &critic.resolved.feedback,
+            critic
+                .resolved
+                .subject
+                .as_ref()
+                .map(|revision| revision.id.0.as_str()),
+        ),
+        (
+            &Action::RunWorker {
+                unit: UnitId::from("run/document"),
+                worker: WorkerKey::from("critic"),
+                mode: Mode::Review,
+                cause: Cause::ReviewOf {
+                    revision: RevisionId::from("run/document:draft:2"),
+                },
+            },
+            Some("run/document:critique:1"),
+            &Some(serde_json::json!({"feedback":"Shorten it"})),
+            Some("run/document:draft:2"),
+        )
+    );
 }
 
 #[test]
@@ -2486,6 +2555,8 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         format!("{:x}", digest.finalize()),
         // The base corpus serialized through serde_json::Value has this
         // canonical-key-order digest; w6_projection restores its old shape.
-        "a2789f0ab4dca05165fc2057758db525b679ae7b076c0a6a211c9b9146c24f8f"
+        // A second review of a newer subject resolves `previous` and
+        // `feedback`, which a review left null before.
+        "7f30021a30aa8a9a74ddf5997f713c2f56ba6fc2f9175370d727e152dab7a648"
     );
 }

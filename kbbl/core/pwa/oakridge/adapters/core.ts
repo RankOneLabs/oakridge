@@ -135,7 +135,8 @@ export function selectAggregateStatus(statuses: readonly RunStatus[]): StageStat
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }
 /** Approve-effect keys the frozen gate UI labels and styles as primary; any other key would render as its raw text. */
 const V1_APPROVE_ACTIONS: ReadonlySet<string> = new Set(["approve", "confirm_merged", "pass"]);
-/** Older pinned runs may still declare this removed assessment action. */
+/** The assessment's builder handoff records this decision with the composed
+ * next actions as its feedback, so the gate does not offer it as a bare button. */
 export const isDisplayedReviewDecision = (review: string, decision: string): boolean =>
   review !== "assessment_review" || decision !== "request_build_changes";
 export const decisionAction = (decision: OperatorDecisionDefinition): string => {

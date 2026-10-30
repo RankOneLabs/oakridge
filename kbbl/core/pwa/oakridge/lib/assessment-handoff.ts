@@ -25,3 +25,8 @@ export function withItemRemoved(body: Assessment, index: number): Assessment {
     recommended_next_actions: body.recommended_next_actions.filter((_, itemIndex) => itemIndex !== index),
   };
 }
+
+/** Publish a successor assessment with one recommendation appended. */
+export function withItemAdded(body: Assessment, text: string): Assessment {
+  return { ...body, recommended_next_actions: [...body.recommended_next_actions, text] };
+}

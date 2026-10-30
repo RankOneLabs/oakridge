@@ -6,11 +6,11 @@ import type { ReactElement } from "react";
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import type { ArtifactDetail, ParkedGate } from "../types";
 import type { Assessment } from "../lib/assessment";
-import type { RunSessionAttempt } from "../types";
-import type { Sid } from "../../lib/ids";
-import type { SessionSnapshot } from "../../types";
-import { useStore } from "../../state/store";
 import { BuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
+import { compositeId } from "../adapters/core";
+import { invalidateCachedRunUnits } from "../client";
+import sample from "../__fixtures__/v2-adapter-sample.json";
+import type { OperatorUnitView } from "../operator-contracts";
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review
 // organism now has two hosts, and its cases outgrew the shared file.
@@ -33,31 +33,48 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 const HANDOFF_ASSESSMENT: Assessment = {
   head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
   recommended_next_actions: ["Fix the first issue", "Add coverage"],
 };
-const BUILDER_ATTEMPT: RunSessionAttempt = {
-  work_order_id: "work-builder", session_id: "builder-sid", stage_instance_id: "cohort-stage",
-  stage_key: "builder", unit_id: "alpha", reason: "initial", work_order_state: "completed",
-  created_at: "2026-10-01 00:00:00+00", completed_at: null, executor_health_kind: null,
-  cleanup_state: "not_needed",
+const HANDOFF_GATE: ParkedGate = {
+  id: compositeId({ kind: "gate", runId: "run-1", unitId: "unit-a", name: "assessment_review" }),
+  gate_type: "assessment_review",
+  gate_step: "assessment_review",
+  run_id: "run-1",
+  stage_name: "cohort",
+  unit_id: "alpha",
+  artifact_revision_id: "assessment-rev",
+  worktree: null,
+  resume_actions: ["approve", "request_assessment_changes"],
+  run_state: "active",
+  actionable: true,
 };
+const capturedCohort = (sample.units as unknown as OperatorUnitView[]).find((unit) => unit.stage === "cohort"
+  && unit.decisions.some((decision) => decision.submit.kind === "review" && decision.submit.decision === "request_build_changes"));
+if (!capturedCohort) throw new Error("captured fixture lacks a build change decision");
+// The assessment review's decisions, re-aimed at this test's assessment revision.
+const HANDOFF_UNIT = { ...capturedCohort, run_id: "run-1", unit_id: "unit-a",
+  decisions: capturedCohort.decisions.flatMap((decision) => decision.submit.kind === "review" && decision.submit.review === "assessment_review"
+    ? [{ ...decision, submit: { ...decision.submit, target_revision_id: "assessment-rev" } }] : []) };
 
-function renderHandoff(status: SessionSnapshot["status"] | null = "idle", attempts: RunSessionAttempt[] = [BUILDER_ATTEMPT], hasSessionInventory = true) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(["oakridge", "run", "run-1", "sessions"], attempts);
-  useStore.setState({
-    sessions: status === null ? new Map() : new Map([["builder-sid" as Sid, { sid: "builder-sid", status } as SessionSnapshot]]),
-    hasInboxSnapshot: hasSessionInventory,
-    hasSessionSeed: hasSessionInventory,
+/** Serves the unit a decision reads, and hands each POST to `post`. */
+function mockDecide(post: (url: string, init: RequestInit) => Promise<Response>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") return post(String(input), init);
+    if (String(input).endsWith("/units/unit-a")) return json(HANDOFF_UNIT);
+    throw new Error(`unexpected request ${String(input)}`);
   });
+}
+
+function renderHandoff(gate: ParkedGate | null = HANDOFF_GATE) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   const onEdit = vi.fn();
   const onSubmitBody = vi.fn();
   render(<QueryClientProvider client={client}><BuilderHandoffPanel assessment={HANDOFF_ASSESSMENT}
-    body={HANDOFF_ASSESSMENT} runId="run-1" cohortLabel="alpha"
+    body={HANDOFF_ASSESSMENT} gate={gate}
     edit={{ enabled: true, isPending: false, onEdit, onSubmitBody }} /></QueryClientProvider>);
   return { onEdit, onSubmitBody };
 }
@@ -225,8 +242,12 @@ describe("navigation inside the review", () => {
 });
 
 describe("assessment builder handoff", () => {
-  it("unticks without publishing, then sends the exact preview once without a review decision", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ turn_key: "turn-1", status: "accepted" }));
+  it("unticks without publishing, then records the exact preview as a build change request", async () => {
+    const posts: Array<{ readonly url: string; readonly body: unknown }> = [];
+    const fetch = mockDecide(async (url, init) => {
+      posts.push({ url, body: JSON.parse(String(init.body)) });
+      return json({ kind: "committed", run_id: "run-1", event_id: "event-1" });
+    });
     renderHandoff();
     fireEvent.click(screen.getByRole("checkbox", { name: "Include action 2" }));
     const preview = screen.getByTestId("or-assessment-handoff-preview").textContent;
@@ -234,11 +255,9 @@ describe("assessment builder handoff", () => {
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
     await screen.findByText("Sent");
-    const calls = fetch.mock.calls.filter(([url]) => String(url).includes("/input"));
-    expect(calls).toHaveLength(1);
-    expect(String(calls[0]?.[0])).toBe("/sessions/builder-sid/input");
-    expect(JSON.parse(String(calls[0]?.[1]?.body))).toMatchObject({ text: preview, client_message_id: expect.any(String) });
-    expect(fetch.mock.calls.some(([url]) => String(url).includes("/decide"))).toBe(false);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.url).not.toContain("/input");
+    expect(posts[0]?.body).toMatchObject({ decision: "request_build_changes", payload: { feedback: preview } });
   });
 
   it("submits an anchor edit and a whole-body removal through distinct handles", () => {
@@ -253,28 +272,25 @@ describe("assessment builder handoff", () => {
       { ...HANDOFF_ASSESSMENT, recommended_next_actions: ["Fix the first issue"] });
   });
 
-  it.each(["provisioning", "ended", "fenced", "failed"] as const)("blocks send for a %s builder session", (status) => {
-    renderHandoff(status);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(status === "provisioning" ? /still starting/ : /Use Resume/)).toBeTruthy();
+  it("adds an action the assessor missed as a new assessment revision", () => {
+    const { onSubmitBody } = renderHandoff();
+    fireEvent.click(screen.getByRole("button", { name: "Add recommended next action" }));
+    fireEvent.change(screen.getByLabelText("New recommended next action"), { target: { value: "  Cover the error path  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Add action" }));
+    expect(onSubmitBody).toHaveBeenCalledWith(HANDOFF_ASSESSMENT,
+      { ...HANDOFF_ASSESSMENT, recommended_next_actions: ["Fix the first issue", "Add coverage", "Cover the error path"] });
   });
 
-  it("explains a builder session missing from a completed inventory without claiming it ended", () => {
+  it("blocks send when the revision has no open assessment review", () => {
     renderHandoff(null);
     expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/missing from the session inventory.*use Resume if/)).toBeTruthy();
+    expect(screen.getByText(/no open assessment review/)).toBeTruthy();
   });
 
-  it("waits for the session inventory before diagnosing a missing builder session", () => {
-    renderHandoff(null, [BUILDER_ATTEMPT], false);
+  it("blocks send when the run has moved on", () => {
+    renderHandoff({ ...HANDOFF_GATE, actionable: false });
     expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Waiting for the builder session inventory.")).toBeTruthy();
-  });
-
-  it("blocks send when there is no matching builder session", () => {
-    renderHandoff("idle", [{ ...BUILDER_ATTEMPT, unit_id: "beta" }]);
-    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/No builder session exists/)).toBeTruthy();
+    expect(screen.getByText(/can no longer take a decision/)).toBeTruthy();
   });
 
   it("blocks send when every action is excluded", () => {
@@ -285,33 +301,21 @@ describe("assessment builder handoff", () => {
     expect(screen.getByText(/Include at least one next action/)).toBeTruthy();
   });
 
-  it("keeps the same message id after a definitive rejection", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ error: "session busy" }, 409))
-      .mockResolvedValueOnce(json({ turn_key: "turn-1", status: "prompting" }));
+  it("retries a rejected send with the same request id", async () => {
+    const requestIds: unknown[] = [];
+    let attempts = 0;
+    mockDecide(async (_url, init) => {
+      requestIds.push((JSON.parse(String(init.body)) as { request_id: unknown }).request_id);
+      attempts += 1;
+      return attempts === 1 ? json({ detail: "try again" }, 500) : json({ kind: "committed", run_id: "run-1", event_id: "event-1" });
+    });
     renderHandoff();
     fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    await screen.findByText("session busy");
+    await screen.findByText(/try again|500/);
     fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
     await screen.findByText("Sent");
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).client_message_id)
-      .toBe(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).client_message_id);
-  });
-
-  it("marks a thrown fetch as uncertain delivery", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection dropped"));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    expect(await screen.findByText(/delivery status unknown; check the transcript before retrying/)).toBeTruthy();
-  });
-
-  it.each([
-    { turn_key: "", status: "accepted", error: "invalid turn" },
-    { turn_key: "turn-1", status: "queued", error: "not prompting" },
-  ])("shows the server's error for an invalid send receipt", async (receipt) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(receipt));
-    renderHandoff();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
-    expect(await screen.findByText(receipt.error)).toBeTruthy();
+    expect(requestIds).toHaveLength(2);
+    expect(requestIds[0]).toBe(requestIds[1]);
   });
 
   it("hides controls when assessment editing is unavailable or a historical revision is selected", async () => {

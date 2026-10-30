@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment } from "./assessment";
-import { composeHandoffText, selectHandoffItems, withItemRemoved } from "./assessment-handoff";
+import { composeHandoffText, selectHandoffItems, withItemAdded, withItemRemoved } from "./assessment-handoff";
 import linkedAssessment from "./__fixtures__/id-linked-assessment.json";
 
 const assessment: Assessment = {
@@ -25,6 +25,12 @@ describe("assessment handoff", () => {
   it("removes one action and leaves the rest of the body identical", () => {
     const body = { ...assessment, extra_server_field: { retained: true } };
     expect(withItemRemoved(body, 1)).toEqual({ ...body, recommended_next_actions: ["Fix the first issue", "Document the result"] });
+  });
+
+  it("appends one action and leaves the rest of the body identical", () => {
+    const body = { ...assessment, extra_server_field: { retained: true } };
+    expect(withItemAdded(body, "Cover the error path")).toEqual({ ...body,
+      recommended_next_actions: ["Fix the first issue", "Add coverage", "Document the result", "Cover the error path"] });
   });
 
   it("preserves the raw commit and typed evidence on republish", () => {

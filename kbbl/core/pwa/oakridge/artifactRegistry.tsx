@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { ArtifactReviewDescriptor, ArtifactSource } from "./types";
+import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./types";
 import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";
 import { PlanViewer } from "./components/molecules/PlanViewer";
@@ -19,6 +19,8 @@ export interface ViewerProps {
     onEdit: (anchor: string, previousValue: unknown, newValue: unknown) => void;
     onSubmitBody?: (previousBody: unknown, nextBody: unknown) => void;
   };
+  /** The open review of the revision on screen, when it is the latest; a viewer may record a decision on it. */
+  gate?: ParkedGate;
 }
 
 interface RegistryEntry {

@@ -367,6 +367,8 @@ stages:
           accept: { effect: approve, label: Accept }
           request_assessment_changes: { effect: request_changes, label: Request assessment changes,
                                         fields: { feedback: "What must the assessment change?" } }
+          request_build_changes: { effect: request_changes, on: build_result, label: Send to builder,
+                                   fields: { feedback: "What must the builder change?" } }
       merge_confirmation:
         of: pr
         by: operator

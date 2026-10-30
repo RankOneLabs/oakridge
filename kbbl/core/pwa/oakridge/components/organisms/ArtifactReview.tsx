@@ -219,6 +219,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
                 }),
                 onSubmitBody: (_previousBody, nextBody) => bodyEdit.mutate(nextBody),
               } : undefined}
+              gate={artifactGate && revIdx === revisions.length - 1 ? artifactGate : undefined}
             />
           ) : (
             <ArtifactJsonRevisionPanel revision={revision} descriptor={artifact.review} />
