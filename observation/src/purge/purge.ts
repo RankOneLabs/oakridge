@@ -57,11 +57,26 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
       await sql`SELECT set_config('observation.purge_override', ${operator_override ? "true" : "false"}, true)`.execute(trx);
       await sql`DELETE FROM observation.grading_job
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
+      await sql`UPDATE observation.blind_assignment a SET submitted_observation_id = NULL
+        FROM observation.item_occurrence i
+        WHERE a.producer = ${tenant.producer} AND a.namespace = ${tenant.namespace}
+          AND i.producer = a.producer AND i.namespace = a.namespace
+          AND i.occurrence_id = a.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
       const grades = await sql`DELETE FROM observation.grade_observation g
         USING observation.item_occurrence i
         WHERE g.producer = ${tenant.producer} AND g.namespace = ${tenant.namespace}
           AND i.producer = g.producer AND i.namespace = g.namespace
           AND i.occurrence_id = g.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
+      await sql`DELETE FROM observation.blind_assignment a
+        USING observation.item_occurrence i
+        WHERE a.producer = ${tenant.producer} AND a.namespace = ${tenant.namespace}
+          AND i.producer = a.producer AND i.namespace = a.namespace
+          AND i.occurrence_id = a.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
+      await sql`DELETE FROM observation.evaluation_eligibility e
+        USING observation.item_occurrence i
+        WHERE e.producer = ${tenant.producer} AND e.namespace = ${tenant.namespace}
+          AND i.producer = e.producer AND i.namespace = e.namespace
+          AND i.occurrence_id = e.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
       const executions = await sql`DELETE FROM observation.evaluation_execution x
         USING observation.item_occurrence i
         WHERE x.producer = ${tenant.producer} AND x.namespace = ${tenant.namespace}

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import { createApp } from "../src/http/app";
 import { storeHumanGradeInTransaction } from "../src/storage/backfill-store";
+import { claimBlindAssignment, createBlindAssignment } from "../src/storage/blind-assignment-store";
 import { withTenant } from "../src/storage/database";
 import { listGrades, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
@@ -72,6 +73,43 @@ integration("blind assignment hides model results and refuses duplicate or expir
   }) });
   expect(retry.status).toBe(201);
   expect((await app.request(`/v1/blind-assignments/${assignment_id}/claim`, { method: "POST", headers })).status).toBe(409);
+}));
+
+integration("overlapping blind submissions replay the saved grade", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
+  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+    (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+    VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
+      'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version };
+  const assignment = await createBlindAssignment(db, tenant, identity);
+  if (!assignment.ok) throw new Error(assignment.error.detail);
+  expect((await claimBlindAssignment(db, tenant, { assignment_id: assignment.value.assignment_id,
+    reviewer_id: "reviewer-a", duration_seconds: 900 })).ok).toBe(true);
+  const app = createApp({ db, credentials: { ingest: [], read: [],
+    grade: [{ ...tenant, token: "blind", reviewer_id: "reviewer-a" }] } });
+  const request = { method: "POST", headers: { authorization: "Bearer blind", "content-type": "application/json" },
+    body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "human",
+      config_digest: "config-1", attempt_label: "overlap" }, details: {
+      answer: { state: "answered", kind: "boolean", value: true }, collection_mode: "blind",
+      blind_assignment_id: assignment.value.assignment_id,
+      model_answers_visible: false, workflow_decisions_visible: false } }) };
+  const pending: Promise<Response>[] = [];
+  const completed = [false, false];
+  await withTenant(db, tenant, async (trx) => {
+    await trx.selectFrom("observation.blind_assignment").select("assignment_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("assignment_id", "=", assignment.value.assignment_id).forUpdate().executeTakeFirstOrThrow();
+    pending.push(...completed.map((_, index) => Promise.resolve(app.request("/v1/grades", request))
+      .finally(() => { completed[index] = true; })));
+    await Bun.sleep(150);
+    expect(completed).toEqual([false, false]);
+  });
+  const [first, second] = await Promise.all(pending);
+  expect([first.status, second.status].sort()).toEqual([200, 201]);
+  const [firstGrade, secondGrade] = await Promise.all([first.json(), second.json()]);
+  expect(firstGrade.observation.observation_id).toBe(secondGrade.observation.observation_id);
 }));
 
 integration("readback distinguishes blind, in-context, correction and historical operator grades", async () => scratchGrading(async (db, occurrence_id) => {

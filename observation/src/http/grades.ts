@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { z } from "zod";
+import type { BlindAssignmentId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer } from "../grading/observation";
 import type { GradingContext } from "../grading/runner";
@@ -9,7 +10,8 @@ import type { SourceDependencies } from "./sources";
 import { contextMatchesIdentity, contextSchema, identitySchema, responseKindSchema } from "./evaluations";
 import { boundReviewer, credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
-import { claimBlindAssignment, createBlindAssignment, listUnclaimedBlindAssignments, readBlindAssignment } from "../storage/blind-assignment-store";
+import { claimBlindAssignment, createBlindAssignment, listUnclaimedBlindAssignments, readBlindAssignment,
+  type BlindAssignmentIdentity } from "../storage/blind-assignment-store";
 
 const answerSchema = z.union([
   z.object({ state: z.literal("answered"), kind: z.literal("boolean"), value: z.boolean() }),
@@ -46,19 +48,21 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     const parsed = z.object({ subject_occurrence_id: z.string().min(1), evidence_set_id: z.string().min(1),
       question_id: z.string().min(1), question_version: z.string().min(1) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_assignment", parsed.error.message);
-    const result = await createBlindAssignment(deps.db, credential, parsed.data);
+    const result = await createBlindAssignment(deps.db, credential, parsed.data as BlindAssignmentIdentity);
     return result.ok ? c.json(result.value, 201) : errorResponse(c, 409, "assignment_refused", result.error.detail);
   });
   app.post("/v1/blind-assignments/:id/claim", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
-    const result = await claimBlindAssignment(deps.db, credential, c.req.param("id"), boundReviewer(credential), 900);
+    const result = await claimBlindAssignment(deps.db, credential, {
+      assignment_id: c.req.param("id") as BlindAssignmentId, reviewer_id: boundReviewer(credential), duration_seconds: 900 });
     return result.ok ? c.json(result.value) : errorResponse(c, 409, "claim_refused", result.error.detail);
   });
   app.get("/v1/blind-assignments/:id", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
-    const assignment = await readBlindAssignment(deps.db, credential, c.req.param("id"), boundReviewer(credential));
+    const assignment = await readBlindAssignment(deps.db, credential,
+      c.req.param("id") as BlindAssignmentId, boundReviewer(credential));
     return assignment ? c.json(assignment) : errorResponse(c, 404, "not_found", "assignment not found");
   });
   app.post("/v1/grades", async (c) => {

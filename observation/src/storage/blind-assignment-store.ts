@@ -1,18 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { err, ok, type Result } from "../domain/primitives";
+import type { BlindAssignmentId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { EvaluationIdentity } from "../grading/execution";
 import { withTenant, type Database, type TenantScope } from "./database";
 
-export interface BlindAssignmentIdentity {
-  readonly subject_occurrence_id: string;
-  readonly evidence_set_id: string;
-  readonly question_id: string;
-  readonly question_version: string;
+export type BlindAssignmentIdentity = Pick<EvaluationIdentity,
+  "subject_occurrence_id" | "evidence_set_id" | "question_id" | "question_version">;
+export interface BlindAssignmentClaim {
+  readonly assignment_id: BlindAssignmentId;
+  readonly reviewer_id: string;
+  readonly duration_seconds: number;
 }
 export interface BlindAssignmentError { readonly operation: "blind_assignment"; readonly entity_id: string; readonly detail: string }
 export type BlindAssignmentState = "unsubmitted" | "claimed" | "expired" | "submitted";
 export interface BlindAssignmentView extends BlindAssignmentIdentity {
-  readonly assignment_id: string;
+  readonly assignment_id: BlindAssignmentId;
   readonly state: BlindAssignmentState;
   readonly claim_owner: string | null;
   readonly expires_at: Date | null;
@@ -41,7 +44,7 @@ export async function createBlindAssignment(db: Database, tenant: TenantScope, i
       if (!eligible || eligible.tag !== "eligible" ||
         (eligible.payload as { evidence_set_id?: string }).evidence_set_id !== identity.evidence_set_id)
         return failure(identity.subject_occurrence_id, "eligible frozen subject and evidence required");
-      const assignment_id = randomUUID();
+      const assignment_id = randomUUID() as BlindAssignmentId;
       const row = await trx.insertInto("observation.blind_assignment").values({
         producer: tenant.producer, namespace: tenant.namespace, assignment_id, ...identity,
         claim_owner: null, claimed_at: null, expires_at: null, submitted_observation_id: null,
@@ -58,8 +61,9 @@ export async function createBlindAssignment(db: Database, tenant: TenantScope, i
   } catch (cause) { return failure(identity.subject_occurrence_id, String(cause)); }
 }
 
-export async function claimBlindAssignment(db: Database, tenant: TenantScope, assignment_id: string,
-  reviewer_id: string, duration_seconds: number): Promise<Result<BlindAssignmentView, BlindAssignmentError>> {
+export async function claimBlindAssignment(db: Database, tenant: TenantScope,
+  claim: BlindAssignmentClaim): Promise<Result<BlindAssignmentView, BlindAssignmentError>> {
+  const { assignment_id, reviewer_id, duration_seconds } = claim;
   try {
     return await withTenant(db, tenant, async (trx) => {
       const row = await trx.updateTable("observation.blind_assignment")
@@ -75,15 +79,16 @@ export async function claimBlindAssignment(db: Database, tenant: TenantScope, as
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("question_id", "=", row.question_id).where("question_version", "=", row.question_version)
         .executeTakeFirst();
-      return ok({ assignment_id, subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: row.evidence_set_id,
-        question_id: row.question_id, question_version: row.question_version, state: assignmentState(row, new Date()),
+      return ok({ assignment_id, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
+        evidence_set_id: row.evidence_set_id as EvidenceSetId,
+        question_id: row.question_id as QuestionId, question_version: row.question_version, state: assignmentState(row, new Date()),
         claim_owner: row.claim_owner, expires_at: row.expires_at,
         submitted_observation_id: row.submitted_observation_id, question_text: question?.question_text ?? null });
     });
   } catch (cause) { return failure(assignment_id, String(cause)); }
 }
 
-export async function readBlindAssignment(db: Database, tenant: TenantScope, assignment_id: string,
+export async function readBlindAssignment(db: Database, tenant: TenantScope, assignment_id: BlindAssignmentId,
   reviewer_id: string): Promise<BlindAssignmentView | null> {
   return withTenant(db, tenant, async (trx) => {
     const row = await trx.selectFrom("observation.blind_assignment as a")
@@ -95,8 +100,9 @@ export async function readBlindAssignment(db: Database, tenant: TenantScope, ass
       .where("a.producer", "=", tenant.producer).where("a.namespace", "=", tenant.namespace)
       .where("a.assignment_id", "=", assignment_id).executeTakeFirst();
     if (!row || (row.claim_owner && row.claim_owner !== reviewer_id)) return null;
-    return { assignment_id, subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: row.evidence_set_id,
-      question_id: row.question_id, question_version: row.question_version,
+    return { assignment_id, subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
+      evidence_set_id: row.evidence_set_id as EvidenceSetId,
+      question_id: row.question_id as QuestionId, question_version: row.question_version,
       state: assignmentState(row, new Date()),
       claim_owner: row.claim_owner, expires_at: row.expires_at, submitted_observation_id: row.submitted_observation_id,
       question_text: row.question_text };
@@ -119,9 +125,10 @@ export async function listUnclaimedBlindAssignments(db: Database, tenant: Tenant
         eb("a.expires_at", "<=", sql<Date>`clock_timestamp()`)]))
       .orderBy("a.created_at").orderBy("a.assignment_id")
       .limit(limit).execute();
-    return rows.map((row) => ({ assignment_id: row.assignment_id,
-      subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: row.evidence_set_id,
-      question_id: row.question_id, question_version: row.question_version, question_text: row.question_text,
+    return rows.map((row) => ({ assignment_id: row.assignment_id as BlindAssignmentId,
+      subject_occurrence_id: row.subject_occurrence_id as ItemOccurrenceId,
+      evidence_set_id: row.evidence_set_id as EvidenceSetId,
+      question_id: row.question_id as QuestionId, question_version: row.question_version, question_text: row.question_text,
       state: row.claim_owner ? "expired" as const : "unsubmitted" as const,
       claim_owner: null, expires_at: row.expires_at, submitted_observation_id: null }));
   });

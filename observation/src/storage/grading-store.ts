@@ -363,6 +363,21 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
           const assignment = await trx.selectFrom("observation.blind_assignment").selectAll()
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("assignment_id", "=", details.blind_assignment_id).forUpdate().executeTakeFirst();
+          if (assignment?.submitted_observation_id) {
+            const replay = await trx.selectFrom("observation.evaluation_execution").selectAll()
+              .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+              .where("idempotency_digest", "=", digest.value).executeTakeFirst();
+            if (replay) {
+              const observation = await trx.selectFrom("observation.grade_observation").selectAll()
+                .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+                .where("execution_id", "=", replay.execution_id).executeTakeFirst();
+              if (observation?.observation_id === assignment.submitted_observation_id
+                && observation.reviewer_id === details.reviewer_id
+                && observation.collection_mode === "blind"
+                && observation.blind_assignment_id === details.blind_assignment_id)
+                return ok({ execution: replay, observation, was_replay: true });
+            }
+          }
           if (!assignment || assignment.claim_owner !== details.reviewer_id || !assignment.expires_at
           || assignment.expires_at <= new Date() || assignment.submitted_observation_id
           || assignment.subject_occurrence_id !== identity.subject_occurrence_id
