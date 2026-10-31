@@ -46,6 +46,7 @@ export function selectHandoffSendTarget(gate: ParkedGate | null, sent_gate_id: s
 }
 
 export const NO_REVIEW_REASON = "This revision has no open assessment review to record the request on.";
+export const BUILD_HANDOFF_UNOFFERED_REASON = "This run's definition has no Send to Builder decision. It launched on an older definition.";
 
 /** Whether the composed request can be recorded on the review, and why not when it cannot. */
 export type HandoffSendability =
@@ -56,5 +57,6 @@ export function selectHandoffSendability(preview: string, gate: ParkedGate): Han
   if (preview.length === 0) return { kind: "blocked", reason: "Include at least one next action to send." };
   if (gate.artifact_revision_id === null) return { kind: "blocked", reason: NO_REVIEW_REASON };
   if (!gate.actionable) return { kind: "blocked", reason: "The run has moved on, so this review can no longer take a decision." };
+  if (!gate.is_build_handoff_offered) return { kind: "blocked", reason: BUILD_HANDOFF_UNOFFERED_REASON };
   return { kind: "sendable", artifact_revision_id: gate.artifact_revision_id };
 }

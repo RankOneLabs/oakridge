@@ -32,6 +32,9 @@ export function selectPromptPaths(workflow: AuthoredWorkflow): readonly string[]
   return [...new Set(paths)].sort();
 }
 
+/** The checkout prompts and committed workflows are read from: `OAKRIDGE_PROMPT_ROOT`, or this repository. */
+export const selectConfigRoot = (): string => realpathSync(process.env.OAKRIDGE_PROMPT_ROOT ?? resolve(import.meta.dir, "../../.."));
+
 const PROMPT_DIRECTORY = `workflow-config${sep}prompts${sep}`;
 /**
  * Read one authored prompt, by its path relative to workflow-config/prompts.
@@ -41,7 +44,7 @@ export function readAuthoredPrompt(path: string): Traced<PromptContent> {
   if (isAbsolute(path) || path.includes("\\") || path.split("/").includes(".."))
     return traced("read_prompt", path, "prompt path is outside workflow-config/prompts");
   try {
-    const root = realpathSync(process.env.OAKRIDGE_PROMPT_ROOT ?? resolve(import.meta.dir, "../../.."));
+    const root = selectConfigRoot();
     const actual = realpathSync(resolve(root, "workflow-config/prompts", path));
     const inside = relative(root, actual);
     if (inside.startsWith("..") || isAbsolute(inside) || !inside.startsWith(PROMPT_DIRECTORY))

@@ -196,7 +196,6 @@ test("an unchanged pull request observation publishes no new revision and its at
 
 test("a transient pr_watch outage backs off and observes a merge, while a terminal failure settles", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
   const calls: number[] = [];
   const operation_runner: OperationRunner = { async run(call) {
     const input = decodePullRequestObserveInput(call.inputs);
@@ -210,6 +209,8 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1", operation_runner,
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, wake_timeout_seconds: 5, carrier_max_iterations: 8 } });
   try {
+    // Pinned after boot, which leaves only the committed workflows launchable.
+    const { digest } = await pinWorkflow(live, PR_WATCH);
     const start = async (head_branch: string): Promise<RunId> => {
       const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: { ...QUERY, head_branch } } }) });
@@ -245,7 +246,6 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
 
 test("a watch rolls over during repeated unavailable operations and resumes its running attempt", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
   let calls = 0;
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
     operation_runner: { async run() {
@@ -256,6 +256,7 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
     } },
     timing: { retry_initial_seconds: 0.02, retry_cap_seconds: 0.02, carrier_max_iterations: 2 } });
   try {
+    const { digest } = await pinWorkflow(live, PR_WATCH);
     const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
     if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
@@ -279,7 +280,6 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
 
 test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
   let release_operation = (): void => undefined;
   const operation_released = new Promise<void>((resolve) => { release_operation = resolve; });
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
@@ -304,6 +304,7 @@ test("a wake sent during carrier dispatch advances the run before its wake timeo
     return launch;
   }) as never);
   try {
+    const { digest } = await pinWorkflow(live, PR_WATCH);
     const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
     if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);

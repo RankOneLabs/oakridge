@@ -11,6 +11,7 @@ import { startObservationPublisher, type ObservationOptions } from "../adapters/
 import { createAgentProvider } from "../effects/agent-provider";
 import type { EffectProvider } from "../effects/provider";
 import { createOperationRunner, type OperationRunner } from "../operations/runner";
+import { pinCommittedDefinitions } from "./committed-definitions";
 import { BunGitCommandRunner } from "./git-command-runner";
 import { GatedReviewPullRequestReader } from "./gated-review-pull-requests";
 import { startRunSweep } from "./run-sweep";
@@ -73,6 +74,7 @@ export async function createProductionComposition(options: ProductionOptions): P
     launch_attempted = true;
     await DBOS.launch();
     await resumeActiveRuns(db);
+    await pinCommittedDefinitions(db, core);
     const wake = (run_id: RunId): void => { void wakeRun(run_id); };
     const app = createHttpApp({ db, core, wake, application_version, write_policy: configuredBrowserWritePolicy(), access, operations });
     const sweep = startRunSweep(() => sweepRunsNeedingWork(db));

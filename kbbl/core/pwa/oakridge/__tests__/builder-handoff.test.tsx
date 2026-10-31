@@ -6,9 +6,10 @@ import type { ParkedGate } from "../types";
 import type { Assessment } from "../lib/assessment";
 import type { EditOutcome } from "../lib/edit-outcome";
 import { BuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
-import { compositeId } from "../adapters/core";
+import { compositeId, reviewToGates } from "../adapters/core";
 import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
+import { withUnitFields } from "../__fixtures__/read-models";
 import type { OperatorUnitView } from "../operator-contracts";
 
 // Split out of artifact-review.test.tsx: the handoff panel is tested on its own,
@@ -34,6 +35,7 @@ const HANDOFF_GATE: ParkedGate = {
   artifact_revision_id: "assessment-rev",
   worktree: null,
   resume_actions: ["approve", "request_assessment_changes"],
+  is_build_handoff_offered: true,
   run_state: "active",
   actionable: true,
 };
@@ -173,5 +175,20 @@ describe("assessment builder handoff", () => {
     fireEvent.blur(input);
     await screen.findByText(/Not saved: 409 stale revision/);
     expect(screen.getByDisplayValue("Fix the revised issue")).toBeTruthy();
+  });
+});
+
+describe("build handoff availability", () => {
+  const assessmentGate = (unit: OperatorUnitView): ParkedGate | undefined => {
+    const gates = reviewToGates(unit);
+    if (!gates.ok) throw new Error(gates.error.detail);
+    return gates.value.find((gate) => gate.gate_step === "assessment_review");
+  };
+
+  it("is offered only when the run's definition has request_build_changes on the review", () => {
+    const olderDefinition = withUnitFields(HANDOFF_UNIT, { decisions: HANDOFF_UNIT.decisions.filter((decision) =>
+      !(decision.submit.kind === "review" && decision.submit.decision === "request_build_changes")) });
+    expect([assessmentGate(HANDOFF_UNIT)?.is_build_handoff_offered, assessmentGate(olderDefinition)?.is_build_handoff_offered])
+      .toEqual([true, false]);
   });
 });

@@ -20,6 +20,8 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
     artifact_revision_id: item.artifact_revision_id,
     worktree: null,
     resume_actions: item.resume_actions,
+    // An inbox gate renders the review's buttons; Send to Builder lives on the assessment, which reads the unit's gate.
+    is_build_handoff_offered: false,
     pr_url: item.pr_url,
     // The inbox only queues gates whose run is still active (`get_review_inbox`
     // filters on `actionable`); stranded gates are rendered on the run instead.

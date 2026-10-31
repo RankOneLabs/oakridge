@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment } from "./assessment";
-import { composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffSendability, selectHandoffSendTarget, withItemAdded, withItemRemoved } from "./assessment-handoff";
+import { BUILD_HANDOFF_UNOFFERED_REASON, composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffSendability, selectHandoffSendTarget, withItemAdded, withItemRemoved } from "./assessment-handoff";
 import type { ParkedGate } from "../types";
 import linkedAssessment from "./__fixtures__/id-linked-assessment.json";
 
@@ -43,7 +43,7 @@ describe("assessment handoff", () => {
 
 const gate: ParkedGate = {
   id: "gate-1", gate_type: "assessment_review", gate_step: "assessment_review", run_id: "run-1", stage_name: "cohort",
-  unit_id: "alpha", artifact_revision_id: "assessment-rev", worktree: null, resume_actions: ["approve"], run_state: "active", actionable: true,
+  unit_id: "alpha", artifact_revision_id: "assessment-rev", worktree: null, resume_actions: ["approve"], is_build_handoff_offered: true, run_state: "active", actionable: true,
 };
 
 describe("selectHandoffSendTarget", () => {
@@ -84,5 +84,10 @@ describe("selectHandoffSendability", () => {
   it("blocks a review the run has moved past", () => {
     expect(selectHandoffSendability("1. Fix it", { ...gate, actionable: false }))
       .toEqual({ kind: "blocked", reason: "The run has moved on, so this review can no longer take a decision." });
+  });
+
+  it("blocks a review whose definition has no build handoff", () => {
+    expect(selectHandoffSendability("1. Fix it", { ...gate, is_build_handoff_offered: false }))
+      .toEqual({ kind: "blocked", reason: BUILD_HANDOFF_UNOFFERED_REASON });
   });
 });

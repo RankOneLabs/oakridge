@@ -78,6 +78,7 @@ const gate = (overrides: Partial<ParkedGate> & Pick<ParkedGate, "id" | "unit_id"
   artifact_revision_id: null,
   worktree: null,
   resume_actions: ["approve", "reject"],
+  is_build_handoff_offered: true,
   run_state: "active",
   actionable: true,
   ...overrides,

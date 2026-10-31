@@ -44,7 +44,7 @@ const isObject = (value: unknown): value is { readonly [key: string]: unknown } 
 const isPromptPath = (value: unknown): boolean => typeof value === "string";
 const isOptionalPromptPath = (value: unknown): boolean => value === undefined || value === null || isPromptPath(value);
 /** The workflow's outline, enough to read its prompts; the core checks the rest when it compiles. */
-function isWorkflowOutline(value: unknown): value is Workflow {
+export function isWorkflowOutline(value: unknown): value is Workflow {
   return isObject(value) && typeof value.workflow === "string" && isObject(value.run) && isObject(value.stages)
     && Object.values(value.stages).every((stage) => isObject(stage) && isObject(stage.workers)
       && Object.values(stage.workers).every((worker) => isObject(worker)

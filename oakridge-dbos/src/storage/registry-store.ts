@@ -111,6 +111,23 @@ export async function pinDefinition(db: Database, pin: DefinitionPin): Promise<P
   });
 }
 
+/**
+ * Make exactly `launchable` the unarchived catalog: those bundles are
+ * unarchived and every other is archived. Runs already pinned to an archived
+ * bundle continue; it only stops being launchable.
+ */
+export async function setLaunchableDefinitions(db: Database, launchable: readonly DefinitionBundleId[]): Promise<void> {
+  if (launchable.length === 0) throw new Error("at least one launchable definition is required");
+  await db.transaction().execute(async (trx) => {
+    const restored = await trx.updateTable("authority.definition_bundle").set({ archived_at: null })
+      .where("id", "=", anyOf(launchable)).where("archived_at", "is not", null).returning("id").execute();
+    const retired = await trx.updateTable("authority.definition_bundle").set((eb) => ({ archived_at: eb.fn<Date>("now") }))
+      .where("id", "not in", [...launchable]).where("archived_at", "is", null).returning("id").execute();
+    if (restored.length + retired.length > 0)
+      await announce(trx, null, launchable[0], { kind: "invalidate", data: { target: "definitions", run_id: null } });
+  });
+}
+
 /** The unarchived definition a launch by digest pins to. */
 export async function findLaunchableDefinition(db: Reader, digest: string): Promise<DefinitionBundleId | null> {
   const row = await db.selectFrom("authority.definition_bundle").select("id")

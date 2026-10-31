@@ -472,6 +472,8 @@ export interface ParkedGate {
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
+  /** Whether the run's pinned definition offers `request_build_changes` on this review; Send to Builder records only that decision. */
+  is_build_handoff_offered: boolean;
   pr_url?: string | null;
   /** The run's persisted state at read time — a gate stays listed whatever it is. */
   run_state: RunState;

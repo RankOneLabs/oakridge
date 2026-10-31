@@ -180,6 +180,8 @@ export function reviewToGates(unit: OperatorUnitView): AdapterResult<ParkedGate[
         ? artifact ? artifactRevisionId(artifact, target.target_revision_id) : target.target_revision_id
         : null,
       worktree: null, resume_actions: [...new Set(decisions.map(decisionAction))],
+      is_build_handoff_offered: unit.decisions.some((decision) => decision.submit.kind === "review"
+        && decision.submit.review === review && decision.submit.decision === "request_build_changes"),
       pr_url: review === "merge_confirmation" ? developmentPullRequestUrl(unit) : null,
       run_state: unit.status.kind === "done" ? "succeeded" : unit.status.kind === "cancelled" ? "cancelled" : "active", actionable: true };
   }));

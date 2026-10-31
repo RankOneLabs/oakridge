@@ -115,6 +115,7 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
   resume_actions: ["approve", "reject"],
+  is_build_handoff_offered: true,
   run_state: "active",
   actionable: true,
 };

@@ -5,18 +5,21 @@ import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import type { RunInspectView } from "../src/projections/run-view";
 import { runWorkflowId, sweepRunsNeedingWork } from "../src/workflows/topology";
-import { sampleWorkflow, scratchDatabase } from "./authority-fixture";
+import { CoreClient } from "../src/core-client/client";
+import { pinSample, sampleWorkflow, scratchDatabase } from "./authority-fixture";
 
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 type Composition = Awaited<ReturnType<typeof createProductionComposition>>;
 /** A production composition booted on a freshly migrated scratch database, closed and dropped after `body`. */
-async function booted(body: (context: { readonly app: Composition["app"]; readonly db: Database }) => Promise<void>): Promise<void> {
+async function booted(body: (context: { readonly app: Composition["app"]; readonly db: Database }) => Promise<void>,
+  before?: (db: Database) => Promise<void>): Promise<void> {
   const scratch = await scratchDatabase();
   const db = openDatabase(scratch.url);
   let composition: Composition | null = null;
   try {
     await migrateEmptyDatabase(db);
+    await before?.(db);
     composition = await createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", timing: { wake_timeout_seconds: 1 } });
     await body({ app: composition.app, db });
   } finally {
@@ -27,7 +30,8 @@ async function booted(body: (context: { readonly app: Composition["app"]; readon
 }
 
 test("an empty database migrates, boots, pins, launches and carries the first worker to the executor", () => booted(async ({ app, db }) => {
-  const empty = { definitions: await (await app.request("/api/definitions")).json(), runs: await (await app.request("/api/runs")).json() };
+  const definitions = await (await app.request("/api/definitions")).json() as { readonly items: readonly { readonly bundle: { readonly key: string } }[] };
+  const empty = { definitions: definitions.items.map((item) => item.bundle.key), runs: await (await app.request("/api/runs")).json() };
   const pinned = await app.request("/api/definitions", json(sampleWorkflow("review-loop")));
   const { digest } = await pinned.json() as { readonly digest: string };
   const launch = (input: unknown) => app.request("/api/runs", json({ digest, input, request_id: "launch-1" }));
@@ -47,10 +51,25 @@ test("an empty database migrates, boots, pins, launches and carries the first wo
   expect({ empty, pinned: pinned.status, launched: launched.status, replay: [replay.status, (await replay.json() as { event_id: string }).event_id === created.event_id],
     conflict: conflict.status, invalid, runs: runs.items.map((run) => run.run_id),
     attention: inspect?.attention.flatMap((item) => item.kind === "stalled_worker" ? [[item.worker, item.detail]] : []), writers: writers.map((row) => row.writer.kind) })
-    .toEqual({ empty: { definitions: { items: [], next_cursor: null }, runs: { items: [], next_cursor: null } }, pinned: 201, launched: 201,
+    .toEqual({ empty: { definitions: ["development"], runs: { items: [], next_cursor: null } }, pinned: 201, launched: 201,
       replay: [200, true], conflict: 409, invalid: [400, 400, 400, 400], runs: [created.run_id],
       attention: [["writer", "agent workers need KBBL_BASE_URL and OAKRIDGE_PUBLICATION_KEY"]], writers: ["operator", "executor"] });
 }), 30_000);
+
+test("boot makes the committed workflows the only launchable definitions", () => {
+  let stale = "";
+  return booted(async ({ app }) => {
+    const listed = async (query: string) => ((await (await app.request(`/api/definitions${query}`)).json()) as
+      { readonly items: readonly { readonly digest: string; readonly bundle: { readonly key: string } }[] }).items;
+    const launch = await app.request("/api/runs", json({ digest: stale, input: { topic: "Oakridge" }, request_id: "launch-stale" }));
+    expect({ launchable: (await listed("")).map((item) => item.bundle.key), stale_archived: (await listed("?archived=true")).some((item) => item.digest === stale),
+      stale_launch: launch.status }).toEqual({ launchable: ["development"], stale_archived: true, stale_launch: 404 });
+  }, async (db) => {
+    const started = CoreClient.start();
+    if (!started.ok) throw new Error("core WASM did not load");
+    try { stale = (await pinSample({ db, core: started.value })).digest; } finally { started.value.close(); }
+  });
+}, 30_000);
 
 test("a run whose wake failed to start its workflow is carried by the next sweep", () => booted(async ({ app, db }) => {
   const { digest } = await (await app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string };
