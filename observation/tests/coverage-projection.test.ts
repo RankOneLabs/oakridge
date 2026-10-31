@@ -150,7 +150,8 @@ async function addOccurrence(db: Database, label: string, tag: string = "eligibl
   return id;
 }
 
-async function addGrade(db: Database, label: string, occurrenceId: string, kind: "human" | "model" | "code",
+async function addGrade(db: Database, label: string, occurrenceId: string,
+  evaluatorId: "human" | "model" | "code" | "oakridge-operator-human",
   answer: { kind: string; state: string; value?: string | boolean; reason?: string }, evidenceId = evidence.evidence_set_id): Promise<void> {
   const digest = fixtureId(`execution-${label}`);
   await withTenant(db, tenant, async (trx) => {
@@ -158,13 +159,13 @@ async function addGrade(db: Database, label: string, occurrenceId: string, kind:
       subject_occurrence_id, evidence_set_id, question_id, question_version, evaluator_definition_id,
       config_digest, attempt_label, idempotency_digest, status, ended_at)
       VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${occurrenceId}, ${evidenceId},
-        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${kind}, 'config-1', ${label},
+        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluatorId}, 'config-1', ${label},
         ${digest}, 'completed', now())`.execute(trx);
     await sql`INSERT INTO observation.grade_observation (producer, namespace, observation_id,
       execution_id, subject_occurrence_id, evidence_set_id, question_id, question_version,
       evaluator_definition_id, answer_kind, answer_state, answer_payload)
       VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${label}, ${occurrenceId}, ${evidenceId},
-        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${kind}, ${answer.kind},
+        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluatorId}, ${answer.kind},
         ${answer.state}, ${JSON.stringify(answer)}::jsonb)`.execute(trx);
   });
 }
@@ -227,6 +228,28 @@ integration("coverage separates human, machine, pending, failed and excluded occ
   expect((await invalid.json()).error.code).toBe("invalid_selection");
 }));
 
+integration("code grades count as machine coverage and reserved operator grades do not count as human labels", async () => scratchGrading(async (db) => {
+  for (const kind of ["human", "code"] as const)
+    expect((await registerGradingContext(db, tenant, { question: choiceQuestion, evidence, evaluator: evaluator(kind) })).ok).toBe(true);
+  expect((await registerGradingContext(db, tenant, { question: choiceQuestion, evidence,
+    evaluator: { ...evaluator("human"), evaluator_definition_id: "oakridge-operator-human",
+      provider: "fixture-reserved-human" } })).ok).toBe(true);
+  const human = await addOccurrence(db, "ordinary-human-grade");
+  const code = await addOccurrence(db, "code-grade");
+  const reserved = await addOccurrence(db, "reserved-human-grade");
+  await addGrade(db, "ordinary-human-observation", human, "human",
+    { kind: "choice", state: "answered", value: "altered" });
+  await addGrade(db, "code-observation", code, "code",
+    { kind: "choice", state: "answered", value: "preserved" });
+  await addGrade(db, "reserved-human-observation", reserved, "oakridge-operator-human",
+    { kind: "choice", state: "answered", value: "altered" });
+  const row = (await readCoverage(db, tenant, { run_id: "run-1", revision_id: null,
+    question_id: choiceQuestion.question_id, question_version: choiceQuestion.question_version })).questions[0]!;
+  expect(row.eligible).toBe(3);
+  expect(row.human_label_graded).toBe(1);
+  expect(row.machine_graded).toBe(1);
+}));
+
 integration("completed work is not pending and terminal failure counts once", async () => scratchGrading(async (db) => {
   expect((await registerGradingContext(db, tenant, { question: choiceQuestion, evidence, evaluator: evaluator("model") })).ok).toBe(true);
   const completed = await addOccurrence(db, "completed-job");
@@ -260,7 +283,7 @@ integration("completed work is not pending and terminal failure counts once", as
   expect(row.failed).toBe(1);
 }));
 
-integration("disagreement compares latest substantive answers on the same evidence and answer kind", async () => scratchGrading(async (db) => {
+integration("disagreement compares latest observations on the same evidence and answer kind", async () => scratchGrading(async (db) => {
   for (const kind of ["human", "model"] as const)
     expect((await registerGradingContext(db, tenant, { question: choiceQuestion, evidence, evaluator: evaluator(kind) })).ok).toBe(true);
   const otherEvidence = { ...evidence, evidence_set_id: "evidence-2" as typeof evidence.evidence_set_id };
@@ -288,6 +311,18 @@ integration("disagreement compares latest substantive answers on the same eviden
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
   await addGrade(db, "different-human-correction", different, "human",
     { kind: "choice", state: "answered", value: "preserved" });
+  expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
+  await addGrade(db, "different-human-new-answer", different, "human",
+    { kind: "choice", state: "answered", value: "altered" });
+  expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
+  await addGrade(db, "different-human-abstain", different, "human",
+    { kind: "choice", state: "abstain", reason: "retracted" });
+  expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
+  await addGrade(db, "different-human-again", different, "human",
+    { kind: "choice", state: "answered", value: "altered" });
+  expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
+  await addGrade(db, "different-human-unclear", different, "human",
+    { kind: "choice", state: "unclear", reason: "retracted" });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
 }));
 
