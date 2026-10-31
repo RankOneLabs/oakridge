@@ -102,16 +102,16 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     if (identity.evaluator_definition_id === "oakridge-operator-human"
       || isLangfuseAnnotationEvaluator(identity.evaluator_definition_id))
       return errorResponse(c, 400, "reserved_evaluator", "evaluator is reserved for its authenticated import path");
+    if (identity.evaluator_definition_id === NATIVE_HUMAN_EVALUATOR.evaluator_definition_id) {
+      const registered = await ensureNativeHumanEvaluator(deps.db, credential);
+      if (!registered.ok) return errorResponse(c, 422, "invalid_evaluator", registered.error.detail);
+    }
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (context.evaluator.kind !== "human") return errorResponse(c, 400, "invalid_evaluator", "human evaluator required");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
-    }
-    if (identity.evaluator_definition_id === NATIVE_HUMAN_EVALUATOR.evaluator_definition_id) {
-      const registered = await ensureNativeHumanEvaluator(deps.db, credential);
-      if (!registered.ok) return errorResponse(c, 422, "invalid_evaluator", registered.error.detail);
     }
     const result = await acceptHumanGrade(deps.db, credential, { ...identity,
       details: { ...parsed.data.details, reviewer_id, answer: parsed.data.details.answer as GradeAnswer } as GradeDetails });

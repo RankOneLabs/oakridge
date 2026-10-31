@@ -7,7 +7,7 @@ import { withTenant } from "../src/storage/database";
 import { listGrades, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
 import { question, evidence, evaluator, scratchGrading, tenant } from "./grading-fixture";
-import { NATIVE_HUMAN_EVALUATOR } from "../src/grading/evaluator";
+import { instructionDigest, NATIVE_HUMAN_EVALUATOR } from "../src/grading/evaluator";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
@@ -25,13 +25,21 @@ integration("native human submission registers its definition without client con
     const details = { answer: { state: "answered", kind: "boolean", value: true },
       collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false };
     const route = "/v1/grades";
+    const poisonedText = "Client-supplied native instructions";
+    const conflicting = await app.request(route, { method: "POST", headers, body: JSON.stringify({ identity,
+      context: { question, evidence, evaluator: { ...NATIVE_HUMAN_EVALUATOR,
+        instruction_text: poisonedText, prompt_digest: instructionDigest(poisonedText) } }, details }) });
+    expect([conflicting.status, (await conflicting.json()).error.code]).toEqual([422, "invalid_context"]);
     const grade = await app.request(route, { method: "POST", headers, body: JSON.stringify({ identity, details }) });
     expect(grade.status).toBe(201);
     const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluator_definition")
-      .select(["kind", "config_digest"]).where("producer", "=", tenant.producer)
+      .select(["kind", "config_digest", "instruction_text", "prompt_digest"])
+      .where("producer", "=", tenant.producer)
       .where("namespace", "=", tenant.namespace)
       .where("evaluator_definition_id", "=", NATIVE_HUMAN_EVALUATOR.evaluator_definition_id).executeTakeFirst());
-    expect(stored).toMatchObject({ kind: "human", config_digest: NATIVE_HUMAN_EVALUATOR.config_digest });
+    expect(stored).toMatchObject({ kind: "human", config_digest: NATIVE_HUMAN_EVALUATOR.config_digest,
+      instruction_text: NATIVE_HUMAN_EVALUATOR.instruction_text,
+      prompt_digest: NATIVE_HUMAN_EVALUATOR.prompt_digest });
     expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0]?.observation.label_origin).toBe("other");
     for (const evaluator_definition_id of ["oakridge-operator-human", "langfuse-annotation-human",
       "langfuse-annotation-human/v2"]) {

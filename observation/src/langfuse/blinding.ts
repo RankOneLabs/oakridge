@@ -8,8 +8,14 @@ function exposesAssessorDecision(address: string | null): boolean {
   return address !== null && /(?:^|[\/#?._-])(verdict|decision|effect)(?:$|[\/#?._=&-])/i.test(address);
 }
 
+export interface BlindedEvidenceAddress {
+  readonly ref: string;
+  readonly digest: string | null;
+  readonly deep_link: string | null;
+}
+
 export function blindReferenceAddresses(references: readonly StoredEvidenceReference[])
-  : Result<readonly { readonly ref: string; readonly digest: string | null; readonly deep_link: string | null }[], BlindingError> {
+  : Result<readonly BlindedEvidenceAddress[], BlindingError> {
   const addresses = references.map((reference) => ({ ref: reference.ref,
     digest: reference.digest, deep_link: reference.deep_link ?? null }));
   if (addresses.some((source) => [source.ref, source.deep_link].some(exposesAssessorDecision)))
