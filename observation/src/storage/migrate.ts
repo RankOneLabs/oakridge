@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { sql } from "kysely";
+import { err, ok, type Result } from "../domain/primitives";
 import { openDatabase, type Database } from "./database";
 import { migrations, type MigrationEntry } from "./migrations/manifest";
 import { createScratchDatabase } from "../../scripts/scratch-database";
@@ -10,6 +11,7 @@ const MINIMUM_SERVER_VERSION = 150000;
 interface AppliedMigration { readonly name: string; readonly digest: string; readonly applied_at: Date }
 interface MigrationSource { readonly entry: MigrationEntry; readonly source: string; readonly digest: string }
 interface CatalogSnapshot { readonly tables: readonly string[]; readonly columns: readonly string[]; readonly constraints: readonly string[]; readonly indexes: readonly string[] }
+interface MigrationPrefixError { readonly operation: "validate_migration_prefix"; readonly entity_id: string; readonly detail: string }
 
 async function sources(entries: readonly MigrationEntry[]): Promise<MigrationSource[]> {
   return Promise.all(entries.map(async (entry) => {
@@ -49,13 +51,18 @@ async function applied(db: Database): Promise<AppliedMigration[]> {
   return [...result.rows];
 }
 
-function assertPrefix(rows: readonly AppliedMigration[], chain: readonly MigrationSource[]): void {
-  if (rows.length > chain.length) throw new Error(`${SCHEMA} ledger contains migrations missing from manifest`);
-  rows.forEach((row, index) => {
+function prefixError(entity_id: string, detail: string): Result<never, MigrationPrefixError> {
+  return err({ operation: "validate_migration_prefix", entity_id, detail });
+}
+
+function validatePrefix(rows: readonly AppliedMigration[], chain: readonly MigrationSource[]): Result<void, MigrationPrefixError> {
+  if (rows.length > chain.length) return prefixError(SCHEMA, "ledger contains migrations missing from manifest");
+  for (const [index, row] of rows.entries()) {
     const expected = chain[index];
-    if (!expected || row.name !== expected.entry.name) throw new Error(`${SCHEMA} ledger order mismatch at ${row.name}`);
-    if (row.digest !== expected.digest) throw new Error(`${SCHEMA} migration digest mismatch for ${row.name}: recorded ${row.digest}, current ${expected.digest}`);
-  });
+    if (!expected || row.name !== expected.entry.name) return prefixError(row.name, `ledger order mismatch at ${row.name}`);
+    if (row.digest !== expected.digest) return prefixError(row.name, `migration digest mismatch for ${row.name}: recorded ${row.digest}, current ${expected.digest}`);
+  }
+  return ok(undefined);
 }
 
 /** Apply the explicit migration chain, one migration and ledger row per transaction. */
@@ -82,7 +89,8 @@ export async function migrateEmptyDatabase(db: Database, entries: readonly Migra
         return;
       }
       const rows = await applied(trx);
-      assertPrefix(rows, chain);
+      const prefix = validatePrefix(rows, chain);
+      if (!prefix.ok) throw new Error(`${SCHEMA} ${prefix.error.operation} (${prefix.error.entity_id}): ${prefix.error.detail}`);
       if (rows.length > index) return;
       if (rows.length !== index) throw new Error(`${SCHEMA} ledger is not a manifest prefix`);
       await sql.raw(migration.source).execute(trx);

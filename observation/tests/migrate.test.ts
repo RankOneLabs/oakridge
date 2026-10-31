@@ -233,6 +233,42 @@ integration("cutover preflight reports both databases without changing rows or s
   } finally { await authority.destroy(); await observation.destroy(); }
 })));
 
+integration("cutover preflight refuses a row-security-limited observation reader", async () => scratch(async (authorityUrl) => scratch(async (observationUrl) => {
+  const authority = openAuthorityDatabase(authorityUrl), observation = openDatabase(observationUrl);
+  const role = `preflight_reader_${randomBytes(6).toString("hex")}`;
+  const password = randomBytes(16).toString("hex");
+  let hasRole = false;
+  try {
+    await migrateAuthority(authority);
+    await migrateEmptyDatabase(observation);
+    await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+      artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body,
+      body_digest, recorded_at) VALUES ('oakridge', 'preflight', 'revision-1', 'run-1', 'unit-1',
+      'build_result', '1', 'bundle-1', 'digest-1', '{}'::jsonb,
+      ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(observation);
+    await sql.raw(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`).execute(observation);
+    hasRole = true;
+    await sql.raw(`GRANT USAGE ON SCHEMA observation TO ${role}`).execute(observation);
+    await sql.raw(`GRANT SELECT ON observation.source_revision, observation.item_occurrence, observation.grade_observation TO ${role}`).execute(observation);
+    const restrictedUrl = new URL(observationUrl);
+    restrictedUrl.username = role;
+    restrictedUrl.password = password;
+    const restricted = openDatabase(restrictedUrl.href);
+    try {
+      const hidden = await sql<{ count: string }>`SELECT count(*)::text AS count FROM observation.source_revision`.execute(restricted);
+      expect(hidden.rows[0]?.count).toBe("0");
+    } finally { await restricted.destroy(); }
+    await expect(cutoverPreflight(authorityUrl, restrictedUrl.href)).rejects.toThrow("BYPASSRLS");
+  } finally {
+    if (hasRole) {
+      await sql.raw(`DROP OWNED BY ${role}`).execute(observation);
+      await sql.raw(`DROP ROLE ${role}`).execute(observation);
+    }
+    await authority.destroy();
+    await observation.destroy();
+  }
+})));
+
 integration("non-empty database without a baseline is refused", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
