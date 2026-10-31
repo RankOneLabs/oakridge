@@ -18,7 +18,11 @@ workflow decisions. kbbl proxies its API and runs ACP sessions; its SQLite
 ledger remains authoritative only for local sessions, turns and process
 observations.
 
-For the Oakridge database cutover: (1) stop the service; (2) `pg_dump` to a
+Normal authority and observation schema changes use their ordered forward
+migration manifests and applied ledgers. Run the read-only cutover preflight
+and rehearse explicit ledger adoption on restored copies before cutover.
+
+Only for an explicitly requested Oakridge database reset: (1) stop the service; (2) `pg_dump` to a
 file nothing in this repository reads; (3) drop and recreate the Oakridge
 database empty; (4) deploy the core WASM, DBOS backend and kbbl PWA; and
 (5) admit traffic after the new stack is healthy. Do not reset kbbl's separate

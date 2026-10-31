@@ -29,7 +29,14 @@ AGENTS.md for its commands.
 
 ## Database cutover
 
-For a reset of the Oakridge database, perform these steps in order:
+Normal schema changes use ordered, data-preserving forward migrations in the
+authority and observation manifests. Each database keeps its own applied
+migration ledger. Before an irreversible cutover, run the read-only cutover
+preflight against restored copies, review its report, and rehearse explicit
+ledger adoption on restored copies of both databases. Existing databases
+without a ledger refuse startup until adoption succeeds.
+
+Only when a reset is explicitly requested, perform these steps in order:
 
 1. Stop the Oakridge service.
 2. Run `pg_dump` to a file that nothing in this repository reads.

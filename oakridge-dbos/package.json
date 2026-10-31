@@ -10,7 +10,10 @@
     "test:unit": "bash tests/run-suite.sh unit",
     "test:integration": "bash tests/run-suite.sh integration",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "generate:records": "bun scripts/generate-storage-records.ts"
+    "generate:records": "bun scripts/generate-storage-records.ts",
+    "storage:adopt": "bun src/storage/migrate.ts --adopt",
+    "cutover:preflight": "bun scripts/cutover-preflight.ts",
+    "storage:check": "bun scripts/generate-storage-records.ts --check"
   },
   "dependencies": {
     "@dbos-inc/dbos-sdk": "4.25.14",

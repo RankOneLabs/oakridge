@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { createHash, randomBytes } from "node:crypto";
+import { readdir, unlink } from "node:fs/promises";
 import { sql } from "kysely";
 import { jsonText, openDatabase } from "../src/storage/database";
-import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { migrateEmptyDatabase, adoptExistingDatabase } from "../src/storage/migrate";
+import { migrations } from "../src/storage/migrations/manifest";
 import { scratchDatabase } from "./authority-fixture";
 
 test("an empty database takes the baseline once, and a repeat confirms it", async () => {
@@ -12,6 +15,10 @@ test("an empty database takes the baseline once, and a repeat confirms it", asyn
     await migrateEmptyDatabase(db);
     const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(db);
     expect(baselines.rows[0]?.count).toBe(1);
+    const ledger = await sql<{ name: string; digest: string; applied_at: Date }>`SELECT name, digest, applied_at FROM authority.schema_migration`.execute(db);
+    expect(ledger.rows[0]?.name).toBe("0001_core.sql");
+    expect(ledger.rows[0]?.digest).toBe(createHash("sha256").update(new Uint8Array(await Bun.file(migrations[0]!.file).arrayBuffer())).digest("hex"));
+    expect(ledger.rows[0]?.applied_at).toBeInstanceOf(Date);
   } finally { await db.destroy(); await scratch.drop(); }
 });
 
@@ -26,7 +33,7 @@ test("two processes applying the baseline concurrently apply it exactly once", a
   } finally { await first.destroy(); await second.destroy(); await scratch.drop(); }
 });
 
-test("a database with other tables is refused, and a changed baseline is detected", async () => {
+test("a database with other tables is refused, and changed migration bytes are detected", async () => {
   const scratch = await scratchDatabase();
   const db = openDatabase(scratch.url);
   try {
@@ -34,8 +41,31 @@ test("a database with other tables is refused, and a changed baseline is detecte
     await expect(migrateEmptyDatabase(db)).rejects.toThrow("requires an empty database; found public.stray");
     await sql`DROP TABLE public.stray`.execute(db);
     await migrateEmptyDatabase(db);
-    await sql`UPDATE authority.schema_baseline SET digest = ${"0".repeat(64)}`.execute(db);
-    await expect(migrateEmptyDatabase(db)).rejects.toThrow("authority baseline digest mismatch");
+    const path = `/tmp/authority_migration_${randomBytes(6).toString("hex")}.sql`;
+    await Bun.write(path, `${await Bun.file(migrations[0]!.file).text()}\n-- changed`);
+    try {
+      await expect(migrateEmptyDatabase(db, [{ name: "0001_core.sql", file: new URL(`file://${path}`) }])).rejects.toThrow("0001_core.sql");
+    } finally { await unlink(path); }
+  } finally { await db.destroy(); await scratch.drop(); }
+});
+
+test("manifest lists every committed authority migration", async () => {
+  const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
+  expect(migrations.map((entry) => entry.name)).toEqual(files.filter((name) => name.endsWith(".sql")));
+});
+
+test("historic authority baseline is adopted after catalog validation", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    const source = await Bun.file(migrations[0]!.file).text();
+    await sql.raw(source).execute(db);
+    await sql`INSERT INTO authority.schema_baseline (digest) VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("run storage:adopt");
+    expect(await adoptExistingDatabase(db, scratch.url)).toEqual([]);
+    await migrateEmptyDatabase(db);
+    const ledger = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM authority.schema_migration`.execute(db);
+    expect(ledger.rows[0]?.count).toBe(1);
   } finally { await db.destroy(); await scratch.drop(); }
 });
 
