@@ -9,5 +9,4 @@ const names = [
 ] as const;
 
 export const migrations: readonly MigrationEntry[] = names.map((name) => ({ name, file: new URL(name, import.meta.url) }));
-export interface MigrationEntry { readonly name: string; readonly file: URL }
 

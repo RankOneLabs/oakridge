@@ -3,11 +3,11 @@ import { randomBytes, createHash } from "node:crypto";
 import { Client } from "pg";
 import { readdir, unlink } from "node:fs/promises";
 import { sql } from "kysely";
-import { openDatabase, withTenant } from "../src/storage/database";
+import { openDatabase, withTenant, type Database as ObservationDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase, adoptExistingDatabase } from "../src/storage/migrate";
 import { migrations } from "../src/storage/migrations/manifest";
 import { dropScratchDatabase } from "./database-fixture";
-import { openDatabase as openAuthorityDatabase } from "../../oakridge-dbos/src/storage/database";
+import { openDatabase as openAuthorityDatabase, type Database as AuthorityDatabase } from "../../oakridge-dbos/src/storage/database";
 import { migrateEmptyDatabase as migrateAuthority } from "../../oakridge-dbos/src/storage/migrate";
 import { cutoverPreflight } from "../../oakridge-dbos/scripts/cutover-preflight";
 
@@ -175,16 +175,59 @@ async function databaseFingerprint(url: string, schema: string): Promise<string>
   } finally { await client.end(); }
 }
 
+async function seedPreflightData(authority: AuthorityDatabase, observation: ObservationDatabase): Promise<void> {
+  await sql`INSERT INTO authority.definition_bundle (id, digest, source, checked_program, prompts)
+    VALUES ('bundle-pinned', 'bundle-digest', '{}'::jsonb, '{"workflow":{}}'::jsonb,
+      '{"missing-prompt":"absent-digest"}'::jsonb)`.execute(authority);
+  // This scratch fixture deliberately includes a dangling reference for the report to find.
+  await sql`ALTER TABLE authority.run DROP CONSTRAINT run_definition_bundle_id_fkey`.execute(authority);
+  await sql`INSERT INTO authority.run (id, definition_bundle_id) VALUES
+    ('run-running', 'bundle-pinned'), ('run-complete', 'bundle-pinned'),
+    ('run-dangling', 'bundle-missing')`.execute(authority);
+  await sql`INSERT INTO authority.unit (id, run_id, declaration, status) VALUES
+    ('root-running', 'run-running', 'root', '{"kind":"running"}'::jsonb),
+    ('root-complete', 'run-complete', 'root', '{"kind":"completed"}'::jsonb)`.execute(authority);
+  await sql`UPDATE authority.run SET root_unit_id = 'root-running' WHERE id = 'run-running'`.execute(authority);
+  await sql`UPDATE authority.run SET root_unit_id = 'root-complete' WHERE id = 'run-complete'`.execute(authority);
+  await sql`INSERT INTO authority.attempt (action_id, seq, run_id, unit_id, worker, mode, cause, status)
+    VALUES ('action-running', 0, 'run-running', 'root-running', 'builder', '{}'::jsonb,
+      '{}'::jsonb, '{"kind":"running"}'::jsonb)`.execute(authority);
+  await sql`INSERT INTO authority.effect_intent (id, run_id, unit_id, action_id, seq, payload, status) VALUES
+    ('intent-pending', 'run-running', 'root-running', 'effect-pending', 0, '{}'::jsonb, 'pending')`.execute(authority);
+  await sql`INSERT INTO authority.effect_intent (id, run_id, unit_id, action_id, seq, payload, status, stop_origin) VALUES
+    ('intent-stopping', 'run-running', 'root-running', 'effect-stopping', 0, '{}'::jsonb,
+      'stop_requested', 'executor')`.execute(authority);
+  await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+    artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body,
+    body_digest, recorded_at) VALUES
+    ('oakridge', 'preflight', 'revision-1', 'run-running', 'root-running', 'build_result', '1',
+      'bundle-pinned', 'bundle-digest', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now()),
+    ('oakridge', 'preflight', 'revision-2', 'run-complete', 'root-complete', 'pr', '1',
+      'bundle-pinned', 'bundle-digest', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(observation);
+}
+
 integration("cutover preflight reports both databases without changing rows or schema", async () => scratch(async (authorityUrl) => scratch(async (observationUrl) => {
   const authority = openAuthorityDatabase(authorityUrl), observation = openDatabase(observationUrl);
   try {
     await migrateAuthority(authority);
     await migrateEmptyDatabase(observation);
+    await seedPreflightData(authority, observation);
     const before = [await databaseFingerprint(authorityUrl, "authority"), await databaseFingerprint(observationUrl, "observation")];
     const report = await cutoverPreflight(authorityUrl, observationUrl);
-    expect(report.run_states).toEqual([]);
-    expect(report.pending_authority_work).toContainEqual({ kind: "running_attempt", count: 0 });
-    expect(report.observation_reference_counts).toContainEqual({ kind: "source_revision", count: 0 });
+    expect(report.run_states).toEqual([
+      { state: "completed", count: 1 }, { state: "not_started", count: 1 }, { state: "running", count: 1 },
+    ]);
+    expect(report.pending_authority_work).toEqual([
+      { kind: "running_attempt", count: 1 }, { kind: "effect_intent:pending", count: 1 },
+      { kind: "effect_intent:stop_requested", count: 1 },
+    ]);
+    expect(report.referenced_definition_ids).toEqual([
+      { id: "bundle-missing", count: 1 }, { id: "bundle-pinned", count: 2 },
+    ]);
+    expect(report.missing_pinned_dependencies).toEqual([
+      { kind: "definition_bundle", id: "bundle-missing" }, { kind: "prompt_content", id: "missing-prompt" },
+    ]);
+    expect(report.observation_reference_counts).toContainEqual({ kind: "source_revision", count: 2 });
     const after = [await databaseFingerprint(authorityUrl, "authority"), await databaseFingerprint(observationUrl, "observation")];
     expect(after).toEqual(before);
   } finally { await authority.destroy(); await observation.destroy(); }
