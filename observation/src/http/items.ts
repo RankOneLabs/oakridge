@@ -4,6 +4,9 @@ import type { SourceDependencies } from "./sources";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 import { readCoverage } from "../storage/coverage-store";
+import { readOccurrenceEligibility } from "../storage/eligibility-store";
+import { readEvidenceSet } from "../storage/grading-store";
+import { evidenceSetDigest, visibleEvidenceReferences } from "../grading/evidence";
 
 function pagination(url: string): Page | null {
   const params = new URL(url).searchParams;
@@ -14,6 +17,17 @@ function pagination(url: string): Page | null {
 }
 
 export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/evidence-sets/:id", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const evidence = await readEvidenceSet(deps.db, credential, c.req.param("id"));
+    if (!evidence) return errorResponse(c, 404, "not_found", "evidence set not found");
+    const digest = evidenceSetDigest(evidence);
+    if (!digest.ok) return errorResponse(c, 422, "invalid_evidence", digest.error.detail);
+    return c.json({ evidence_set_id: evidence.evidence_set_id,
+      evidence_refs: visibleEvidenceReferences(evidence), is_incomplete: evidence.is_incomplete,
+      incompleteness_reason: evidence.incompleteness_reason, digest: digest.value });
+  });
   app.get("/v1/runs/:run_id/coverage", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
@@ -29,7 +43,17 @@ export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
     const page = pagination(c.req.url);
     if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
-    return c.json(await listRunItems(deps.db, credential, c.req.param("run_id"), page));
+    const params = new URL(c.req.url).searchParams;
+    return c.json(await listRunItems(deps.db, credential, c.req.param("run_id"), page, {
+      revision_id: params.get("revision_id") ?? undefined,
+      item_id_or_path: params.get("item_id_or_path") ?? undefined }));
+  });
+  app.get("/v1/items/:id/eligibility", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const item = await readItem(deps.db, credential, c.req.param("id"));
+    if (!item) return errorResponse(c, 404, "not_found", "item not found");
+    return c.json({ items: await readOccurrenceEligibility(deps.db, credential, item.occurrence_id) });
   });
   app.get("/v1/items/:id/lineage", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

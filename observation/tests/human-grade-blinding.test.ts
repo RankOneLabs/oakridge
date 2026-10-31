@@ -7,8 +7,80 @@ import { withTenant } from "../src/storage/database";
 import { listGrades, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
 import { question, evidence, evaluator, scratchGrading, tenant } from "./grading-fixture";
+import { instructionDigest, NATIVE_HUMAN_EVALUATOR } from "../src/grading/evaluator";
+import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
+
+integration("native human submission registers its definition without client context and keeps origin other", async () =>
+  scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+    const app = createApp({ db, credentials: { ingest: [], read: [],
+      grade: [{ ...tenant, token: "grade", reviewer_id: "reviewer-a" }] } });
+    const headers = { authorization: "Bearer grade", "content-type": "application/json" };
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: NATIVE_HUMAN_EVALUATOR.evaluator_definition_id,
+      config_digest: NATIVE_HUMAN_EVALUATOR.config_digest, attempt_label: "native" };
+    const details = { answer: { state: "answered", kind: "boolean", value: true },
+      collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false };
+    const route = "/v1/grades";
+    const poisonedText = "Client-supplied native instructions";
+    const conflicting = await app.request(route, { method: "POST", headers, body: JSON.stringify({ identity,
+      context: { question, evidence, evaluator: { ...NATIVE_HUMAN_EVALUATOR,
+        instruction_text: poisonedText, prompt_digest: instructionDigest(poisonedText) } }, details }) });
+    expect([conflicting.status, (await conflicting.json()).error.code]).toEqual([422, "invalid_context"]);
+    const grade = await app.request(route, { method: "POST", headers, body: JSON.stringify({ identity, details }) });
+    expect(grade.status).toBe(201);
+    const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluator_definition")
+      .select(["kind", "config_digest", "instruction_text", "prompt_digest"])
+      .where("producer", "=", tenant.producer)
+      .where("namespace", "=", tenant.namespace)
+      .where("evaluator_definition_id", "=", NATIVE_HUMAN_EVALUATOR.evaluator_definition_id).executeTakeFirst());
+    expect(stored).toMatchObject({ kind: "human", config_digest: NATIVE_HUMAN_EVALUATOR.config_digest,
+      instruction_text: NATIVE_HUMAN_EVALUATOR.instruction_text,
+      prompt_digest: NATIVE_HUMAN_EVALUATOR.prompt_digest });
+    expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0]?.observation.label_origin).toBe("other");
+    for (const evaluator_definition_id of ["oakridge-operator-human", "langfuse-annotation-human",
+      "langfuse-annotation-human/v2"]) {
+      const refused = await app.request(route, { method: "POST", headers,
+        body: JSON.stringify({ identity: { ...identity, evaluator_definition_id }, details }) });
+      expect([refused.status, (await refused.json()).error.code]).toEqual([400, "reserved_evaluator"]);
+    }
+  }));
+
+integration("claimed pilot assignment serves pinned question and blinded addresses only", async () =>
+  scratchGrading(async (db, occurrence_id) => {
+    const pilot = LANGFUSE_PILOT_QUESTIONS["analysis.finding_relevance"].definition;
+    const pinnedEvidence = { ...evidence, evidence_set_id: "pilot-evidence" as typeof evidence.evidence_set_id,
+      references: ["requested_change", "relevant_excerpt", "analysis_finding"].map((role) => ({
+        ref: `${role}:source`, kind: "public" as const, content: "private content",
+        digest: `digest-${role}`, deep_link: `https://example.test/${role}` })) };
+    expect((await registerGradingContext(db, tenant, { question: pilot, evidence: pinnedEvidence,
+      evaluator: evaluator("human") })).ok).toBe(true);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${pilot.question_id},
+        ${pilot.question_version}, 'eligible', ${JSON.stringify({ evidence_set_id: pinnedEvidence.evidence_set_id })}::jsonb)`.execute(trx));
+    const assignment = await createBlindAssignment(db, tenant, { subject_occurrence_id: occurrence_id,
+      question_id: pilot.question_id, question_version: pilot.question_version,
+      evidence_set_id: pinnedEvidence.evidence_set_id });
+    if (!assignment.ok) throw new Error(assignment.error.detail);
+    expect((await claimBlindAssignment(db, tenant, { assignment_id: assignment.value.assignment_id,
+      reviewer_id: "owner", duration_seconds: 900 })).ok).toBe(true);
+    const app = createApp({ db, credentials: { ingest: [], read: [], grade: [
+      { ...tenant, token: "owner", reviewer_id: "owner" },
+      { ...tenant, token: "other", reviewer_id: "other" }] } });
+    const route = `/v1/blind-assignments/${assignment.value.assignment_id}`;
+    const denied = await app.request(route, { headers: { authorization: "Bearer other" } });
+    expect([denied.status, (await denied.json()).error.code]).toEqual([404, "not_found"]);
+    const response = await app.request(route, { headers: { authorization: "Bearer owner" } });
+    const body = JSON.parse(await response.text());
+    expect(body.question_text).toBe(pilot.question_text);
+    expect(body.blinded_evidence.input).toHaveLength(2);
+    expect(body.blinded_evidence.output).toHaveLength(1);
+    expect(JSON.stringify(body)).not.toMatch(/private content|grade_observation|evaluation_execution|workflow_decision|review_decision|agreement|disagreement/);
+  }));
 
 integration("blind assignment hides model results and refuses duplicate or expired claims", async () => scratchGrading(async (db, occurrence_id) => {
   const model = evaluator("model");
@@ -44,7 +116,10 @@ integration("blind assignment hides model results and refuses duplicate or expir
   const read = await app.request(`/v1/blind-assignments/${assignment_id}`, { headers });
   const payload = await read.json();
   expect(payload.state).toBe("claimed");
-  expect(JSON.stringify(payload)).not.toMatch(/model.grade|agreement|approval|answer_payload|normalized_score/);
+  expect(payload.blinded_evidence).toBeDefined();
+  expect(JSON.stringify(payload)).not.toMatch(/model.grade|grade_observation|evaluation_execution|workflow_decision|review_decision|agreement|disagreement|approval|answer_payload|normalized_score/);
+  const denied = await app.request(`/v1/blind-assignments/${assignment_id}`);
+  expect([denied.status, (await denied.json()).error.code]).toEqual([403, "forbidden"]);
   await withTenant(db, tenant, (trx) => sql`UPDATE observation.blind_assignment SET expires_at = claimed_at + interval '1 microsecond'
     WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND assignment_id = ${assignment_id}`.execute(trx));
   const expired = await app.request(`/v1/blind-assignments/${assignment_id}`, { headers });

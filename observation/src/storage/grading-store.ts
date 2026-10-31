@@ -6,7 +6,7 @@ import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { repositorySnapshotEligibility } from "../grading/eligibility";
-import { evaluatorIdentity, instructionDigest, isLangfuseAnnotationEvaluator,
+import { evaluatorIdentity, instructionDigest, isLangfuseAnnotationEvaluator, NATIVE_HUMAN_EVALUATOR,
   type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
@@ -34,6 +34,53 @@ function same(left: unknown, right: unknown): boolean {
   return a.ok && b.ok && a.value === b.value;
 }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
+
+export async function ensureNativeHumanEvaluator(db: Database, tenant: TenantScope): Promise<Result<void, GradingError>> {
+  const definition = NATIVE_HUMAN_EVALUATOR;
+  const digest = evaluatorIdentity(definition);
+  if (!digest.ok) return failure("register_native_evaluator", definition.evaluator_definition_id, digest.error.detail);
+  try {
+    return await withTenant(db, tenant, async (trx) => {
+      await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant),
+        evaluator_definition_id: definition.evaluator_definition_id, kind: definition.kind,
+        backend_kind: definition.backend_kind, provider: definition.provider, model: definition.model,
+        prompt_digest: definition.prompt_digest, config_digest: definition.config_digest,
+        runtime_revision: definition.runtime_revision, cost_metadata: null, seed: null,
+        attempt_controls: null, identity_digest: digest.value, instruction_text: definition.instruction_text,
+      }).onConflict((conflict) => conflict.columns(["producer", "namespace", "evaluator_definition_id"]).doNothing()).execute();
+      const stored = await trx.selectFrom("observation.evaluator_definition").select(["identity_digest", "config_digest"])
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("evaluator_definition_id", "=", definition.evaluator_definition_id).executeTakeFirstOrThrow();
+      return stored.identity_digest === digest.value && stored.config_digest === definition.config_digest
+        ? ok(undefined) : failure("register_native_evaluator", definition.evaluator_definition_id, "evaluator definition identity conflict");
+    });
+  } catch (cause) { return failure("register_native_evaluator", definition.evaluator_definition_id, String(cause)); }
+}
+
+export function readEvidenceSet(db: Database, tenant: TenantScope, evidence_set_id: string): Promise<EvidenceSet | null> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.selectFrom("observation.evidence_set").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("evidence_set_id", "=", evidence_set_id).executeTakeFirst();
+    return row ? { evidence_set_id: row.evidence_set_id as EvidenceSet["evidence_set_id"],
+      references: row.evidence_refs as unknown as EvidenceSet["references"],
+      is_incomplete: row.is_incomplete, incompleteness_reason: row.incompleteness_reason } : null;
+  });
+}
+
+export function readQuestionDefinition(db: Database, tenant: TenantScope, question_id: string,
+  question_version: string): Promise<QuestionDefinition | null> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.selectFrom("observation.question_definition").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("question_id", "=", question_id).where("question_version", "=", question_version).executeTakeFirst();
+    return row ? { ...row, question_id: row.question_id as QuestionDefinition["question_id"],
+      target_item_kinds: row.target_item_kinds as string[], input_recipe: row.input_recipe as QuestionDefinition["input_recipe"],
+      response_kind: row.response_kind as QuestionDefinition["response_kind"],
+      allowed_values: row.allowed_values as QuestionDefinition["allowed_values"],
+      missing_evidence_policy: row.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] } : null;
+  });
+}
 
 /** Definitions are immutable within their natural keys. */
 export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {

@@ -2,6 +2,27 @@ import { err, ok, type Result } from "../domain/primitives";
 import type { GradeObservationListing } from "../grading/observation";
 import type { QuestionDefinition } from "../grading/question";
 import { projectPilotEvidence, type EvidenceSource, type ProjectedQuestionEvidence } from "./evidence-recipe";
+import type { StoredEvidenceReference } from "../grading/evidence";
+
+function exposesAssessorDecision(address: string | null): boolean {
+  return address !== null && /(?:^|[\/#?._-])(verdict|decision|effect)(?:$|[\/#?._=&-])/i.test(address);
+}
+
+export interface BlindedEvidenceAddress {
+  readonly ref: string;
+  readonly digest: string | null;
+  readonly deep_link: string | null;
+}
+
+export function blindReferenceAddresses(references: readonly StoredEvidenceReference[])
+  : Result<readonly BlindedEvidenceAddress[], BlindingError> {
+  const addresses = references.map((reference) => ({ ref: reference.ref,
+    digest: reference.digest, deep_link: reference.deep_link ?? null }));
+  if (addresses.some((source) => [source.ref, source.deep_link].some(exposesAssessorDecision)))
+    return err({ operation: "blind_evidence", entity_id: "evidence_set",
+      detail: "evidence address exposes an assessor decision" });
+  return ok(addresses);
+}
 
 export interface BlindedEvidencePackage extends ProjectedQuestionEvidence {
   readonly question_id: QuestionDefinition["question_id"];
@@ -15,8 +36,7 @@ export function blindEvidence(question: QuestionDefinition, sources: readonly Ev
   graded_artifact: "report" | "code"): Result<BlindedEvidencePackage, BlindingError> {
   const projected = projectPilotEvidence(question, sources);
   if (!projected.ok) return err({ operation: "blind_evidence", entity_id: question.question_id, detail: projected.error.detail });
-  if (sources.some((source) => [source.ref, source.deep_link].some((address) =>
-    /(?:^|[\/#?._-])(verdict|decision|effect)(?:$|[\/#?._=&-])/i.test(address))))
+  if (sources.some((source) => [source.ref, source.deep_link].some(exposesAssessorDecision)))
     return err({ operation: "blind_evidence", entity_id: question.question_id,
       detail: "evidence address exposes an assessor decision" });
   return ok({ ...projected.value, question_id: question.question_id,
@@ -34,7 +54,8 @@ export interface LabelSeries {
 /** A positive origin allowlist prevents any other human grade from becoming held-out by accident. */
 export function separateLabelSeries(grades: readonly GradeObservationListing[],
   collaboration: readonly CollaborationLabel[]): LabelSeries {
-  return { held_out: grades.filter((grade) => grade.label_origin === "langfuse_annotation_blinded"),
+  return { held_out: grades.filter((grade) => grade.label_origin === "langfuse_annotation_blinded"
+    || grade.collection_mode === "blind"),
     oakridge_operator_unblinded: grades.filter((grade) => grade.label_origin === "oakridge_operator_unblinded"),
     collaboration_unblinded: collaboration };
 }

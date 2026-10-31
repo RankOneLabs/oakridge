@@ -59,6 +59,14 @@ test("blinded evidence contains no original verdict and declares whether it grad
     .toMatchObject({ ok: false, error: { operation: "blind_evidence" } });
 });
 
+test("native blind labels join held-out while in-context native labels do not", () => {
+  const native = { label_origin: "other", collection_mode: "blind", observation_id: "native-blind" };
+  const inContext = { ...native, collection_mode: "in_context", observation_id: "native-context" };
+  const imported = { ...native, label_origin: "langfuse_annotation_blinded", collection_mode: "unknown", observation_id: "imported" };
+  const series = separateLabelSeries([native, inContext, imported] as never, []);
+  expect(series.held_out.map((grade) => String(grade.observation_id))).toEqual(["native-blind", "imported"]);
+});
+
 test("stratified sample selection depends on pinned candidate properties and contains required failure cases", () => {
   const candidates = [
     { occurrence_id: "easy-1", stratum: "clearly_easy" as const, has_split_criterion: false,
