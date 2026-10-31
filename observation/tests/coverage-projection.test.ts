@@ -13,6 +13,7 @@ import { VERSION as CATALOGUE_VERSION } from "../src/projection/catalogue/oakrid
 import { DISAGREEMENT_POLICY_VERSION } from "../src/grading/coverage";
 import type { Database } from "../src/storage/database";
 import type { QuestionDefinition } from "../src/grading/question";
+import type { GradeAnswer } from "../src/grading/observation";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("coverage uses recorded eligibility and keeps successive revisions separate", async () => scratchGrading(async (db, occurrence_id) => {
@@ -150,22 +151,30 @@ async function addOccurrence(db: Database, label: string, tag: string = "eligibl
   return id;
 }
 
-async function addGrade(db: Database, label: string, occurrenceId: string,
-  evaluatorId: "human" | "model" | "code" | "oakridge-operator-human",
-  answer: { kind: string; state: string; value?: string | boolean; reason?: string }, evidenceId = evidence.evidence_set_id): Promise<void> {
+interface GradeFixtureInput {
+  readonly label: string;
+  readonly occurrence_id: string;
+  readonly evaluator_definition_id: string;
+  readonly answer: GradeAnswer;
+  readonly evidence_set_id?: string;
+}
+
+async function addGrade(db: Database, input: GradeFixtureInput): Promise<void> {
+  const { label, occurrence_id, evaluator_definition_id, answer } = input;
+  const evidence_set_id = input.evidence_set_id ?? evidence.evidence_set_id;
   const digest = fixtureId(`execution-${label}`);
   await withTenant(db, tenant, async (trx) => {
     await sql`INSERT INTO observation.evaluation_execution (producer, namespace, execution_id,
       subject_occurrence_id, evidence_set_id, question_id, question_version, evaluator_definition_id,
       config_digest, attempt_label, idempotency_digest, status, ended_at)
-      VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${occurrenceId}, ${evidenceId},
-        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluatorId}, 'config-1', ${label},
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${occurrence_id}, ${evidence_set_id},
+        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluator_definition_id}, 'config-1', ${label},
         ${digest}, 'completed', now())`.execute(trx);
     await sql`INSERT INTO observation.grade_observation (producer, namespace, observation_id,
       execution_id, subject_occurrence_id, evidence_set_id, question_id, question_version,
       evaluator_definition_id, answer_kind, answer_state, answer_payload)
-      VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${label}, ${occurrenceId}, ${evidenceId},
-        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluatorId}, ${answer.kind},
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${label}, ${label}, ${occurrence_id}, ${evidence_set_id},
+        ${choiceQuestion.question_id}, ${choiceQuestion.question_version}, ${evaluator_definition_id}, ${answer.kind},
         ${answer.state}, ${JSON.stringify(answer)}::jsonb)`.execute(trx);
   });
 }
@@ -182,8 +191,10 @@ integration("coverage separates human, machine, pending, failed and excluded occ
   const failed = await addOccurrence(db, "failed");
   await addOccurrence(db, "inapplicable", "inapplicable");
   await addOccurrence(db, "missing", "missing_evidence");
-  await addGrade(db, "human-grade", human, "human", { kind: "choice", state: "answered", value: "altered" });
-  await addGrade(db, "machine-grade", machine, "model", { kind: "choice", state: "answered", value: "preserved" });
+  await addGrade(db, { label: "human-grade", occurrence_id: human, evaluator_definition_id: "human",
+    answer: { kind: "choice", state: "answered", value: "altered" } });
+  await addGrade(db, { label: "machine-grade", occurrence_id: machine, evaluator_definition_id: "model",
+    answer: { kind: "choice", state: "answered", value: "preserved" } });
   await withTenant(db, tenant, async (trx) => {
     await sql`INSERT INTO observation.grading_job (producer, namespace, job_id, subject_occurrence_id,
       evidence_set_id, question_id, question_version, evaluator_definition_id, config_digest, attempt_label,
@@ -237,12 +248,12 @@ integration("code grades count as machine coverage and reserved operator grades 
   const human = await addOccurrence(db, "ordinary-human-grade");
   const code = await addOccurrence(db, "code-grade");
   const reserved = await addOccurrence(db, "reserved-human-grade");
-  await addGrade(db, "ordinary-human-observation", human, "human",
-    { kind: "choice", state: "answered", value: "altered" });
-  await addGrade(db, "code-observation", code, "code",
-    { kind: "choice", state: "answered", value: "preserved" });
-  await addGrade(db, "reserved-human-observation", reserved, "oakridge-operator-human",
-    { kind: "choice", state: "answered", value: "altered" });
+  await addGrade(db, { label: "ordinary-human-observation", occurrence_id: human, evaluator_definition_id: "human",
+    answer: { kind: "choice", state: "answered", value: "altered" } });
+  await addGrade(db, { label: "code-observation", occurrence_id: code, evaluator_definition_id: "code",
+    answer: { kind: "choice", state: "answered", value: "preserved" } });
+  await addGrade(db, { label: "reserved-human-observation", occurrence_id: reserved,
+    evaluator_definition_id: "oakridge-operator-human", answer: { kind: "choice", state: "answered", value: "altered" } });
   const row = (await readCoverage(db, tenant, { run_id: "run-1", revision_id: null,
     question_id: choiceQuestion.question_id, question_version: choiceQuestion.question_version })).questions[0]!;
   expect(row.eligible).toBe(3);
@@ -301,28 +312,29 @@ integration("disagreement compares latest observations on the same evidence and 
     ["kind", kindMismatch, { kind: "boolean", state: "answered", value: true }],
   ] as const;
   for (const [label, occurrence, answer] of rows) {
-    await addGrade(db, `${label}-human`, occurrence, "human", answer);
-    await addGrade(db, `${label}-model`, occurrence, "model",
-      { kind: "choice", state: "answered", value: "preserved" },
-      label === "evidence" ? otherEvidence.evidence_set_id : evidence.evidence_set_id);
+    await addGrade(db, { label: `${label}-human`, occurrence_id: occurrence,
+      evaluator_definition_id: "human", answer });
+    await addGrade(db, { label: `${label}-model`, occurrence_id: occurrence,
+      evaluator_definition_id: "model", answer: { kind: "choice", state: "answered", value: "preserved" },
+      evidence_set_id: label === "evidence" ? otherEvidence.evidence_set_id : evidence.evidence_set_id });
   }
   const selection = { run_id: "run-1", revision_id: null, question_id: choiceQuestion.question_id,
     question_version: choiceQuestion.question_version };
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
-  await addGrade(db, "different-human-correction", different, "human",
-    { kind: "choice", state: "answered", value: "preserved" });
+  await addGrade(db, { label: "different-human-correction", occurrence_id: different,
+    evaluator_definition_id: "human", answer: { kind: "choice", state: "answered", value: "preserved" } });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
-  await addGrade(db, "different-human-new-answer", different, "human",
-    { kind: "choice", state: "answered", value: "altered" });
+  await addGrade(db, { label: "different-human-new-answer", occurrence_id: different,
+    evaluator_definition_id: "human", answer: { kind: "choice", state: "answered", value: "altered" } });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
-  await addGrade(db, "different-human-abstain", different, "human",
-    { kind: "choice", state: "abstain", reason: "retracted" });
+  await addGrade(db, { label: "different-human-abstain", occurrence_id: different,
+    evaluator_definition_id: "human", answer: { kind: "choice", state: "abstain", reason: "retracted" } });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
-  await addGrade(db, "different-human-again", different, "human",
-    { kind: "choice", state: "answered", value: "altered" });
+  await addGrade(db, { label: "different-human-again", occurrence_id: different,
+    evaluator_definition_id: "human", answer: { kind: "choice", state: "answered", value: "altered" } });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(1);
-  await addGrade(db, "different-human-unclear", different, "human",
-    { kind: "choice", state: "unclear", reason: "retracted" });
+  await addGrade(db, { label: "different-human-unclear", occurrence_id: different,
+    evaluator_definition_id: "human", answer: { kind: "choice", state: "unclear", reason: "retracted" } });
   expect((await readCoverage(db, tenant, selection)).questions[0]?.disagreement).toBe(0);
 }));
 
