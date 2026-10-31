@@ -127,7 +127,7 @@ function forbidden(c: Context, reason: string): Response {
 
 // ---- request auth middleware -----------------------------------------------
 
-function verifyControlCredentials(c: Context, token: string): Response | null {
+export function verifyControlCredentials(c: Context, token: string): Response | null {
   const authHeader = c.req.header("authorization");
   if (authHeader !== undefined) {
     const space = authHeader.indexOf(" ");
@@ -160,6 +160,21 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
   }
 
   return unauthorized(c, "missing_credentials");
+}
+
+/** Observation reads are protected even though the global control middleware exempts GET. */
+export function makeObservationAuthMiddleware(policy: AuthPolicy): MiddlewareHandler {
+  return async (c: Context, next: Next) => {
+    c.header("cache-control", "no-store");
+    const isSensitive = c.req.path.startsWith("/observation/blind/")
+      || c.req.path.startsWith("/observation/evidence/");
+    if (policy.mode === "insecure-non-loopback" && isSensitive) return forbidden(c, "observation_sensitive_insecure_bind");
+    if (policy.mode === "token") {
+      const rejection = verifyControlCredentials(c, policy.token);
+      if (rejection) return rejection;
+    }
+    await next();
+  };
 }
 
 /**

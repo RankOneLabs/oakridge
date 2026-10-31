@@ -57,6 +57,26 @@ afterEach(() => {
 });
 
 describe("GET /config", () => {
+  test("never serializes observation credentials or service URL", async () => {
+    const values = { OAKRIDGE_OBSERVATION_URL: "http://private-observation.invalid",
+      OAKRIDGE_OBSERVATION_NAMESPACE: "test", OAKRIDGE_OBSERVATION_READ_TOKEN: "private-read-token",
+      OAKRIDGE_OBSERVATION_GRADE_TOKEN: "private-grade-token" };
+    const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]] as const));
+    try {
+      Object.assign(process.env, values);
+      const app = buildApp(KbblConfigSchema.parse({}));
+      const body = await (await app.request("/config")).text();
+      for (const secret of [values.OAKRIDGE_OBSERVATION_READ_TOKEN,
+        values.OAKRIDGE_OBSERVATION_GRADE_TOKEN, values.OAKRIDGE_OBSERVATION_URL]) expect(body).not.toContain(secret);
+      expect(body).toContain("observationNamespace");
+    } finally {
+      for (const key of Object.keys(values)) {
+        const value = previous.get(key);
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
   test("returns defaultWorkdir", async () => {
     const app = buildApp(KbblConfigSchema.parse({}));
 

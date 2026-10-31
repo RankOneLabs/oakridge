@@ -1,6 +1,5 @@
 // API client for the Oakridge backend proxy at /oakridge/api/*.
 // All paths are same-origin relative so the PWA needs no CORS config.
-
 import type {
   CohortPullRequestResponse,
   ConfirmCohortMergedRequest,
@@ -41,13 +40,17 @@ import type {
   SentReviewFeedback,
 } from "./types";
 import type { Result } from "../lib/result";
-import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
+import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorUnitView } from "./operator-contracts";
 import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, sentReviewFeedback, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
-import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitView, parseUnitViews } from "./adapters/parse";
-
+import { oakridgeGet, oakridgePost, oakridgePutBody } from "./adapters/http";
+import { readRunPage, readDefinitions, readRunInboxBatch } from "./adapters/read-pages";
+import type { ArtifactAddress } from "../../server/observation/revision-address";
+import type { ArtifactItemSummary } from "../../server/observation/view-model";
+import type { ObservationLineage, ObservationEvidence } from "../../server/observation/client";
+import { parseArtifactDetail, parseRunView, parseUnitView, parseUnitViews } from "./adapters/parse";
 const API = "/oakridge/api";
 const OPERATOR = "/api";
 interface CachedUnits {
@@ -113,102 +116,33 @@ export const invalidateCachedRunUnits = (runId: string | null): void => {
   if (runId) unitCache.delete(runId);
   else unitCache.clear();
 };
-
-async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
-  const items: OperatorRunView[] = [];
-  let cursor: string | null = null;
-  do {
-    const query = new URLSearchParams({ limit: "100", archived: String(isArchived) });
-    if (cursor) query.set("cursor", cursor);
-    const path = `${OPERATOR}/runs?${query}`;
-    const page: OperatorRunPage = await oakridgeGet(path);
-    if (!Array.isArray(page.items) || !(page.next_cursor === null || typeof page.next_cursor === "string"))
-      throw new Error(`oakridge ${path}: invalid run page`);
-    items.push(...page.items.map((run) => unwrapAdapter(path, parseRunView(run))));
-    cursor = page.next_cursor;
-  } while (cursor);
-  return items;
-}
-
-async function readDefinitions(isArchived: boolean): Promise<OperatorDefinitionSummary[]> {
-  const items: OperatorDefinitionSummary[] = [];
-  let cursor: string | null = null;
-  do {
-    const query = new URLSearchParams({ archived: String(isArchived), limit: "100" });
-    if (cursor) query.set("cursor", cursor);
-    const page = await oakridgeGet<OperatorDefinitionPage>(`${OPERATOR}/definitions?${query}`);
-    items.push(...page.items);
-    cursor = page.next_cursor;
-  } while (cursor);
-  return items;
-}
-
-async function readRunInboxBatch(runIds: readonly string[]): Promise<OperatorRunInboxBatch["items"]> {
-  const entries: OperatorRunInboxBatch["items"][number][] = [];
-  for (let offset = 0; offset < runIds.length; offset += 100) {
-    const ids = runIds.slice(offset, offset + 100);
-    const path = `${OPERATOR}/run-inboxes?ids=${ids.map(encodeURIComponent).join(",")}`;
-    const batch = unwrapAdapter(path, parseRunInboxBatch(await oakridgeGet<unknown>(path)));
-    entries.push(...batch.items);
-  }
-  return entries;
-}
-
 function committed(response: OperatorIngressResponse, path: string): string {
   if (response.kind === "committed") return response.run_id;
   throw new Error(`oakridge ${path}: ${response.kind === "rejected" ? response.reason : response.detail}`);
 }
-
 async function decide(runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string): Promise<string> {
   const path = `${unitPath(runId, unitId)}/reviews/${encodeURIComponent(review)}/decide`;
   return committed(await oakridgePost<OperatorIngressResponse>(path, { request_id: requestId, decision, target, payload }), path);
 }
-
 export { parseOakridgeRunEventFrame } from "./adapters/event";
-
 export { selectFailureDetail } from "./adapters/boundary";
-
-async function oakridgeGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(body, `oakridge ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  return (await res.json()) as T;
+export async function fetchObservationItemSummary(address: ArtifactAddress, item_id_or_path: string): Promise<ArtifactItemSummary> {
+  const response = await fetch("/observation/item-summary", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...address, item_id_or_path }), cache: "no-store" });
+  if (!response.ok) throw new Error(`observation item summary: ${response.status}`);
+  return (await response.json()) as ArtifactItemSummary;
 }
 
-interface OakridgePostOptions { readonly idempotency_key?: string }
-
-async function oakridgePost<T>(path: string, body: unknown, options: OakridgePostOptions = {}): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(options.idempotency_key ? { "Idempotency-Key": options.idempotency_key } : {}) },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const b = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(b, `oakridge POST ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  if (res.status === 204 || res.headers.get("content-length") === "0") {
-    return undefined as unknown as T;
-  }
-  return (await res.json()) as T;
+export async function fetchObservationLineage(occurrenceId: string): Promise<ObservationLineage> {
+  const response = await fetch(`/observation/items/${encodeURIComponent(occurrenceId)}/lineage`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`observation lineage: ${response.status}`);
+  return (await response.json()) as ObservationLineage;
 }
 
-async function oakridgePutBody<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Oakridge-Publisher": "operator" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const b = await res.json().catch(() => null) as unknown;
-    const detail = selectFailureDetail(b, `oakridge PUT ${path}: ${res.status}`);
-    throw new Error(detail);
-  }
-  return (await res.json()) as T;
+export async function fetchObservationEvidence(evidenceSetId: string): Promise<ObservationEvidence> {
+  const response = await fetch(`/observation/evidence/${encodeURIComponent(evidenceSetId)}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`observation evidence: ${response.status}`);
+  return (await response.json()) as ObservationEvidence;
 }
 
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {

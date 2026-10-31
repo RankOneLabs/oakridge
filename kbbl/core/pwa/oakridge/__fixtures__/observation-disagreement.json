@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "observation": { "observation_id": "grade-machine", "evaluator_definition_id": "judge-v1", "label_origin": "other" }, "answer": { "state": "answered", "kind": "choice", "value": "pass" } },
+    { "observation": { "observation_id": "grade-human", "evaluator_definition_id": "native-human", "label_origin": "oakridge_operator_unblinded" }, "answer": { "state": "answered", "kind": "choice", "value": "fail" } }
+  ],
+  "total": 2
+}

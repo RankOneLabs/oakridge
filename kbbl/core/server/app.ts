@@ -16,6 +16,8 @@ import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountSkillsRoutes } from "../skills/routes";
 import { mountOakridgeProxyRoutes, parseFallbackRefreshMs } from "./handlers/oakridge-proxy";
 import { mountLiveStreamRoutes } from "./handlers/live-stream";
+import { mountObservationRoutes } from "./handlers/observation";
+import { createObservationClient, observationConfigFromEnv } from "./observation/client";
 import {
   isRuntimeId,
   RUNTIME_EFFORTS,
@@ -75,6 +77,9 @@ export function createApp(deps: CreateAppDeps): Hono {
   // configured with a control token, on any bind. Without one (loopback or
   // insecure mode) this is a no-op pass-through.
   app.use("/*", makeControlAuthMiddleware(authPolicy));
+  const observationConfig = observationConfigFromEnv(process.env);
+  mountObservationRoutes(app, { authPolicy, client: observationConfig ? createObservationClient(observationConfig) : null,
+    namespace: observationConfig?.namespace ?? null });
 
   // ---- cookie establishment endpoint ----
   //
@@ -101,6 +106,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     // agent-reported ACP config options remain authoritative.
     return c.json({
       defaultWorkdir,
+      observationNamespace: observationConfig?.namespace ?? null,
       defaultRuntimeId: acp.defaultAgent,
       runtimes: acp
         .listProfiles()

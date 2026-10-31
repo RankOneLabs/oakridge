@@ -1,0 +1,9 @@
+{
+  "occurrence_id": "criterion-merged",
+  "relations": [
+    { "relation_id": "merge-a", "type": "merged_from", "source_occurrence_id": "criterion-merged", "target_occurrence_id": "criterion-old-a", "unresolved_target_ref": null },
+    { "relation_id": "merge-b", "type": "merged_from", "source_occurrence_id": "criterion-merged", "target_occurrence_id": "criterion-old-b", "unresolved_target_ref": null }
+  ],
+  "unresolved": [],
+  "total": 2
+}

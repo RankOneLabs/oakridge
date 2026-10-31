@@ -27,6 +27,12 @@ the start script wires both sides itself: it keeps one ingest token in
 sets `OBSERVATION_INGEST_CREDENTIALS` for the service to that token under
 producer `oakridge` and `OAKRIDGE_OBSERVATION_NAMESPACE` (default `default`),
 and gives DBOS the matching token and `http://127.0.0.1:${OBSERVATION_PORT:-8791}`.
+It also mints distinct `observation-read.token` and `observation-grade.token`
+files in the same state directory under `umask 077`. The service receives
+tenant-bound read and grade arrays; the grade entry binds
+`reviewer_id` to `oakridge-operator`. kbbl receives the observation URL,
+namespace, read token and grade token through its server environment. These
+credentials stay in the server process and are not sent in PWA configuration.
 Without the flag, an exported publisher URL and token pass through to DBOS
 unchanged, for a separately deployed service. An ingest token may
 only submit and inspect its configured producer and namespace through the

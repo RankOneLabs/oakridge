@@ -1,0 +1,10 @@
+{
+  "occurrence_id": "criterion-new-b",
+  "relations": [
+    { "relation_id": "split-1", "type": "split_from", "source_occurrence_id": "criterion-new-b", "target_occurrence_id": "criterion-old", "unresolved_target_ref": null },
+    { "relation_id": "reorder-1", "type": "derived_from", "source_occurrence_id": "criterion-new-b", "target_occurrence_id": "criterion-old", "unresolved_target_ref": null },
+    { "relation_id": "unresolved-1", "type": "assesses", "source_occurrence_id": "criterion-new-b", "target_occurrence_id": null, "unresolved_target_ref": "missing-target" }
+  ],
+  "unresolved": [{ "relation_id": "unresolved-1", "unresolved_target_ref": "missing-target" }],
+  "total": 3
+}

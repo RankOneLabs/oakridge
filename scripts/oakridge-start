@@ -202,6 +202,8 @@ OBSERVATION_ROOT="$OAKRIDGE_ROOT/observation"
 # Without the flag, a publisher URL and token exported for a separate deployment pass through.
 OBSERVATION_URL="${OAKRIDGE_OBSERVATION_URL:-}"
 OBSERVATION_INGEST_TOKEN="${OAKRIDGE_OBSERVATION_INGEST_TOKEN:-}"
+OBSERVATION_READ_TOKEN="${OAKRIDGE_OBSERVATION_READ_TOKEN:-}"
+OBSERVATION_GRADE_TOKEN="${OAKRIDGE_OBSERVATION_GRADE_TOKEN:-}"
 OBSERVATION_NAMESPACE="${OAKRIDGE_OBSERVATION_NAMESPACE:-default}"
 if [ "$start_observation" -eq 1 ]; then
   if ! OBSERVATION_SERVICE_PORT="$(cd "$OBSERVATION_ROOT" && bun -e '
@@ -210,13 +212,20 @@ if [ "$start_observation" -eq 1 ]; then
     echo "oakridge: --observation needs OBSERVATION_DATABASE_URL in $OBSERVATION_ROOT/.env" >&2
     exit 1
   fi
-  # One ingest token for the install's lifetime, shared by the service and the DBOS publisher.
+  # Capability tokens persist independently across restarts.
   INGEST_TOKEN_FILE="$STATE_DIR/observation-ingest.token"
-  if [ ! -s "$INGEST_TOKEN_FILE" ]; then
-    mkdir -p "$STATE_DIR"
-    (umask 077 && openssl rand -hex 32 > "$INGEST_TOKEN_FILE")
-  fi
+  READ_TOKEN_FILE="$STATE_DIR/observation-read.token"
+  GRADE_TOKEN_FILE="$STATE_DIR/observation-grade.token"
+  mkdir -p "$STATE_DIR"
+  for token_file in "$INGEST_TOKEN_FILE" "$READ_TOKEN_FILE" "$GRADE_TOKEN_FILE"; do
+    if [ ! -s "$token_file" ]; then (umask 077 && openssl rand -hex 32 > "$token_file"); fi
+  done
   OBSERVATION_INGEST_TOKEN="$(cat "$INGEST_TOKEN_FILE")"
+  OBSERVATION_READ_TOKEN="$(cat "$READ_TOKEN_FILE")"
+  OBSERVATION_GRADE_TOKEN="$(cat "$GRADE_TOKEN_FILE")"
+  if [ "$OBSERVATION_INGEST_TOKEN" = "$OBSERVATION_READ_TOKEN" ] || [ "$OBSERVATION_INGEST_TOKEN" = "$OBSERVATION_GRADE_TOKEN" ] || [ "$OBSERVATION_READ_TOKEN" = "$OBSERVATION_GRADE_TOKEN" ]; then
+    echo "oakridge: observation capability tokens must be distinct" >&2; exit 1
+  fi
   OBSERVATION_URL="http://127.0.0.1:${OBSERVATION_SERVICE_PORT}"
 fi
 
@@ -244,6 +253,8 @@ if [ "$start_observation" -eq 1 ]; then
   (
     cd "$OBSERVATION_ROOT"
     OBSERVATION_INGEST_CREDENTIALS="[{\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\",\"token\":\"$OBSERVATION_INGEST_TOKEN\"}]" \
+    OBSERVATION_READ_CREDENTIALS="[{\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\",\"token\":\"$OBSERVATION_READ_TOKEN\"}]" \
+    OBSERVATION_GRADE_CREDENTIALS="[{\"producer\":\"oakridge\",\"namespace\":\"$OBSERVATION_NAMESPACE\",\"token\":\"$OBSERVATION_GRADE_TOKEN\",\"reviewer_id\":\"oakridge-operator\"}]" \
       bun run start
   ) &
   observation_pid=$!
@@ -271,6 +282,10 @@ dbos_pid=$!
 echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
 env -u ANTHROPIC_API_KEY \
   OAKRIDGE_CORE_BASE_URL="$DBOS_URL" \
+  OAKRIDGE_OBSERVATION_URL="$OBSERVATION_URL" \
+  OAKRIDGE_OBSERVATION_NAMESPACE="$OBSERVATION_NAMESPACE" \
+  OAKRIDGE_OBSERVATION_READ_TOKEN="$OBSERVATION_READ_TOKEN" \
+  OAKRIDGE_OBSERVATION_GRADE_TOKEN="$OBSERVATION_GRADE_TOKEN" \
   OAKRIDGE_GATED_REVIEW_URL="$GATED_REVIEW_URL" \
   "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" ${kbbl_args[@]+"${kbbl_args[@]}"} &
 kbbl_pid=$!
