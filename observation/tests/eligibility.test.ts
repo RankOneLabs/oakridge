@@ -95,9 +95,22 @@ integration("occurrence eligibility selects later timestamp and higher id on a t
     const filtered = await app.request("/v1/runs/run-1/items?revision_id=rev-1&item_id_or_path=criterion-1",
       { headers: { authorization: "Bearer read" } });
     expect((await filtered.json())).toMatchObject({ total: 1, items: [{ occurrence_id }] });
-    const missing = await app.request("/v1/runs/run-1/items?revision_id=rev-1&item_id_or_path=absent",
+    const issuedQueries: string[] = [];
+    const trackedDb = db.withPlugin({
+      transformQuery(args) {
+        if (args.node.kind === "SelectQueryNode") issuedQueries.push(JSON.stringify(args.node));
+        return args.node;
+      },
+      async transformResult(args) { return args.result; },
+    });
+    const trackedApp = createApp({ db: trackedDb,
+      credentials: { ingest: [], grade: [], read: [{ ...tenant, token: "read" }] } });
+    const missing = await trackedApp.request("/v1/runs/run-1/items?revision_id=rev-1&item_id_or_path=absent",
       { headers: { authorization: "Bearer read" } });
     expect((await missing.json())).toMatchObject({ total: 0, items: [], issues: [] });
+    expect(issuedQueries).toHaveLength(3);
+    expect(issuedQueries.filter((query) => query.includes("item_occurrence"))).toHaveLength(2);
+    expect(issuedQueries.filter((query) => query.includes("extraction_issue"))).toHaveLength(1);
     for (const query of ["limit=0", "limit=201", "offset=-1"]) {
       const invalid = await app.request(`/v1/runs/run-1/items?revision_id=rev-1&${query}`,
         { headers: { authorization: "Bearer read" } });
