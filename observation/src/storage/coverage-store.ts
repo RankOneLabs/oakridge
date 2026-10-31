@@ -46,13 +46,25 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
     ), versions AS (
       SELECT COALESCE(array_agg(DISTINCT extractor_version ORDER BY extractor_version)
         FILTER (WHERE tag = 'eligible'), ARRAY[]::text[]) AS selection_versions FROM latest
+    ), eligible_subjects AS (
+      SELECT subject_occurrence_id, question_id, question_version
+      FROM latest WHERE tag = 'eligible'
+    ), execution_state AS (
+      SELECT x.subject_occurrence_id, x.question_id, x.question_version,
+        (array_agg(x.status ORDER BY x.started_at DESC, x.execution_id DESC))[1] AS latest_status,
+        bool_or(x.status = 'completed') AS has_completed
+      FROM observation.evaluation_execution x
+      JOIN eligible_subjects e ON e.subject_occurrence_id = x.subject_occurrence_id
+        AND e.question_id = x.question_id AND e.question_version = x.question_version
+      WHERE x.producer = ${tenant.producer} AND x.namespace = ${tenant.namespace}
+      GROUP BY x.subject_occurrence_id, x.question_id, x.question_version
     ), counted AS (
       SELECT e.*, COALESCE(m.has_grade, false) AS has_grade,
         COALESCE(m.has_blind, false) AS has_blind,
         COALESCE(m.has_in_context, false) AS has_in_context,
         COALESCE(m.has_unknown, false) AS has_unknown,
         machine.has_machine_grade,
-        (jobs.has_pending AND NOT executions.has_completed) AS is_pending,
+        (jobs.has_pending AND NOT COALESCE(executions.has_completed, false)) AS is_pending,
         ((executions.latest_status = 'failed' OR jobs.has_terminal_failure)
           AND NOT grades.has_any_grade) AS is_failed,
         disagreement.has_disagreement
@@ -88,18 +100,8 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
             AND g.question_id = e.question_id AND g.question_version = e.question_version
         ) AS has_any_grade
       ) grades ON true
-      LEFT JOIN LATERAL (
-        SELECT (SELECT x.status FROM observation.evaluation_execution x
-          WHERE x.producer = ${tenant.producer} AND x.namespace = ${tenant.namespace}
-            AND x.subject_occurrence_id = e.subject_occurrence_id
-            AND x.question_id = e.question_id AND x.question_version = e.question_version
-          ORDER BY x.started_at DESC, x.execution_id DESC LIMIT 1) AS latest_status,
-          EXISTS (SELECT 1 FROM observation.evaluation_execution x
-            WHERE x.producer = ${tenant.producer} AND x.namespace = ${tenant.namespace}
-              AND x.subject_occurrence_id = e.subject_occurrence_id
-              AND x.question_id = e.question_id AND x.question_version = e.question_version
-              AND x.status = 'completed') AS has_completed
-      ) executions ON true
+      LEFT JOIN execution_state executions ON executions.subject_occurrence_id = e.subject_occurrence_id
+        AND executions.question_id = e.question_id AND executions.question_version = e.question_version
       LEFT JOIN LATERAL (
         SELECT EXISTS (SELECT 1 FROM observation.grading_job j
           WHERE j.producer = ${tenant.producer} AND j.namespace = ${tenant.namespace}
