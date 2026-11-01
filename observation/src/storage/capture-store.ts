@@ -17,8 +17,9 @@ export interface SourceRevisionRead {
   readonly revision_id: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
-  readonly definition_bundle_id: string;
-  readonly definition_bundle_digest: string;
+  readonly definition_id: string | null;
+  readonly definition_bundle_id: string | null;
+  readonly definition_bundle_digest: string | null;
   readonly body: JsonValue;
   readonly body_digest: string;
   readonly predecessor_id: string | null;
@@ -37,7 +38,7 @@ function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionR
   const prefix = `${row.producer}:${row.namespace}:`;
   return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id,
     revision_id: id, artifact_kind: row.artifact_kind, artifact_schema_version: row.artifact_schema_version,
-    definition_bundle_id: row.definition_bundle_id, definition_bundle_digest: row.definition_bundle_digest,
+    definition_id: row.definition_id, definition_bundle_id: row.definition_bundle_id, definition_bundle_digest: row.definition_bundle_digest,
     body: row.body, body_digest: row.body_digest,
     predecessor_id: row.predecessor_id ? `${prefix}${row.predecessor_id}` : null,
     subject_id: row.subject_id ? `${prefix}${row.subject_id}` : null,

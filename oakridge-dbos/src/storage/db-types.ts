@@ -213,6 +213,7 @@ export interface AuthorityRun {
   config: NullableJsonColumn<RunConfig>;
   created_at: Generated<Timestamp>;
   definition_bundle_id: string;
+  historical_read_only: Generated<boolean>;
   id: string;
   /**
    * @type {RuntimeValue}

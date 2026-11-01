@@ -16,7 +16,7 @@ test("an empty database takes the baseline once, and a repeat confirms it", asyn
     const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(db);
     expect(baselines.rows[0]?.count).toBe(1);
     const ledger = await sql<{ name: string; digest: string; applied_at: Date }>`SELECT name, digest, applied_at FROM authority.schema_migration`.execute(db);
-    expect(ledger.rows[0]?.name).toBe("0001_core.sql");
+    expect(ledger.rows.map((row) => row.name)).toEqual(["0001_core.sql", "0002_historical_runs.sql"]);
     expect(ledger.rows[0]?.digest).toBe(createHash("sha256").update(new Uint8Array(await Bun.file(migrations[0]!.file).arrayBuffer())).digest("hex"));
     expect(ledger.rows[0]?.applied_at).toBeInstanceOf(Date);
   } finally { await db.destroy(); await scratch.drop(); }
@@ -63,9 +63,31 @@ test("historic authority baseline is adopted after catalog validation", async ()
     await sql`INSERT INTO authority.schema_baseline (digest) VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
     await expect(migrateEmptyDatabase(db)).rejects.toThrow("run storage:adopt");
     expect(await adoptExistingDatabase(db, scratch.url)).toEqual([]);
+    const adopted = await sql<{ name: string }>`SELECT name FROM authority.schema_migration ORDER BY ordinal`.execute(db);
+    expect(adopted.rows.map((row) => row.name)).toEqual(["0001_core.sql"]);
     await migrateEmptyDatabase(db);
     const ledger = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM authority.schema_migration`.execute(db);
-    expect(ledger.rows[0]?.count).toBe(1);
+    expect(ledger.rows[0]?.count).toBe(2);
+  } finally { await db.destroy(); await scratch.drop(); }
+});
+
+test("cutover freezes existing runs independently of operator archiving", async () => {
+  const scratch = await scratchDatabase();
+  const db = openDatabase(scratch.url);
+  try {
+    await migrateEmptyDatabase(db, migrations.slice(0, 1));
+    await db.insertInto("authority.definition_bundle").values({ id: "before", digest: "before", source: jsonText({}) as never,
+      checked_program: jsonText({ workflow: {} }) as never }).execute();
+    await db.insertInto("authority.run").values({ id: "unarchived", definition_bundle_id: "before" }).execute();
+    await db.insertInto("authority.run").values({ id: "archived", definition_bundle_id: "before", archived_at: new Date() }).execute();
+    await migrateEmptyDatabase(db);
+    const rows = await db.selectFrom("authority.run").select(["id", "historical_read_only", "archived_at"]).orderBy("id").execute();
+    expect(rows.map((row) => [row.id, row.historical_read_only, row.archived_at === null])).toEqual([
+      ["archived", true, false], ["unarchived", true, true],
+    ]);
+    await db.insertInto("authority.run").values({ id: "new", definition_bundle_id: "before" }).execute();
+    expect((await db.selectFrom("authority.run").select("historical_read_only").where("id", "=", "new")
+      .executeTakeFirstOrThrow()).historical_read_only).toBe(false);
   } finally { await db.destroy(); await scratch.drop(); }
 });
 

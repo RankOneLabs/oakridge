@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { canonicalJson } from "canonical-json";
-import { DefinitionStoreError, loadDefinition, readJsonObject, readLaunchCatalog, readProgramObject, readPromptObject } from "./store";
+import { DefinitionStoreError, loadDefinition, readJsonObject, readLaunchCatalog, readProgramObject, readPromptObject,
+  resolveExecutionDefinition, resolveHistoricalDefinition, resolveLaunchDefinition } from "./store";
 import { compileWorkflow, type CoreClient } from "../core-client/client";
 import type { Workflow } from "../core-client/core-types";
 
@@ -79,7 +80,48 @@ test("missing transitive references name their path or ID", () => {
 test("committed generated definitions resolve", () => {
   const root = resolve(import.meta.dir, "../../../definitions");
   const catalog = readLaunchCatalog(root);
-  for (const id of Object.values(catalog)) expect(loadDefinition(root, id).id).toBe(id);
+  for (const id of Object.values(catalog)) {
+    expect(resolveExecutionDefinition(id, root).id).toBe(id);
+    expect(resolveLaunchDefinition(id, root).id).toBe(id);
+  }
+});
+test("historical definition reads load the exported program without compiling", () => {
+  const f = fixture();
+  try {
+    const program = { digest: "recorded-core-digest", workflow: { workflow: "historical", input: { kind: "record", fields: {} },
+      run: { units: {}, outcome: {} }, stages: {} }, stages: [], operations: [] };
+    f.put("programs", f.json(program), f.definitionId);
+    expect(resolveHistoricalDefinition(f.definitionId, f.root).program.digest).toBe("recorded-core-digest");
+  } finally { f.close(); }
+});
+test("historical program decoder refuses malformed nested workflows and operations", () => {
+  const f = fixture();
+  try {
+    for (const program of [
+      { digest: "recorded", workflow: true, stages: [], operations: [] },
+      { digest: "recorded", workflow: { workflow: "old", input: { kind: "record", fields: {} },
+        run: { units: {}, outcome: {} }, stages: {} }, stages: [], operations: [null] },
+    ]) {
+      f.put("programs", f.json(program), f.definitionId);
+      expect(kindOf(() => readProgramObject(f.root, f.definitionId))).toBe("InvalidProgram");
+    }
+  } finally { f.close(); }
+});
+test("a missing or malformed exported program names the historical object", () => {
+  const f = fixture();
+  try {
+    expect(kindOf(() => resolveHistoricalDefinition(f.definitionId, f.root))).toBe("MissingStoreObject");
+    f.put("programs", f.json({ digest: "recorded" }), f.definitionId);
+    expect(kindOf(() => resolveHistoricalDefinition(f.definitionId, f.root))).toBe("InvalidProgram");
+  } finally { f.close(); }
+});
+test("an object absent from the launch catalog cannot start a run", () => {
+  const f = fixture();
+  try {
+    writeFileSync(resolve(f.root, "launchable.json"), f.json({ other: "f".repeat(64) }));
+    expect(kindOf(() => resolveLaunchDefinition(f.definitionId, f.root))).toBe("NotLaunchable");
+    expect(resolveExecutionDefinition(f.definitionId, f.root).id).toBe(f.definitionId);
+  } finally { f.close(); }
 });
 test("invalid catalog UTF-8 is a named store fault", () => {
   const f = fixture();

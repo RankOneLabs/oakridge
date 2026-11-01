@@ -123,7 +123,7 @@ export function catalogDifferences(expected: CatalogSnapshot, actual: CatalogSna
   return differences;
 }
 
-/** Validate an existing fully migrated install against a scratch build, then record its history. */
+/** Adopt a ledgerless baseline after exact catalog validation; later migrations run normally. */
 export async function adoptExistingDatabase(db: Database, serverUrl: string): Promise<string[]> {
   await assertVersion(db);
   const chain = await sources(migrations);
@@ -134,7 +134,7 @@ export async function adoptExistingDatabase(db: Database, serverUrl: string): Pr
   let differences: string[];
   try {
     const built = openDatabase(scratch.url);
-    try { await migrateEmptyDatabase(built); differences = catalogDifferences(await catalog(built), await catalog(db)); }
+    try { await migrateEmptyDatabase(built, [baseline.entry]); differences = catalogDifferences(await catalog(built), await catalog(db)); }
     finally { await built.destroy(); }
   } finally { await scratch.drop(); }
   if (differences.length) throw new Error(`${SCHEMA} adoption schema difference:\n${differences.join("\n")}`);
@@ -145,8 +145,7 @@ export async function adoptExistingDatabase(db: Database, serverUrl: string): Pr
     await sql`CREATE TABLE authority.schema_migration (
       ordinal integer PRIMARY KEY, name text NOT NULL UNIQUE, digest text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT clock_timestamp())`.execute(trx);
-    for (const [index, migration] of chain.entries())
-      await sql`INSERT INTO authority.schema_migration (ordinal, name, digest) VALUES (${index + 1}, ${migration.entry.name}, ${migration.digest})`.execute(trx);
+    await sql`INSERT INTO authority.schema_migration (ordinal, name, digest) VALUES (1, ${baseline.entry.name}, ${baseline.digest})`.execute(trx);
   });
   return differences;
 }

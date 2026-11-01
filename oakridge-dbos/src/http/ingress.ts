@@ -7,7 +7,7 @@ import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, 
 import { readSessionAttempt } from "../storage/read-store";
 import { findLaunchableDefinition, hasProject } from "../storage/registry-store";
 import { operatorWriterFromCredential } from "./control-auth";
-import { errorResponse, fault, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
+import { errorResponse, fault, HistoricalRunReadOnlyError, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
 
 /**
  * Ingress (part 1 §7.1): HTTP to events. Each route checks authentication and
@@ -75,6 +75,7 @@ export function ingressResponse(run_id: string, result: CommitResult): Response 
       : json({ kind: "rejected", reason: outcome.receipt.reason }, 409);
     case "rejected": return json({ kind: "rejected", reason: outcome.reason }, 409);
     case "conflict": case "contended": return json({ kind: "conflict", detail: outcome.detail }, 409);
+    case "historical_run_read_only": return errorResponse(new HistoricalRunReadOnlyError(outcome.detail));
     case "missing": return errorResponse(new MissingEntityError(outcome.detail));
   }
 }
