@@ -11,6 +11,7 @@ const MINIMUM_SERVER_VERSION = 150000;
 interface AppliedMigration { readonly name: string; readonly digest: string; readonly applied_at: Date }
 interface MigrationSource { readonly entry: MigrationEntry; readonly source: string; readonly digest: string }
 interface CatalogSnapshot { readonly tables: readonly string[]; readonly columns: readonly string[]; readonly constraints: readonly string[]; readonly indexes: readonly string[] }
+interface ExportProtection { readonly kind: "trigger" | "function"; readonly name: string; readonly definition: string }
 interface MigrationPrefixError { readonly operation: "validate_migration_prefix"; readonly entity_id: string; readonly detail: string }
 
 async function sources(entries: readonly MigrationEntry[]): Promise<MigrationSource[]> {
@@ -123,6 +124,43 @@ export function catalogDifferences(expected: CatalogSnapshot, actual: CatalogSna
   return differences;
 }
 
+/** Check export guards the four-category schema diff cannot see. Adoption replaces 0006's guard body afterwards. */
+async function exportProtections(db: Database): Promise<ExportProtection[]> {
+  const result = await sql<ExportProtection>`WITH export_triggers AS (
+    SELECT t.oid AS trigger_oid, t.tgfoid AS function_oid, t.tgname AS trigger_name,
+      t.tgenabled AS enabled, c.relname AS table_name
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = ${SCHEMA} AND NOT t.tgisinternal
+      AND (left(t.tgname, 7) = 'export_' OR c.relname IN ('export_manifest', 'export_membership'))
+  )
+  SELECT 'trigger' AS kind, table_name || '.' || trigger_name AS name,
+    enabled::text || '|' || pg_get_triggerdef(trigger_oid) AS definition FROM export_triggers
+  UNION ALL
+  SELECT 'function' AS kind,
+    n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS name,
+    pg_get_functiondef(p.oid) AS definition
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE p.oid IN (SELECT function_oid FROM export_triggers)
+    AND NOT (n.nspname = ${SCHEMA} AND p.proname = 'require_new_export_manifest')
+  ORDER BY kind, name`.execute(db);
+  return [...result.rows];
+}
+
+function exportProtectionDifferences(expected: readonly ExportProtection[], actual: readonly ExportProtection[]): string[] {
+  const expectedByName = new Map(expected.map((item) => [`${item.kind}:${item.name}`, item]));
+  const actualByName = new Map(actual.map((item) => [`${item.kind}:${item.name}`, item]));
+  const differences: string[] = [];
+  for (const [key, want] of expectedByName) {
+    const have = actualByName.get(key);
+    if (!have) differences.push(`export ${want.kind} missing ${want.name}`);
+    else if (want.definition !== have.definition)
+      differences.push(`export ${want.kind} changed ${want.name}: expected ${createHash("sha256").update(want.definition).digest("hex")}, actual ${createHash("sha256").update(have.definition).digest("hex")}`);
+  }
+  for (const [key, have] of actualByName) if (!expectedByName.has(key)) differences.push(`export ${have.kind} extra ${have.name}`);
+  return differences;
+}
+
 /** Validate an existing fully migrated install against a scratch build, then record its history. */
 export async function adoptExistingDatabase(db: Database, serverUrl: string): Promise<string[]> {
   await assertVersion(db);
@@ -134,7 +172,13 @@ export async function adoptExistingDatabase(db: Database, serverUrl: string): Pr
   let differences: string[];
   try {
     const built = openDatabase(scratch.url);
-    try { await migrateEmptyDatabase(built); differences = catalogDifferences(await catalog(built), await catalog(db)); }
+    try {
+      await migrateEmptyDatabase(built);
+      differences = [
+        ...catalogDifferences(await catalog(built), await catalog(db)),
+        ...exportProtectionDifferences(await exportProtections(built), await exportProtections(db)),
+      ];
+    }
     finally { await built.destroy(); }
   } finally { await scratch.drop(); }
   if (differences.length) throw new Error(`${SCHEMA} adoption schema difference:\n${differences.join("\n")}`);

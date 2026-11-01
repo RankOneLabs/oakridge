@@ -159,6 +159,24 @@ integration("adoption names table, column, constraint and index differences", as
   });
 });
 
+integration("adoption refuses missing, disabled and changed export protections", async () => {
+  const changes = [
+    { statement: "DROP TRIGGER export_membership_immutable ON observation.export_membership", difference: "export trigger missing export_membership.export_membership_immutable" },
+    { statement: "ALTER TABLE observation.export_membership DISABLE TRIGGER export_membership_immutable", difference: "export trigger changed export_membership.export_membership_immutable" },
+    { statement: "CREATE OR REPLACE FUNCTION observation.reject_export_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$", difference: "export function changed observation.reject_export_mutation()" },
+  ];
+  for (const change of changes) await scratch(async (url) => {
+    const db = openDatabase(url);
+    try {
+      await historicSchema(db);
+      await sql.raw(change.statement).execute(db);
+      await expect(adoptExistingDatabase(db, url)).rejects.toThrow(change.difference);
+      const ledger = await sql<{ name: string | null }>`SELECT to_regclass('observation.schema_migration')::text AS name`.execute(db);
+      expect(ledger.rows[0]?.name).toBeNull();
+    } finally { await db.destroy(); }
+  });
+});
+
 async function databaseFingerprint(url: string, schema: string): Promise<string> {
   const client = new Client({ connectionString: url });
   await client.connect();
