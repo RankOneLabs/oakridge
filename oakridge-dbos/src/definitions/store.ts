@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson } from "canonical-json";
 import type { AuthoredWorkflow, CodeOperation } from "../core-client/core-types";
+import type { CompiledAgainst } from "../core-client/client";
 
 export type StoreKind = "workflows" | "prompts" | "operations" | "programs";
 export type DefinitionStoreFault =
   | "InvalidStoreId" | "MissingStoreObject" | "InvalidUtf8" | "PromptBOM" | "PromptCR"
   | "PromptNewline" | "InvalidJson" | "NonCanonicalJson" | "StoreHashMismatch"
-  | "InvalidDefinition" | "InvalidLaunchCatalog" | "MissingPromptReference" | "MissingOperationReference";
+  | "InvalidDefinition" | "InvalidProgram" | "InvalidLaunchCatalog" | "NotLaunchable"
+  | "MissingPromptReference" | "MissingOperationReference";
 export class DefinitionStoreError extends Error {
   constructor(readonly kind: DefinitionStoreFault, readonly object: string, detail: string) {
     super(`${kind}: ${object}: ${detail}`);
@@ -25,6 +27,14 @@ export interface LoadedDefinition {
   readonly definition: CommittedDefinition;
   readonly prompts: Readonly<{ [path: string]: string }>;
   readonly operations: readonly CodeOperation[];
+}
+export interface HistoricalDefinitionRead {
+  readonly definition: LoadedDefinition;
+  readonly program: CompiledAgainst;
+}
+/** The root is configured once for every store read made by the running service. */
+export function definitionRoot(): string {
+  return process.env.OAKRIDGE_DEFINITION_ROOT ?? resolve(import.meta.dir, "../../../definitions");
 }
 const hash = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const idPattern = /^[a-f0-9]{64}$/;
@@ -72,9 +82,22 @@ export function readPromptObject(root: string, id: string): string {
   return text;
 }
 /** Program records are keyed by definition ID, not by their own bytes. */
-export function readProgramObject(root: string, id: string): unknown {
+export function readProgramObject(root: string, id: string): CompiledAgainst {
   const object = `programs/${id}`;
-  return parseJson(utf8(readBytes(root, "programs", id), object), object);
+  const bytes = readBytes(root, "programs", id);
+  const text = utf8(bytes, object);
+  const value = parseJson(text, object);
+  const encoded = canonicalJson(value);
+  if (!encoded.ok || encoded.value !== text)
+    throw new DefinitionStoreError("NonCanonicalJson", object, encoded.ok ? "bytes are not Canonical JSON v1" : encoded.error.detail);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new DefinitionStoreError("InvalidProgram", object, "expected a compiled program object");
+  const program = value as Partial<CompiledAgainst>;
+  if (typeof program.digest !== "string" || !program.workflow ||
+      !Array.isArray(program.stages) || !program.stages.every((stage) => typeof stage === "string") ||
+      !Array.isArray(program.operations))
+    throw new DefinitionStoreError("InvalidProgram", object, "digest, workflow, stages and operations are required");
+  return program as CompiledAgainst;
 }
 export function readLaunchCatalog(root: string): Readonly<{ [name: string]: string }> {
   let bytes: Uint8Array;
@@ -118,4 +141,21 @@ export function loadDefinition(root: string, id: string): LoadedDefinition {
   }
   if (!Array.isArray(operations)) throw new DefinitionStoreError("InvalidDefinition", `workflows/${id}`, "operations must be an array");
   return { id, definition: record as CommittedDefinition, prompts, operations: operations as CodeOperation[] };
+}
+
+/** Resolve the exact committed source, prompt bytes and operation registry used to compile. */
+export function resolveExecutionDefinition(id: string, root = definitionRoot()): LoadedDefinition {
+  return loadDefinition(root, id);
+}
+
+/** Starting a run requires an entry in the launch catalog, not merely an object on disk. */
+export function resolveLaunchDefinition(id: string, root = definitionRoot()): LoadedDefinition {
+  if (!Object.values(readLaunchCatalog(root)).includes(id))
+    throw new DefinitionStoreError("NotLaunchable", `workflows/${id}`, "definition is absent from launchable.json");
+  return resolveExecutionDefinition(id, root);
+}
+
+/** Historical reads use the exported executable program and never invoke today's compiler. */
+export function resolveHistoricalDefinition(id: string, root = definitionRoot()): HistoricalDefinitionRead {
+  return { definition: loadDefinition(root, id), program: readProgramObject(root, id) };
 }
