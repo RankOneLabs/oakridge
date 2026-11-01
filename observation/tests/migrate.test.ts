@@ -34,12 +34,38 @@ integration("manifest pins all files in historical order", async () => {
     "0004_cursor.sql", "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql",
     "0008_langfuse_sync.sql", "0009_grade_label_origin.sql", "0010_question_text_and_evaluator_instructions.sql",
     "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql",
-    "0014_annotation_evaluator_v2.sql",
+    "0014_annotation_evaluator_v2.sql", "0015_definition_identity.sql",
   ]);
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
   expect(migrations.map((entry) => entry.name).sort()).toEqual(files.filter((name) => name.endsWith(".sql")).sort());
   for (const entry of migrations) expect(await Bun.file(entry.file).exists()).toBe(true);
 });
+
+integration("definition identity migration keeps legacy provenance and permits new IDs alone", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db, migrations.slice(0, -1));
+    await withTenant(db, { producer: "oakridge", namespace: "cutover" }, (trx) =>
+      sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+        artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest,
+        body, body_digest, recorded_at) VALUES ('oakridge', 'cutover', 'old', 'run', 'unit', 'brief', '1',
+        'bundle', 'digest', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(trx));
+    await migrateEmptyDatabase(db);
+    await withTenant(db, { producer: "oakridge", namespace: "cutover" }, (trx) =>
+      sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+        artifact_kind, artifact_schema_version, definition_id, body, body_digest, recorded_at)
+        VALUES ('oakridge', 'cutover', 'new', 'run', 'unit', 'brief', '1', ${"a".repeat(64)}, '{}'::jsonb,
+        ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(trx));
+    const rows = await withTenant(db, { producer: "oakridge", namespace: "cutover" }, (trx) =>
+      sql<{ revision_id: string; definition_id: string | null; definition_bundle_id: string | null; definition_bundle_digest: string | null }>`
+        SELECT revision_id, definition_id, definition_bundle_id, definition_bundle_digest
+        FROM observation.source_revision ORDER BY revision_id`.execute(trx));
+    expect(rows.rows).toEqual([
+      { revision_id: "new", definition_id: "a".repeat(64), definition_bundle_id: null, definition_bundle_digest: null },
+      { revision_id: "old", definition_id: null, definition_bundle_id: "bundle", definition_bundle_digest: "digest" },
+    ]);
+  } finally { await db.destroy(); }
+}));
 
 integration("fresh migration ledger records the ordered chain and exact file digests", async () => scratch(async (url) => {
   const db = openDatabase(url);

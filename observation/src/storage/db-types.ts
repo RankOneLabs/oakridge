@@ -416,14 +416,15 @@ export interface ObservationSourceRevision {
   unit_id: string;
   artifact_kind: string;
   artifact_schema_version: string;
-  definition_bundle_id: string;
-  definition_bundle_digest: string;
+  definition_bundle_id: string | null;
+  definition_bundle_digest: string | null;
   body: JsonValue;
   body_digest: string;
   recorded_at: Date;
   captured_at: Generated<Date>;
   predecessor_id: string | null;
   subject_id: string | null;
+  definition_id: string | null;
 }
 
 export interface DB {
