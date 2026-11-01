@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { compileWorkflow, CoreClient, CORE_WASM_PATH } from "../src/core-client/client";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
-import { pinDefinition } from "../src/storage/registry-store";
+import { pinDefinition, setRunArchived } from "../src/storage/registry-store";
+import { ingressResponse } from "../src/http/ingress";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
 import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
 import { commitEvent, requestDigest } from "../src/storage/commit";
 import { selectOperatorFrame } from "../src/projections/operator-event";
-import { listRuns } from "../src/storage/read-store";
+import { listRuns, listRunsNeedingWork } from "../src/storage/read-store";
 import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
@@ -27,6 +28,31 @@ async function launched(request_id = crypto.randomUUID()): Promise<RunId> {
   return run_id;
 }
 const intents = (run_id: RunId) => authority.db.selectFrom("authority.effect_intent").selectAll().where("run_id", "=", run_id).orderBy("updated_at").execute();
+
+test("historical runs refuse decisions, retries, edits, publications and resumption even when unarchived", async () => {
+  const run_id = await launched();
+  const unit = unitOf(run_id, "document");
+  await authority.db.updateTable("authority.run").set({ historical_read_only: true }).where("id", "=", run_id).execute();
+  const events = [
+    { kind: "operator_decided", unit, review: "editor", decision: "approve", target: "revision", payload: {} },
+    { kind: "retry_requested", unit, worker: "writer" },
+    { kind: "revision_published", unit, artifact: "draft", body: {}, by: null, predecessor: null, subject: null },
+    { kind: "revision_published", unit, artifact: "draft", body: {}, by: "attempt", predecessor: null, subject: null },
+  ] as const;
+  const before = (await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute()).length;
+  for (const event of events) {
+    const result = await submitter(authority)({ run_id, event });
+    expect(result.ok && result.value.kind).toBe("historical_run_read_only");
+    const response = ingressResponse(run_id, result);
+    expect([response.status, (await response.json()).code]).toEqual([409, "historical_run_read_only"]);
+  }
+  await setRunArchived(authority.db, run_id, true);
+  await setRunArchived(authority.db, run_id, false);
+  const cancel = await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
+  expect(cancel.ok && cancel.value.kind).toBe("historical_run_read_only");
+  expect(await listRunsNeedingWork(authority.db, { run_id })).toEqual([]);
+  expect((await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute()).length).toBe(before);
+});
 
 test("deadlock and serialization conflicts report distinct retryable reasons", async () => {
   const reasons: string[] = [];

@@ -7,13 +7,14 @@ export class UnsupportedMediaTypeError { readonly kind = "unsupported_media_type
 export class InvalidPayloadError { readonly kind = "invalid_payload"; constructor(readonly detail: string) {} }
 export class MissingEntityError { readonly kind = "missing_entity"; constructor(readonly detail: string) {} }
 export class ConflictError { readonly kind = "conflict"; constructor(readonly detail: string) {} }
+export class HistoricalRunReadOnlyError { readonly kind = "historical_run_read_only"; constructor(readonly detail: string) {} }
 export class InternalFaultError { readonly kind = "internal_fault"; readonly trace_id = crypto.randomUUID(); constructor(readonly detail: string) {} }
 export type RequestError = MalformedRequestError | UnauthorizedError | ForbiddenError | UnknownRouteError | UnsupportedMediaTypeError
-  | InvalidPayloadError | MissingEntityError | ConflictError | InternalFaultError;
+  | InvalidPayloadError | MissingEntityError | ConflictError | HistoricalRunReadOnlyError | InternalFaultError;
 
 export const REQUEST_ERROR_STATUS = {
   malformed_request: 400, unauthorized: 401, forbidden: 403, unknown_route: 404, unsupported_media_type: 415,
-  invalid_payload: 422, missing_entity: 404, conflict: 409, internal_fault: 500,
+  invalid_payload: 422, missing_entity: 404, conflict: 409, historical_run_read_only: 409, internal_fault: 500,
 } as const satisfies Readonly<Record<RequestError["kind"], 400 | 401 | 403 | 404 | 409 | 415 | 422 | 500>>;
 
 /** An internal fault is logged by trace id and never echoes its detail to the caller. */

@@ -33,6 +33,7 @@ export interface CommitRequest {
 }
 export type CommitOutcome =
   | { readonly kind: "committed"; readonly event_id: string }
+  | { readonly kind: "historical_run_read_only"; readonly detail: string }
   /** The ingress id was seen before with the same content: its stored result. */
   | { readonly kind: "replayed"; readonly receipt: CommitReceipt }
   /** `step` refused the event. Stored as a rejected receipt when it carries an ingress id. */
@@ -222,9 +223,10 @@ async function storeLaunchRefusal(db: Database, request: CommitRequest, launch: 
 
 async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<Result<CommitOutcome, CommitFault>> {
   const { run_id } = request;
-  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config"])
+  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config", "historical_read_only"])
     .where("id", "=", run_id).forUpdate().executeTakeFirst();
   if (!run) return { ok: true, value: { kind: "missing", detail: "run not found" } };
+  if (run.historical_read_only) return { ok: true, value: { kind: "historical_run_read_only", detail: `run ${run_id} is historical and read-only` } };
   if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
     return { ok: true, value: { kind: "conflict", detail: "run is pinned to a different definition" } };
   const digest = requestDigest(request);
