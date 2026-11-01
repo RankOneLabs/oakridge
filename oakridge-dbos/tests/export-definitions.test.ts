@@ -18,7 +18,8 @@ function fixture() {
   const promptId = sha(prompt);
   const row: LegacyDefinitionRow = { id: "legacy-unlaunchable", digest: "legacy-digest",
     source_text: json({ workflow: "old", input: {}, run: { units: {}, outcome: {} }, stages: {} }),
-    program_text: json({ digest: "recorded-core-digest", workflow: { workflow: "old" }, stages: [], operations: [] }),
+    program_text: json({ digest: "recorded-core-digest", workflow: { workflow: "old", input: { kind: "record", fields: {} },
+      run: { units: {}, outcome: {} }, stages: {} }, stages: [], operations: [] }),
     prompts_text: json({ "old.md": promptId }) };
   return { row, prompt: { content_digest: promptId, content: prompt } };
 }

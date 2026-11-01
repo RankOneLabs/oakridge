@@ -88,9 +88,23 @@ test("committed generated definitions resolve", () => {
 test("historical definition reads load the exported program without compiling", () => {
   const f = fixture();
   try {
-    const program = { digest: "recorded-core-digest", workflow: { workflow: "historical" }, stages: [], operations: [] };
+    const program = { digest: "recorded-core-digest", workflow: { workflow: "historical", input: { kind: "record", fields: {} },
+      run: { units: {}, outcome: {} }, stages: {} }, stages: [], operations: [] };
     f.put("programs", f.json(program), f.definitionId);
     expect(resolveHistoricalDefinition(f.definitionId, f.root).program.digest).toBe("recorded-core-digest");
+  } finally { f.close(); }
+});
+test("historical program decoder refuses malformed nested workflows and operations", () => {
+  const f = fixture();
+  try {
+    for (const program of [
+      { digest: "recorded", workflow: true, stages: [], operations: [] },
+      { digest: "recorded", workflow: { workflow: "old", input: { kind: "record", fields: {} },
+        run: { units: {}, outcome: {} }, stages: {} }, stages: [], operations: [null] },
+    ]) {
+      f.put("programs", f.json(program), f.definitionId);
+      expect(kindOf(() => readProgramObject(f.root, f.definitionId))).toBe("InvalidProgram");
+    }
   } finally { f.close(); }
 });
 test("a missing or malformed exported program names the historical object", () => {
