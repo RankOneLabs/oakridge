@@ -1,3 +1,4 @@
+import { OPERATION_REGISTRY } from "../src/operations/registry";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RunConfig } from "../src/domain/run-config";
@@ -61,7 +62,7 @@ export async function pinWorkflow(authority: Pick<Authority, "db" | "core">, wor
   const prompts = edit === undefined ? read.value : { ...read.value,
     [edit.path]: { content_digest: createHash("sha256").update(edit.content).digest("hex"), content: edit.content } };
   const compiled = await compileWorkflow(authority.core, { workflow,
-    prompts: Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, prompt.content])) });
+    prompts: Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, prompt.content])), operations: OPERATION_REGISTRY });
   if (!compiled.ok) throw new Error(compiled.error.detail);
   const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts });
   return { bundle_id: pinned.bundle.id, digest: pinned.bundle.digest };

@@ -283,6 +283,8 @@ pub struct FieldExpression {
 #[serde(deny_unknown_fields)]
 pub struct Workflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operations: Option<String>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
@@ -296,6 +298,8 @@ pub struct Workflow {
 #[serde(deny_unknown_fields)]
 pub struct AuthoredWorkflow {
     pub workflow: SymbolKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operations: Option<String>,
     pub input: TypeExpression,
     #[serde(default)]
     pub schemas: BTreeMap<String, TypeExpression>,
@@ -702,6 +706,17 @@ mod prompt_tests {
         config["stages"]["document"]["workers"]["writer"]["prompts"] =
             serde_json::json!({"initial": "write.md", "revsie": "revise.md"});
         assert!(serde_json::from_value::<Workflow>(config).is_err());
+    }
+
+    #[test]
+    fn authored_operation_reference_round_trips() {
+        let value = serde_json::json!({
+            "workflow": "identity", "operations": "abc123", "input": {},
+            "run": { "units": {}, "outcome": {} }, "stages": {}
+        });
+        let authored: AuthoredWorkflow = serde_json::from_value(value).unwrap();
+        let serialized = serde_json::to_value(authored).unwrap();
+        assert_eq!(serialized["operations"], "abc123");
     }
 }
 

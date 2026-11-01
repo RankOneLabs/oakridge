@@ -437,7 +437,11 @@ pub(super) fn check(
         root,
     })
 }
-pub(super) fn lower(parts: CheckedParts) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
+pub(super) fn lower(
+    parts: CheckedParts,
+    operations: &[CodeOperation],
+    prompts: &BTreeMap<String, String>,
+) -> Result<(CheckedWorkflow, Workflow), Vec<CompileError>> {
     let mut encoded = Vec::new();
     let mut serializer = serde_json::Serializer::new(&mut encoded);
     serde_path_to_error::serialize(&parts.original, &mut serializer).map_err(|error| {
@@ -459,9 +463,15 @@ pub(super) fn lower(parts: CheckedParts) -> Result<(CheckedWorkflow, Workflow), 
             error.inner().to_string(),
         )]
     })?;
+    let inputs = serde_json::to_vec(&(operations, prompts)).expect("compile inputs serialize");
+    let mut digest_input = Vec::with_capacity(encoded.len() + inputs.len() + 16);
+    digest_input.extend_from_slice(&(encoded.len() as u64).to_be_bytes());
+    digest_input.extend_from_slice(&encoded);
+    digest_input.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
+    digest_input.extend_from_slice(&inputs);
     let projected = projection::workflow(&parts.original, &parts.source);
     let program = CheckedWorkflow {
-        digest: BundleDigest(format!("{:x}", Sha256::digest(encoded))),
+        digest: BundleDigest(format!("{:x}", Sha256::digest(digest_input))),
         input: parts.source.input,
         stages: parts.stages,
         root: parts.root,

@@ -16,6 +16,8 @@ jobs:
         working-directory: workflow-core
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.93.1
@@ -29,6 +31,8 @@ jobs:
         working-directory: .
       - run: bun workflow-config/src/generate.ts --check
         working-directory: .
+        env:
+          DEFINITIONS_MERGE_BASE: origin/main
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
@@ -73,6 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@master
@@ -83,8 +89,11 @@ jobs:
           workspaces: workflow-core
       - run: bash scripts/generate-core-contracts.sh --check
       - run: bun workflow-config/src/generate.ts --check
+        env:
+          DEFINITIONS_MERGE_BASE: origin/main
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: bun test workflow-config/src
+      - run: bun test canonical-json/tests
 
   workspace-typecheck:
     name: workspace typecheck (TypeScript)
@@ -98,6 +107,7 @@ jobs:
       # package.json — keeps CI builds reproducible against the
       # committed lock.
       - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit -p canonical-json/tsconfig.json
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json

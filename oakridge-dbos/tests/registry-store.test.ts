@@ -1,3 +1,4 @@
+import { OPERATION_REGISTRY } from "../src/operations/registry";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -103,7 +104,7 @@ test("pinDefinition records a newly pinned bundle on the operator stream", async
   const prompts = readWorkflowPrompts(workflow);
   if (!prompts.ok) throw new Error(prompts.error.detail);
   const compiled = await compileWorkflow(authority.core, { workflow,
-    prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+    prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])), operations: OPERATION_REGISTRY });
   if (!compiled.ok) throw new Error(compiled.error.detail);
   const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts: prompts.value });
   expect((await announcements(pinned.bundle.id)).map((row) => row.payload.kind)).toEqual(["invalidate"]);

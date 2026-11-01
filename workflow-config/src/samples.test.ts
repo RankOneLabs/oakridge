@@ -4,11 +4,37 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import YAML from "yaml";
-import { WORKFLOW_SOURCES } from "./workflow-sources";
+import { WORKFLOW_SOURCES, definitionBytes, definitionId, type DefinitionContent } from "./workflow-sources";
 import { listPromptCatalog } from "./prompt-catalog";
+import type { AuthoredWorkflow } from "../../oakridge-dbos/src/core-client/core-types";
+import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
+import { canonicalJson } from "canonical-json";
 
 const root = resolve(import.meta.dir, "../..");
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+test("definition identity follows prompt and registry bytes, not YAML key order", () => {
+  const first = YAML.parse("workflow: example\ninput: {}\nrun: {units: {}, outcome: {}}\nstages: {}\n") as AuthoredWorkflow;
+  const reordered = YAML.parse("stages: {}\nrun: {outcome: {}, units: {}}\ninput: {}\nworkflow: example\n") as AuthoredWorkflow;
+  const registry = digest("registry");
+  const content: DefinitionContent = { source: { ...first, operations: registry }, operations: registry, prompts: { "a.md": digest("first\n") } };
+  const same: DefinitionContent = { ...content, source: { ...reordered, operations: registry } };
+  expect(definitionBytes(content)).toBe(definitionBytes(same));
+  expect(definitionId(content)).toBe(definitionId(same));
+  expect(definitionId({ ...content, prompts: { "a.md": digest("second\n") } })).not.toBe(definitionId(content));
+  const changed = digest("changed registry");
+  expect(definitionId({ ...content, source: { ...first, operations: changed }, operations: changed })).not.toBe(definitionId(content));
+});
+
+test("generated prompt objects preserve their source bytes", () => {
+  const catalog = JSON.parse(readFileSync(resolve(root, "definitions/launchable.json"), "utf8")) as { [name: string]: string };
+  for (const id of Object.values(catalog)) {
+    const definition = JSON.parse(readFileSync(resolve(root, "definitions/workflows", `${id}.json`), "utf8")) as DefinitionContent;
+    for (const [path, promptId] of Object.entries(definition.prompts))
+      expect(readFileSync(resolve(root, "definitions/prompts", `${promptId}.md`)))
+        .toEqual(readFileSync(resolve(root, "workflow-config/prompts", path)));
+  }
+});
 
 // The Rust compiler and replay tests read the JSON; the YAML is what a person
 // edits. These assertions are what generate.ts --check enforces in CI.
@@ -18,7 +44,9 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
     const document = YAML.parseDocument(source, { uniqueKeys: true });
     expect(document.errors).toEqual([]);
     const fixture = readFileSync(resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), "utf8");
-    expect(fixture).toBe(`${JSON.stringify(document.toJS(), null, 2)}\n`);
+    const registry = canonicalJson(OPERATION_REGISTRY);
+    if (!registry.ok) throw new Error(registry.error.detail);
+    expect(fixture).toBe(`${JSON.stringify({ ...document.toJS(), operations: digest(registry.value) }, null, 2)}\n`);
   });
 
   test(`${path} names only prompt files that exist`, () => {

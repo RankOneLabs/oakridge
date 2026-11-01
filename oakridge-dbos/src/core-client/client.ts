@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
 import type { CodeOperation, CompiledWorkflow, CoreCompileError, CoreDomainError, CoreRequest, CoreTransportError, Output, StepResult, WantedWorker, Workflow } from "./core-types";
 import { traced, type Traced } from "../domain/primitives";
-import { OPERATION_REGISTRY } from "../operations/registry";
 
 export const CORE_WASM_PATH = process.env.OAKRIDGE_CORE_WASM ?? resolve(import.meta.dir, "../../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
 export const MAX_SNAPSHOT_BYTES = 64 * 1_048_576;
@@ -102,19 +101,21 @@ export class CoreClient {
 
 /**
  * Source and prompt texts (by path) that a workflow compiles from, and the
- * code operations it is checked against: the declared registry unless a
- * pinned definition recorded the one it was pinned under.
+ * code operations it is checked against. Callers must name the registry.
  */
 export interface CompileInput {
   readonly workflow: Workflow;
   readonly prompts: { readonly [path: string]: string };
-  readonly operations?: readonly CodeOperation[];
+  readonly operations: readonly CodeOperation[];
 }
 /** A compile result with the operations it was checked against, which pinning records beside it. */
 export type CompiledAgainst = CompiledWorkflow & { readonly operations: readonly CodeOperation[] };
 /** Compile a workflow against code operations and leave it in the core's program cache. */
 export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledAgainst>> {
-  const operations = input.operations ?? OPERATION_REGISTRY;
+  if ("definition_id" in input || "digest" in input)
+    return traced("compile", input.workflow.workflow, "UnverifiedDefinitionId: direct compile cannot choose a program identity");
+  if (input.operations === undefined) return traced("compile", input.workflow.workflow, "MissingOperations: compile requires an explicit operation registry");
+  const operations = input.operations;
   const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...operations] });
   if (!response.ok) {
     const detail = response.error.kind === "compile"

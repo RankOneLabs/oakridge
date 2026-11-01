@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
@@ -266,7 +268,9 @@ const BEFORE_BRANCHES_REGISTRY = OPERATION_REGISTRY.map((operation) => operation
 
 /** Steps a launch on a core that has cached nothing, as one does after a restart. */
 async function launchOnFreshCore(pinned: DefinitionBundleId, input: unknown) {
-  const started = CoreClient.start();
+  // CI builds this release artifact from the committed workflow-core sources.
+  const releaseWasm = resolve(import.meta.dir, "../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
+  const started = CoreClient.start({ wasm_path: releaseWasm });
   if (!started.ok) throw new Error("core WASM did not load");
   try { return (await launch({ db: authority.db, core: started.value }, { bundle_id: pinned, request_id: crypto.randomUUID(), input })).result; }
   finally { started.value.close(); }
@@ -280,12 +284,12 @@ test("a definition pinned under an older operation contract still steps after a 
   expect(result.ok && result.value.kind).toBe("committed");
 });
 
-test("a definition pinned before its operations were recorded compiles against the declared registry", async () => {
+test("a definition with no pinned operation registry fails recovery by name", async () => {
   const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "no_recorded_operations" });
   await authority.db.updateTable("authority.definition_bundle")
     .set({ checked_program: sql`checked_program - 'operations'` }).where("id", "=", pinned).execute();
   const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
-  expect(result.ok && result.value.kind).toBe("committed");
+  expect(result.ok ? null : result.error.detail).toContain("MissingOperations");
 });
 
 test("a definition pinned with an edited prompt still steps after a restart", async () => {
@@ -293,6 +297,16 @@ test("a definition pinned with an edited prompt still steps after a restart", as
     { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" });
   const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
   expect(result.ok && result.value.kind).toBe("committed");
+});
+
+test("recovery names a missing pinned prompt instead of compiling without it", async () => {
+  const content = "Unique missing prompt for recovery {{topic}}.\n";
+  const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "missing_prompt_restart" },
+    { path: "review-loop/write.md", content });
+  const digest = createHash("sha256").update(content).digest("hex");
+  await authority.db.deleteFrom("authority.prompt_content").where("content_digest", "=", digest).execute();
+  const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
+  expect(result.ok ? null : result.error.detail).toContain("MissingPinnedPrompt: review-loop/write.md");
 });
 
 test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {
