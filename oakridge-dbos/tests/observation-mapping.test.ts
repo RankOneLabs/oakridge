@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CORE_PROTOCOL_SCHEMA, type Event } from "../src/core-client/core-types";
-import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
+import { artifactSchemaVersion, bodyDigest, declarationDigest } from "../src/adapters/observation-schema-version";
 import { DELIBERATELY_UNMAPPED_EVENTS, MAPPED_EVENTS, mapObservationEvent } from "../src/adapters/observation-mapping";
 import type { CommittedEventRow, PinnedDefinitionRead } from "../src/storage/read-store";
 
@@ -13,6 +13,12 @@ const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead 
 });
 const row = (payload: Event): CommittedEventRow<Event> => ({ id: "event-1", run_id: "run-1", unit_id: "run-1/writing",
   payload, created_at: new Date("2026-10-28T00:00:00Z"), commit_txid: "10", was_visible_at_subscription: false });
+
+test("stored schema and body digest bytes match the prior canonical encoder", () => {
+  const hash = "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777";
+  expect(declarationDigest({ b: 2, a: 1 })).toBe(`artifact-schema/v1:${hash}`);
+  expect(String(bodyDigest({ b: 2, a: 1 }))).toBe(`canonical-json/v1:${hash}`);
+});
 
 test("schema digest changes with the artifact declaration, not the bundle digest", () => {
   const original = artifactSchemaVersion(definition({ kind: "text" }), "writing", "draft");

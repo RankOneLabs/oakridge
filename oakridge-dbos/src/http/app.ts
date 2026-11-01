@@ -1,3 +1,4 @@
+import { OPERATION_REGISTRY } from "../operations/registry";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { CoreClient } from "../core-client/client";
@@ -103,7 +104,7 @@ export function installDefinitionApi(app: Hono, deps: DefinitionApiDependencies)
       const prompts = readWorkflowPrompts(source);
       if (!prompts.ok) return errorResponse(new InvalidPayloadError(`${prompts.error.entity_id}: ${prompts.error.detail}`));
       const texts = Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content]));
-      const compiled = await compileWorkflow(deps.core, { workflow: source, prompts: texts });
+      const compiled = await compileWorkflow(deps.core, { workflow: source, prompts: texts, operations: OPERATION_REGISTRY });
       if (!compiled.ok) return errorResponse(new InvalidPayloadError(compiled.error.detail));
       if (!is_pinned) return Response.json(compiled.value);
       const pinned = await pinDefinition(deps.db, { source, compiled: compiled.value, prompts: prompts.value });

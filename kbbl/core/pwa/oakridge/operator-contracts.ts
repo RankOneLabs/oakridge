@@ -259,9 +259,9 @@ export interface OperatorDefinitionBundle {
   readonly units: readonly OperatorUnitDefinition[];
 }
 
-export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorStage }; readonly "workflow": string };
+export type OperatorWorkflow = { readonly "input": OperatorTypeExpression; readonly "operations"?: string | null; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorStage }; readonly "workflow": string };
 
-export type OperatorAuthoredWorkflow = { readonly "decisions"?: { readonly [key: string]: { readonly [key: string]: OperatorReviewDecision } }; readonly "input": OperatorTypeExpression; readonly "reviews"?: { readonly [key: string]: OperatorReview }; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorAuthoredStage }; readonly "workers"?: { readonly [key: string]: OperatorWorker }; readonly "workflow": string };
+export type OperatorAuthoredWorkflow = { readonly "decisions"?: { readonly [key: string]: { readonly [key: string]: OperatorReviewDecision } }; readonly "input": OperatorTypeExpression; readonly "operations"?: string | null; readonly "reviews"?: { readonly [key: string]: OperatorReview }; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorTypeExpression }; readonly "stages": { readonly [key: string]: OperatorAuthoredStage }; readonly "workers"?: { readonly [key: string]: OperatorWorker }; readonly "workflow": string };
 
 export interface OperatorDefinitionGraph { readonly nodes: readonly OperatorDefinitionGraphNode[]; readonly edges: readonly { readonly from: string; readonly to: string }[] }
 
@@ -394,7 +394,7 @@ export type OperatorWorker = { readonly "creates": (string)[]; readonly "inputs"
 
 export interface OperatorDefinitionGraphNode { readonly key: string; readonly stage: string; readonly depends_on: readonly string[] }
 
-export type OperatorParsedWorkflow = { readonly "input": OperatorType; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorType }; readonly "stages": { readonly [key: string]: OperatorParsedStage }; readonly "workflow": string };
+export type OperatorParsedWorkflow = { readonly "input": OperatorType; readonly "operations"?: string | null; readonly "run": OperatorGroup; readonly "schemas"?: { readonly [key: string]: OperatorType }; readonly "stages": { readonly [key: string]: OperatorParsedStage }; readonly "workflow": string };
 
 export type OperatorJsonValue = OperatorJsonPrimitive | readonly OperatorJsonValue[] | { readonly [key: string]: OperatorJsonValue };
 

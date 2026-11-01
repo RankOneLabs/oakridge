@@ -1,3 +1,4 @@
+import { OPERATION_REGISTRY } from "../src/operations/registry";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -107,7 +108,7 @@ test("the development bundle lists each direct collection declaration", async ()
   if (!started.ok) throw new Error(started.error.detail.detail);
   try {
     const compiled = await compileWorkflow(started.value, { workflow: source,
-      prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+      prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])), operations: OPERATION_REGISTRY });
     if (!compiled.ok) throw new Error(compiled.error.detail);
     expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
     ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],

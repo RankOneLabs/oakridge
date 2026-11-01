@@ -26,7 +26,7 @@ test("a code worker of each registered operation compiles against its declared c
     const bound = (schema: unknown): TypeExpression => JSON.parse(JSON.stringify(schema).replaceAll(`"${TYPE_VARIABLE}"`, `"text"`));
     const compiled = await Promise.all(OPERATION_REGISTRY.map((operation) => {
       const inputs = Object.fromEntries(Object.keys(operation.input_schema).map((field) => [field, `input.${field}`]));
-      return compileWorkflow(core, { prompts: {}, workflow: { workflow: "operation_contract", input: bound(operation.input_schema),
+      return compileWorkflow(core, { prompts: {}, operations: OPERATION_REGISTRY, workflow: { workflow: "operation_contract", input: bound(operation.input_schema),
         run: { units: { only: { stage: "only", input: inputs } }, outcome: {} },
         stages: { only: { input: bound(operation.input_schema), artifacts: { output: { schema: bound(operation.output_schema) } },
           workers: { call: { kind: "code", operation: operation.key, inputs, creates: ["output"] } }, done_when: "published(output)", outcome: {} } } } });

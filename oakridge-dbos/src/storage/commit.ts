@@ -304,19 +304,22 @@ const pinnedOperations = (compiled: CompiledWorkflow): readonly CodeOperation[] 
  * strands a run that is already pinned.
  */
 async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: StepInput): Promise<Result<Stepped, CommitFault>> {
-  // The core caches programs by its own digest of the source; the definition's
-  // digest also covers its prompts, so it is not the core's key.
+  // The core cache key covers the source, prompt texts and pinned operations.
   const core_digest = input.definition.checked_program.digest;
   const step = () => core.request("step", { workflow_digest: core_digest, snapshot: input.snapshot, incoming: input.incoming });
   let response = await step();
   if (!response.ok && response.error.kind === "domain" && response.error.detail.kind === "unknown_bundle") {
     const texts = await readPromptTexts(trx, Object.values(input.definition.prompts));
-    const prompts = Object.fromEntries(Object.entries(input.definition.prompts).flatMap(([path, digest]) => {
+    const prompts: { [path: string]: string } = {};
+    for (const [path, digest] of Object.entries(input.definition.prompts)) {
       const text = texts.get(digest);
-      return text === undefined ? [] : [[path, text]];
-    }));
+      if (text === undefined) return { ok: false, error: fault(input.run_id, `MissingPinnedPrompt: ${path}`) };
+      prompts[path] = text;
+    }
+    const operations = pinnedOperations(input.definition.checked_program);
+    if (operations === undefined) return { ok: false, error: fault(input.run_id, "MissingOperations: pinned definition has no operation registry") };
     const compiled = await compileWorkflow(core, { workflow: input.definition.source, prompts,
-      operations: pinnedOperations(input.definition.checked_program) });
+      operations });
     if (!compiled.ok) return { ok: false, error: fault(input.run_id, `pinned definition no longer compiles: ${compiled.error.detail}`) };
     if (compiled.value.digest !== core_digest) return { ok: false, error: fault(input.run_id,
       `pinned definition compiles to ${compiled.value.digest}, not ${core_digest}`) };

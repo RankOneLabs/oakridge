@@ -1,0 +1,60 @@
+{
+  "workflow": "template_override",
+  "input": {
+    "topic": "text"
+  },
+  "workers": {
+    "writer": {
+      "kind": "agent",
+      "prompts": {
+        "initial": "template-override/default.md"
+      },
+      "inputs": {
+        "topic": "input.topic"
+      },
+      "creates": [
+        "draft"
+      ]
+    }
+  },
+  "run": {
+    "units": {
+      "document": {
+        "stage": "document",
+        "input": {
+          "topic": "input.topic"
+        }
+      }
+    },
+    "outcome": {
+      "draft": "document.outcome.draft"
+    }
+  },
+  "stages": {
+    "document": {
+      "input": {
+        "topic": "text"
+      },
+      "artifacts": {
+        "draft": {
+          "schema": "text"
+        }
+      },
+      "workers": {
+        "writer": {
+          "template": "writer",
+          "overrides": {
+            "prompts": {
+              "initial": "template-override/override.md"
+            }
+          }
+        }
+      },
+      "done_when": "published(draft)",
+      "outcome": {
+        "draft": "latest(draft)"
+      }
+    }
+  },
+  "operations": "2be57554f297c43518ff80b22c6becd35612f6ce1a4b5a29273cfbf9ebab29c0"
+}
