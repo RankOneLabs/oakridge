@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { canonicalJson } from "canonical-json";
+import { canonicalJson, type CanonicalizationError, type Result } from "canonical-json";
 import type { AuthoredWorkflow } from "../../oakridge-dbos/src/core-client/core-types";
 
 export interface DefinitionContent {
@@ -8,14 +8,14 @@ export interface DefinitionContent {
   readonly prompts: Readonly<{ [path: string]: string }>;
 }
 
-export function definitionBytes(content: DefinitionContent): string {
-  const encoded = canonicalJson(content);
-  if (!encoded.ok) throw new Error(`NonCanonicalJson: ${encoded.error.entity_id}: ${encoded.error.detail}`);
-  return encoded.value;
+export function definitionBytes(content: DefinitionContent): Result<string, CanonicalizationError> {
+  return canonicalJson(content);
 }
 
-export function definitionId(content: DefinitionContent): string {
-  return createHash("sha256").update(definitionBytes(content), "utf8").digest("hex");
+export function definitionId(content: DefinitionContent): Result<string, CanonicalizationError> {
+  const encoded = definitionBytes(content);
+  if (!encoded.ok) return encoded;
+  return { ok: true, value: createHash("sha256").update(encoded.value, "utf8").digest("hex") };
 }
 
 /**

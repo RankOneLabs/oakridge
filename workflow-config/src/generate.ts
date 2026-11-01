@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { resolve } from "node:path";
 import { canonicalJson } from "canonical-json";
 import YAML from "yaml";
-import { WORKFLOW_SOURCES, definitionBytes, definitionId, type DefinitionContent } from "./workflow-sources";
+import { WORKFLOW_SOURCES, definitionBytes, type DefinitionContent } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import type { AuthoredWorkflow } from "../../oakridge-dbos/src/core-client/core-types";
 import { selectPromptPaths } from "../../oakridge-dbos/src/runtime/prompt-files";
@@ -109,8 +109,10 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
     prompts[promptPath] = id;
   }
   const definition: DefinitionContent = { source: workflow, operations, prompts };
-  const id = definitionId(definition);
-  output(`definitions/workflows/${id}.json`, definitionBytes(definition));
+  const encoded = definitionBytes(definition);
+  if (!encoded.ok) throw new Error(`NonCanonicalJson: ${encoded.error.entity_id}: ${encoded.error.detail}`);
+  const id = sha256(encoded.value);
+  output(`definitions/workflows/${id}.json`, encoded.value);
   launchable[name] = id;
 }
 output("definitions/launchable.json", canonical(launchable));

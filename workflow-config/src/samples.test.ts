@@ -20,11 +20,19 @@ test("definition identity follows prompt and registry bytes, not YAML key order"
   const registry = digest("registry");
   const content: DefinitionContent = { source: { ...first, operations: registry }, operations: registry, prompts: { "a.md": digest("first\n") } };
   const same: DefinitionContent = { ...content, source: { ...reordered, operations: registry } };
-  expect(definitionBytes(content)).toBe(definitionBytes(same));
-  expect(definitionId(content)).toBe(definitionId(same));
-  expect(definitionId({ ...content, prompts: { "a.md": digest("second\n") } })).not.toBe(definitionId(content));
+  expect(definitionId(content).ok).toBe(true);
+  expect(definitionBytes(content)).toEqual(definitionBytes(same));
+  expect(definitionId(content)).toEqual(definitionId(same));
+  expect(definitionId({ ...content, prompts: { "a.md": digest("second\n") } })).not.toEqual(definitionId(content));
   const changed = digest("changed registry");
-  expect(definitionId({ ...content, source: { ...first, operations: changed }, operations: changed })).not.toBe(definitionId(content));
+  expect(definitionId({ ...content, source: { ...first, operations: changed }, operations: changed })).not.toEqual(definitionId(content));
+});
+
+test("definition transforms return canonicalization failures as values", () => {
+  const invalid = { source: { workflow: "invalid", input: {}, run: { units: {}, outcome: {} }, stages: {} },
+    operations: "registry", prompts: { "a.md": Number.NaN as unknown as string } } as DefinitionContent;
+  expect(definitionBytes(invalid)).toMatchObject({ ok: false, error: { operation: "canonical_json", entity_id: "/prompts/a.md" } });
+  expect(definitionId(invalid)).toEqual(definitionBytes(invalid));
 });
 
 test("generated prompt objects preserve their source bytes", () => {
