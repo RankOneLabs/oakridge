@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { compileWorkflow, CoreClient } from "../src/core-client/client";
+import { compileWorkflow, CoreClient, CORE_WASM_PATH } from "../src/core-client/client";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
 import { pinDefinition } from "../src/storage/registry-store";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
@@ -268,9 +267,8 @@ const BEFORE_BRANCHES_REGISTRY = OPERATION_REGISTRY.map((operation) => operation
 
 /** Steps a launch on a core that has cached nothing, as one does after a restart. */
 async function launchOnFreshCore(pinned: DefinitionBundleId, input: unknown) {
-  // CI builds this release artifact from the committed workflow-core sources.
-  const releaseWasm = resolve(import.meta.dir, "../../workflow-core/target/wasm32-unknown-unknown/debug/workflow_evaluator.wasm");
-  const started = CoreClient.start({ wasm_path: releaseWasm });
+  // CI builds the core from this checkout; CORE_WASM_PATH also honors OAKRIDGE_CORE_WASM.
+  const started = CoreClient.start({ wasm_path: CORE_WASM_PATH });
   if (!started.ok) throw new Error("core WASM did not load");
   try { return (await launch({ db: authority.db, core: started.value }, { bundle_id: pinned, request_id: crypto.randomUUID(), input })).result; }
   finally { started.value.close(); }
