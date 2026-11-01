@@ -158,10 +158,19 @@ export function writeDefinitionExport(root: string, plan: ExportPlan): void {
       throw new DefinitionExportError("ConflictingStoreObject", [key], "two recorded objects have different bytes");
     unique.set(key, item);
   }
-  for (const kind of ["workflows", "prompts", "operations", "programs"]) mkdirSync(resolve(root, kind), { recursive: true });
-  for (const [key, item] of [...unique].sort(([left], [right]) => left.localeCompare(right))) {
+  const manifestBytes = canonical(plan.manifest, "legacy-definition-map.json");
+  for (const [key, item] of unique) {
     if (item.kind !== "programs" && sha(item.bytes) !== item.id)
       throw new DefinitionExportError("ConflictingStoreObject", [key], "planned bytes do not hash to ID");
+    const path = resolve(root, item.kind, `${item.id}.${item.kind === "prompts" ? "md" : "json"}`);
+    if (existsSync(path) && readFileSync(path, "utf8") !== item.bytes)
+      throw new DefinitionExportError("ConflictingStoreObject", [key], path);
+  }
+  const manifestPath = resolve(root, "legacy-definition-map.json");
+  if (existsSync(manifestPath) && readFileSync(manifestPath, "utf8") !== manifestBytes)
+    throw new DefinitionExportError("ConflictingStoreObject", ["legacy-definition-map.json"], manifestPath);
+  for (const kind of ["workflows", "prompts", "operations", "programs"]) mkdirSync(resolve(root, kind), { recursive: true });
+  for (const [key, item] of [...unique].sort(([left], [right]) => left.localeCompare(right))) {
     const path = resolve(root, item.kind, `${item.id}.${item.kind === "prompts" ? "md" : "json"}`);
     writeVerified(path, item.bytes, key);
     if (item.kind === "prompts") readPromptObject(root, item.id);
@@ -174,8 +183,7 @@ export function writeDefinitionExport(root: string, plan: ExportPlan): void {
     if (sha(programBytes) !== mapping.program_sha256)
       throw new DefinitionExportError("ConflictingStoreObject", [mapping.definition_id], "recorded program digest differs");
   }
-  const manifestPath = resolve(root, "legacy-definition-map.json");
-  writeVerified(manifestPath, canonical(plan.manifest, "legacy-definition-map.json"), "legacy-definition-map.json");
+  writeVerified(manifestPath, manifestBytes, "legacy-definition-map.json");
 }
 
 export async function exportDefinitions(databaseUrl: string, root: string, reviews: readonly ConversionReview[]): Promise<ExportManifest> {
