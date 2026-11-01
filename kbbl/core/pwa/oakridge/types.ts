@@ -440,6 +440,8 @@ export interface ArtifactTypeDescriptor {
  */
 export interface ArtifactSource {
   run_id: string;
+  /** Identity of the revision on screen, used to scope legacy display keys. */
+  revision_id: string;
   label: string | null;
   producing_stage?: string;
   original_spec?: string | null;
@@ -473,7 +475,7 @@ export interface ParkedGate {
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   /** Full server offer, including decisions hidden from the generic resume buttons. */
-  offered_decisions?: string[];
+  offered_decisions: string[];
   pr_url?: string | null;
   /** The run's persisted state at read time — a gate stays listed whatever it is. */
   run_state: RunState;

@@ -107,14 +107,7 @@ function enrichGenerated(type: Type, value: unknown, aliases: ParsedWorkflow["sc
     return { ok: true, value: items };
   }
   if (resolved.kind === "record") {
-    const entries = Object.entries(resolved.fields);
-    const generated = entries.filter(([, field]) => { const type = resolvedType(field, aliases); return type.kind === "uuid" && type.generated; });
-    const ordinary = entries.filter(([key]) => !generated.some(([generatedKey]) => key === generatedKey));
-    // A single text field with a generated UUID also accepts the text shorthand in publication input.
-    // The stored value is always the complete record required by the checked schema.
-    const shorthand = typeof value === "string" && generated.length === 1 && ordinary.length === 1
-      && resolvedType(ordinary[0]![1], aliases).kind === "text" ? { [ordinary[0]![0]]: value } : null;
-    const fields = objectFields(value) ?? shorthand;
+    const fields = objectFields(value);
     if (!fields) return { ok: true, value };
     const output: { [key: string]: unknown } = { ...fields };
     for (const [key, fieldType] of Object.entries(resolved.fields)) {

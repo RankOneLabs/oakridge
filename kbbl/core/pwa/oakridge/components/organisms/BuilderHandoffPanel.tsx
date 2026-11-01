@@ -61,7 +61,8 @@ export function BuilderHandoffPanel({ runId, unitLabel, assessment, body, gate, 
       setRemoveErrors((previous) => new Map(previous).set(id, "Action is absent from the current assessment. Refresh and review it again."));
       return;
     }
-    const outcome = await submit(withItemRemoved(body, id));
+    const removal = withItemRemoved(body, id);
+    const outcome = removal.ok ? await submit(removal.value) : { ok: false as const, error: removal.error };
     setRemoveErrors((previous) => { const next = new Map(previous); if (outcome.ok) next.delete(id); else next.set(id, outcome.error); return next; });
   }
 

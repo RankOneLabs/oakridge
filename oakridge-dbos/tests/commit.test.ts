@@ -154,7 +154,7 @@ test("nested generated action IDs are assigned once and an edit keeps predecesso
   const action = await actionOf(authority, run_id, "writer");
   const submit = submitter(authority);
   await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid-generated" }, writer: executor(action) });
-  const body = { title: "T", body: "Long", actions: ["A", { text: "B" }] };
+  const body = { title: "T", body: "Long", actions: [{ text: "A" }, { text: "B" }] };
   const publish = { kind: "revision_published" as const, unit, artifact: "draft", body, by: action, predecessor: null, subject: null };
   const ingress_id = crypto.randomUUID();
   const first = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
@@ -175,10 +175,12 @@ test("nested generated action IDs are assigned once and an edit keeps predecesso
     body: { ...stored, actions: [{ id: crypto.randomUUID(), text: "A" }] } } });
   const malformed = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
     body: { ...stored, actions: [{ id: "bad", text: "A" }] } } });
+  const shorthand = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: ["A"] } } });
   const edited = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
     body: { ...stored, actions: [{ id: secondId, text: "B revised" }] } } });
-  expect([duplicate, foreign, malformed, edited].map((result) => result.ok && result.value.kind))
-    .toEqual(["rejected", "rejected", "rejected", "committed"]);
+  expect([duplicate, foreign, malformed, shorthand, edited].map((result) => result.ok && result.value.kind))
+    .toEqual(["rejected", "rejected", "rejected", "rejected", "committed"]);
 });
 
 test("concurrent identical launches create one run and one event", async () => {

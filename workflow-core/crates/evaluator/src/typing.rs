@@ -8,7 +8,7 @@ pub fn check_type(ty: &CheckedType, value: &Value) -> bool {
             })
         }),
         CheckedType::Text | CheckedType::RepoPath => value.is_string(),
-        CheckedType::Uuid { generated: true } => value.as_str().is_some_and(|text| {
+        CheckedType::Uuid { .. } => value.as_str().is_some_and(|text| {
             let bytes = text.as_bytes();
             bytes.len() == 36
                 && bytes.iter().enumerate().all(|(index, byte)| {
@@ -19,7 +19,6 @@ pub fn check_type(ty: &CheckedType, value: &Value) -> bool {
                     }
                 })
         }),
-        CheckedType::Uuid { generated: false } => false,
         CheckedType::Ident => value.as_str().is_some_and(is_ident),
         CheckedType::Enum { variants } => value
             .as_str()

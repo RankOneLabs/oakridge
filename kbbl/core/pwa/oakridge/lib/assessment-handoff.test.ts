@@ -21,10 +21,18 @@ const gate: ParkedGate = {
 describe("assessment handoff", () => {
   it("keeps selection with each action after a preceding action is removed", () => {
     const selected = selectHandoffItems(assessment).map((item) => ({ ...item, is_included: item.id !== "b" }));
-    const remaining = selectHandoffItems(withItemRemoved(assessment, "a")).map((item) => ({
+    const removal = withItemRemoved(assessment, "a");
+    if (!removal.ok) throw new Error(removal.error);
+    const remaining = selectHandoffItems(removal.value).map((item) => ({
       ...item, is_included: selected.find((previous) => previous.id === item.id)?.is_included ?? true,
     }));
     expect(remaining.map((item) => [item.id, item.is_included])).toEqual([["b", false], ["c", true]]);
+  });
+
+  it("refuses a removal from a legacy string list without dropping its contents", () => {
+    const legacy = { ...assessment, recommended_next_actions: ["First", "Second"] };
+    expect(withItemRemoved(legacy, "missing")).toEqual({ ok: false, error: "Historical actions cannot be edited." });
+    expect(legacy.recommended_next_actions).toEqual(["First", "Second"]);
   });
 
   it("keeps an action ID when its text changes", () => {

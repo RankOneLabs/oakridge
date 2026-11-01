@@ -38,7 +38,7 @@ function gateFor(unit: OperatorUnitView): ParkedGate {
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 const SAVED: EditOutcome = { ok: true, value: undefined };
 
-function setup(options: { saved?: EditOutcome; revision?: string; actions?: Assessment; hasDecision?: boolean } = {}) {
+function setup(options: { saved?: EditOutcome; revision?: string; actions?: Assessment; body?: Assessment; hasDecision?: boolean } = {}) {
   let revision = options.revision ?? "assessment-rev";
   let currentAssessment = options.actions ?? assessment();
   let sent = false;
@@ -57,7 +57,7 @@ function setup(options: { saved?: EditOutcome; revision?: string; actions?: Asse
   const onEdit = vi.fn().mockResolvedValue(options.saved ?? SAVED);
   const onSubmitBody = vi.fn().mockResolvedValue(options.saved ?? SAVED);
   const panel = () => <QueryClientProvider client={client}><BuilderHandoffPanel runId="run-1" unitLabel={base.collection_key ?? base.unit_key} assessment={currentAssessment}
-    body={currentAssessment} gate={gateFor(unit)} edit={{ enabled: true, isPending: false, onEdit, onSubmitBody }} /></QueryClientProvider>;
+    body={options.body ?? currentAssessment} gate={gateFor(unit)} edit={{ enabled: true, isPending: false, onEdit, onSubmitBody }} /></QueryClientProvider>;
   const view = render(panel());
   return { posts, onSubmitBody, client, supersede: (nextRevision: string) => {
     unit = unitFor(nextRevision, false);
@@ -98,6 +98,31 @@ describe("assessment builder handoff", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove action 1" }));
     await screen.findByText(/Not removed: 409 stale predecessor/);
     expect(screen.getByText("Fix assessment-rev")).toBeTruthy();
+  });
+
+  it("renders an absent-action refusal without publishing a body", async () => {
+    const view = setup({ body: { ...assessment(), recommended_next_actions: [{ id: "other", text: "Other" }] } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove action 1" }));
+    expect(await screen.findByText(/Not removed: Action is absent from the current assessment/)).toBeTruthy();
+    expect(view.onSubmitBody).not.toHaveBeenCalled();
+    expect(screen.getByText("Fix assessment-rev")).toBeTruthy();
+  });
+
+  it("edits an action and then sends its refreshed assessment in one flow", async () => {
+    const view = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Edit recommended next actions/a/text" }));
+    fireEvent.change(screen.getByDisplayValue("Fix assessment-rev"), { target: { value: "Fix revised" } });
+    fireEvent.blur(screen.getByDisplayValue("Fix revised"));
+    await waitFor(() => expect(view.onSubmitBody).toHaveBeenCalledTimes(1));
+    const edited = { ...assessment(), recommended_next_actions: [
+      { id: "a", text: "Fix revised" }, { id: "a-2", text: "Add coverage" }] };
+    expect(view.onSubmitBody).toHaveBeenCalledWith(assessment(), edited);
+    view.rerender(edited, "assessment-rev-edited");
+    await waitFor(() => expect(screen.getByTestId("or-assessment-handoff-preview").textContent).toContain("Fix revised"));
+    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
+    await screen.findByText("Sent");
+    expect(view.posts).toHaveLength(1);
+    expect(JSON.stringify(view.posts[0])).toContain("Fix revised");
   });
 
   it("keeps a refused action edit open with its error", async () => {

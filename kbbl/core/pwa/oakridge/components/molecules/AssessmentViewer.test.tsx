@@ -48,7 +48,7 @@ const assessment: Assessment = {
 };
 
 const renderViewer = () => render(
-  <AssessmentViewer assessment={assessment} brief={{ kind: "found", value: brief }} result={{ kind: "found", value: result }} cohortLabel="cm-cli" />,
+  <AssessmentViewer assessment={assessment} brief={{ kind: "found", value: brief }} result={{ kind: "found", value: result }} revisionScope="rev-1" cohortLabel="cm-cli" />,
 );
 
 afterEach(cleanup);
@@ -87,7 +87,7 @@ describe("AssessmentViewer", () => {
     const parsed = parseAssessment(linkedAssessment);
     const linked = readBuildBrief(linkedBrief);
     if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
-    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} revisionScope="rev-1" cohortLabel="pwa" />);
     fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
     expect(screen.getByTestId("or-assessment-head-sha").textContent).toContain("abc123def456");
     const met = within(screen.getByTestId("or-assessment-met"));
@@ -101,7 +101,7 @@ describe("AssessmentViewer", () => {
   test("marks a met finding with an empty evidence list", () => {
     const parsed = parseAssessment(emptyEvidenceAssessment);
     if (!parsed.ok) throw new Error("fixture failed to parse");
-    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "missing", cohort_label: "pwa" }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "missing", cohort_label: "pwa" }} result={{ kind: "loading" }} revisionScope="rev-1" cohortLabel="pwa" />);
     fireEvent.click(screen.getByRole("button", { name: /Show met criteria/ }));
     expect(screen.getByText("Met with no evidence cited.")).toBeTruthy();
   });
@@ -110,20 +110,20 @@ describe("AssessmentViewer", () => {
     const parsed = parseAssessment(unresolvedAssessment);
     const linked = readBuildBrief(linkedBrief);
     if (!parsed.ok || linked === null) throw new Error("fixture failed to parse");
-    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} cohortLabel="pwa" />);
+    render(<AssessmentViewer assessment={parsed.value} brief={{ kind: "found", value: linked }} result={{ kind: "loading" }} revisionScope="rev-1" cohortLabel="pwa" />);
     expect(screen.getByText("criterion-missing")).toBeTruthy();
     expect(screen.getByText("No brief criterion match")).toBeTruthy();
   });
 
   test("does not call an unassessed brief criterion unmatched to the brief", () => {
-    render(<AssessmentViewer assessment={{ ...assessment, findings: assessment.findings.slice(0, 1) }} brief={{ kind: "found", value: brief }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
+    render(<AssessmentViewer assessment={{ ...assessment, findings: assessment.findings.slice(0, 1) }} brief={{ kind: "found", value: brief }} result={{ kind: "loading" }} revisionScope="rev-1" cohortLabel="cm-cli" />);
     const attention = within(screen.getByTestId("or-assessment-attention"));
     expect(attention.getByText("Every fixture exists.")).toBeTruthy();
     expect(attention.queryByText("No brief criterion match")).toBeNull();
   });
 
   test("still lists findings when the brief is missing", () => {
-    render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: "cm-cli" }} result={{ kind: "loading" }} cohortLabel="cm-cli" />);
+    render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: "cm-cli" }} result={{ kind: "loading" }} revisionScope="rev-1" cohortLabel="cm-cli" />);
     expect(within(screen.getByTestId("or-assessment-attention")).getByText("Every fixture exists.")).toBeTruthy();
     expect(screen.queryByText("No brief criterion match")).toBeNull();
   });
@@ -137,7 +137,7 @@ describe("AssessmentViewer", () => {
 
   test("renders an integration assessment without cohort artifact warnings", () => {
     render(<AssessmentViewer assessment={assessment} brief={{ kind: "missing", cohort_label: null }}
-      result={{ kind: "missing", cohort_label: null }} cohortLabel="assay" isIntegration />);
+      result={{ kind: "missing", cohort_label: null }} revisionScope="rev-1" cohortLabel="assay" isIntegration />);
     expect(screen.getByText("Integration assessment")).toBeTruthy();
     expect(screen.queryByTestId("or-assessment-brief-note")).toBeNull();
     expect(screen.queryByTestId("or-assessment-result-note")).toBeNull();

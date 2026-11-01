@@ -133,6 +133,17 @@ fn generated_uuid_type_round_trips_and_validates_stored_values() {
 }
 
 #[test]
+fn plain_uuid_type_round_trips_and_validates_values() {
+    let ty = Type::parse("uuid").unwrap();
+    assert_eq!(ty.to_string(), "uuid");
+    assert!(check_type(
+        &ty,
+        &serde_json::json!("aa32c2d6-b93c-42e5-80c8-d4cb1081fab2")
+    ));
+    assert!(!check_type(&ty, &serde_json::json!("not-a-uuid")));
+}
+
+#[test]
 fn an_artifact_without_an_edit_policy_defaults_to_always() {
     let artifact: Artifact = serde_json::from_value(serde_json::json!({"schema":"text"})).unwrap();
     assert!(matches!(artifact.edit_policy, EditPolicy::Always));

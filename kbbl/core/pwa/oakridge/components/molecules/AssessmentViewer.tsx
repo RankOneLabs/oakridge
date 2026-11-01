@@ -19,7 +19,7 @@ interface Props {
   cohortLabel: string | null;
   isIntegration?: boolean;
   handoff?: ReactNode;
-  revisionScope?: string;
+  revisionScope: string;
 }
 
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
@@ -42,7 +42,7 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
   );
 }
 
-export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, revisionScope = "legacy" }: Props) {
+export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, revisionScope }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
   const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
 

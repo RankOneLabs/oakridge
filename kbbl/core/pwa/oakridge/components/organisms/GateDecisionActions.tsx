@@ -4,6 +4,7 @@ import { useResumeGate } from "../../hooks/useResumeGate";
 import type { MergeStatus, ParkedGate } from "../../types";
 import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
+import { REQUEST_BUILD_CHANGES } from "../../adapters/core";
 import { Button } from "../../../components/atoms/Button";
 
 const decisionButtonClass = "min-h-12 w-full rounded-lg! px-4! py-[0.65rem]! md:min-h-11 md:w-auto";
@@ -20,7 +21,7 @@ function actionLabel(action: string): string {
     case "approve": return "Approve artifact";
     case "request_revision": return "Request changes";
     case "request_assessment_changes": return "Request assessment changes";
-    case "request_build_changes": return "Request build changes";
+    case REQUEST_BUILD_CHANGES: return "Request build changes";
     case "confirm_merged": return "Confirm merge";
     case "pass": return "Pass";
     case "fail": return "Mark failed";
@@ -31,7 +32,7 @@ function actionLabel(action: string): string {
 
 function successMessage(action: string): string {
   if (action === "request_assessment_changes") return "Assessment changes requested. The assessor will revise its report.";
-  if (action === "request_build_changes") return "Build changes requested. The builder will revise its work.";
+  if (action === REQUEST_BUILD_CHANGES) return "Build changes requested. The builder will revise its work.";
   if (action === "request_revision") return "Changes requested.";
   if (action === "confirm_merged") return "Merge confirmed. The cohort can continue.";
   return "Decision recorded. The cohort can continue.";
@@ -144,7 +145,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
       )}
       <div className="or-decision-actions__buttons">
         {gate.resume_actions.map((action) => {
-          const needsFeedback = action === "request_revision" || action === "request_assessment_changes" || action === "request_build_changes"
+          const needsFeedback = action === "request_revision" || action === "request_assessment_changes" || action === REQUEST_BUILD_CHANGES
             || action === "rerun" || action === "reject" || action === "fail";
           const isPrimary = action === "approve" || action === "confirm_merged" || action === "pass";
           const isConfirming = action === "approve" && isConfirmingApproval;

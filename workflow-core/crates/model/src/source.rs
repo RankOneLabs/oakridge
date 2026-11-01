@@ -477,6 +477,9 @@ impl Type {
         if text == "uuid(generated)" {
             return Ok(Self::Uuid { generated: true });
         }
+        if text == "uuid" {
+            return Ok(Self::Uuid { generated: false });
+        }
         if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             let mut fields = BTreeMap::new();
             if !inner.trim().is_empty() {

@@ -1,4 +1,5 @@
 import type { Assessment, NextAction } from "./assessment";
+import type { Result } from "../../lib/result";
 
 export type AssessmentPublication = Omit<Assessment, "recommended_next_actions"> & {
   readonly recommended_next_actions: readonly (NextAction | { readonly text: string })[];
@@ -28,11 +29,14 @@ export function composeHandoffText(items: readonly HandoffItem[]): string {
 }
 
 /** Publish a successor assessment with one recommendation removed. */
-export function withItemRemoved(body: Assessment, id: string): Assessment {
-  return {
+export function withItemRemoved(body: Assessment, id: string): Result<Assessment, string> {
+  if (body.recommended_next_actions.some((action) => typeof action === "string"))
+    return { ok: false, error: "Historical actions cannot be edited." };
+  if (!hasHandoffItem(body, id)) return { ok: false, error: "Action is absent from the current assessment. Refresh and review it again." };
+  return { ok: true, value: {
     ...body,
     recommended_next_actions: body.recommended_next_actions.filter((action) => typeof action !== "string" && action.id !== id),
-  };
+  } };
 }
 
 /** Publish a successor assessment with one recommendation appended. */
@@ -68,6 +72,6 @@ export function selectHandoffSendability(preview: string, gate: ParkedGate): Han
   if (preview.length === 0) return { kind: "blocked", reason: "Include at least one next action to send." };
   if (gate.artifact_revision_id === null) return { kind: "blocked", reason: NO_REVIEW_REASON };
   if (!gate.actionable) return { kind: "blocked", reason: "The run has moved on, so this review can no longer take a decision." };
-  if (!gate.offered_decisions?.includes(REQUEST_BUILD_CHANGES)) return { kind: "blocked", reason: "Request build changes is not offered for this review." };
+  if (!gate.offered_decisions.includes(REQUEST_BUILD_CHANGES)) return { kind: "blocked", reason: "Request build changes is not offered for this review." };
   return { kind: "sendable", artifact_revision_id: gate.artifact_revision_id };
 }
