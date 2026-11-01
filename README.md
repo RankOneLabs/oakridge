@@ -26,7 +26,7 @@ event_id}`.
 bun install --frozen-lockfile
 cargo build --locked --target wasm32-unknown-unknown --manifest-path workflow-core/Cargo.toml -p workflow-evaluator
 bash scripts/generate-core-contracts.sh --check
-bun workflow-config/src/generate.ts --check
+DEFINITIONS_MERGE_BASE=origin/main bun workflow-config/src/generate.ts --check
 bun run typecheck
 bun run --filter kbbl test
 bun run --filter kbbl test:pwa

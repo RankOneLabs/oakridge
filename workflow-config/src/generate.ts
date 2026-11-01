@@ -74,7 +74,7 @@ function verifyGeneratedObjects(): void {
 }
 function verifyPreservation(): void {
   const base = process.env.DEFINITIONS_MERGE_BASE;
-  if (!base) return;
+  if (!base) throw new Error("MissingDefinitionsMergeBase: set DEFINITIONS_MERGE_BASE to the branch used for the committed-object comparison");
   const mergeBase = execFileSync("git", ["merge-base", "HEAD", base], { cwd: root, encoding: "utf8" }).trim();
   const paths = execFileSync("git", ["ls-tree", "-r", "--name-only", mergeBase, "definitions"], { cwd: root, encoding: "utf8" }).trim();
   for (const path of paths ? paths.split("\n") : []) {

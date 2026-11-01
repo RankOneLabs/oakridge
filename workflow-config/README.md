@@ -9,8 +9,10 @@ The v2 examples are authored in `samples/review-loop.yaml` and
 workflow listed in `src/workflow-sources.ts`, the samples and development,
 with the workspace's `yaml` package and writes their JSON counterparts to
 `workflow-core/fixtures/bundles/`, which the Rust compiler and replay tests
-and the DBOS end-to-end tests use. Run `bun workflow-config/src/generate.ts
---check` to detect drift; CI runs this check. The prompts referenced by the
+and the DBOS end-to-end tests use. Run `DEFINITIONS_MERGE_BASE=origin/main bun
+workflow-config/src/generate.ts --check` to detect drift and verify committed
+store objects against the merge base; this requires local branch history. CI
+runs this check. The prompts referenced by the
 samples live under `prompts/review-loop/` and `prompts/fan-out/`, and the Rust
 sample tests load those exact files.
 
