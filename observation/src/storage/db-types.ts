@@ -425,6 +425,15 @@ export interface ObservationSourceOperatorCursor {
   event_id: Generated<string>;
 }
 
+export interface ObservationSourceRepairPosition {
+  producer: string;
+  namespace: string;
+  commit_txid: Generated<number>;
+  event_id: Generated<string>;
+  completed_through_txid: Generated<number>;
+  updated_at: Generated<Date>;
+}
+
 export interface ObservationSourceRevision {
   producer: string;
   namespace: string;
@@ -475,5 +484,6 @@ export interface DB {
   "observation.source_event_outcome": ObservationSourceEventOutcome;
   "observation.source_human_grade": ObservationSourceHumanGrade;
   "observation.source_operator_cursor": ObservationSourceOperatorCursor;
+  "observation.source_repair_position": ObservationSourceRepairPosition;
   "observation.source_revision": ObservationSourceRevision;
 }

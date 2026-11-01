@@ -29,7 +29,9 @@ const value = (flag: string): string | null => { const index = args.indexOf(flag
 const through = value("--through-txid");
 const namespace = value("--namespace") ?? process.env.OAKRIDGE_OBSERVATION_NAMESPACE ?? "default";
 const dry_run = args.includes("--dry-run");
+const max_events = value("--max-events") === null ? null : Number(value("--max-events"));
 if (!through || !/^[0-9]+$/.test(through)) throw new Error("--through-txid requires a finite decimal transaction ID");
+if (max_events !== null && (!Number.isSafeInteger(max_events) || max_events < 1)) throw new Error("--max-events must be a positive integer");
 const authority_url = process.env.DBOS_SYSTEM_DATABASE_URL;
 const observation_url = process.env.OBSERVATION_DATABASE_URL;
 if (!authority_url || !observation_url) throw new Error("DBOS_SYSTEM_DATABASE_URL and OBSERVATION_DATABASE_URL are required");
@@ -42,8 +44,16 @@ try {
   await lock.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [`observation:repair:${namespace}`]);
   const before_cursor = await readSourceCursor(observation, tenant);
   const before = await counts(observation, tenant);
-  let after: SourceEventCursor = { commit_txid: "0", id: "" };
+  const progress = await withTenant(observation, tenant, (trx) => sql<{
+    commit_txid: string; event_id: string; completed_through_txid: string }>`SELECT commit_txid::text AS commit_txid,
+      event_id, completed_through_txid::text AS completed_through_txid FROM observation.source_repair_position
+      WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx));
+  const saved = progress.rows[0];
+  let after: SourceEventCursor = saved && BigInt(saved.completed_through_txid) < BigInt(through)
+    ? { commit_txid: saved.commit_txid, id: saved.event_id } : { commit_txid: "0", id: "" };
+  const resumed_from = after;
   let inspected = 0, repaired = 0, purged = 0, conflicts = 0;
+  let interrupted = false;
   for (;;) {
     const batch = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: Event;
       created_at: Date; commit_txid_text: string; collection_key: string | null; was_visible_at_subscription: boolean }>`
@@ -52,7 +62,7 @@ try {
           AS collection_key,
         false AS was_visible_at_subscription FROM authority.event AS source_event
       WHERE (commit_txid, id) > (${after.commit_txid}::bigint, ${after.id})
-        AND commit_txid <= ${through}::bigint ORDER BY authority.event.commit_txid, authority.event.id LIMIT 100`.execute(authority);
+        AND commit_txid <= ${through}::bigint ORDER BY source_event.commit_txid, source_event.id LIMIT 100`.execute(authority);
     const rows: readonly CommittedEventRow<Event>[] = batch.rows.map(({ commit_txid_text, ...row }) =>
       ({ ...row, commit_txid: commit_txid_text }));
     if (rows.length === 0) break;
@@ -77,14 +87,29 @@ try {
         } catch (cause) {
           conflicts++;
           console.error("[observation repair] refused event", row.id, cause);
+          interrupted = true;
+          break;
         }
       }
       after = { commit_txid: row.commit_txid, id: row.id };
+      if (!dry_run) await withTenant(observation, tenant, (trx) => sql`INSERT INTO observation.source_repair_position
+        (producer, namespace, commit_txid, event_id, updated_at)
+        VALUES (${tenant.producer}, ${tenant.namespace}, ${after.commit_txid}::bigint, ${after.id}, clock_timestamp())
+        ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = excluded.commit_txid,
+          event_id = excluded.event_id, updated_at = excluded.updated_at`.execute(trx));
+      if (max_events !== null && inspected >= max_events) { interrupted = true; break; }
     }
+    if (interrupted) break;
   }
+  if (!dry_run && !interrupted) await withTenant(observation, tenant, (trx) => sql`INSERT INTO observation.source_repair_position
+    (producer, namespace, commit_txid, event_id, completed_through_txid, updated_at)
+    VALUES (${tenant.producer}, ${tenant.namespace}, ${after.commit_txid}::bigint, ${after.id}, ${through}::bigint, clock_timestamp())
+    ON CONFLICT (producer, namespace) DO UPDATE SET commit_txid = excluded.commit_txid, event_id = excluded.event_id,
+      completed_through_txid = excluded.completed_through_txid, updated_at = excluded.updated_at`.execute(trx));
   const after_cursor = await readSourceCursor(observation, tenant);
   const after_counts = await counts(observation, tenant);
-  console.log(JSON.stringify({ dry_run, through_txid: through, before_cursor, after_cursor, before, after: after_counts,
+  console.log(JSON.stringify({ dry_run, through_txid: through, resumed_from, progress_after: after, interrupted,
+    before_cursor, after_cursor, before, after: after_counts,
     inspected_events: inspected, repaired_events: repaired, conflicts, purge_exclusions: purged,
     note: "A skipped-event count is not an expected count of new rows; one event can produce several rows or none." }, null, 2));
 } finally {

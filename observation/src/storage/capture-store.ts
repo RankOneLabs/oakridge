@@ -7,7 +7,7 @@ import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
 import { projectRevisionInTransaction } from "./projection-store";
-import { storeCollaborationInTransaction, storeHumanGradeInTransaction } from "./backfill-store";
+import { storeCollaborationInTransaction, storeHumanGradeInTransaction, verifyStored } from "./backfill-store";
 
 export type SourceEventIssueCause = "missing_grade_target" | "missing_collaboration_revision" | "run_mismatch"
   | "unmapped_event" | "revision_identity_conflict" | "tenant_mismatch";
@@ -19,15 +19,24 @@ function sourceIssueId(tenant: TenantScope, outcome: SourceEventOutcome, cause: 
   if (!digest.ok) throw new Error(digest.error.detail);
   return digest.value;
 }
+const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer, namespace: tenant.namespace });
 async function recordSourceIssue(trx: DatabaseTransaction, tenant: TenantScope, outcome: SourceEventOutcome,
   cause: SourceEventIssueCause, target_revision_id: string | null): Promise<SourceEventIssue> {
   const issue_id = sourceIssueId(tenant, outcome, cause);
-  await trx.insertInto("observation.source_event_issue").values({ ...tenant, issue_id,
+  const identity = { ...scope(tenant), issue_id,
     event_id: outcome.event_id, run_id: outcome.run_id, event_kind: outcome.event_kind, target_revision_id, cause,
-    original_outcome: jsonText(outcome as unknown as JsonValue), resolution_state: "unresolved", resolution_detail: null,
-    resolved_at: null }).onConflict((conflict) => conflict.columns(["producer", "namespace", "issue_id"]).doNothing()).execute();
+    original_outcome: jsonText(outcome as unknown as JsonValue) } as const;
+  const inserted = await trx.insertInto("observation.source_event_issue").values({ ...identity,
+    resolution_state: "unresolved", resolution_detail: null, resolved_at: null })
+    .onConflict((conflict) => conflict.columns(["producer", "namespace", "issue_id"]).doNothing())
+    .returning("issue_id").executeTakeFirst();
+  const prior = inserted ? undefined : await trx.selectFrom("observation.source_event_issue")
+    .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("issue_id", "=", issue_id).executeTakeFirst();
+  if (!inserted) verifyStored("source_event_issue", identity, prior, ["original_outcome"]);
   return { issue_id, event_id: outcome.event_id, run_id: outcome.run_id, event_kind: outcome.event_kind,
-    target_revision_id, cause, resolution_state: "unresolved", resolution_detail: null };
+    target_revision_id, cause, resolution_state: prior?.resolution_state === "resolved" ? "resolved" : "unresolved",
+    resolution_detail: prior?.resolution_detail ?? null };
 }
 
 export interface SourceRevisionRead {
@@ -211,8 +220,19 @@ export async function reconcileSourceEventIssuesInTransaction(trx: DatabaseTrans
     .where("target_revision_id", "=", target_revision_id).where("resolution_state", "=", "unresolved")
     .where("cause", "in", ["missing_grade_target", "missing_collaboration_revision"]).execute();
   let resolved = 0;
+  const target = await trx.selectFrom("observation.source_revision").select("run_id")
+    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("revision_id", "=", target_revision_id).executeTakeFirst();
   for (const row of rows) {
     const outcome = row.original_outcome as unknown as SourceEventOutcome;
+    if (target && target.run_id !== outcome.run_id) {
+      await recordSourceIssue(trx, tenant, outcome, "run_mismatch", target_revision_id);
+      await trx.updateTable("observation.source_event_issue").set({ resolution_state: "resolved",
+        resolution_detail: "reclassified as run mismatch", resolved_at: new Date() })
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("issue_id", "=", row.issue_id).execute();
+      continue;
+    }
     if (outcome.kind === "human_grade") await storeHumanGradeInTransaction(trx, tenant, outcome);
     else if (outcome.kind === "collaboration_thread") await storeCollaborationInTransaction(trx, tenant, outcome);
     else continue;
@@ -232,6 +252,19 @@ export function readSourceEventIssues(db: Database, tenant: TenantScope, offset 
     .orderBy("recorded_at").orderBy("issue_id").limit(500).offset(offset).execute() as Promise<readonly SourceEventIssue[]>);
 }
 
+/** An operator can explicitly close a provenance mismatch without projecting its event. */
+export function resolveRunMismatchIssue(db: Database, tenant: TenantScope, issue_id: string,
+  reviewer_id: string, detail: string): Promise<boolean> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.updateTable("observation.source_event_issue")
+      .set({ resolution_state: "resolved", resolution_detail: `${reviewer_id}: ${detail}`, resolved_at: new Date() })
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("issue_id", "=", issue_id).where("cause", "=", "run_mismatch")
+      .where("resolution_state", "=", "unresolved").returning("issue_id").executeTakeFirst();
+    return Boolean(row);
+  });
+}
+
 /** Repair invokes the same mapping writers but never changes either live position. */
 export function repairSourceEvent(db: Database, tenant: TenantScope, outcome: SourceEventOutcome,
   commit_txid: string): Promise<"repaired" | "purged" | "unchanged"> {
@@ -240,10 +273,12 @@ export function repairSourceEvent(db: Database, tenant: TenantScope, outcome: So
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", outcome.run_id).executeTakeFirst();
     if (purged) return "purged";
-    const existing = await trx.selectFrom("observation.source_event_outcome").select("detail")
+    const existing = await trx.selectFrom("observation.source_event_outcome").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("event_id", "=", outcome.event_id).executeTakeFirst();
     if (existing) {
+      if (existing.run_id !== outcome.run_id || existing.event_kind !== outcome.event_kind)
+        throw new Error(`source event ${outcome.event_id} provenance conflict`);
       const old = canonicalDigest(existing.detail);
       const incoming = canonicalDigest(outcome as unknown as JsonValue);
       if (!old.ok || !incoming.ok) throw new Error(`source event ${outcome.event_id} content is not canonical`);
@@ -267,15 +302,22 @@ export function repairSourceEvent(db: Database, tenant: TenantScope, outcome: So
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("event_id", "=", outcome.event_id)
       .where("cause", "in", ["missing_grade_target", "missing_collaboration_revision"]).execute();
-    if (!existing) await trx.insertInto("observation.source_event_outcome").values({ ...tenant,
+    if (!existing) await trx.insertInto("observation.source_event_outcome").values({ ...scope(tenant),
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${commit_txid}::bigint`,
       event_kind: outcome.event_kind, outcome_kind: outcome.kind,
       detail: jsonText(outcome as unknown as JsonValue) }).execute();
-    if (outcome.kind === "human_grade") await trx.insertInto("observation.source_human_grade").values({ ...tenant,
+    if (outcome.kind === "human_grade") {
+      const grade = { ...scope(tenant),
       event_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review,
       decision: outcome.decision, target_revision_id: outcome.target, evaluator_kind: "human",
-      feedback: jsonText(outcome.feedback as JsonValue) })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
+      feedback: jsonText(outcome.feedback as JsonValue) } as const;
+      const inserted = await trx.insertInto("observation.source_human_grade").values(grade)
+        .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing())
+        .returning("event_id").executeTakeFirst();
+      if (!inserted) verifyStored("source_human_grade", grade, await trx.selectFrom("observation.source_human_grade")
+        .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("event_id", "=", outcome.event_id).executeTakeFirst(), ["feedback"]);
+    }
     return existing ? "unchanged" : "repaired";
   });
 }

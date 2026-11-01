@@ -1,11 +1,12 @@
 import type { Hono } from "hono";
 import { decodeCapture } from "../ingest/capture";
 import { captureDelivery, deliverSourceEvent, readSourceCursor, readSourceEventIssues, readSourceHumanGrades, readSourceRevision,
-  readUnmappedSourceEvents, reconcileSourceEventIssuesInTransaction, type CaptureHooks } from "../storage/capture-store";
+  readUnmappedSourceEvents, reconcileSourceEventIssuesInTransaction, resolveRunMismatchIssue,
+  type CaptureHooks } from "../storage/capture-store";
 import { decodeSourceEventDelivery } from "../ingest/cursor";
 import type { Database } from "../storage/database";
 import { errorResponse } from "./errors";
-import { credentialFor, type Credentials } from "./ingest-auth";
+import { boundReviewer, credentialFor, type Credentials } from "./ingest-auth";
 import { projectRevision } from "../storage/projection-store";
 import { sql } from "kysely";
 import { withTenant } from "../storage/database";
@@ -149,6 +150,18 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     const offset = Number(new URL(c.req.url).searchParams.get("offset") ?? "0");
     if (!Number.isSafeInteger(offset) || offset < 0) return errorResponse(c, 400, "invalid_offset", "offset must be nonnegative");
     return c.json({ items: await readSourceEventIssues(deps.db, credential, offset), offset, limit: 500 });
+  });
+  app.post("/v1/sources/oakridge/issues/resolve", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "operator credential required");
+    let input: unknown;
+    try { input = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
+    if (!isRecord(input) || typeof input.issue_id !== "string" || input.issue_id.length === 0
+      || typeof input.detail !== "string" || input.detail.trim().length === 0
+      || input.detail.length > 500) return errorResponse(c, 400, "invalid_resolution", "bounded resolution detail required");
+    const resolved = await resolveRunMismatchIssue(deps.db, credential, input.issue_id, boundReviewer(credential), input.detail.trim());
+    return resolved ? c.json({ issue_id: input.issue_id, resolution_state: "resolved" })
+      : errorResponse(c, 404, "not_found", "unresolved run mismatch issue not found");
   });
   app.get("/v1/sources/oakridge/issue-health", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

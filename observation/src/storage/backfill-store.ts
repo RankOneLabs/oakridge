@@ -20,6 +20,18 @@ const digest = (value: JsonValue): string => {
   return result.value;
 };
 const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer, namespace: tenant.namespace });
+/** Verify a natural-key replay against every supplied content column. */
+export function verifyStored(table: string, expected: object, stored: object | undefined, jsonColumns: readonly string[] = []): void {
+  if (!stored) throw new Error(`${table} disappeared during replay`);
+  for (const [column, value] of Object.entries(expected)) {
+    const decoded = jsonColumns.includes(column) && value !== null ? JSON.parse(value as string) : value;
+    const normalize = (input: unknown): JsonValue => input instanceof Date ? input.toISOString() : input as JsonValue;
+    const left = canonicalJson(normalize(decoded));
+    const right = canonicalJson(normalize((stored as { [key: string]: unknown })[column]));
+    if (!left.ok || !right.ok || left.value !== right.value)
+      throw new Error(`${table} content conflict at ${column}`);
+  }
+}
 
 /**
  * What became of a human decision's L2 grades. A decision on a revision published
@@ -46,12 +58,17 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     .where("namespace", "=", tenant.namespace).where("revision_id", "=", outcome.target).execute();
   const evaluator_definition_id = "oakridge-operator-human";
   const config_digest = "oakridge-operator/v1";
-  await trx.insertInto("observation.evaluator_definition").values({ ...scope(tenant), evaluator_definition_id,
+  const evaluator = { ...scope(tenant), evaluator_definition_id,
     kind: "human", backend_kind: "local", provider: "oakridge", model: null,
     prompt_digest: digest("oakridge-review/v1"), instruction_text: "oakridge-review/v1", config_digest, runtime_revision: "1",
     cost_metadata: null, seed: null, attempt_controls: null,
-    identity_digest: digest(["oakridge", "operator", "human", "1"]) })
-    .onConflict((conflict) => conflict.columns(["producer", "namespace", "evaluator_definition_id"]).doNothing()).execute();
+    identity_digest: digest(["oakridge", "operator", "human", "1"]) } as const;
+  const insertedEvaluator = await trx.insertInto("observation.evaluator_definition").values(evaluator)
+    .onConflict((conflict) => conflict.columns(["producer", "namespace", "evaluator_definition_id"]).doNothing())
+    .returning("evaluator_definition_id").executeTakeFirst();
+  if (!insertedEvaluator) verifyStored("evaluator_definition", evaluator, await trx.selectFrom("observation.evaluator_definition")
+    .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+    .where("evaluator_definition_id", "=", evaluator_definition_id).executeTakeFirst());
   for (const item of occurrences) {
     const question_id = `oakridge-review:${outcome.review}:${item.item_kind}`;
     const question_version = "1";
@@ -60,34 +77,56 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     const execution_id = digest(["oakridge-review-execution", decision_key, item.occurrence_id]);
     const observation_id = digest(["oakridge-review-observation", decision_key, item.occurrence_id]);
     const idempotency_digest = digest(["oakridge-review", decision_key, item.occurrence_id]);
-    await trx.insertInto("observation.question_definition").values({ ...scope(tenant), question_id, question_version,
+    const question = { ...scope(tenant), question_id, question_version,
       target_item_kinds: jsonText([item.item_kind]), input_recipe: jsonText({ source: "oakridge.review_decision" }),
       response_kind: "structured", allowed_values: null, missing_evidence_policy: "abstain",
       abstain_semantics: "missing source revision", unclear_semantics: "ambiguous review",
-      interpretation_caveats: "operator decision on an artifact revision", requires_repository_snapshot: false })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "question_id", "question_version"]).doNothing()).execute();
-    await trx.insertInto("observation.evidence_set").values({ ...scope(tenant), evidence_set_id,
+      interpretation_caveats: "operator decision on an artifact revision", requires_repository_snapshot: false } as const;
+    const insertedQuestion = await trx.insertInto("observation.question_definition").values(question)
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "question_id", "question_version"]).doNothing())
+      .returning("question_id").executeTakeFirst();
+    if (!insertedQuestion) verifyStored("question_definition", question, await trx.selectFrom("observation.question_definition")
+      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("question_id", "=", question_id).where("question_version", "=", question_version).executeTakeFirst(),
+      ["target_item_kinds", "input_recipe", "allowed_values"]);
+    const evidence = { ...scope(tenant), evidence_set_id,
       evidence_refs: jsonText([{ revision_id: outcome.target, occurrence_id: item.occurrence_id }]),
-      is_incomplete: false, incompleteness_reason: null })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "evidence_set_id"]).doNothing()).execute();
-    await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id,
+      is_incomplete: false, incompleteness_reason: null } as const;
+    const insertedEvidence = await trx.insertInto("observation.evidence_set").values(evidence)
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "evidence_set_id"]).doNothing())
+      .returning("evidence_set_id").executeTakeFirst();
+    if (!insertedEvidence) verifyStored("evidence_set", evidence, await trx.selectFrom("observation.evidence_set")
+      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("evidence_set_id", "=", evidence_set_id).executeTakeFirst(), ["evidence_refs"]);
+    const execution = { ...scope(tenant), execution_id,
       subject_occurrence_id: item.occurrence_id, evidence_set_id, question_id, question_version,
       evaluator_definition_id, config_digest, attempt_label: decision_key, idempotency_digest,
       started_at: new Date(outcome.decided_at), ended_at: new Date(outcome.decided_at), status: "completed",
       error: null, model_usage: null, cost: null, external_execution_id: null,
-      provider_link: null, reproducibility_metadata: null })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "execution_id"]).doNothing()).execute();
+      provider_link: null, reproducibility_metadata: null } as const;
+    const insertedExecution = await trx.insertInto("observation.evaluation_execution").values(execution)
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "execution_id"]).doNothing())
+      .returning("execution_id").executeTakeFirst();
+    if (!insertedExecution) verifyStored("evaluation_execution", execution, await trx.selectFrom("observation.evaluation_execution")
+      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("execution_id", "=", execution_id).executeTakeFirst());
     const answer = { kind: "structured", state: "answered", value: { review: outcome.review,
       decision: outcome.decision, effect: outcome.effect, feedback: outcome.feedback as JsonValue } } as const;
-    await trx.insertInto("observation.grade_observation").values({ ...scope(tenant), observation_id, execution_id,
+    const grade = { ...scope(tenant), observation_id, execution_id,
       subject_occurrence_id: item.occurrence_id, evidence_set_id, question_id, question_version,
       evaluator_definition_id, answer_kind: "structured", answer_state: "answered",
       answer_payload: jsonText(answer), probabilities: null, confidence: null, normalized_score: null,
       decision_policy_id: null, decision_policy_version: null, reviewer_id: "oakridge-operator",
       reviewer_details: jsonText({ review: outcome.review, decision: outcome.decision, effect: outcome.effect }),
       comments: null, rationale: null, quality_flags: jsonText([]), supersedes_observation_id: null,
-      recorded_at: new Date(outcome.decided_at) })
-      .onConflict((conflict) => conflict.columns(["producer", "namespace", "observation_id"]).doNothing()).execute();
+      recorded_at: new Date(outcome.decided_at) } as const;
+    const insertedGrade = await trx.insertInto("observation.grade_observation").values(grade)
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "observation_id"]).doNothing())
+      .returning("observation_id").executeTakeFirst();
+    if (!insertedGrade) verifyStored("grade_observation", grade, await trx.selectFrom("observation.grade_observation")
+      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("observation_id", "=", observation_id).executeTakeFirst(),
+      ["answer_payload", "probabilities", "reviewer_details", "quality_flags"]);
   }
   return { kind: "graded" };
 }
@@ -113,11 +152,19 @@ export async function storeCollaborationInTransaction(trx: DatabaseTransaction, 
     await trx.insertInto("observation.extraction_issue").values({ ...scope(tenant), issue_id: issueId(issue), ...issue })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "issue_id"]).doNothing()).execute();
   }
-  for (const message of outcome.messages) await trx.insertInto("observation.source_collaboration_comment").values({ ...scope(tenant),
-    message_id: message.id, thread_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit,
-    revision_id, anchor: outcome.context.anchor, title: outcome.context.title,
-    body: jsonText(message.body), occurrence_id, recorded_at: new Date(message.created_at) })
-    .onConflict((conflict) => conflict.columns(["producer", "namespace", "message_id"]).doNothing()).execute();
+  for (const message of outcome.messages) {
+    const comment = { ...scope(tenant), message_id: message.id, thread_id: outcome.event_id,
+      run_id: outcome.run_id, unit_id: outcome.unit, revision_id, anchor: outcome.context.anchor,
+      title: outcome.context.title, body: jsonText(message.body), occurrence_id,
+      recorded_at: new Date(message.created_at) } as const;
+    const inserted = await trx.insertInto("observation.source_collaboration_comment").values(comment)
+      .onConflict((conflict) => conflict.columns(["producer", "namespace", "message_id"]).doNothing())
+      .returning("message_id").executeTakeFirst();
+    if (!inserted) verifyStored("source_collaboration_comment", comment,
+      await trx.selectFrom("observation.source_collaboration_comment").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("message_id", "=", message.id).executeTakeFirst(), ["body"]);
+  }
 }
 
 export function readBackfillCheckpoint(db: Database, tenant: TenantScope): Promise<BackfillCheckpoint> {
