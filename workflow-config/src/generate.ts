@@ -75,13 +75,15 @@ function verifyGeneratedObjects(): void {
 function verifyPreservation(): void {
   const base = process.env.DEFINITIONS_MERGE_BASE;
   if (!base) throw new Error("MissingDefinitionsMergeBase: set DEFINITIONS_MERGE_BASE to the branch used for the committed-object comparison");
-  const mergeBase = execFileSync("git", ["merge-base", "HEAD", base], { cwd: root, encoding: "utf8" }).trim();
-  const paths = execFileSync("git", ["ls-tree", "-r", "--name-only", mergeBase, "definitions"], { cwd: root, encoding: "utf8" }).trim();
-  for (const path of paths ? paths.split("\n") : []) {
-    if (!/^definitions\/(prompts|operations|workflows|programs)\//.test(path)) continue;
-    const prior = execFileSync("git", ["show", `${mergeBase}:${path}`], { cwd: root });
-    if (!existsSync(resolve(root, path)) || !readFileSync(resolve(root, path)).equals(prior))
-      throw new Error(`CommittedStoreObjectChanged: ${path}`);
+  for (const reference of new Set([base, process.env.DEFINITIONS_PR_BASE].filter((value): value is string => Boolean(value)))) {
+    const mergeBase = execFileSync("git", ["merge-base", "HEAD", reference], { cwd: root, encoding: "utf8" }).trim();
+    const paths = execFileSync("git", ["ls-tree", "-r", "--name-only", mergeBase, "definitions"], { cwd: root, encoding: "utf8" }).trim();
+    for (const path of paths ? paths.split("\n") : []) {
+      if (!/^definitions\/(prompts|operations|workflows|programs)\//.test(path)) continue;
+      const prior = execFileSync("git", ["show", `${mergeBase}:${path}`], { cwd: root });
+      if (!existsSync(resolve(root, path)) || !readFileSync(resolve(root, path)).equals(prior))
+        throw new Error(`CommittedStoreObjectChanged: ${path}`);
+    }
   }
 }
 

@@ -33,6 +33,7 @@ jobs:
         working-directory: .
         env:
           DEFINITIONS_MERGE_BASE: origin/main
+          DEFINITIONS_PR_BASE: origin/${{ github.base_ref }}
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
@@ -91,6 +92,7 @@ jobs:
       - run: bun workflow-config/src/generate.ts --check
         env:
           DEFINITIONS_MERGE_BASE: origin/main
+          DEFINITIONS_PR_BASE: origin/${{ github.base_ref }}
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: bun test workflow-config/src
       - run: bun test canonical-json/tests

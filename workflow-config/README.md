@@ -13,9 +13,9 @@ with the workspace's `yaml` package and writes their JSON counterparts to
 and the DBOS end-to-end tests use. Run `DEFINITIONS_MERGE_BASE=origin/main bun
 workflow-config/src/generate.ts --check` to detect drift and verify committed
 store objects against the merge base; this requires local branch history. CI
-runs this check. The prompts referenced by the
-samples live under `prompts/review-loop/` and `prompts/fan-out/`, and the Rust
-sample tests load those exact files.
+runs this check against both `origin/main` and the pull request target. The
+prompts referenced by the samples live under `prompts/review-loop/` and
+`prompts/fan-out/`, and the Rust sample tests load those exact files.
 
 `src/prompt-catalog.ts` lists every file under `prompts/` with a server-computed
 SHA-256 digest; the authority serves it at `/api/prompts` and resolves a pinned
