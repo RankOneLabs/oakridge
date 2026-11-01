@@ -1,7 +1,8 @@
 {
-  // Editor workspace references. Authoritative checks: bun run typecheck (three independent packages).
+  // Editor workspace references. Authoritative checks: bun run typecheck.
   "files": [],
   "references": [
+    { "path": "./canonical-json" },
     { "path": "./kbbl" },
     { "path": "./oakridge-dbos" },
     { "path": "./observation" }

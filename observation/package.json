@@ -12,6 +12,7 @@
     "storage:adopt": "bun src/storage/migrate.ts --adopt"
   },
   "dependencies": {
+    "canonical-json": "workspace:*",
     "hono": "^4.6.14",
     "kysely": "~0.29.6",
     "pg": "^8.23.0",
