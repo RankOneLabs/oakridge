@@ -63,6 +63,8 @@ test("historic authority baseline is adopted after catalog validation", async ()
     await sql`INSERT INTO authority.schema_baseline (digest) VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
     await expect(migrateEmptyDatabase(db)).rejects.toThrow("run storage:adopt");
     expect(await adoptExistingDatabase(db, scratch.url)).toEqual([]);
+    const adopted = await sql<{ name: string }>`SELECT name FROM authority.schema_migration ORDER BY ordinal`.execute(db);
+    expect(adopted.rows.map((row) => row.name)).toEqual(["0001_core.sql"]);
     await migrateEmptyDatabase(db);
     const ledger = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM authority.schema_migration`.execute(db);
     expect(ledger.rows[0]?.count).toBe(2);
