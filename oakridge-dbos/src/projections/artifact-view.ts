@@ -40,8 +40,11 @@ export function selectArtifactDetail(read: RunRead, location: ArtifactLocation):
   const decisions = read.decisions.filter((decision) => ids.has(decision.target_revision_id)).map(selectRevisionDecision);
   const latest = revisions.at(-1);
   const verdict = latest ? decisions.filter((decision) => decision.target_revision_id === latest.id).at(-1) : undefined;
+  const status = verdict === undefined ? "draft" : verdict.effect === "approve" ? "approved" : "changes_requested";
+  const editPolicy = stage.artifacts[location.artifact]?.edit_policy?.kind ?? "always";
   return { run_id: unit.run_id, unit_id: unit.id, artifact_key: location.artifact, schema: selectArtifactSchema(stage, location.artifact),
-    is_reviewable: isReviewable(stage, location.artifact), is_editable: isEditable(stage, location.artifact),
-    status: verdict === undefined ? "draft" : verdict.effect === "approve" ? "approved" : "changes_requested", revisions, decisions,
+    is_reviewable: isReviewable(stage, location.artifact), is_editable: !read.run.historical_read_only
+      && isEditable(stage, location.artifact) && !(editPolicy === "frozen_when_accepted" && status === "approved"),
+    status, revisions, decisions,
     original_spec: originalSpec(read, location) };
 }

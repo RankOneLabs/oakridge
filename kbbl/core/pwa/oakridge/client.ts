@@ -156,7 +156,7 @@ async function readRunInboxBatch(runIds: readonly string[]): Promise<OperatorRun
 
 function committed(response: OperatorIngressResponse, path: string): string {
   if (response.kind === "committed") return response.run_id;
-  throw new Error(`oakridge ${path}: ${response.kind === "rejected" ? response.reason : response.detail}`);
+  throw new Error(`oakridge ${path}: unexpected ingress response`);
 }
 
 async function decide(runId: string, unitId: string, review: string, decision: string, target: string, payload: unknown, requestId: string): Promise<string> {
@@ -288,10 +288,11 @@ export async function fetchArtifact(id: string): Promise<ArtifactDetail> {
 
 export async function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
   const gate = await resolveGateId(gateId, req);
+  const review = gate.name.split(":", 1)[0];
   const path = unitPath(gate.runId, gate.unitId);
   const unit = unwrapAdapter(path, parseUnitView(await oakridgeGet<unknown>(path)));
   const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
-    || (candidate.run_id === gate.runId && candidate.gate_step === gate.name));
+    || (candidate.run_id === gate.runId && candidate.gate_step === review));
   const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
   const currentRevision = currentGate?.artifact_revision_id
     ? parseCompositeId(currentGate.artifact_revision_id, "artifact") : null;
@@ -301,14 +302,14 @@ export async function resumeGate(gateId: string, req: GateResumeRequest): Promis
     ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentGate?.artifact_revision_id;
   if (!currentTarget || requestedTarget !== currentTarget)
     throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
-  const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === gate.name && decisionAction(candidate) === req.action);
+  const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate) === req.action);
   if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
   if (decision.fields.length > 1 || (decision.fields.length === 1 && decision.fields[0].key !== "feedback"))
     throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
   if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
     throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
   const payload = decision.fields.length === 1 ? { feedback: req.feedback } : {};
-  await decide(gate.runId, gate.unitId, gate.name, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
+  await decide(gate.runId, gate.unitId, review, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
   invalidateCachedRunUnits(gate.runId);
   return { gate_id: gateId, resumed: true };
 }

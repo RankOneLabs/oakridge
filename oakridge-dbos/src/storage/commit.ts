@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
 import { compileWorkflow, selectWanted, type CompiledAgainst, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type CodeOperation, type CompiledWorkflow, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
+import { VALIDATION_REVIEW, type BlockedReason, type CodeOperation, type CompiledWorkflow, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
@@ -58,6 +58,74 @@ const fault = (run_id: string, detail: string, unit_id: string | null = null): C
   ({ error: { operation: "commit_event", entity_id: run_id, detail }, unit_id });
 const violation = (run_id: string, detail: string): Result<never, CommitViolation> =>
   ({ ok: false, error: { operation: "select_commit_plan", entity_id: run_id, detail } });
+
+type GeneratedValue = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: string };
+const generatedFailure = (detail: string): GeneratedValue => ({ ok: false, error: detail });
+const objectFields = (value: unknown): { readonly [key: string]: unknown } | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as { readonly [key: string]: unknown } : null;
+function resolvedType(type: Type, aliases: ParsedWorkflow["schemas"]): Type {
+  let current = type;
+  const visited = new Set<string>();
+  while (current.kind === "named" && !visited.has(current.schema)) {
+    visited.add(current.schema);
+    const next = aliases?.[current.schema];
+    if (!next) break;
+    current = next;
+  }
+  return current;
+}
+function collectGeneratedIds(type: Type, value: unknown, aliases: ParsedWorkflow["schemas"], ids: Set<string>): void {
+  const resolved = resolvedType(type, aliases);
+  if (resolved.kind === "uuid" && resolved.generated && typeof value === "string") ids.add(value);
+  if (resolved.kind === "optional" && value !== null) collectGeneratedIds(resolved.value, value, aliases, ids);
+  if (resolved.kind === "list" && Array.isArray(value)) for (const item of value) collectGeneratedIds(resolved.item, item, aliases, ids);
+  if (resolved.kind === "record") {
+    const fields = objectFields(value);
+    if (fields) for (const [key, fieldType] of Object.entries(resolved.fields)) collectGeneratedIds(fieldType, fields[key], aliases, ids);
+  }
+}
+/** Fill generated fields recursively. A supplied ID is only valid on an operator edit of its predecessor. */
+function enrichGenerated(type: Type, value: unknown, aliases: ParsedWorkflow["schemas"], allowed: ReadonlySet<string>, seen: Set<string> | null = null): GeneratedValue {
+  const resolved = resolvedType(type, aliases);
+  if (resolved.kind === "uuid" && resolved.generated) {
+    const id = value === undefined ? crypto.randomUUID() : value;
+    if (typeof id !== "string" || (value !== undefined && !allowed.has(id))) return generatedFailure("generated identity does not belong to the predecessor");
+    if (seen?.has(id)) return generatedFailure("duplicate generated identity in one list");
+    seen?.add(id);
+    return { ok: true, value: id };
+  }
+  if (resolved.kind === "optional" && (value === undefined || value === null)) return { ok: true, value };
+  if (resolved.kind === "optional") return enrichGenerated(resolved.value, value, aliases, allowed, seen);
+  if (resolved.kind === "list" && Array.isArray(value)) {
+    const listSeen = new Set<string>();
+    const items: unknown[] = [];
+    for (const item of value) {
+      const next = enrichGenerated(resolved.item, item, aliases, allowed, listSeen);
+      if (!next.ok) return next;
+      items.push(next.value);
+    }
+    return { ok: true, value: items };
+  }
+  if (resolved.kind === "record") {
+    const entries = Object.entries(resolved.fields);
+    const generated = entries.filter(([, field]) => { const type = resolvedType(field, aliases); return type.kind === "uuid" && type.generated; });
+    const ordinary = entries.filter(([key]) => !generated.some(([generatedKey]) => key === generatedKey));
+    // A single text field with a generated UUID also accepts the text shorthand in publication input.
+    // The stored value is always the complete record required by the checked schema.
+    const shorthand = typeof value === "string" && generated.length === 1 && ordinary.length === 1
+      && resolvedType(ordinary[0]![1], aliases).kind === "text" ? { [ordinary[0]![0]]: value } : null;
+    const fields = objectFields(value) ?? shorthand;
+    if (!fields) return { ok: true, value };
+    const output: { [key: string]: unknown } = { ...fields };
+    for (const [key, fieldType] of Object.entries(resolved.fields)) {
+      const next = enrichGenerated(fieldType, fields[key], aliases, allowed, seen);
+      if (!next.ok) return next;
+      if (next.value !== undefined) output[key] = next.value;
+    }
+    return { ok: true, value: output };
+  }
+  return { ok: true, value };
+}
 
 /** Canonical JSON: object keys sorted, so a replay matches regardless of key order. */
 function canonical(value: unknown): string {
@@ -245,7 +313,22 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
   if (!definition) return { ok: false, error: fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`) };
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`, null);
-  const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
+  let effectiveRequest = request;
+  if (request.event.kind === "revision_published") {
+    const event = request.event;
+    const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
+    const workflow = definition.checked_program.workflow;
+    const schema = unit?.kind.kind === "stage" ? workflow.stages[unit.kind.stage]?.artifacts[event.artifact]?.schema : undefined;
+    if (schema) {
+      const allowed = new Set<string>();
+      const previous = snapshot.revisions.find((revision) => revision.id === event.predecessor && revision.unit === event.unit && revision.artifact === event.artifact);
+      if (request.writer.kind === "operator" && previous) collectGeneratedIds(schema, previous.body, workflow.schemas, allowed);
+      const enriched = enrichGenerated(schema, event.body, workflow.schemas, allowed);
+      if (!enriched.ok) return reject(enriched.error, unit_id.value);
+      effectiveRequest = { ...request, event: { ...event, body: enriched.value } };
+    }
+  }
+  const incoming: Incoming = { event: effectiveRequest.event, writer: request.writer, ingress_id: request.ingress_id };
   const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
   if (!stepped.ok) return stepped;
   if (stepped.value.kind === "rejected") return reject(stepped.value.reason, unit_id.value);
@@ -259,7 +342,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
       payload: jsonText({ kind: "invalidate", data: { target: "run", run_id } }) }).execute();
     return { ok: true, value: { kind: "rejected", reason } };
   }
-  const existing = await readCommitExisting(trx, { request, digest, unit_id: unit_id.value, source: definition.source,
+  const existing = await readCommitExisting(trx, { request: effectiveRequest, digest, unit_id: unit_id.value, source: definition.source,
     parsed_workflow: definition.checked_program.workflow,
     prompts: definition.prompts, config: run.config, step: stepped.value.step });
   const planned = selectCommitPlan(snapshot, stepped.value.step, existing);

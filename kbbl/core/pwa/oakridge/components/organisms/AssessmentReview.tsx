@@ -18,10 +18,11 @@ export function AssessmentReview({ body, source, edit, gate }: ViewerProps) {
   if (!parsed.ok) {
     return <div className="or-error" role="alert">This assessment does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;
   }
-  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result}
+  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result} revisionScope={source?.as_of}
     cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration}
     handoff={!isIntegration && source && cohortLabel && edit?.enabled && edit.onSubmitBody
-      ? <BuilderHandoffPanel assessment={parsed.value} body={body as typeof parsed.value}
+      && parsed.value.recommended_next_actions.every((action) => typeof action !== "string")
+      ? <BuilderHandoffPanel runId={source.run_id} unitLabel={cohortLabel} assessment={parsed.value} body={body as typeof parsed.value}
           gate={gate ?? null} edit={edit} />
       : undefined} />;
 }

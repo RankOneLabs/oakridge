@@ -74,14 +74,10 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
     const decisionRevisionId = artifactRevisionId ?? gate.artifact_revision_id;
     if (!decisionRevisionId) return;
     const feedbackValue = decisionFeedback?.trim() ?? "";
-    const gateStep = gate.gate_step ?? gate.gate_type;
-    const operatorComment = actionLabels[action] ?? actionLabel(action);
     const requestIdentity = JSON.stringify({
       action,
       artifact_revision_id: decisionRevisionId,
       feedback: feedbackValue,
-      gate_step: gateStep,
-      operator_comment: operatorComment,
     });
     let key = requestKeys.current.get(requestIdentity);
     if (!key) {
@@ -91,9 +87,7 @@ function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {
     mutation.mutate({
       idempotency_key: key,
       artifact_revision_id: decisionRevisionId,
-      gate_step: gateStep,
       action,
-      operator_comment: operatorComment,
       feedback: feedbackValue,
     }, {
       onSuccess: () => {

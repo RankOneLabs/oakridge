@@ -35,7 +35,7 @@ test("a gate decision refreshes the run detail, run list, gates, and sessions", 
   }), { wrapper: queryWrapper(client) });
   await waitFor(() => expect([result.current.run.data, result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([0, 0, 0, 0]));
   await act(async () => { await result.current.action.mutateAsync({ idempotency_key: "decision-1", artifact_revision_id: "revision",
-    gate_step: "review", action: "approve", operator_comment: "", feedback: "" }); });
+    action: "approve", feedback: "" }); });
   await waitFor(() => expect([result.current.run.data, result.current.runs.data, result.current.gates.data, result.current.sessions.data]).toEqual([1, 1, 1, 1]));
   client.clear();
 });

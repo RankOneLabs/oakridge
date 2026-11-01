@@ -427,6 +427,7 @@ pub struct ReviewUse {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Type {
     Text,
+    Uuid { generated: bool },
     Ident,
     RepoPath,
     Boolean,
@@ -473,6 +474,9 @@ impl Type {
         }
         let parse = |inner: &str| Self::parse_nested(inner, depth + 1);
         let text = text.trim();
+        if text == "uuid(generated)" {
+            return Ok(Self::Uuid { generated: true });
+        }
         if let Some(inner) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             let mut fields = BTreeMap::new();
             if !inner.trim().is_empty() {
@@ -555,6 +559,8 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Text => f.write_str("text"),
+            Self::Uuid { generated: true } => f.write_str("uuid(generated)"),
+            Self::Uuid { generated: false } => f.write_str("uuid"),
             Self::Ident => f.write_str("ident"),
             Self::RepoPath => f.write_str("repo_path"),
             Self::Boolean => f.write_str("boolean"),
@@ -638,6 +644,7 @@ impl Serialize for Type {
         let mut map = serializer.serialize_map(None)?;
         let kind = match self {
             Self::Text => "text",
+            Self::Uuid { .. } => "uuid",
             Self::Ident => "ident",
             Self::RepoPath => "repo_path",
             Self::Boolean => "boolean",
@@ -651,6 +658,7 @@ impl Serialize for Type {
         };
         map.serialize_entry("kind", kind)?;
         match self {
+            Self::Uuid { generated } => map.serialize_entry("generated", generated)?,
             Self::Enum { variants } => map.serialize_entry("variants", variants)?,
             Self::Optional { value } => map.serialize_entry("value", value)?,
             Self::List { item } => map.serialize_entry("item", item)?,
@@ -773,7 +781,17 @@ pub struct Stage {
 pub struct Artifact {
     pub schema: TypeExpression,
     #[serde(default)]
+    pub edit_policy: EditPolicy,
+    #[serde(default)]
     pub validate: Vec<ValidationCheck>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EditPolicy {
+    #[default]
+    Always,
+    FrozenWhenAccepted,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

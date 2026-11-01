@@ -138,6 +138,49 @@ test("a replayed ingress id returns its stored result, and reused with other con
     .toEqual({ replay: "replayed", changed: "conflict", event_count: 1 });
 });
 
+test("nested generated action IDs are assigned once and an edit keeps predecessor identities", async () => {
+  const source = sampleWorkflow("review-loop");
+  const stage = source.stages.document;
+  if (!stage) throw new Error("document stage absent");
+  const draft = stage.artifacts.draft;
+  if (!draft) throw new Error("draft artifact absent");
+  const workflow: Workflow = { ...source, workflow: "generated_identity_review", stages: { ...source.stages,
+    document: { ...stage, artifacts: { ...stage.artifacts, draft: { ...draft,
+      schema: { title: "text", body: "text", actions: "list({id: uuid(generated), text: text})" },
+      edit_policy: { kind: "frozen_when_accepted" } } } } } };
+  const { bundle_id: generated } = await pinWorkflow(authority, workflow);
+  const { run_id } = await launch(authority, { bundle_id: generated, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const unit = unitOf(run_id, "document");
+  const action = await actionOf(authority, run_id, "writer");
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid-generated" }, writer: executor(action) });
+  const body = { title: "T", body: "Long", actions: ["A", { text: "B" }] };
+  const publish = { kind: "revision_published" as const, unit, artifact: "draft", body, by: action, predecessor: null, subject: null };
+  const ingress_id = crypto.randomUUID();
+  const first = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
+  const replay = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
+  const revisions = await authority.db.selectFrom("authority.artifact_revision").select(["id", "body"])
+    .where("run_id", "=", run_id).where("unit_id", "=", unit).where("artifact", "=", "draft").execute();
+  const stored = revisions[0]?.body as { title: string; body: string; actions: { id: string; text: string }[] } | undefined;
+  expect({ first: first.ok && first.value.kind, replay: replay.ok && replay.value.kind, count: revisions.length,
+    ids: stored?.actions.map((item) => item.id) }).toMatchObject({ first: "committed", replay: "replayed", count: 1,
+    ids: [expect.stringMatching(/^[0-9a-f-]{36}$/), expect.stringMatching(/^[0-9a-f-]{36}$/)] });
+  if (!stored || !revisions[0]) throw new Error("stored revision absent");
+  const firstId = stored.actions[0]?.id;
+  const secondId = stored.actions[1]?.id;
+  if (!firstId || !secondId) throw new Error("stored action IDs absent");
+  const duplicate = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: firstId, text: "A" }, { id: firstId, text: "B" }] } } });
+  const foreign = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: crypto.randomUUID(), text: "A" }] } } });
+  const malformed = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: "bad", text: "A" }] } } });
+  const edited = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: secondId, text: "B revised" }] } } });
+  expect([duplicate, foreign, malformed, edited].map((result) => result.ok && result.value.kind))
+    .toEqual(["rejected", "rejected", "rejected", "committed"]);
+});
+
 test("concurrent identical launches create one run and one event", async () => {
   const request_id = crypto.randomUUID();
   const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } })));
