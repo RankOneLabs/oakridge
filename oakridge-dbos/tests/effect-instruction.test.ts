@@ -8,7 +8,7 @@ import type { ActionId, RunId } from "../src/domain/primitives";
 
 const unit = "run-1/document";
 const action: RunWorkerAction = { kind: "run_worker", unit, worker: "writer", mode: { kind: "initial" }, cause: { kind: "missing" } };
-const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null } };
+const resolved: ResolvedRunWorker = { action_id: `${unit}:writer:Initial:Missing`, inputs: { topic: "Oakridge", critique: null }, feedback: [] };
 const prompts = { "review-loop/write.md": "a".repeat(64) };
 const select = (overrides: Partial<Parameters<typeof selectEffectInstruction>[0]> = {}) =>
   selectEffectInstruction({ run_id: "run-1" as RunId, workflow: sampleWorkflow("review-loop"), prompts, stage: "document", config: null, action, seq: 1, resolved, ...overrides });
@@ -18,9 +18,9 @@ test("an agent instruction carries its pinned prompt, session key, inputs and de
   expect(instruction.ok ? instruction.value : null).toEqual({ version: 1, run_id: "run-1" as RunId, action,
     attempt: { action_id: resolved.action_id as ActionId, seq: 1 },
     worker: { kind: "agent", session: "resume", session_key: selectSessionKey(action, resolved.action_id, "resume"),
-      prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
+      gated_review: null, prompt: { path: "review-loop/write.md", digest: "a".repeat(64) }, handoff: null, settings: null,
       creates: [{ key: "draft", schema: { title: "text", body: "text" } }], schemas: {} },
-    inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: null, subject: null }, workspace: null,
+    inputs: { topic: "Oakridge", critique: null }, engine_inputs: { previous: null, feedback: [], subject: null }, workspace: null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS });
 });
 
@@ -152,4 +152,23 @@ test("a provider call past its deadline is uncertain and aborted", async () => {
   const controller = new AbortController();
   const result = await bounded(new Promise<never>(() => undefined), 5, controller);
   expect([result.kind, controller.signal.aborted]).toEqual(["uncertain", true]);
+});
+
+test("a same-SHA replacement selects the declared assessor review prompt", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const workflow = JSON.parse(fs.readFileSync(new URL("../../workflow-core/fixtures/bundles/development.json", import.meta.url), "utf8")) as import("../src/core-client/core-types").Workflow;
+  const build = { id: "run-1/cohort:build_result:2", unit: "run-1/cohort", artifact: "build_result", seq: 2, body: { head_sha: "same" } };
+  const previous = { id: "run-1/cohort:assessment:1", unit: "run-1/cohort", artifact: "assessment", seq: 1, body: { head_sha: "same" }, subject: "run-1/cohort:build_result:1" };
+  const reviewAction: RunWorkerAction = { kind: "run_worker", unit: "run-1/cohort", worker: "assessor", mode: { kind: "review" }, cause: { kind: "review_of", revision: build.id } };
+  const selected = selectEffectInstruction({ run_id: "run-1" as RunId, workflow, stage: "cohort", config: null, action: reviewAction, seq: 1,
+    prompts: { "development/assess.md": "a".repeat(64), "development/assess-revise.md": "b".repeat(64) },
+    resolved: { action_id: "assess-new-build", inputs: {}, previous, subject: build, feedback: [] } });
+  expect(selected.ok && selected.value.worker.kind === "agent" ? selected.value.worker.prompt.path : "refused")
+    .toBe("development/assess.md");
+  const reviseAction: RunWorkerAction = { ...reviewAction, mode: { kind: "revise" }, cause: { kind: "changes_requested", decision: "run-1/cohort:d3" } };
+  const revised = selectEffectInstruction({ run_id: "run-1" as RunId, workflow, stage: "cohort", config: null, action: reviseAction, seq: 2,
+    prompts: { "development/assess.md": "a".repeat(64), "development/assess-revise.md": "b".repeat(64) },
+    resolved: { action_id: "revise-assessment", inputs: {}, previous, subject: build, feedback: [] } });
+  expect(revised.ok && revised.value.worker.kind === "agent" ? revised.value.worker.prompt.path : "refused")
+    .toBe("development/assess-revise.md");
 });

@@ -364,8 +364,21 @@ pub struct ResolvedDecision {
 /// The inputs of one wanted `RunWorker` (part 1 §2.5). `inputs` holds the
 /// worker's declared inputs, an unresolved read (such as `latest` of an
 /// unpublished artifact) as null. The engine inputs are present only for the
-/// mode that uses them: `previous` and `feedback` for revise, `subject` for review.
+/// mode that uses them: `previous` and ordered `feedback` for revise and
+/// reassessment, `subject` for review.
 /// `workspace` is the repository a `repository(<expr>)` workspace names; None for `none`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackEntry {
+    pub id: DecisionId,
+    pub review: SymbolKey,
+    pub decision: SymbolKey,
+    pub target: RevisionId,
+    #[serde(with = "crate::wire_numbers::json")]
+    #[schemars(with = "Value")]
+    pub payload: Value,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRunWorker {
@@ -374,9 +387,7 @@ pub struct ResolvedRunWorker {
     #[schemars(with = "Value")]
     pub inputs: Value,
     pub previous: Option<RevisionState>,
-    #[serde(with = "crate::wire_numbers::optional_json")]
-    #[schemars(with = "Option<Value>")]
-    pub feedback: Option<Value>,
+    pub feedback: Vec<FeedbackEntry>,
     pub subject: Option<RevisionState>,
     #[serde(with = "crate::wire_numbers::optional_json")]
     #[schemars(with = "Option<Value>")]

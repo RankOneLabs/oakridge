@@ -125,7 +125,7 @@ test("a revise instruction carries the requested revision and the decision paylo
   const revise = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload))
     .find((decoded) => decoded.ok && decoded.value.action.mode.kind === "revise");
   expect(revise?.ok ? { previous: revise.value.engine_inputs.previous?.id, feedback: revise.value.engine_inputs.feedback } : null)
-    .toEqual({ previous: `${unit}:draft:1`, feedback: { feedback: "shorter" } });
+    .toEqual({ previous: `${unit}:draft:1`, feedback: [{ id: `${unit}:d1`, review: "editor", decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "shorter" } }] });
 });
 
 test("a replayed ingress id returns its stored result, and reused with other content it conflicts", async () => {

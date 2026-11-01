@@ -337,13 +337,15 @@ stages:
     workers:
       builder:
         kind: agent
+        gated_review: { kind: restricted, role: builder }
         prompts: { initial: development/build.md, revise: development/build-revise.md }
         inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
         kind: agent
-        prompts: { review: development/assess.md, revise: development/assess.md }
+        gated_review: { kind: restricted, role: assessor }
+        prompts: { review: development/assess.md, revise: development/assess-revise.md }
         inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
         reviews: build_result
@@ -407,6 +409,7 @@ stages:
     workers:
       integrator:
         kind: agent
+        gated_review: { kind: unscoped }
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
         inputs: { repository: input.repository, cohorts: input.cohorts }
         workspace: repository(input.workspace)

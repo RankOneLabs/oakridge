@@ -52,3 +52,9 @@ An ACP permission should therefore stay attached to the live session and be trea
 Widen `projectPermissionRequest` in a follow-up change. Add typed nullable fields for `toolCallId`, `name`, `kind`, and projected `locations`, and preserve `rawInput` as protocol-owned `unknown` for a narrowly scoped normalizer or fingerprinting step. Do not use title equality, do not interpret `_meta`, and do not add automatic approval until tool-specific normalization and risk rules exist. Keep the full detail on the session event stream; keep `/inbox` at the bare count unless a concrete cross-surface workflow needs more.
 
 This gives future UX enough evidence to classify, compare, and group requests while preserving the existing boundary: live permissions remain per-process session state, and durable waits remain Oakridge records.
+
+## Gated-review access from the workflow definition
+
+The authored agent's `gated_review` declaration is pinned in the workflow definition and carried through the effect instruction into the kbbl session identity. A restricted grant chooses `/builder` or `/assessor`; an explicit unscoped grant chooses the base endpoint. A missing declaration, missing session identity, or invalid stored role supplies no MCP server. The adapter persists the grant in `acp_sessions.gated_review_json`.
+
+The integrator prompts require remote `git.push` and `open_pr`. On 2026-11-01 the configured `/mcp` endpoint returned both from `tools/list`, while `/mcp/builder` and `/mcp/assessor` returned HTTP 404. The integrator therefore declares `{ kind: unscoped }`; `git.push` and `open_pr` are the specific tools no reachable restricted endpoint exposes. The assessor prompt calls `set_pr_draft`, but the reachable unscoped endpoint did not list it. The restricted endpoints must be deployed before the builder and assessor grants can work end to end.

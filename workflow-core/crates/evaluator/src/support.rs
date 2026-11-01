@@ -370,36 +370,36 @@ pub(super) fn answered_decision<'a>(
         .find(|revision| &revision.id == decision.target())?;
     Some((revision, decision))
 }
-/// What a reviewer reviewing a newer subject published last time: the latest
-/// revision of the first artifact it creates, in `creates` order, that has
-/// one, with the newest request for changes on the subject that revision
-/// reviewed. Revisions about the current subject are skipped: a retried
-/// review may already have published part of its output about it.
+pub(super) fn feedback_on(state: &StepSnapshot, unit: &UnitId, target_revision: &RevisionId) -> Vec<FeedbackEntry> {
+    state.decisions.iter().filter_map(|record| {
+        if let DecisionState::Review { id, unit: decision_unit, review, decision, effect: DecisionEffect::RequestChanges { .. }, target, payload } = record {
+            if decision_unit == unit && target == target_revision {
+                return Some(FeedbackEntry { id: id.clone(), review: review.clone(), decision: decision.clone(), target: target.clone(), payload: payload.clone() });
+            }
+        }
+        None
+    }).collect()
+}
+
+/// Previous review of a different subject, followed by every request-change
+/// decision on that subject in snapshot order.
 pub(super) fn reviewed_before<'a>(
     state: &'a StepSnapshot,
     unit: &UnitId,
     artifacts: &[SymbolKey],
     subject: Option<&RevisionId>,
-) -> Option<(&'a RevisionState, Option<&'a DecisionState>)> {
+) -> Option<(&'a RevisionState, Vec<FeedbackEntry>)> {
     let revision = artifacts.iter().find_map(|artifact| {
-        state
-            .revisions
-            .iter()
+        state.revisions.iter()
             .filter(|r| r.unit == *unit && r.artifact == *artifact && r.subject.as_ref() != subject)
             .max_by_key(|r| r.seq)
     })?;
-    let decision = revision.subject.as_ref().and_then(|subject| {
-        state.decisions.iter().rev().find(|decision| {
-            decision.unit() == unit
-                && decision.target() == subject
-                && matches!(
-                    decision.effect(),
-                    Some(DecisionEffect::RequestChanges { .. })
-                )
-        })
-    });
-    Some((revision, decision))
+    let feedback = revision.subject.as_ref()
+        .map(|previous_subject| feedback_on(state, unit, previous_subject))
+        .unwrap_or_default();
+    Some((revision, feedback))
 }
+
 pub(super) fn group_for<'a>(
     program: &'a CheckedWorkflow,
     state: &StepSnapshot,

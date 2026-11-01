@@ -399,8 +399,8 @@ pub(super) fn resolve_run_worker(
     };
     let (previous, feedback) = match action.mode {
         Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
-            Some((revision, decision)) => (Some(revision.clone()), Some(decision.payload())),
-            None => (None, None),
+            Some((revision, _decision)) => (Some(revision.clone()), feedback_on(state, &unit.id, &revision.id)),
+            None => (None, Vec::new()),
         },
         Mode::Review => match reviewed_before(
             state,
@@ -408,12 +408,10 @@ pub(super) fn resolve_run_worker(
             checked.creates(),
             subject.as_ref().map(|revision| &revision.id),
         ) {
-            Some((revision, decision)) => {
-                (Some(revision.clone()), decision.map(DecisionState::payload))
-            }
-            None => (None, None),
+            Some((revision, feedback)) => (Some(revision.clone()), feedback),
+            None => (None, Vec::new()),
         },
-        _ => (None, None),
+        _ => (None, Vec::new()),
     };
     Ok(ResolvedRunWorker {
         action_id: action_id(&unit.id, action.worker, action.mode, action.cause),

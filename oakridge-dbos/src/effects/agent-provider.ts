@@ -84,7 +84,7 @@ export function selectSessionStart(instruction: EffectInstruction, config: Pick<
     ...(worker.settings ? { runtime: worker.settings.harness, model: worker.settings.model,
       ...(worker.settings.effort === null ? {} : { effort: worker.settings.effort }) } : {}),
     ...(workspace ? { worktree: { branch_name: selectWorkspaceBranch(instruction), worktree_subdir: "oakridge", base_ref: `origin/${workspace.base_branch}` } } : {}),
-    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker },
+    workflow: { run_id: instruction.run_id, unit_id: session_unit, worker: instruction.action.worker, gated_review: worker.gated_review },
   };
 }
 

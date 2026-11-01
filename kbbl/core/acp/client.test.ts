@@ -1,34 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { selectGatedReviewRole, selectMcpServers } from "./client";
+import { selectGatedReviewAccess, selectMcpServers } from "./client";
 
-const identity = (worker: string) => ({ run_id: "run-1", unit_id: "run-1/implementation/a", worker });
+const identity = (worker: string, gated_review?: { kind: "restricted"; role: "builder" | "assessor" } | { kind: "unscoped" }) =>
+  ({ run_id: "run-1", unit_id: "run-1/implementation/a", worker, gated_review });
 
-describe("selectGatedReviewRole", () => {
-  test("scopes the cohort builder and assessor", () => {
-    expect([selectGatedReviewRole(identity("builder")), selectGatedReviewRole(identity("assessor"))]).toEqual(["builder", "assessor"]);
+const server = (url: string) => [{ type: "http" as const, name: "gated-review", url, headers: [] }];
+
+describe("definition-driven gated-review access", () => {
+  test("a renamed worker keeps its declared role endpoint", () => {
+    const access = selectGatedReviewAccess(identity("renamed-worker", { kind: "restricted", role: "assessor" }));
+    expect(selectMcpServers("http://otto:3555/mcp/", access)).toEqual(server("http://otto:3555/mcp/assessor"));
   });
 
-  test("leaves the integrator and other workers unscoped", () => {
-    expect([selectGatedReviewRole(identity("integrator")), selectGatedReviewRole(identity("writer"))]).toEqual([null, null]);
+  test("a worker named builder without a grant receives no endpoint", () => {
+    expect(selectMcpServers("http://otto:3555/mcp", selectGatedReviewAccess(identity("builder")))).toEqual([]);
   });
 
-  test("leaves a hand-started session unscoped", () => {
-    expect(selectGatedReviewRole(null)).toBeNull();
-  });
-});
-
-describe("selectMcpServers", () => {
-  test("serves a role from its endpoint under the base URL", () => {
-    expect(selectMcpServers("http://otto:3555/mcp/", "builder"))
-      .toEqual([{ type: "http", name: "gated-review", url: "http://otto:3555/mcp/builder", headers: [] }]);
+  test("a hand-started session receives no endpoint", () => {
+    expect(selectMcpServers("http://otto:3555/mcp", selectGatedReviewAccess(null))).toEqual([]);
   });
 
-  test("serves an unscoped session from the base URL", () => {
-    expect(selectMcpServers("http://otto:3555/mcp", null))
-      .toEqual([{ type: "http", name: "gated-review", url: "http://otto:3555/mcp", headers: [] }]);
+  test("an invalid role receives no endpoint", () => {
+    const malformed = { ...identity("builder"), gated_review: { kind: "restricted", role: "administrator" } };
+    expect(selectMcpServers("http://otto:3555/mcp", selectGatedReviewAccess(malformed as never))).toEqual([]);
   });
 
-  test("supplies no server when none is configured", () => {
-    expect(selectMcpServers(undefined, "assessor")).toEqual([]);
+  test("explicit unscoped access receives the base endpoint", () => {
+    expect(selectMcpServers("http://otto:3555/mcp/", selectGatedReviewAccess(identity("integrator", { kind: "unscoped" }))))
+      .toEqual(server("http://otto:3555/mcp"));
+  });
+
+  test("no configured server means no endpoint", () => {
+    expect(selectMcpServers(undefined, { kind: "restricted", role: "builder" })).toEqual([]);
   });
 });

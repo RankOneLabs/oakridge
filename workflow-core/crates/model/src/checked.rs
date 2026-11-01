@@ -140,6 +140,7 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
+        gated_review: Option<GatedReviewAccess>,
         workspace: Option<CheckedStageExpression>,
         when: Option<CheckedStageExpression>,
     },
