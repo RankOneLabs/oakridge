@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
-import { selectCriterionCounts, selectCriterionReport, type Assessment, type CriterionTally } from "../../lib/assessment";
+import { selectCriterionCounts, selectCriterionReport, selectDisplayActions, type Assessment, type CriterionTally } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
@@ -19,6 +19,7 @@ interface Props {
   cohortLabel: string | null;
   isIntegration?: boolean;
   handoff?: ReactNode;
+  revisionScope: string;
 }
 
 const VERDICT_LABEL: Record<AssessmentVerdict, string> = { pass: "Pass", pass_with_notes: "Pass with notes", fail: "Fail" };
@@ -41,7 +42,7 @@ function VerdictBanner({ verdict, tally }: { verdict: AssessmentVerdict; tally: 
   );
 }
 
-export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff }: Props) {
+export function AssessmentViewer({ assessment, brief, result, cohortLabel, isIntegration = false, handoff, revisionScope }: Props) {
   const [isMetOpen, setIsMetOpen] = useState(false);
   const report = selectCriterionReport(!isIntegration && brief.kind === "found" ? brief.value.acceptance_criteria : null, assessment.findings);
 
@@ -70,7 +71,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       {handoff ?? (assessment.recommended_next_actions.length > 0 && (
         <ArtifactSection title={`Recommended next actions (${assessment.recommended_next_actions.length})`} testId="or-assessment-next-actions">
           <ol className="m-0 flex list-decimal flex-col gap-1.5 rounded-md border-l-4 border-[var(--accent-blue)] bg-[var(--accent-muted)] py-2 pl-8 pr-3 text-sm text-[var(--text-primary)]">
-            {assessment.recommended_next_actions.map((action, index) => <li key={`${index}-${action}`}>{action}</li>)}
+            {selectDisplayActions(assessment, revisionScope).map((action) => <li key={action.id}>{action.text}</li>)}
           </ol>
         </ArtifactSection>
       ))}

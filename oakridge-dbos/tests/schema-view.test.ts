@@ -70,6 +70,13 @@ test("primitives map to the PWA's shapes, with the core's ident bound", () => {
     boolean: { kind: "boolean" } });
 });
 
+test("generated UUID metadata survives nested schema projection", () => {
+  const schemas = selectWorkflowSchemas({ ...workflow, schemas: { ...workflow.schemas,
+    next_action: { kind: "record", fields: { id: { kind: "uuid", generated: true }, text: { kind: "text" } } } },
+  input: { kind: "list", item: { kind: "named", schema: "next_action" } } });
+  expect(schemas.find((schema) => schema.key === "uuid(generated)")?.shape).toEqual({ kind: "uuid", generated: true });
+});
+
 test("an enum expression becomes the PWA's enum shape", () => {
   const type: Type = { kind: "enum", variants: ["fast", "safe"] };
   expect({ key: schemaKey(typeNode(type)), shape: selectWorkflowSchemas({ ...workflow, input: { kind: "record", fields: { mode: type } } })

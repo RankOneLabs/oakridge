@@ -114,6 +114,146 @@ fn incoming(event: Event, id: &str) -> Incoming {
         ingress_id: Some(id.into()),
     }
 }
+
+#[test]
+fn generated_uuid_type_round_trips_and_validates_stored_values() {
+    let ty = Type::parse("list({id: uuid(generated), text: text})").unwrap();
+    assert_eq!(Type::parse(&ty.to_string()).unwrap(), ty);
+    assert!(check_type(
+        &ty,
+        &serde_json::json!([{
+            "id": "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", "text": "Fix it"
+        }])
+    ));
+    assert!(!check_type(&ty, &serde_json::json!([{"text": "Fix it"}])));
+    assert!(!check_type(
+        &ty,
+        &serde_json::json!([{"id": "not-a-uuid", "text": "Fix it"}])
+    ));
+}
+
+#[test]
+fn plain_uuid_type_round_trips_and_validates_values() {
+    let ty = Type::parse("uuid").unwrap();
+    assert_eq!(ty.to_string(), "uuid");
+    assert!(check_type(
+        &ty,
+        &serde_json::json!("aa32c2d6-b93c-42e5-80c8-d4cb1081fab2")
+    ));
+    assert!(!check_type(&ty, &serde_json::json!("not-a-uuid")));
+}
+
+#[test]
+fn an_artifact_without_an_edit_policy_defaults_to_always() {
+    let artifact: Artifact = serde_json::from_value(serde_json::json!({"schema":"text"})).unwrap();
+    assert!(matches!(artifact.edit_policy, EditPolicy::Always));
+    assert_eq!(
+        serde_json::to_value(&artifact).unwrap(),
+        serde_json::json!({"schema":{"kind":"text"},"validate":[]})
+    );
+    let explicit: Artifact = serde_json::from_value(
+        serde_json::json!({"schema":"text","edit_policy":{"kind":"always"}}),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&explicit).unwrap(),
+        serde_json::to_value(&artifact).unwrap()
+    );
+}
+
+#[test]
+fn an_accepted_artifact_with_a_freeze_policy_rejects_operator_edits() {
+    let source: Workflow = serde_json::from_value(serde_json::json!({
+        "workflow":"freeze", "input":{},
+        "run":{"units":{"document":{"stage":"document","input":{}}},"outcome":{}},
+        "stages":{"document":{"input":{},"artifacts":{"draft":{"schema":"text","edit_policy":{"kind":"frozen_when_accepted"}}},
+            "workers":{"writer":{"kind":"agent","prompts":{"initial":"write.md"},"inputs":{},"creates":["draft"]}},
+            "reviews":{"editor":{"of":"draft","by":"operator","prompt":"review.md","decisions":{"accept":{"effect":"approve","label":"Accept"}}}},
+            "done_when":"false","outcome":{}}}
+    })).unwrap();
+    let program = compile_workflow(
+        &source,
+        &[],
+        &BTreeMap::from([
+            ("write.md".to_owned(), String::new()),
+            ("review.md".to_owned(), String::new()),
+        ]),
+    )
+    .unwrap();
+    let launched = step(
+        &program,
+        &snapshot(),
+        &incoming(
+            Event::Launched {
+                input: serde_json::json!({}),
+            },
+            "launch",
+        ),
+    )
+    .unwrap()
+    .snapshot;
+    let unit = UnitId::from("run/document");
+    let published = step(
+        &program,
+        &launched,
+        &Incoming {
+            ingress_id: Some("publish".into()),
+            writer: Writer::Session {
+                session: SessionId::from("session"),
+                attempt: launched.attempts[0].action_id.clone(),
+            },
+            event: Event::RevisionPublished {
+                unit: unit.clone(),
+                artifact: SymbolKey::from("draft"),
+                body: serde_json::json!("first"),
+                predecessor: None,
+                subject: None,
+                by: Some(launched.attempts[0].action_id.clone()),
+            },
+        },
+    )
+    .unwrap()
+    .snapshot;
+    let revision = published.revisions[0].id.clone();
+    let accepted = step(
+        &program,
+        &published,
+        &Incoming {
+            ingress_id: Some("accept".into()),
+            writer: Writer::Operator {
+                subject: OperatorId::from("operator"),
+            },
+            event: Event::OperatorDecided {
+                unit: unit.clone(),
+                review: SymbolKey::from("editor"),
+                decision: SymbolKey::from("accept"),
+                target: revision.clone(),
+                payload: serde_json::json!({}),
+            },
+        },
+    )
+    .unwrap()
+    .snapshot;
+    let edit = step(
+        &program,
+        &accepted,
+        &Incoming {
+            ingress_id: Some("edit".into()),
+            writer: Writer::Operator {
+                subject: OperatorId::from("operator"),
+            },
+            event: Event::RevisionPublished {
+                unit,
+                artifact: SymbolKey::from("draft"),
+                body: serde_json::json!("second"),
+                predecessor: Some(revision),
+                subject: None,
+                by: None,
+            },
+        },
+    );
+    assert!(format!("{:?}", edit.unwrap_err()).contains("accepted artifact revision is frozen"));
+}
 fn sample(name: &str) -> CheckedWorkflow {
     let content = match name {
         "review-loop" => include_str!("../../../fixtures/bundles/review-loop.json"),
@@ -314,6 +454,7 @@ fn assessment_schema_accepts_omitted_optional_fields_without_weakening_required_
         "input": "assessment_body",
         "schemas": {
             "assessment_body": schemas["assessment_body"],
+            "next_action": schemas["next_action"],
             "assessment_finding": schemas["assessment_finding"],
             "evidence_ref": schemas["evidence_ref"],
             "test_evidence": schemas["test_evidence"]

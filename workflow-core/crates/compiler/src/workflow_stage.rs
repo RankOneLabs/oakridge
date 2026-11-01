@@ -83,6 +83,7 @@ pub(super) fn compile_stage(
             artifacts.push(CheckedArtifact {
                 key: SymbolKey::from(artifact_key.as_str()),
                 schema: schema.expect("valid artifact schema"),
+                edit_policy: artifact.edit_policy.clone(),
                 validations,
             });
         }

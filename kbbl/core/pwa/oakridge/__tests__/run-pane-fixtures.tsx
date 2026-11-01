@@ -98,6 +98,7 @@ const GATES: ParkedGate[] = [
     artifact_revision_id: "rev-1",
     worktree: null,
     resume_actions: ["approve", "reject"],
+    offered_decisions: ["approve", "reject"],
     run_state: "active",
     actionable: true,
   },

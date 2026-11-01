@@ -7,7 +7,7 @@ import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, 
 import { readSessionAttempt } from "../storage/read-store";
 import { findLaunchableDefinition, hasProject } from "../storage/registry-store";
 import { operatorWriterFromCredential } from "./control-auth";
-import { errorResponse, fault, HistoricalRunReadOnlyError, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
+import { ConflictError, errorResponse, fault, HistoricalRunReadOnlyError, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
 
 /**
  * Ingress (part 1 §7.1): HTTP to events. Each route checks authentication and
@@ -26,10 +26,8 @@ export interface LaunchRequest extends IngressRequest {
 export interface DecideRequest extends IngressRequest { readonly decision: string; readonly target: string; readonly payload: unknown }
 /** What an agent sends to publish a revision; its attempt comes from the session secret. */
 export interface PublishRequest extends IngressRequest { readonly body: unknown; readonly predecessor: string | null; readonly subject: string | null }
-/** The response to an ingress request: the committed event, or why `step` refused it. */
-export type IngressResponse = IngressCommitted
-  | { readonly kind: "rejected"; readonly reason: string }
-  | { readonly kind: "conflict"; readonly detail: string };
+/** Successful ingress returns the committed event; typed refusals use the shared error response. */
+export type IngressResponse = IngressCommitted;
 /** A committed (or replayed) ingress request: the only success body. */
 export interface IngressCommitted { readonly kind: "committed"; readonly run_id: string; readonly event_id: string }
 
@@ -72,9 +70,9 @@ export function ingressResponse(run_id: string, result: CommitResult): Response 
   switch (outcome.kind) {
     case "committed": return json({ kind: "committed", run_id, event_id: outcome.event_id }, 201);
     case "replayed": return outcome.receipt.kind === "committed" ? json({ kind: "committed", run_id, event_id: outcome.receipt.event_id })
-      : json({ kind: "rejected", reason: outcome.receipt.reason }, 409);
-    case "rejected": return json({ kind: "rejected", reason: outcome.reason }, 409);
-    case "conflict": case "contended": return json({ kind: "conflict", detail: outcome.detail }, 409);
+      : errorResponse(new ConflictError(outcome.receipt.reason));
+    case "rejected": return errorResponse(new ConflictError(outcome.reason));
+    case "conflict": case "contended": return errorResponse(new ConflictError(outcome.detail));
     case "historical_run_read_only": return errorResponse(new HistoricalRunReadOnlyError(outcome.detail));
     case "missing": return errorResponse(new MissingEntityError(outcome.detail));
   }

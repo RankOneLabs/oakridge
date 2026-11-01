@@ -192,6 +192,16 @@ describe("v2 development adapters", () => {
     const gates = reviewToGates(cohort);
     expect(gates.ok && gates.value.find((gate) => gate.gate_step === "assessment_review")?.resume_actions).toEqual(["approve"]);
   });
+  it("gives successive assessment targets distinct review identities while retaining the hidden send offer", () => {
+    const first = reviewToGates(cohort);
+    const second = reviewToGates({ ...cohort, decisions: cohort.decisions.map((decision) => decision.submit.kind === "review"
+      && decision.submit.review === "assessment_review" ? { ...decision,
+        submit: { ...decision.submit, target_revision_id: "new-assessment-revision" } } : decision) });
+    const oldGate = first.ok ? first.value.find((gate) => gate.gate_step === "assessment_review") : null;
+    const newGate = second.ok ? second.value.find((gate) => gate.gate_step === "assessment_review") : null;
+    expect({ distinct: oldGate?.id !== newGate?.id, offered: newGate?.offered_decisions?.includes("request_build_changes"),
+      displayed: newGate?.resume_actions.includes("request_build_changes") }).toEqual({ distinct: true, offered: true, displayed: false });
+  });
   it("keeps assessment revision available on pinned reviews", () => {
     const buildChange = cohort.decisions.find((decision) => decision.key === "request_build_changes");
     if (!buildChange || buildChange.submit.kind !== "review") throw new Error("fixture lacks build change decision");

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
+import { TasksViewer } from "../components/molecules/TasksViewer";
 import type { ArtifactDetail, ParkedGate } from "../types";
 import { invalidateCachedRunUnits } from "../client";
 
@@ -40,6 +41,7 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
   resume_actions: ["approve", "reject"],
+  offered_decisions: ["approve", "reject"],
   run_state: "active",
   actionable: true,
 };
@@ -194,6 +196,8 @@ describe("navigation inside the review", () => {
 
 describe("assessment builder handoff inside the review", () => {
   const ASSESSMENT_BODY = { head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null, recommended_next_actions: ["Fix it"] };
+  const CURRENT_ASSESSMENT_BODY = { ...ASSESSMENT_BODY, recommended_next_actions: [
+    { id: "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", text: "Fix it" }] };
 
   it("hides controls when assessment editing is unavailable or a historical revision is selected", async () => {
     const artifact: ArtifactDetail = {
@@ -202,7 +206,7 @@ describe("assessment builder handoff inside the review", () => {
       capabilities: { reviewable: true, commentable: false, atom_editable: true, review_items: false },
       revisions: [
         { ...ARTIFACT_FIXTURE.revisions[0]!, body: ASSESSMENT_BODY },
-        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: ASSESSMENT_BODY },
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", body: CURRENT_ASSESSMENT_BODY },
       ],
     };
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
@@ -215,5 +219,20 @@ describe("assessment builder handoff inside the review", () => {
       capabilities: { ...artifact.capabilities!, atom_editable: false } });
     expect(screen.queryByTestId("or-assessment-handoff")).toBeNull();
     expect(screen.getByTestId("or-assessment-next-actions")).toBeTruthy();
+  });
+});
+
+describe("task edit refusal", () => {
+  it("shows a refused task draft to the operator", async () => {
+    const onEdit = vi.fn().mockResolvedValue({ ok: false, error: "409 task revision changed" });
+    render(<TasksViewer body={{ tasks: [{ id: "task-a", description: "Build the viewer.", requirement_ids: [] }] }}
+      edit={{ enabled: true, isPending: false, onEdit }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit tasks/0/description" }));
+    const field = screen.getByDisplayValue("Build the viewer.");
+    fireEvent.change(field, { target: { value: "Build the revised viewer." } });
+    fireEvent.blur(field);
+    await screen.findByText(/Not saved: 409 task revision changed/);
+    expect(screen.getByDisplayValue("Build the revised viewer.")).toBeTruthy();
   });
 });

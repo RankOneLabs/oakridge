@@ -18,10 +18,12 @@ export function AssessmentReview({ body, source, edit, gate }: ViewerProps) {
   if (!parsed.ok) {
     return <div className="or-error" role="alert">This assessment does not match the registered contract ({parsed.error.field}: {parsed.error.detail}).</div>;
   }
-  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result}
-    cohortLabel={isIntegration ? source?.label ?? null : cohortLabel} isIntegration={isIntegration}
-    handoff={!isIntegration && source && cohortLabel && edit?.enabled && edit.onSubmitBody
-      ? <BuilderHandoffPanel assessment={parsed.value} body={body as typeof parsed.value}
+  if (!source) return <div className="or-error" role="alert">Assessment revision identity is unavailable.</div>;
+  return <AssessmentViewer assessment={parsed.value} brief={brief} result={result} revisionScope={source.revision_id}
+    cohortLabel={isIntegration ? source.label ?? null : cohortLabel} isIntegration={isIntegration}
+    handoff={!isIntegration && cohortLabel && edit?.enabled && edit.onSubmitBody
+      && parsed.value.recommended_next_actions.every((action) => typeof action !== "string")
+      ? <BuilderHandoffPanel runId={source.run_id} unitLabel={cohortLabel} revisionId={source.revision_id} assessment={parsed.value} body={body as typeof parsed.value}
           gate={gate ?? null} edit={edit} />
       : undefined} />;
 }

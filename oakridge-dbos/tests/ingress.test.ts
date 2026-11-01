@@ -103,7 +103,7 @@ test("a decision addressed to a group unit is rejected without recording a commi
   const faults = await authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 
@@ -114,7 +114,7 @@ test("a retry addressed to a group unit is rejected without recording a commit f
   const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 
@@ -124,7 +124,7 @@ test("an operator revision addressed to a group unit is rejected without recordi
   const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 

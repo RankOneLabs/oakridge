@@ -440,6 +440,8 @@ export interface ArtifactTypeDescriptor {
  */
 export interface ArtifactSource {
   run_id: string;
+  /** Identity of the revision on screen, used to scope legacy display keys. */
+  revision_id: string;
   label: string | null;
   producing_stage?: string;
   original_spec?: string | null;
@@ -472,6 +474,8 @@ export interface ParkedGate {
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
+  /** Full server offer, including decisions hidden from the generic resume buttons. */
+  offered_decisions: string[];
   pr_url?: string | null;
   /** The run's persisted state at read time — a gate stays listed whatever it is. */
   run_state: RunState;
@@ -486,6 +490,7 @@ export interface ParkedGate {
  */
 export interface SentReviewFeedback {
   id: string;
+  target_revision_id: string;
   run_id: string;
   stage_name: string;
   unit_id: string;
@@ -498,9 +503,7 @@ export interface SentReviewFeedback {
 export interface GateResumeRequest {
   idempotency_key: string;
   artifact_revision_id: string;
-  gate_step: string;
   action: string;
-  operator_comment: string;
   feedback: string;
 }
 

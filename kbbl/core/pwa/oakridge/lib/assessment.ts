@@ -30,7 +30,16 @@ export interface Assessment {
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
   test_evidence: TestEvidence | null;
-  recommended_next_actions: string[];
+  recommended_next_actions: (string | NextAction)[];
+}
+
+/** Stored next_action from the authored assessment schema. Older revisions contain strings. */
+export interface NextAction { readonly id: string; readonly text: string }
+export interface DisplayAction extends NextAction { readonly is_legacy: boolean }
+export function selectDisplayActions(assessment: Assessment, revisionId: string): DisplayAction[] {
+  return assessment.recommended_next_actions.map((action, index) => typeof action === "string"
+    ? { id: `${revisionId}:${index}`, text: action, is_legacy: true }
+    : { ...action, is_legacy: false });
 }
 
 export interface AssessmentParseError {
@@ -43,6 +52,7 @@ type Parsed<T> = Result<T, AssessmentParseError>;
 
 const VERDICTS: readonly AssessmentVerdict[] = ["pass", "pass_with_notes", "fail"];
 const CRITERION_STATUSES: readonly CriterionStatus[] = ["not_met", "partial", "met"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (field: string, detail: string): Parsed<never> => ({ ok: false, error: { operation: "parse_assessment", field, detail } });
 
 function isRecord(value: unknown): value is { [key: string]: unknown } {
@@ -118,8 +128,9 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
     findings.push(finding.value);
   }
   const actions = body.recommended_next_actions;
-  if (!Array.isArray(actions) || !actions.every((action) => typeof action === "string")) {
-    return fail("recommended_next_actions", "expected an array of strings");
+  if (!Array.isArray(actions) || !(actions.every((action) => typeof action === "string")
+    || actions.every((action) => isRecord(action) && typeof action.id === "string" && UUID.test(action.id) && typeof action.text === "string"))) {
+    return fail("recommended_next_actions", "expected strings or {id, text} actions");
   }
   let testEvidence: TestEvidence | null = null;
   if (body.test_evidence !== undefined && body.test_evidence !== null) {

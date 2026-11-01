@@ -184,6 +184,14 @@ fn reduce_event(
                     "a revision that names no attempt must be the operator's"
                 }));
             }
+            if is_operator && matches!(artifact_definition.edit_policy, EditPolicy::FrozenWhenAccepted)
+                && latest(&state, unit, artifact).is_some_and(|revision| state.decisions.iter().any(|decision| {
+                    matches!(decision, DecisionState::Review { unit: decided_unit, review, target, effect: DecisionEffect::Approve, .. }
+                        if decided_unit == unit && target == &revision.id
+                            && definition.reviews.iter().any(|candidate| candidate.key() == review && candidate.of() == artifact))
+                })) {
+                return Err(rejected("accepted artifact revision is frozen"));
+            }
             if latest(&state, unit, artifact)
                 .is_some_and(|revision| revision.by == *by && is_unchanged(revision))
             {

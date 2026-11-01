@@ -14,6 +14,9 @@ The producer contract is `workflow-config/development.yaml`, pinned per run. Add
 | `build_result.head_sha` | Repository commit actually built, anchoring changed-file and test claims. |
 | `assessment.findings[].criterion_id` | Brief criterion id for a cohort assessment. |
 | `assessment.head_sha` | Repository commit assessed; the cohort assessor copies reviewed `build_result.head_sha`. |
+| `assessment.recommended_next_actions[].id` | Server-assigned UUID for an action in this assessment revision. Rewording or reordering preserves it; a new assessment assigns new IDs. |
+
+Current assessments store each next action as `{id, text}`. Publication input may omit `id` for a new action; the authority assigns it before validation. An operator edit supplies the predecessor revision and retains the IDs of surviving actions. Historical string-list assessments remain read-only and use revision-scoped display IDs. The review round is identified by its target revision, and a recorded `request_build_changes` decision on that revision determines whether the handoff was sent.
 
 An empty id list means **no link**, never “unknown.” Missing links remain unlinked; a consumer must not infer them from prose. Plan-wide `acceptance_criteria` are text with no downstream criterion ids. Integration findings have no brief criteria, so `criterion_id` is unset. A brief-only decision has no plan decision source, and a rejected approach has no upstream plan item. Risks, requirement statuses, finding fields, and known issues are located by JSON path. `assessment_finding.evidence` is a required list; each reference has `kind` (`file`, `test`, or `output`), `ref` (path with optional line range, test id, or command), and optional `detail`.
 
