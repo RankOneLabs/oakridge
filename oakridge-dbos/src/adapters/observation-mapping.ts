@@ -36,6 +36,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
         revision: { format: "observation.artifact-revision/v1", source: {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
           run_id: identity.run_id, unit_id: event.unit, artifact_kind: event.artifact, artifact_schema_version: version,
+          collection_key: row.collection_key ?? null,
           definition_bundle: { id: definition.bundle_id, digest: definition.digest },
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },

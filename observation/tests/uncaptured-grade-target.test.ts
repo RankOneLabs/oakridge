@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "bun:test";
 import { Client } from "pg";
+import { sql } from "kysely";
 import { createApp } from "../src/http/app";
-import { openDatabase, type Database } from "../src/storage/database";
+import { openDatabase, withTenant, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
 
@@ -43,8 +44,13 @@ integration("a live decision on an uncaptured revision is kept and the cursor mo
     const stored = await (await app.request("/v1/sources/oakridge/human-grades", { headers: readHeaders })).json() as
       { items: { decision_id: string }[] };
     const position = await (await app.request("/v1/sources/oakridge/cursor", { headers: { authorization: "Bearer ingest-fixture" } })).json();
-    expect({ status: delivered.status, decisions: stored.items.map((item) => item.decision_id), position })
-      .toEqual({ status: 200, decisions: ["decision-1"], position: { cursor } });
+    const issuesResponse = await app.request("/v1/sources/oakridge/issues", { headers: readHeaders });
+    const issues = await issuesResponse.json() as { items: { cause: string; resolution_state: string }[] };
+    const unauthenticated = await app.request("/v1/sources/oakridge/issues");
+    expect({ status: delivered.status, decisions: stored.items.map((item) => item.decision_id), position,
+      issues: issues.items.map((issue) => [issue.cause, issue.resolution_state]), unauthenticated: unauthenticated.status })
+      .toEqual({ status: 200, decisions: ["decision-1"], position: { cursor },
+        issues: [["missing_grade_target", "unresolved"]], unauthenticated: 403 });
   });
 });
 
@@ -63,5 +69,29 @@ integration("a backfilled decision on an uncaptured revision is kept and the bac
       { headers: { authorization: "Bearer ingest-fixture" } })).json() as { position: unknown };
     expect({ status: backfilled.status, decisions: stored.items.map((item) => item.decision_id), position: checkpoint.position })
       .toEqual({ status: 200, decisions: ["decision-2"], position: after });
+  });
+});
+
+integration("live feedback preserves every JSON kind and distinguishes JSON null from SQL NULL", async () => {
+  await scratch(async (db) => {
+    const app = createApp({ db, credentials });
+    const samples = [
+      { value: "lgtm", kind: "string" }, { value: [], kind: "array" },
+      { value: ["a"], kind: "array" }, { value: 0, kind: "number" },
+      { value: null, kind: "null" }, { value: {}, kind: "object" },
+    ];
+    let previous = { commit_txid: "0", id: "" };
+    for (const [index, sample] of samples.entries()) {
+      const event_id = `feedback-${index}`;
+      const cursor = { commit_txid: String(index + 1), id: event_id };
+      const response = await app.request("/v1/sources/oakridge/events", { method: "POST", headers: ingestHeaders,
+        body: JSON.stringify({ previous, cursor, outcome: { ...decisionOn(event_id, event_id), feedback: sample.value } }) });
+      expect(response.status).toBe(200);
+      const result = await withTenant(db, tenant, (trx) => sql<{ kind: string; feedback: unknown; is_sql_null: boolean }>`
+        SELECT jsonb_typeof(feedback) AS kind, feedback, (feedback IS NULL) AS is_sql_null
+        FROM observation.source_human_grade WHERE event_id = ${event_id}`.execute(trx));
+      expect(result.rows[0]).toEqual({ kind: sample.kind, feedback: sample.value, is_sql_null: false });
+      previous = cursor;
+    }
   });
 });

@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { decodeCapture } from "../ingest/capture";
-import { captureDelivery, deliverSourceEvent, readSourceCursor, readSourceHumanGrades, readSourceRevision, readUnmappedSourceEvents, type CaptureHooks } from "../storage/capture-store";
+import { captureDelivery, deliverSourceEvent, readSourceCursor, readSourceEventIssues, readSourceHumanGrades, readSourceRevision,
+  readUnmappedSourceEvents, reconcileSourceEventIssuesInTransaction, type CaptureHooks } from "../storage/capture-store";
 import { decodeSourceEventDelivery } from "../ingest/cursor";
 import type { Database } from "../storage/database";
 import { errorResponse } from "./errors";
@@ -134,8 +135,29 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
       if (decoded.value.envelope.source.producer !== credential.producer || decoded.value.envelope.source.namespace !== credential.namespace)
         return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     }
-    const result = await deliverSourceEvent(deps.db, credential, delivery);
-    return c.json(result.body, result.status);
+    try {
+      const result = await deliverSourceEvent(deps.db, credential, delivery);
+      return c.json(result.body, result.status);
+    } catch (cause) {
+      console.error("[observation] source event delivery failed", cause);
+      return errorResponse(c, 500, "delivery_failed", "source event delivery failed; retry after operator review");
+    }
+  });
+  app.get("/v1/sources/oakridge/issues", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
+    const offset = Number(new URL(c.req.url).searchParams.get("offset") ?? "0");
+    if (!Number.isSafeInteger(offset) || offset < 0) return errorResponse(c, 400, "invalid_offset", "offset must be nonnegative");
+    return c.json({ items: await readSourceEventIssues(deps.db, credential, offset), offset, limit: 500 });
+  });
+  app.get("/v1/sources/oakridge/issue-health", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential || credential.producer !== "oakridge") return errorResponse(c, 403, "forbidden", "read credential required");
+    const counts = await withTenant(deps.db, credential, (trx) => sql<{ unresolved: number; resolved: number }>`
+      SELECT count(*) FILTER (WHERE resolution_state = 'unresolved')::integer AS unresolved,
+        count(*) FILTER (WHERE resolution_state = 'resolved')::integer AS resolved
+      FROM observation.source_event_issue WHERE producer = ${credential.producer} AND namespace = ${credential.namespace}`.execute(trx));
+    return c.json(counts.rows[0] ?? { unresolved: 0, resolved: 0 });
   });
   app.get("/v1/sources/oakridge/unmapped", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
@@ -169,7 +191,10 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     if (source.producer !== "oakridge" || source.producer !== credential.producer || source.namespace !== credential.namespace)
       return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");
     const result = await captureDelivery(deps.db, delivery.value, deps.captureHooks);
-    if (result.status === 201) await projectRevision(deps.db, credential, delivery.value.local_revision_id);
+    if (result.status === 201) {
+      await projectRevision(deps.db, credential, delivery.value.local_revision_id);
+      await withTenant(deps.db, credential, (trx) => reconcileSourceEventIssuesInTransaction(trx, credential, delivery.value.local_revision_id));
+    }
     return c.json(result.body, result.status);
   });
   app.get("/v1/source-revisions/:id", async (c) => {

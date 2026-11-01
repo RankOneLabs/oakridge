@@ -1,6 +1,7 @@
 // Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.
 import type { Generated } from "kysely";
 import type { JsonValue } from "../domain/primitives";
+import type { JsonColumn, NullableJsonColumn, GeneratedJsonColumn } from "./json-column-types";
 
 export interface ObservationBlindAssignment {
   producer: string;
@@ -24,7 +25,7 @@ export interface ObservationEvaluationEligibility {
   question_id: string;
   question_version: string;
   tag: string;
-  payload: JsonValue;
+  payload: JsonColumn<JsonValue>;
   recorded_at: Generated<Date>;
   eligibility_id: Generated<string>;
 }
@@ -47,12 +48,12 @@ export interface ObservationEvaluationExecution {
   ended_at: Date | null;
   status: string;
   error: string | null;
-  model_usage: JsonValue | null;
+  model_usage: NullableJsonColumn<JsonValue>;
   cost: number | null;
   external_execution_id: string | null;
   provider_link: string | null;
-  reproducibility_metadata: JsonValue | null;
-  provider_attempts: Generated<JsonValue>;
+  reproducibility_metadata: NullableJsonColumn<JsonValue>;
+  provider_attempts: GeneratedJsonColumn<JsonValue>;
 }
 
 export interface ObservationEvaluatorDefinition {
@@ -66,9 +67,9 @@ export interface ObservationEvaluatorDefinition {
   prompt_digest: string;
   config_digest: string;
   runtime_revision: string;
-  cost_metadata: JsonValue | null;
+  cost_metadata: NullableJsonColumn<JsonValue>;
   seed: number | null;
-  attempt_controls: JsonValue | null;
+  attempt_controls: NullableJsonColumn<JsonValue>;
   identity_digest: string;
   instruction_text: string | null;
 }
@@ -77,7 +78,7 @@ export interface ObservationEvidenceSet {
   producer: string;
   namespace: string;
   evidence_set_id: string;
-  evidence_refs: JsonValue;
+  evidence_refs: JsonColumn<JsonValue>;
   is_incomplete: boolean;
   incompleteness_reason: string | null;
   created_at: Generated<Date>;
@@ -90,8 +91,8 @@ export interface ObservationExportManifest {
   frozen_at: Date;
   membership_digest: string;
   format_version: string;
-  redaction_policy: JsonValue;
-  file_hashes: JsonValue;
+  redaction_policy: JsonColumn<JsonValue>;
+  file_hashes: JsonColumn<JsonValue>;
 }
 
 export interface ObservationExportMembership {
@@ -107,7 +108,7 @@ export interface ObservationExportMembership {
   observation_id: string | null;
   disposition: string;
   reason: string;
-  redaction_reasons: JsonValue;
+  redaction_reasons: JsonColumn<JsonValue>;
 }
 
 export interface ObservationExtractionIssue {
@@ -147,17 +148,17 @@ export interface ObservationGradeObservation {
   evaluator_definition_id: string;
   answer_kind: string;
   answer_state: string;
-  answer_payload: JsonValue;
-  probabilities: JsonValue | null;
+  answer_payload: JsonColumn<JsonValue>;
+  probabilities: NullableJsonColumn<JsonValue>;
   confidence: number | null;
   normalized_score: number | null;
   decision_policy_id: string | null;
   decision_policy_version: string | null;
   reviewer_id: string | null;
-  reviewer_details: JsonValue | null;
+  reviewer_details: NullableJsonColumn<JsonValue>;
   comments: string | null;
   rationale: string | null;
-  quality_flags: Generated<JsonValue>;
+  quality_flags: GeneratedJsonColumn<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
   collection_mode: string | null;
@@ -190,7 +191,7 @@ export interface ObservationGradingJob {
   retry_limit: number;
   terminal_cause: string | null;
   estimated_cost: Generated<number>;
-  disclosure: JsonValue | null;
+  disclosure: NullableJsonColumn<JsonValue>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -201,7 +202,7 @@ export interface ObservationIngestReceipt {
   request_key: string;
   revision_id: string;
   outcome: string;
-  response: JsonValue;
+  response: JsonColumn<JsonValue>;
   stored_digest: string;
   incoming_digest: string;
   recorded_at: Generated<Date>;
@@ -222,7 +223,7 @@ export interface ObservationItemOccurrence {
   item_id_or_path: string;
   item_scope: string | null;
   producer_local_id: string | null;
-  selected_value: JsonValue;
+  selected_value: JsonColumn<JsonValue>;
   logical_item_id: string | null;
   json_pointer: string | null;
 }
@@ -252,7 +253,7 @@ export interface ObservationLangfuseInboundQuarantine {
   score_id: string | null;
   observation_id: string | null;
   sync_state: string;
-  raw_payload: JsonValue;
+  raw_payload: JsonColumn<JsonValue>;
   reason: string;
   recorded_at: Generated<Date>;
 }
@@ -305,7 +306,7 @@ export interface ObservationPurgeEvent {
   trigger_event_id: string;
   trigger_run_key: string;
   operator_override: boolean;
-  frozen_manifest_ids: JsonValue;
+  frozen_manifest_ids: JsonColumn<JsonValue>;
   source_revisions_removed: number;
   item_occurrences_removed: number;
   item_relations_removed: number;
@@ -320,17 +321,17 @@ export interface ObservationQuestionDefinition {
   namespace: string;
   question_id: string;
   question_version: string;
-  target_item_kinds: JsonValue;
-  input_recipe: JsonValue;
+  target_item_kinds: JsonColumn<JsonValue>;
+  input_recipe: JsonColumn<JsonValue>;
   response_kind: string;
-  allowed_values: JsonValue | null;
+  allowed_values: NullableJsonColumn<JsonValue>;
   missing_evidence_policy: string;
   abstain_semantics: string;
   unclear_semantics: string;
   interpretation_caveats: string;
   requires_repository_snapshot: boolean;
   question_text: string | null;
-  evidence_recipe_provenance: JsonValue | null;
+  evidence_recipe_provenance: NullableJsonColumn<JsonValue>;
 }
 
 export interface ObservationSchemaBaseline {
@@ -349,8 +350,8 @@ export interface ObservationSchemaMigration {
 export interface ObservationSourceBackfillPosition {
   producer: string;
   namespace: string;
-  position: JsonValue;
-  counts: JsonValue;
+  position: JsonColumn<JsonValue>;
+  counts: JsonColumn<JsonValue>;
   updated_at: Generated<Date>;
 }
 
@@ -364,7 +365,7 @@ export interface ObservationSourceCollaborationComment {
   revision_id: string | null;
   anchor: string | null;
   title: string;
-  body: JsonValue;
+  body: JsonColumn<JsonValue>;
   occurrence_id: string | null;
   recorded_at: Date;
 }
@@ -376,6 +377,22 @@ export interface ObservationSourceEventCursor {
   event_id: Generated<string>;
 }
 
+export interface ObservationSourceEventIssue {
+  producer: string;
+  namespace: string;
+  issue_id: string;
+  event_id: string;
+  run_id: string;
+  event_kind: string;
+  target_revision_id: string | null;
+  cause: string;
+  original_outcome: JsonColumn<JsonValue>;
+  resolution_state: Generated<string>;
+  resolution_detail: string | null;
+  recorded_at: Generated<Date>;
+  resolved_at: Date | null;
+}
+
 export interface ObservationSourceEventOutcome {
   producer: string;
   namespace: string;
@@ -384,7 +401,7 @@ export interface ObservationSourceEventOutcome {
   commit_txid: number;
   event_kind: string;
   outcome_kind: string;
-  detail: JsonValue;
+  detail: JsonColumn<JsonValue>;
   recorded_at: Generated<Date>;
 }
 
@@ -398,7 +415,7 @@ export interface ObservationSourceHumanGrade {
   decision: string;
   target_revision_id: string;
   evaluator_kind: string;
-  feedback: JsonValue | null;
+  feedback: NullableJsonColumn<JsonValue>;
 }
 
 export interface ObservationSourceOperatorCursor {
@@ -418,13 +435,14 @@ export interface ObservationSourceRevision {
   artifact_schema_version: string;
   definition_bundle_id: string | null;
   definition_bundle_digest: string | null;
-  body: JsonValue;
+  body: JsonColumn<JsonValue>;
   body_digest: string;
   recorded_at: Date;
   captured_at: Generated<Date>;
   predecessor_id: string | null;
   subject_id: string | null;
   definition_id: string | null;
+  collection_key: string | null;
 }
 
 export interface DB {
@@ -453,6 +471,7 @@ export interface DB {
   "observation.source_backfill_position": ObservationSourceBackfillPosition;
   "observation.source_collaboration_comment": ObservationSourceCollaborationComment;
   "observation.source_event_cursor": ObservationSourceEventCursor;
+  "observation.source_event_issue": ObservationSourceEventIssue;
   "observation.source_event_outcome": ObservationSourceEventOutcome;
   "observation.source_human_grade": ObservationSourceHumanGrade;
   "observation.source_operator_cursor": ObservationSourceOperatorCursor;

@@ -365,3 +365,8 @@ findings match the plan grade above: the account's responses still omit both, as
 public TypeSafe OpenAPI contract does.
 
 Worker construction reads `TYPESAFE_API_KEY` and optional `TYPESAFE_BASE_URL` for Jev, or `FASTINO_API_KEY` and optional `FASTINO_BASE_URL` for GLiDE. Keys stay in the worker process. Set `OBSERVATION_EXTERNAL_PROCESSING_POLICY` to the selected provider processing agreement or policy identifier. Every provider attempt stores that value separately from local retention; if unset, the field is omitted.
+# Historical source event repair
+
+Use `bun observation/scripts/observation-repair.ts --through-txid <finite decimal txid> --namespace <namespace> --dry-run` to inspect a bounded authority range. Remove `--dry-run` to apply repair. The command requires `DBOS_SYSTEM_DATABASE_URL` and `OBSERVATION_DATABASE_URL`, serializes invocations for the namespace, and runs the production capture, projection, and grade writers without advancing the live source cursor or backfill checkpoint. Repeat the same bounded command after an interruption; stable event and revision identities make the scan resumable.
+
+Review the report's cursor before and after, source revision and derived row counts, conflicts, unresolved issue count, and purge exclusions. A skipped-event count is not an expected count of new rows: a source event may produce several rows or none. Query `/v1/sources/oakridge/issues` with the tenant's read credential for recorded and resolved source event issues, and `/v1/sources/oakridge/issue-health` for counts.

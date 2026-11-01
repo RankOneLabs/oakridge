@@ -11,7 +11,7 @@ import { evaluatorIdentity, instructionDigest, isLangfuseAnnotationEvaluator,
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
-import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
@@ -24,7 +24,6 @@ export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
 }
 export interface GradePage extends Page { readonly total: number; readonly items: readonly GradeListingItem[] }
 
-const json = (value: JsonValue) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
 const scope = (tenant: TenantScope) => ({ producer: tenant.producer, namespace: tenant.namespace });
 function failure(operation: string, entity_id: string, detail: string): Result<never, GradingError> {
   return err({ operation, entity_id, detail });
@@ -63,20 +62,20 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         return failure("register_context", question.question_id, "question text or recipe provenance conflict");
       if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
         question_id: question.question_id, question_version: question.question_version,
-        target_item_kinds: json(asJson(question.target_item_kinds)), input_recipe: json(question.input_recipe),
-        response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : json(asJson(question.allowed_values)),
+        target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
+        response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : jsonText(asJson(question.allowed_values)),
         missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
         unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
         requires_repository_snapshot: question.requires_repository_snapshot,
         question_text: question.question_text ?? null,
-        evidence_recipe_provenance: question.evidence_recipe_provenance ? json(asJson(question.evidence_recipe_provenance)) : null }).execute();
+        evidence_recipe_provenance: question.evidence_recipe_provenance ? jsonText(asJson(question.evidence_recipe_provenance)) : null }).execute();
       const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
       if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],
         [evidence.references, evidence.is_incomplete, evidence.incompleteness_reason]))
         return failure("register_context", evidence.evidence_set_id, "evidence set identity conflict");
       if (!e) await trx.insertInto("observation.evidence_set").values({ ...scope(tenant), evidence_set_id: evidence.evidence_set_id,
-        evidence_refs: json(asJson(evidence.references)), is_incomplete: evidence.is_incomplete,
+        evidence_refs: jsonText(asJson(evidence.references)), is_incomplete: evidence.is_incomplete,
         incompleteness_reason: evidence.incompleteness_reason }).execute();
       const d = await trx.selectFrom("observation.evaluator_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", evaluator.evaluator_definition_id).executeTakeFirst();
@@ -87,8 +86,8 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         evaluator_definition_id: evaluator.evaluator_definition_id, kind: evaluator.kind,
         backend_kind: evaluator.backend_kind, provider: evaluator.provider, model: evaluator.model,
         prompt_digest: evaluator.prompt_digest, config_digest: evaluator.config_digest,
-        runtime_revision: evaluator.runtime_revision, cost_metadata: evaluator.cost_metadata === null ? null : json(evaluator.cost_metadata),
-        seed: evaluator.seed, attempt_controls: evaluator.attempt_controls === null ? null : json(evaluator.attempt_controls),
+        runtime_revision: evaluator.runtime_revision, cost_metadata: evaluator.cost_metadata === null ? null : jsonText(evaluator.cost_metadata),
+        seed: evaluator.seed, attempt_controls: evaluator.attempt_controls === null ? null : jsonText(evaluator.attempt_controls),
         identity_digest: digest.value, instruction_text: evaluator.instruction_text }).execute();
       return ok(undefined);
     });
@@ -271,9 +270,9 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
       }
       const updated = await trx.updateTable("observation.evaluation_execution").set({
         status: outcome ? "completed" : "failed", ended_at: new Date(), error: result.ok ? null : result.error.detail,
-        model_usage: outcome?.model_usage == null ? null : json(outcome.model_usage), cost: outcome?.cost ?? null,
+        model_usage: outcome?.model_usage == null ? null : jsonText(outcome.model_usage), cost: outcome?.cost ?? null,
         external_execution_id: outcome?.external_execution_id ?? null, provider_link: outcome?.provider_link ?? null,
-        reproducibility_metadata: outcome?.reproducibility_metadata == null ? null : json(outcome.reproducibility_metadata),
+        reproducibility_metadata: outcome?.reproducibility_metadata == null ? null : jsonText(outcome.reproducibility_metadata),
       }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("execution_id", "=", execution.execution_id).where("status", "=", "running")
         .returningAll().executeTakeFirst();
@@ -283,12 +282,12 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         observation_id: randomUUID(), execution_id: execution.execution_id, subject_occurrence_id: identity.subject_occurrence_id,
         evidence_set_id: identity.evidence_set_id, question_id: identity.question_id, question_version: identity.question_version,
         evaluator_definition_id: identity.evaluator_definition_id, answer_kind: outcome.answer.kind,
-        answer_state: outcome.answer.state, answer_payload: json(asJson(outcome.answer)),
-        probabilities: outcome.probabilities == null ? null : json(asJson(outcome.probabilities)),
+        answer_state: outcome.answer.state, answer_payload: jsonText(asJson(outcome.answer)),
+        probabilities: outcome.probabilities == null ? null : jsonText(asJson(outcome.probabilities)),
         confidence: outcome.confidence ?? null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: null, reviewer_details: null,
         comments: outcome.comments ?? null, rationale: outcome.rationale ?? null,
-        quality_flags: json(asJson(outcome.quality_flags ?? [])), supersedes_observation_id: null })
+        quality_flags: jsonText(asJson(outcome.quality_flags ?? [])), supersedes_observation_id: null })
         .returningAll().executeTakeFirstOrThrow();
       if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
         terminal_cause: outcome ? null : blocked || missing ? "ineligible"
@@ -421,15 +420,15 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         observation_id: randomUUID(), execution_id, subject_occurrence_id: identity.subject_occurrence_id,
         evidence_set_id: identity.evidence_set_id, question_id: identity.question_id, question_version: identity.question_version,
         evaluator_definition_id: identity.evaluator_definition_id, answer_kind: details.answer.kind,
-        answer_state: details.answer.state, answer_payload: json(asJson(details.answer)),
-        probabilities: details.probabilities == null ? null : json(asJson(details.probabilities)),
+        answer_state: details.answer.state, answer_payload: jsonText(asJson(details.answer)),
+        probabilities: details.probabilities == null ? null : jsonText(asJson(details.probabilities)),
         confidence: details.confidence, normalized_score: details.normalized_score,
         decision_policy_id: details.decision_policy_id, decision_policy_version: details.decision_policy_version,
-        reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : json(details.reviewer_details),
+        reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : jsonText(details.reviewer_details),
         collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
         model_answers_visible: details.model_answers_visible,
         workflow_decisions_visible: details.workflow_decisions_visible,
-        comments: details.comments, rationale: details.rationale, quality_flags: json(asJson(details.quality_flags)),
+        comments: details.comments, rationale: details.rationale, quality_flags: jsonText(asJson(details.quality_flags)),
         supersedes_observation_id: details.supersedes_observation_id }).returningAll().executeTakeFirstOrThrow();
       if (details.blind_assignment_id) await trx.updateTable("observation.blind_assignment")
         .set({ submitted_observation_id: observation.observation_id })

@@ -3,7 +3,7 @@ import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
 import type { JsonValue } from "../domain/primitives";
 import type { SourceEventOutcome } from "../ingest/cursor";
 import { issueId, type ExtractionIssue } from "../projection/issues";
-import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
 export type BackfillPosition = { readonly source: "review_decision" | "collaboration_thread";
   readonly created_at: string; readonly id: string } | { readonly source: "done" };
@@ -19,7 +19,6 @@ const digest = (value: JsonValue): string => {
   if (!result.ok) throw new Error(result.error.detail);
   return result.value;
 };
-const json = (value: JsonValue) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
 const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer, namespace: tenant.namespace });
 
 /**
@@ -62,13 +61,13 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     const observation_id = digest(["oakridge-review-observation", decision_key, item.occurrence_id]);
     const idempotency_digest = digest(["oakridge-review", decision_key, item.occurrence_id]);
     await trx.insertInto("observation.question_definition").values({ ...scope(tenant), question_id, question_version,
-      target_item_kinds: json([item.item_kind]), input_recipe: json({ source: "oakridge.review_decision" }),
+      target_item_kinds: jsonText([item.item_kind]), input_recipe: jsonText({ source: "oakridge.review_decision" }),
       response_kind: "structured", allowed_values: null, missing_evidence_policy: "abstain",
       abstain_semantics: "missing source revision", unclear_semantics: "ambiguous review",
       interpretation_caveats: "operator decision on an artifact revision", requires_repository_snapshot: false })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "question_id", "question_version"]).doNothing()).execute();
     await trx.insertInto("observation.evidence_set").values({ ...scope(tenant), evidence_set_id,
-      evidence_refs: json([{ revision_id: outcome.target, occurrence_id: item.occurrence_id }]),
+      evidence_refs: jsonText([{ revision_id: outcome.target, occurrence_id: item.occurrence_id }]),
       is_incomplete: false, incompleteness_reason: null })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "evidence_set_id"]).doNothing()).execute();
     await trx.insertInto("observation.evaluation_execution").values({ ...scope(tenant), execution_id,
@@ -83,17 +82,17 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     await trx.insertInto("observation.grade_observation").values({ ...scope(tenant), observation_id, execution_id,
       subject_occurrence_id: item.occurrence_id, evidence_set_id, question_id, question_version,
       evaluator_definition_id, answer_kind: "structured", answer_state: "answered",
-      answer_payload: json(answer), probabilities: null, confidence: null, normalized_score: null,
+      answer_payload: jsonText(answer), probabilities: null, confidence: null, normalized_score: null,
       decision_policy_id: null, decision_policy_version: null, reviewer_id: "oakridge-operator",
-      reviewer_details: json({ review: outcome.review, decision: outcome.decision, effect: outcome.effect }),
-      comments: null, rationale: null, quality_flags: json([]), supersedes_observation_id: null,
+      reviewer_details: jsonText({ review: outcome.review, decision: outcome.decision, effect: outcome.effect }),
+      comments: null, rationale: null, quality_flags: jsonText([]), supersedes_observation_id: null,
       recorded_at: new Date(outcome.decided_at) })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "observation_id"]).doNothing()).execute();
   }
   return { kind: "graded" };
 }
 
-async function storeCollaboration(trx: DatabaseTransaction, tenant: TenantScope,
+export async function storeCollaborationInTransaction(trx: DatabaseTransaction, tenant: TenantScope,
   outcome: Extract<SourceEventOutcome, { kind: "collaboration_thread" }>): Promise<void> {
   const revision_id = outcome.revision_id;
   if (revision_id) {
@@ -117,7 +116,7 @@ async function storeCollaboration(trx: DatabaseTransaction, tenant: TenantScope,
   for (const message of outcome.messages) await trx.insertInto("observation.source_collaboration_comment").values({ ...scope(tenant),
     message_id: message.id, thread_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit,
     revision_id, anchor: outcome.context.anchor, title: outcome.context.title,
-    body: json(message.body), occurrence_id, recorded_at: new Date(message.created_at) })
+    body: jsonText(message.body), occurrence_id, recorded_at: new Date(message.created_at) })
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "message_id"]).doNothing()).execute();
 }
 
@@ -133,7 +132,7 @@ export function readBackfillCheckpoint(db: Database, tenant: TenantScope): Promi
 export async function deliverBackfill(db: Database, tenant: TenantScope, delivery: BackfillDelivery): Promise<"accepted" | "conflict"> {
   return withTenant(db, tenant, async (trx) => {
     await trx.insertInto("observation.source_backfill_position").values({ ...scope(tenant),
-      position: json(INITIAL.position), counts: json(INITIAL.counts as unknown as JsonValue), updated_at: new Date() })
+      position: jsonText(INITIAL.position), counts: jsonText(INITIAL.counts as unknown as JsonValue), updated_at: new Date() })
       .onConflict((conflict) => conflict.columns(["producer", "namespace"]).doNothing()).execute();
     const row = await sql<{ position: BackfillPosition }>`SELECT position FROM observation.source_backfill_position
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} FOR UPDATE`.execute(trx);
@@ -145,16 +144,16 @@ export async function deliverBackfill(db: Database, tenant: TenantScope, deliver
       await storeHumanGradeInTransaction(trx, tenant, outcome);
       await trx.insertInto("observation.source_event_outcome").values({ ...scope(tenant),
         event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: 0,
-        event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: json(outcome as unknown as JsonValue) })
+        event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
         .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
       await trx.insertInto("observation.source_human_grade").values({ ...scope(tenant), event_id: outcome.event_id,
         run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review, decision: outcome.decision,
-        target_revision_id: outcome.target, evaluator_kind: "human", feedback: json(outcome.feedback as JsonValue) })
+        target_revision_id: outcome.target, evaluator_kind: "human", feedback: jsonText(outcome.feedback as JsonValue) })
         .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     }
-    if (outcome?.kind === "collaboration_thread") await storeCollaboration(trx, tenant, outcome);
-    if (!delivery.replay) await trx.updateTable("observation.source_backfill_position").set({ position: json(delivery.position),
-      counts: json(delivery.counts as unknown as JsonValue), updated_at: new Date() })
+    if (outcome?.kind === "collaboration_thread") await storeCollaborationInTransaction(trx, tenant, outcome);
+    if (!delivery.replay) await trx.updateTable("observation.source_backfill_position").set({ position: jsonText(delivery.position),
+      counts: jsonText(delivery.counts as unknown as JsonValue), updated_at: new Date() })
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).execute();
     return "accepted";
   });

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import { jsonText, openDatabase } from "../src/storage/database";
 import { readCommittedEventsAfter } from "../src/storage/read-store";
 import { launch, openAuthority, pinSample, scratchDatabase, type Authority } from "./authority-fixture";
@@ -58,6 +59,17 @@ test("events are read in numeric commit order across a digit boundary", async ()
   await authority.db.insertInto("authority.event").values([boundary, nines]).execute();
   const rows = await readCommittedEventsAfter(authority.db, "authority.event", { after: { commit_txid: "98", id: "" }, limit: 2 });
   expect(rows.map((row) => row.commit_txid)).toEqual(["99", "100"]);
+});
+
+test("a text output alias cannot shadow numeric commit order at a long digit boundary", async () => {
+  const ordered = await sql<{ commit_txid_text: string }>`SELECT commit_txid::text AS commit_txid_text
+    FROM (VALUES (1000005::bigint), (100001::bigint)) AS events(commit_txid)
+    ORDER BY commit_txid`.execute(authority.db);
+  const shadowed = await sql<{ commit_txid: string }>`SELECT commit_txid::text AS commit_txid
+    FROM (VALUES (1000005::bigint), (100001::bigint)) AS events(commit_txid)
+    ORDER BY commit_txid`.execute(authority.db);
+  expect(ordered.rows.map((row) => row.commit_txid_text)).toEqual(["100001", "1000005"]);
+  expect(shadowed.rows.map((row) => row.commit_txid)).toEqual(["1000005", "100001"]);
 });
 
 test("a replay reports blocked, not finished, while an open transaction hides committed events", async () => {

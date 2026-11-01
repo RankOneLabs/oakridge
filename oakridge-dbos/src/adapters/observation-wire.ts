@@ -6,6 +6,7 @@ export type CanonicalDigest = `canonical-json/v1:${string}` & { readonly __brand
 export interface CaptureSource {
   readonly producer: string; readonly namespace: string; readonly revision_id: string; readonly run_id: string;
   readonly unit_id: string; readonly artifact_kind: string; readonly artifact_schema_version: string;
+  readonly collection_key?: string | null;
   readonly definition_bundle: { readonly id: string; readonly digest: string };
   readonly predecessor_id: string | null; readonly subject_id: string | null;
   readonly by_id?: string | null;

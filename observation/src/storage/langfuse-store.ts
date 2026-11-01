@@ -3,10 +3,10 @@ import type { CanonicalDigest, EvidenceSetId, ExecutionId, ItemOccurrenceId, Que
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { LangfuseSyncState } from "../langfuse/sync-state";
 import type { ExternalTargetIds, LangfuseError, LangfuseObservationId, LangfuseScoreId } from "../ports/evaluation-backend";
-import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationLangfuseInboundQuarantine, ObservationLangfuseMapping,
   ObservationLangfuseSyncTransition } from "./db-types";
-import { sql, type Selectable } from "kysely";
+import type { Selectable } from "kysely";
 
 export type MappingRow = Selectable<ObservationLangfuseMapping>;
 export type TransitionRow = Selectable<ObservationLangfuseSyncTransition>;
@@ -121,7 +121,7 @@ async function insertQuarantine(trx: DatabaseTransaction, tenant: TenantScope,
   return trx.insertInto("observation.langfuse_inbound_quarantine").values({
     producer: tenant.producer, namespace: tenant.namespace, mapping_key: input.mapping_key,
     score_id: input.score_id, observation_id: input.observation_id, sync_state: input.sync_state,
-    raw_payload: sql<JsonValue>`${JSON.stringify(input.raw_payload)}::jsonb`, reason: input.reason,
+    raw_payload: jsonText(input.raw_payload), reason: input.reason,
   }).returningAll().executeTakeFirstOrThrow();
 }
 

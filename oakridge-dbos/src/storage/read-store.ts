@@ -461,23 +461,31 @@ export async function readPinnedDefinition(db: Reader, run_id: string): Promise<
  */
 export interface CommittedEventCursor { readonly commit_txid: string; readonly id: string }
 export interface CommittedEventRow<Payload> { readonly id: string; readonly run_id: string | null; readonly unit_id: string | null;
-  readonly payload: Payload; readonly created_at: Date; readonly commit_txid: string; readonly was_visible_at_subscription: boolean }
+  readonly payload: Payload; readonly created_at: Date; readonly commit_txid: string;
+  readonly collection_key?: string | null; readonly was_visible_at_subscription: boolean }
 export interface CommittedEventQuery { readonly after: CommittedEventCursor; readonly limit: number; readonly subscription_snapshot?: string | null }
 /** Both authority event feeds use this one guarded, ordered tuple scan. */
 export async function readCommittedEventsAfter(db: Reader, table: "authority.event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event>[]>;
 export async function readCommittedEventsAfter(db: Reader, table: "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<OperatorEventPayload>[]>;
-// ORDER BY names the table's columns: the bare name would sort by the text output alias,
-// putting "1000005" before "100001" and skipping every event below a digit boundary.
 export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event", input: CommittedEventQuery): Promise<readonly CommittedEventRow<Event | OperatorEventPayload>[]> {
   const rows = await sql<{ id: string; run_id: string | null; unit_id: string | null; payload: Event | OperatorEventPayload; created_at: Date;
-    commit_txid: string; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid, coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription FROM ${sql.table(table)} WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id}) AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY ${sql.table(table)}.commit_txid, ${sql.table(table)}.id LIMIT ${input.limit}`.execute(db);
-  return rows.rows;
+    commit_txid_text: string; collection_key: string | null; was_visible_at_subscription: boolean }>`SELECT id, run_id, ${table === "authority.event" ? sql.ref("unit_id") : sql<null>`NULL::text`} AS unit_id, payload, created_at, commit_txid::text AS commit_txid_text,
+    ${table === "authority.event" ? sql<string | null>`(SELECT u.collection_key FROM authority.unit u WHERE u.run_id = source_event.run_id AND u.id = source_event.unit_id)` : sql<null>`NULL::text`} AS collection_key,
+    coalesce(pg_visible_in_snapshot(commit_txid::text::xid8, ${input.subscription_snapshot ?? null}::pg_snapshot), false) AS was_visible_at_subscription
+    FROM ${sql.table(table)} AS source_event WHERE (commit_txid, id) > (${input.after.commit_txid}::bigint, ${input.after.id})
+    AND commit_txid < pg_snapshot_xmin(pg_current_snapshot())::text::bigint ORDER BY commit_txid, id LIMIT ${input.limit}`.execute(db);
+  return rows.rows.map(({ commit_txid_text, ...row }) => ({ ...row, commit_txid: commit_txid_text }));
 }
 
 /** The stage pinned on the unit addressed by a revision event. */
 export async function readEventUnitStage(db: Reader, run_id: string, unit_id: string): Promise<string | null> {
   const row = await db.selectFrom("authority.unit").select("stage").where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
   return row?.stage ?? null;
+}
+export async function readEventUnitCollectionKey(db: Reader, run_id: string, unit_id: string): Promise<string | null> {
+  const row = await db.selectFrom("authority.unit").select("collection_key")
+    .where("run_id", "=", run_id).where("id", "=", unit_id).executeTakeFirst();
+  return row?.collection_key ?? null;
 }
 
 /** Count committed publications through this event to reproduce the core's revision sequence. */
