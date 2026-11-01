@@ -8,6 +8,7 @@ import { WORKFLOW_SOURCES, definitionBytes, definitionId, type DefinitionContent
 import { listPromptCatalog } from "./prompt-catalog";
 import type { AuthoredWorkflow } from "../../oakridge-dbos/src/core-client/core-types";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
+import { selectPromptPaths } from "../../oakridge-dbos/src/runtime/prompt-files";
 import { canonicalJson } from "canonical-json";
 
 const root = resolve(import.meta.dir, "../..");
@@ -36,6 +37,16 @@ test("generated prompt objects preserve their source bytes", () => {
   }
 });
 
+test("the generator pins a worker template override instead of its default prompt", () => {
+  const catalog = JSON.parse(readFileSync(resolve(root, "definitions/launchable.json"), "utf8")) as { [name: string]: string };
+  const definition = JSON.parse(readFileSync(resolve(root, "definitions/workflows", `${catalog["template-override"]}.json`), "utf8")) as DefinitionContent;
+  const path = "template-override/override.md";
+  const source = readFileSync(resolve(root, "workflow-config/prompts", path));
+  expect(definition.source.stages.document?.workers.writer).toEqual({ template: "writer", overrides: { prompts: { initial: path } } });
+  expect(definition.prompts).toEqual({ [path]: createHash("sha256").update(source).digest("hex") });
+  expect(readFileSync(resolve(root, "definitions/prompts", `${definition.prompts[path]}.md`))).toEqual(source);
+});
+
 // The Rust compiler and replay tests read the JSON; the YAML is what a person
 // edits. These assertions are what generate.ts --check enforces in CI.
 for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
@@ -50,14 +61,8 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   });
 
   test(`${path} names only prompt files that exist`, () => {
-    const workflow = YAML.parse(readFileSync(resolve(root, path), "utf8")) as {
-      stages: Record<string, { workers: Record<string, { prompts?: Record<string, string> }>;
-        reviews?: Record<string, { prompt?: string }> }>;
-    };
-    const referenced = Object.values(workflow.stages).flatMap((stage) => [
-      ...Object.values(stage.workers).flatMap((worker) => Object.values(worker.prompts ?? {})),
-      ...Object.values(stage.reviews ?? {}).flatMap((review) => review.prompt ? [review.prompt] : []),
-    ]);
+    const workflow = YAML.parse(readFileSync(resolve(root, path), "utf8")) as AuthoredWorkflow;
+    const referenced = selectPromptPaths(workflow);
     expect(referenced.length).toBeGreaterThan(0);
     for (const path of referenced)
       expect(() => readFileSync(resolve(root, "workflow-config/prompts", path))).not.toThrow();

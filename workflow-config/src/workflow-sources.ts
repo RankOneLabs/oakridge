@@ -25,5 +25,6 @@ export function definitionId(content: DefinitionContent): string {
 export const WORKFLOW_SOURCES = {
   "review-loop": "workflow-config/samples/review-loop.yaml",
   "fan-out": "workflow-config/samples/fan-out.yaml",
+  "template-override": "workflow-config/samples/template-override.yaml",
   development: "workflow-config/development.yaml",
 } as const;
