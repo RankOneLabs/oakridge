@@ -8,7 +8,7 @@ import { readEventRevisionSequence, readEventUnitStage, readPinnedDefinition,
   type CommittedEventRow } from "../../oakridge-dbos/src/storage/read-store";
 import { readDecisionForEvent } from "../../oakridge-dbos/src/storage/observation-backfill-store";
 import { openDatabase, withTenant } from "../src/storage/database";
-import { readSourceCursor, repairSourceEvent } from "../src/storage/capture-store";
+import { inspectSourceEventRepair, readSourceCursor, repairSourceEvent } from "../src/storage/capture-store";
 import type { SourceEventCursor } from "../src/ingest/cursor";
 
 interface Counts { readonly revisions: number; readonly occurrences: number; readonly grades: number;
@@ -79,7 +79,11 @@ try {
         decision_effect: decision?.effect ?? null, decision_created_at: decision?.created_at,
         decision_id: decision?.id ?? null });
       inspected++;
-      if (!dry_run) {
+      if (dry_run) {
+        const inspection = await inspectSourceEventRepair(observation, tenant, outcome);
+        if (inspection === "conflict") conflicts++;
+        if (inspection === "purged") purged++;
+      } else {
         try {
           const result = await repairSourceEvent(observation, tenant, outcome, row.commit_txid);
           if (result === "repaired") repaired++;
@@ -111,6 +115,7 @@ try {
   console.log(JSON.stringify({ dry_run, through_txid: through, resumed_from, progress_after: after, interrupted,
     before_cursor, after_cursor, before, after: after_counts,
     inspected_events: inspected, repaired_events: repaired, conflicts, purge_exclusions: purged,
+    dry_run_checks: dry_run ? "purge tombstones, source outcome and revision identities; derived-row conflicts unchecked" : null,
     note: "A skipped-event count is not an expected count of new rows; one event can produce several rows or none." }, null, 2));
 } finally {
   await lock.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [`observation:repair:${namespace}`]);

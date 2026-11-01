@@ -27,7 +27,7 @@ function revision(run_id = "run-1") {
     revision_id: `${tenant.producer}:${tenant.namespace}:${revision_id}`, run_id,
     unit_id: "run-1/implementation/a", artifact_kind: "assessment", artifact_schema_version: "development-v1",
     definition_bundle: { id: "development", digest: "fixture-bundle" }, predecessor_id: null, subject_id: null },
-    recorded_at: "2026-10-30T15:00:00.000Z", body, body_digest: digest.value };
+    recorded_at: "2026-10-30T15:00:00.000Z", body, body_digest: digest.value } as const;
 }
 async function send(app: ReturnType<typeof createApp>, previous: { commit_txid: string; id: string },
   index: number, outcome: object) {
@@ -200,6 +200,22 @@ integration("repair refuses conflicting derived content instead of absorbing it"
   await withTenant(db, tenant, (trx) => trx.updateTable("observation.question_definition")
     .set({ interpretation_caveats: "changed" }).execute());
   await expect(repairSourceEvent(db, tenant, outcome, "1")).rejects.toThrow("question_definition content conflict");
+}));
+
+integration("repair enriches only the missing historical collection relationship", async () => scratch(async (db) => {
+  const original = { format: "observation.source-event/v1", definition_bundle: null,
+    artifact_schema_version: "development-v1", kind: "artifact_revision", event_kind: "revision_published",
+    run_id: "run-1", event_id: "revision-history", revision: revision() } as const;
+  expect(await repairSourceEvent(db, tenant, original, "1")).toBe("repaired");
+  const enriched = { ...original, revision: { ...original.revision,
+    source: { ...original.revision.source, collection_key: "cohort-one" } } };
+  expect(await repairSourceEvent(db, tenant, enriched, "1")).toBe("unchanged");
+  const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
+    .select(["collection_key", "body_digest"]).executeTakeFirstOrThrow());
+  expect(stored).toEqual({ collection_key: "cohort-one", body_digest: original.revision.body_digest });
+  const changed = { ...enriched, revision: { ...enriched.revision,
+    source: { ...enriched.revision.source, artifact_kind: "other" } } };
+  await expect(repairSourceEvent(db, tenant, changed, "1")).rejects.toThrow("content conflict");
 }));
 
 integration("run mismatch survives target capture until an operator resolves it", async () => scratch(async (db) => {

@@ -166,6 +166,21 @@ const sameCursor = (left: SourceEventCursor, right: SourceEventCursor): boolean 
 const afterCursor = (left: SourceEventCursor, right: SourceEventCursor): boolean =>
   BigInt(left.commit_txid) > BigInt(right.commit_txid) || left.commit_txid === right.commit_txid && left.id > right.id;
 
+/** Older outcomes omitted this source field; accept only that one-field enrichment. */
+function isCollectionEnrichment(stored: SourceEventOutcome, incoming: SourceEventOutcome): boolean {
+  if (stored.kind !== "artifact_revision" || incoming.kind !== "artifact_revision") return false;
+  const priorKey = stored.revision.source.collection_key;
+  const nextKey = incoming.revision.source.collection_key;
+  if (priorKey !== undefined && priorKey !== null && priorKey !== nextKey) return false;
+  const withoutCollection = (outcome: Extract<SourceEventOutcome, { kind: "artifact_revision" }>): JsonValue => {
+    const { collection_key: _omitted, ...source } = outcome.revision.source;
+    return { ...outcome, revision: { ...outcome.revision, source } } as unknown as JsonValue;
+  };
+  const old = canonicalDigest(withoutCollection(stored));
+  const next = canonicalDigest(withoutCollection(incoming));
+  return old.ok && next.ok && old.value === next.value;
+}
+
 /** Production mapping and writers shared by delivery and repair. Known gaps become durable issues. */
 export async function applySourceOutcomeInTransaction(trx: DatabaseTransaction, tenant: TenantScope,
   outcome: SourceEventOutcome): Promise<SourceEventIssue | null> {
@@ -265,10 +280,51 @@ export function resolveRunMismatchIssue(db: Database, tenant: TenantScope, issue
   });
 }
 
+/** Read-only preflight of the source identities repair would revisit. */
+export function inspectSourceEventRepair(db: Database, tenant: TenantScope,
+  outcome: SourceEventOutcome): Promise<"candidate" | "purged" | "conflict"> {
+  return withTenant(db, tenant, async (trx) => {
+    const purged = await trx.selectFrom("observation.purge_event").select("purge_id")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", outcome.run_id).executeTakeFirst();
+    if (purged) return "purged";
+    const existing = await trx.selectFrom("observation.source_event_outcome")
+      .select(["run_id", "event_kind", "detail"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("event_id", "=", outcome.event_id).executeTakeFirst();
+    if (existing) {
+      if (existing.run_id !== outcome.run_id || existing.event_kind !== outcome.event_kind) return "conflict";
+      const old = canonicalDigest(existing.detail);
+      const incoming = canonicalDigest(outcome as unknown as JsonValue);
+      if (!old.ok || !incoming.ok) return "conflict";
+      if (old.value !== incoming.value) {
+        const previous = existing.detail as unknown as SourceEventOutcome;
+        if (!(previous.kind === "unmapped" && outcome.kind !== "unmapped")
+          && !isCollectionEnrichment(previous, outcome)) return "conflict";
+      }
+    }
+    if (outcome.kind === "artifact_revision") {
+      const source = outcome.revision.source;
+      const prefix = `${tenant.producer}:${tenant.namespace}:`;
+      if (!source.revision_id.startsWith(prefix)) return "conflict";
+      const revision = await trx.selectFrom("observation.source_revision")
+        .select(["body_digest", "collection_key", "run_id", "unit_id"])
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("revision_id", "=", source.revision_id.slice(prefix.length)).executeTakeFirst();
+      if (revision && (revision.body_digest !== outcome.revision.body_digest
+        || revision.run_id !== source.run_id || revision.unit_id !== source.unit_id
+        || revision.collection_key !== null && source.collection_key !== null
+          && source.collection_key !== undefined && revision.collection_key !== source.collection_key)) return "conflict";
+    }
+    return "candidate";
+  });
+}
+
 /** Repair invokes the same mapping writers but never changes either live position. */
 export function repairSourceEvent(db: Database, tenant: TenantScope, outcome: SourceEventOutcome,
   commit_txid: string): Promise<"repaired" | "purged" | "unchanged"> {
   return withTenant(db, tenant, async (trx) => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenant.producer}:${tenant.namespace}:purge:${outcome.run_id}`}, 0))`.execute(trx);
     const purged = await trx.selectFrom("observation.purge_event").select("purge_id")
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", outcome.run_id).executeTakeFirst();
@@ -284,16 +340,21 @@ export function repairSourceEvent(db: Database, tenant: TenantScope, outcome: So
       if (!old.ok || !incoming.ok) throw new Error(`source event ${outcome.event_id} content is not canonical`);
       if (old.value !== incoming.value) {
         const previous = existing.detail as unknown as SourceEventOutcome;
-        if (previous.kind !== "unmapped" || outcome.kind === "unmapped")
-          throw new Error(`source event ${outcome.event_id} content conflict`);
-        await trx.updateTable("observation.source_event_outcome").set({ outcome_kind: outcome.kind,
-          detail: jsonText(outcome as unknown as JsonValue) })
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("event_id", "=", outcome.event_id).execute();
-        await trx.updateTable("observation.source_event_issue").set({ resolution_state: "resolved",
-          resolution_detail: "mapping corrected and event retried", resolved_at: new Date() })
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("event_id", "=", outcome.event_id).where("cause", "=", "unmapped_event").execute();
+        if (previous.kind === "unmapped" && outcome.kind !== "unmapped") {
+          await trx.updateTable("observation.source_event_outcome").set({ outcome_kind: outcome.kind,
+            detail: jsonText(outcome as unknown as JsonValue) })
+            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+            .where("event_id", "=", outcome.event_id).execute();
+          await trx.updateTable("observation.source_event_issue").set({ resolution_state: "resolved",
+            resolution_detail: "mapping corrected and event retried", resolved_at: new Date() })
+            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+            .where("event_id", "=", outcome.event_id).where("cause", "=", "unmapped_event").execute();
+        } else if (isCollectionEnrichment(previous, outcome)) {
+          await trx.updateTable("observation.source_event_outcome")
+            .set({ detail: jsonText(outcome as unknown as JsonValue) })
+            .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+            .where("event_id", "=", outcome.event_id).execute();
+        } else throw new Error(`source event ${outcome.event_id} content conflict`);
       }
     }
     const issue = await applySourceOutcomeInTransaction(trx, tenant, outcome);

@@ -3,16 +3,17 @@ import { Client } from "pg";
 import { sql } from "kysely";
 import { openAuthority, pinSample, launch } from "../../oakridge-dbos/tests/authority-fixture";
 import { createScratchDatabase } from "../scripts/scratch-database";
-import { openDatabase, withTenant } from "../src/storage/database";
+import { jsonText, openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { readSourceCursor } from "../src/storage/capture-store";
+import { purgeRun } from "../src/purge/purge";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 const tenant = { producer: "oakridge", namespace: "repair-test" };
 interface RepairReport { readonly dry_run: boolean; readonly resumed_from: { readonly commit_txid: string; readonly id: string };
   readonly progress_after: { readonly commit_txid: string; readonly id: string }; readonly interrupted: boolean;
   readonly before_cursor: unknown; readonly after_cursor: unknown; readonly before: { readonly revisions: number };
-  readonly after: { readonly revisions: number }; readonly conflicts: number }
+  readonly after: { readonly revisions: number }; readonly conflicts: number; readonly purge_exclusions: number }
 function start(authority_url: string, observation_url: string, through: string, extra: string[] = []) {
   const env: Record<string, string | undefined> = { ...process.env,
     DBOS_SYSTEM_DATABASE_URL: authority_url, OBSERVATION_DATABASE_URL: observation_url };
@@ -34,7 +35,7 @@ integration("dry run is read only, interrupted repair resumes, and overlapping i
   try {
     await migrateEmptyDatabase(observation);
     const { bundle_id } = await pinSample(authority);
-    await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "repair" } });
+    const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "repair" } });
     const horizon = await sql<{ through: string }>`SELECT max(commit_txid)::text AS through FROM authority.event`.execute(authority.db);
     const through = horizon.rows[0]!.through;
     const before = await readSourceCursor(observation, tenant);
@@ -52,6 +53,15 @@ integration("dry run is read only, interrupted repair resumes, and overlapping i
     expect(resumed.conflicts).toBe(0);
     expect(await readSourceCursor(observation, tenant)).toEqual(before);
 
+    const prior = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_outcome")
+      .select(["event_id", "detail"]).orderBy("event_id").executeTakeFirstOrThrow());
+    await withTenant(observation, tenant, (trx) => trx.updateTable("observation.source_event_outcome")
+      .set({ detail: jsonText({ tampered: true }) }).where("event_id", "=", prior.event_id).execute());
+    const conflicted = await result(start(authority.url, scratch.url, through, ["--dry-run"]));
+    expect(conflicted.conflicts).toBeGreaterThan(0);
+    await withTenant(observation, tenant, (trx) => trx.updateTable("observation.source_event_outcome")
+      .set({ detail: jsonText(prior.detail) }).where("event_id", "=", prior.event_id).execute());
+
     const blocker = new Client({ connectionString: scratch.url });
     await blocker.connect();
     try {
@@ -64,5 +74,10 @@ integration("dry run is read only, interrupted repair resumes, and overlapping i
       const reports = await Promise.all([result(first), result(second)]);
       expect(reports.map((report) => report.conflicts)).toEqual([0, 0]);
     } finally { await blocker.end(); }
+    const purged = await purgeRun(observation, { tenant, run_id, trigger_event_id: "repair-test-purge",
+      trigger_run_key: run_id, operator_override: false });
+    expect(purged.ok).toBe(true);
+    const excluded = await result(start(authority.url, scratch.url, through, ["--dry-run"]));
+    expect(excluded.purge_exclusions).toBeGreaterThan(0);
   } finally { await observation.destroy(); await scratch.drop(); await authority.close(); }
 });
