@@ -1,4 +1,4 @@
-// Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
+// Generated from src/storage/migrations. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
 import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
@@ -222,6 +222,19 @@ export interface AuthorityRun {
   root_unit_id: string | null;
 }
 
+export interface AuthoritySchemaBaseline {
+  applied_at: Generated<Timestamp>;
+  digest: string;
+  id: Generated<boolean>;
+}
+
+export interface AuthoritySchemaMigration {
+  applied_at: Generated<Timestamp>;
+  digest: string;
+  name: string;
+  ordinal: number;
+}
+
 export interface AuthorityUnit {
   /**
    * @type {BlockedReason}
@@ -280,6 +293,8 @@ export interface DB {
   "authority.review_decision": AuthorityReviewDecision;
   "authority.review_item": AuthorityReviewItem;
   "authority.run": AuthorityRun;
+  "authority.schema_baseline": AuthoritySchemaBaseline;
+  "authority.schema_migration": AuthoritySchemaMigration;
   "authority.unit": AuthorityUnit;
   "authority.unit_dependency": AuthorityUnitDependency;
   "authority.wanted_log": AuthorityWantedLog;
