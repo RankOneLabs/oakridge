@@ -16,12 +16,8 @@ import type {
   CreateRunRequest,
   RunSummary,
   RunDetail,
-  ParkedGate,
   ArtifactDetail,
   ArtifactTypeDescriptor,
-  GateResumeRequest,
-  GateResumeResponse,
-  MergeStatus,
   CollabThread,
   ReviewItem,
   PostThreadRequest,
@@ -38,15 +34,15 @@ import type {
   WorkflowRunId,
   RunSessionAttempt,
   SessionRunLocation,
-  SentReviewFeedback,
 } from "./types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
-import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, decisionAction, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, reviewToGates, revisionToArtifact, sentReviewFeedback, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";
+import { createGateClient } from "./client-gates";
 import { classifyDevelopmentInbox, replaceDevelopmentInboxRun } from "./adapters/inbox";
 import { developmentLaunch } from "./adapters/launch";
 import { parseProject, projectUpdateError, selectFailureDetail } from "./adapters/boundary";
-import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitView, parseUnitViews } from "./adapters/parse";
+import { parseArtifactDetail, parseRunInboxBatch, parseRunView, parseUnitViews } from "./adapters/parse";
 
 const API = "/oakridge/api";
 const OPERATOR = "/api";
@@ -70,23 +66,6 @@ async function resolveArtifactId(id: string): Promise<CompositeId> {
     }
   }
   if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque artifact revision ${matches.length === 0 ? "not found" : "is ambiguous"}`);
-  return matches[0];
-}
-async function resolveGateId(id: string, request: GateResumeRequest): Promise<CompositeId> {
-  const parsed = parseCompositeId(id, "gate");
-  if (parsed.ok) return parsed.value;
-  const revision = parseCompositeId(request.artifact_revision_id, "artifact");
-  const target = revision.ok ? revision.value.name.slice(revision.value.name.indexOf(":") + 1) : request.artifact_revision_id;
-  const matches: CompositeId[] = [];
-  for (const run of await readRunPage()) for (const unit of await readUnits(run.run_id)) {
-    const reviews = new Set(unit.decisions.flatMap((decision) => decision.submit.kind === "review"
-      && decision.submit.target_revision_id === target ? [decision.submit.review] : []));
-    for (const review of reviews) if (unit.decisions.some((decision) => decision.submit.kind === "review"
-      && decision.submit.review === review && decisionAction(decision) === request.action)) {
-      matches.push({ kind: "gate", runId: run.run_id, unitId: unit.unit_id, name: review });
-    }
-  }
-  if (matches.length !== 1) throw new Error(`oakridge ${id}: opaque gate ${matches.length === 0 ? "not found" : "is ambiguous"}`);
   return matches[0];
 }
 const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
@@ -211,6 +190,9 @@ async function oakridgePutBody<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+const gateClient = createGateClient({ readRunPage, readUnits, unitPath, get: oakridgeGet, decide, invalidateCachedRunUnits });
+export const { fetchRunGates, fetchRunSentFeedback, fetchGates, resumeGate, fetchMergeStatus } = gateClient;
+
 export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
   const res = await fetch("/oakridge/config");
   if (!res.ok) return { available: false };
@@ -226,14 +208,6 @@ export async function fetchRun(id: string): Promise<RunDetail> {
   const path = runPath(id);
   const [run, units] = await Promise.all([oakridgeGet<unknown>(path).then((value) => unwrapAdapter(path, parseRunView(value))), readUnits(id)]);
   return unwrapAdapter(path, runSnapshot(run, units));
-}
-
-export async function fetchRunGates(runId: string): Promise<ParkedGate[]> {
-  return (await readUnits(runId)).flatMap((unit) => unwrapAdapter(unitPath(runId, unit.unit_id), reviewToGates(unit)));
-}
-
-export async function fetchRunSentFeedback(runId: string): Promise<SentReviewFeedback[]> {
-  return (await readUnits(runId)).flatMap(sentReviewFeedback);
 }
 
 export function fetchRunSessions(runId: string): Promise<RunSessionAttempt[]> {
@@ -253,11 +227,6 @@ export async function fetchSessionRun(sessionId: string): Promise<SessionRunLoca
     }
   }
   return null;
-}
-
-export async function fetchGates(): Promise<ParkedGate[]> {
-  const runs = await readRunPage();
-  return (await Promise.all(runs.map((run) => fetchRunGates(run.run_id)))).flat();
 }
 
 export async function fetchReviewInbox(): Promise<ReviewInbox> {
@@ -284,40 +253,6 @@ export async function fetchArtifact(id: string): Promise<ArtifactDetail> {
   const unit = units.find((candidate) => candidate.unit_id === parsed.unitId);
   if (!unit) throw new Error(`oakridge ${path}: artifact unit not found`);
   return unwrapAdapter(path, revisionToArtifact(unwrapAdapter(path, parseArtifactDetail(rawArtifact)), unit));
-}
-
-export async function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
-  const gate = await resolveGateId(gateId, req);
-  const review = gate.name.split(":", 1)[0];
-  const path = unitPath(gate.runId, gate.unitId);
-  const unit = unwrapAdapter(path, parseUnitView(await oakridgeGet<unknown>(path)));
-  const currentGate = unwrapAdapter(path, reviewToGates(unit)).find((candidate) => candidate.id === gateId
-    || (candidate.run_id === gate.runId && candidate.gate_step === review));
-  const requestedRevision = parseCompositeId(req.artifact_revision_id, "artifact");
-  const currentRevision = currentGate?.artifact_revision_id
-    ? parseCompositeId(currentGate.artifact_revision_id, "artifact") : null;
-  const requestedTarget = requestedRevision.ok
-    ? requestedRevision.value.name.slice(requestedRevision.value.name.indexOf(":") + 1) : req.artifact_revision_id;
-  const currentTarget = currentRevision?.ok
-    ? currentRevision.value.name.slice(currentRevision.value.name.indexOf(":") + 1) : currentGate?.artifact_revision_id;
-  if (!currentTarget || requestedTarget !== currentTarget)
-    throw new Error(`oakridge ${gateId}: review artifact changed; refresh before deciding`);
-  const decision = unit.decisions.find((candidate) => candidate.submit.kind === "review" && candidate.submit.review === review && decisionAction(candidate) === req.action);
-  if (!decision || decision.submit.kind !== "review") throw new Error(`oakridge ${gateId}: decision ${req.action} unavailable`);
-  if (decision.fields.length > 1 || (decision.fields.length === 1 && decision.fields[0].key !== "feedback"))
-    throw new Error(`oakridge ${gateId}: decision requires unsupported fields`);
-  if (req.action === "request_revision" && decision.fields.length === 0 && req.feedback.trim())
-    throw new Error(`oakridge ${gateId}: decision does not accept feedback`);
-  const payload = decision.fields.length === 1 ? { feedback: req.feedback } : {};
-  await decide(gate.runId, gate.unitId, review, decision.submit.decision, decision.submit.target_revision_id, payload, req.idempotency_key);
-  invalidateCachedRunUnits(gate.runId);
-  return { gate_id: gateId, resumed: true };
-}
-
-/** Read the forge at click time for the current PR of a cohort or integration unit. */
-export function fetchMergeStatus(gateId: string): Promise<MergeStatus> {
-  const gate = unwrapAdapter(gateId, parseCompositeId(gateId, "gate"));
-  return oakridgeGet<MergeStatus>(`${unitPath(gate.runId, gate.unitId)}/merge-status`);
 }
 
 export async function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRequest): Promise<CohortPullRequestResponse> {

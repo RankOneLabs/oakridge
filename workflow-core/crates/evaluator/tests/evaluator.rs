@@ -147,6 +147,18 @@ fn plain_uuid_type_round_trips_and_validates_values() {
 fn an_artifact_without_an_edit_policy_defaults_to_always() {
     let artifact: Artifact = serde_json::from_value(serde_json::json!({"schema":"text"})).unwrap();
     assert!(matches!(artifact.edit_policy, EditPolicy::Always));
+    assert_eq!(
+        serde_json::to_value(&artifact).unwrap(),
+        serde_json::json!({"schema":{"kind":"text"},"validate":[]})
+    );
+    let explicit: Artifact = serde_json::from_value(
+        serde_json::json!({"schema":"text","edit_policy":{"kind":"always"}}),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&explicit).unwrap(),
+        serde_json::to_value(&artifact).unwrap()
+    );
 }
 
 #[test]

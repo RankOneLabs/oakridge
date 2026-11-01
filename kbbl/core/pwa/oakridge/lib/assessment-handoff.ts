@@ -4,8 +4,8 @@ import type { Result } from "../../lib/result";
 export type AssessmentPublication = Omit<Assessment, "recommended_next_actions"> & {
   readonly recommended_next_actions: readonly (NextAction | { readonly text: string })[];
 };
-import type { ParkedGate } from "../types";
-import { REQUEST_BUILD_CHANGES } from "../adapters/core";
+import type { ParkedGate, SentReviewFeedback } from "../types";
+import { parseCompositeId, REQUEST_BUILD_CHANGES } from "../adapters/core";
 
 /** One editable recommendation from the registered assessment body. */
 export interface HandoffItem {
@@ -59,6 +59,22 @@ export function selectHandoffSendTarget(gate: ParkedGate | null, hasRecordedSend
   if (hasRecordedSend) return { kind: "sent" };
   if (gate !== null) return { kind: "review", gate };
   return { kind: "no_review" };
+}
+
+/** Match both the recorded send and the open review to the revision being displayed. */
+export function selectHandoffRound(revisionId: string, unitLabel: string, gate: ParkedGate | null,
+  feedback: readonly SentReviewFeedback[]): HandoffSendTarget {
+  const revisionTarget = targetRevisionId(revisionId);
+  const hasRecordedSend = feedback.some((entry) => entry.review === "assessment_review"
+    && entry.decision === REQUEST_BUILD_CHANGES && entry.unit_id === unitLabel
+    && entry.target_revision_id === revisionTarget);
+  const gateRevision = gate?.artifact_revision_id ? targetRevisionId(gate.artifact_revision_id) : null;
+  return selectHandoffSendTarget(gateRevision === revisionTarget ? gate : null, hasRecordedSend);
+}
+
+function targetRevisionId(revisionId: string): string {
+  const parsed = parseCompositeId(revisionId, "artifact");
+  return parsed.ok ? parsed.value.name.slice(parsed.value.name.indexOf(":") + 1) : revisionId;
 }
 
 export const NO_REVIEW_REASON = "This revision has no open assessment review to record the request on.";

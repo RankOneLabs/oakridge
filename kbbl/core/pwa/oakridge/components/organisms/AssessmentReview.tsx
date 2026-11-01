@@ -23,7 +23,7 @@ export function AssessmentReview({ body, source, edit, gate }: ViewerProps) {
     cohortLabel={isIntegration ? source.label ?? null : cohortLabel} isIntegration={isIntegration}
     handoff={!isIntegration && cohortLabel && edit?.enabled && edit.onSubmitBody
       && parsed.value.recommended_next_actions.every((action) => typeof action !== "string")
-      ? <BuilderHandoffPanel runId={source.run_id} unitLabel={cohortLabel} assessment={parsed.value} body={body as typeof parsed.value}
+      ? <BuilderHandoffPanel runId={source.run_id} unitLabel={cohortLabel} revisionId={source.revision_id} assessment={parsed.value} body={body as typeof parsed.value}
           gate={gate ?? null} edit={edit} />
       : undefined} />;
 }

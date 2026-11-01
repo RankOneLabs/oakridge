@@ -56,12 +56,14 @@ function setup(options: { saved?: EditOutcome; revision?: string; actions?: Asse
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0 }, mutations: { retry: false } } });
   const onEdit = vi.fn().mockResolvedValue(options.saved ?? SAVED);
   const onSubmitBody = vi.fn().mockResolvedValue(options.saved ?? SAVED);
-  const panel = () => <QueryClientProvider client={client}><BuilderHandoffPanel runId="run-1" unitLabel={base.collection_key ?? base.unit_key} assessment={currentAssessment}
+  const panel = () => <QueryClientProvider client={client}><BuilderHandoffPanel runId="run-1" unitLabel={base.collection_key ?? base.unit_key} revisionId={revision} assessment={currentAssessment}
     body={options.body ?? currentAssessment} gate={gateFor(unit)} edit={{ enabled: true, isPending: false, onEdit, onSubmitBody }} /></QueryClientProvider>;
   const view = render(panel());
   return { posts, onSubmitBody, client, supersede: (nextRevision: string) => {
     unit = unitFor(nextRevision, false);
     invalidateCachedRunUnits("run-1");
+  }, showAssessmentBeforeGateRefresh: (nextAssessment: Assessment, nextRevision: string) => {
+    revision = nextRevision; currentAssessment = nextAssessment; view.rerender(panel());
   }, rerender: (nextAssessment: Assessment, nextRevision: string) => {
     revision = nextRevision; currentAssessment = nextAssessment; sent = false; unit = unitFor(revision, sent);
     invalidateCachedRunUnits("run-1"); void client.invalidateQueries({ queryKey: ["oakridge", "run", "run-1", "sent-feedback"] });
@@ -155,6 +157,15 @@ describe("assessment builder handoff", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
     await screen.findByText("Sent");
     expect(view.posts).toHaveLength(2);
+  });
+
+  it("does not show a previous round as sent while artifact data leads the gate refresh", async () => {
+    const view = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Send to Builder" }));
+    await screen.findByText("Sent");
+    view.showAssessmentBeforeGateRefresh(assessment("fresh", "assessment-rev-2"), "assessment-rev-2");
+    expect(screen.queryByText("Sent")).toBeNull();
+    expect((screen.getByRole("button", { name: "Send to Builder" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("disables Send when the decision is not offered", () => {

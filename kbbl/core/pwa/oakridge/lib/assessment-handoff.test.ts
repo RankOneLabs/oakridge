@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment } from "./assessment";
-import { composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffSendability, selectHandoffSendTarget, withItemAdded, withItemRemoved, withItemTextChanged } from "./assessment-handoff";
+import { composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffRound, selectHandoffSendability, selectHandoffSendTarget, withItemAdded, withItemRemoved, withItemTextChanged } from "./assessment-handoff";
 import type { ParkedGate } from "../types";
+import { compositeId } from "../adapters/core";
 
 const assessment: Assessment = {
   head_sha: null, verdict: "pass_with_notes", findings: [], test_evidence: null,
@@ -50,6 +51,16 @@ describe("assessment handoff", () => {
 
   it("derives sent status from a recorded decision", () => {
     expect(selectHandoffSendTarget(gate, true)).toEqual({ kind: "sent" });
+  });
+
+  it("does not apply an older recorded send or gate to a newly displayed revision", () => {
+    const feedback = [{ id: "sent", target_revision_id: "assessment-rev", run_id: "run-1", stage_name: "assessment",
+      unit_id: "alpha", review: "assessment_review", decision: "request_build_changes", feedback: "Fix it", sent_at: "2026-01-01" }];
+    expect(selectHandoffRound("next-rev", "alpha", gate, feedback)).toEqual({ kind: "no_review" });
+    expect(selectHandoffRound("next-rev", "alpha", null, feedback)).toEqual({ kind: "no_review" });
+    expect(selectHandoffRound("assessment-rev", "alpha", gate, feedback)).toEqual({ kind: "sent" });
+    const displayed = compositeId({ kind: "artifact", runId: "run-1", unitId: "alpha", name: "assessment:assessment-rev" });
+    expect(selectHandoffRound(displayed, "alpha", { ...gate, artifact_revision_id: displayed }, feedback)).toEqual({ kind: "sent" });
   });
 
   it("offers a new round when no send is recorded for it", () => {

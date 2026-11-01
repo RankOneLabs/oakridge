@@ -5,9 +5,8 @@ import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import type { ViewerProps } from "../../artifactRegistry";
 import type { Assessment } from "../../lib/assessment";
-import { composeHandoffText, hasHandoffItem, NO_REVIEW_REASON, selectHandoffItems, selectHandoffSendTarget, withItemAdded, withItemRemoved, withItemTextChanged, type HandoffItem } from "../../lib/assessment-handoff";
+import { composeHandoffText, hasHandoffItem, NO_REVIEW_REASON, selectHandoffItems, selectHandoffRound, withItemAdded, withItemRemoved, withItemTextChanged, type HandoffItem } from "../../lib/assessment-handoff";
 import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
-import { parseCompositeId, REQUEST_BUILD_CHANGES } from "../../adapters/core";
 import type { EditOutcome } from "../../lib/edit-outcome";
 import type { ParkedGate } from "../../types";
 import { AddNextAction } from "../molecules/AddNextAction";
@@ -18,6 +17,7 @@ import { SendToBuilder } from "./SendToBuilder";
 interface Props {
   runId: string;
   unitLabel: string;
+  revisionId: string;
   assessment: Assessment;
   /** The unnormalised revision body preserves fields outside the parser's view. */
   body: Assessment;
@@ -26,7 +26,7 @@ interface Props {
   edit: NonNullable<ViewerProps["edit"]>;
 }
 
-export function BuilderHandoffPanel({ runId, unitLabel, assessment, body, gate, edit }: Props) {
+export function BuilderHandoffPanel({ runId, unitLabel, revisionId, assessment, body, gate, edit }: Props) {
   const client = useQueryClient();
   const sentFeedback = useRunSentFeedback(runId);
   const [items, setItems] = useState<HandoffItem[]>(() => selectHandoffItems(assessment));
@@ -36,13 +36,7 @@ export function BuilderHandoffPanel({ runId, unitLabel, assessment, body, gate, 
       ...item, is_included: previous.find((candidate) => candidate.id === item.id)?.is_included ?? true,
     })));
   }, [assessment]);
-  const parsedTarget = gate?.artifact_revision_id ? parseCompositeId(gate.artifact_revision_id, "artifact") : null;
-  const currentTarget = parsedTarget?.ok ? parsedTarget.value.name.slice(parsedTarget.value.name.indexOf(":") + 1)
-    : gate?.artifact_revision_id ?? null;
-  const hasRecordedSend = sentFeedback.data?.some((feedback) => feedback.review === "assessment_review"
-    && feedback.decision === REQUEST_BUILD_CHANGES && feedback.unit_id === unitLabel
-    && (currentTarget === null || feedback.target_revision_id === currentTarget)) ?? false;
-  const target = selectHandoffSendTarget(gate, hasRecordedSend);
+  const target = selectHandoffRound(revisionId, unitLabel, gate, sentFeedback.data ?? []);
   const preview = composeHandoffText(items);
 
   async function submit(next: unknown): Promise<EditOutcome> {

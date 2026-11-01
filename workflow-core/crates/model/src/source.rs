@@ -783,7 +783,7 @@ pub struct Stage {
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub schema: TypeExpression,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "EditPolicy::is_always")]
     pub edit_policy: EditPolicy,
     #[serde(default)]
     pub validate: Vec<ValidationCheck>,
@@ -795,6 +795,12 @@ pub enum EditPolicy {
     #[default]
     Always,
     FrozenWhenAccepted,
+}
+
+impl EditPolicy {
+    pub fn is_always(&self) -> bool {
+        matches!(self, Self::Always)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
