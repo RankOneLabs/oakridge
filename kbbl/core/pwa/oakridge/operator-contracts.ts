@@ -411,7 +411,7 @@ export interface OperatorSessionSettings { readonly harness: string; readonly mo
 export type OperatorAttemptStatus = { readonly "kind": "pending" } | { readonly "kind": "running" } | { readonly "kind": "succeeded" } | { readonly "code": string; readonly "detail": string; readonly "kind": "failed" };
 
 export type OperatorSchemaShape =
-  | { readonly kind: "uuid"; readonly generated: true }
+  | { readonly kind: "uuid"; readonly generated: boolean }
   | { readonly kind: "boolean" }
   | { readonly kind: "integer"; readonly min: number; readonly max: number }
   | { readonly kind: "string"; readonly min_length: number; readonly max_length: number }

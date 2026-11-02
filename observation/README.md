@@ -4,8 +4,7 @@
 
 Canonical JSON v1 identities are computed from the canonicalized body recovered from JSONB. Byte-identical recovery of a producer's submitted JSON is not claimed.
 
-For credentials, startup, retention, upgrades and recovery, see
-[observation operations](../docs/observation-operations.md). The checked-in
+The checked-in
 `fixtures/oakridge/run-slice/` corpus drives the cross-layer slice and failure
 cases. Run `bun test observation/tests` with a local PostgreSQL server named by
 `OAKRIDGE_TEST_DATABASE_URL`; the tests create and remove isolated databases.

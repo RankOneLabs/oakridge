@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { StageUnit } from "../types";
+import type { StageUnit } from "../run-types";
 import { selectCohortBrief } from "./stage-unit-params";
 import buildParams from "./__fixtures__/run-fd23c8b3-build-params.json";
 import assessorParams from "./__fixtures__/run-fd23c8b3-assessor-params.json";

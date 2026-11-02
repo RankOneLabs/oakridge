@@ -4,7 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import type { SessionSnapshot } from "../../types";
-import type { ArtifactDetail, ParkedGate, ReviewItem, RunDetail, RunSessionAttempt } from "../types";
+import type { ArtifactDetail, ParkedGate } from "../artifact-types";
+import type { ReviewItem } from "../collab-types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 
 // Fixtures and the jsdom harness for the pane-body render tests. Not a
 // `*.test.*` file, so vitest imports it rather than collecting it.

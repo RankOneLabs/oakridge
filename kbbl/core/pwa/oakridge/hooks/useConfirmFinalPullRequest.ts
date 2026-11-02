@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { confirmFinalPullRequest } from "../client";
-import type { ConfirmFinalPullRequestRequest, RepositoryKey } from "../types";
+import type { ConfirmFinalPullRequestRequest, RepositoryKey } from "../run-types";
 
 export function useConfirmFinalPullRequest(runId: string, repositoryKey: RepositoryKey) {
   const client = useQueryClient();

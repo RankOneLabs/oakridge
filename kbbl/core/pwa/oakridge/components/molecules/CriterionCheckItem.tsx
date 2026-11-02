@@ -1,7 +1,7 @@
 import { Chip } from "../../../components/atoms/Chip";
 import { selectCheckCriterionText, selectCheckNote, selectCheckStatus, type CriterionCheck } from "../../lib/assessment";
 import { selectStatusTone } from "../../lib/status-tone";
-import type { CriterionStatus } from "../../types";
+import type { CriterionStatus } from "../../artifact-types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
 

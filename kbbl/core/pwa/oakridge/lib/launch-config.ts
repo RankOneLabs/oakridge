@@ -2,7 +2,8 @@ import type { RuntimeId } from "../../../runtime-interface";
 import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime } from "../../../runtime";
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
 import type { Result } from "../../lib/result";
-import type { CreateRunContext, EpicProfileConfig, FinalMergePolicy, RepositoryInput } from "../types";
+import type { CreateRunContext } from "../project-types";
+import type { EpicProfileConfig, FinalMergePolicy, RepositoryInput } from "../run-types";
 import type { ValidatedRepositoryInput } from "../repository-inputs";
 
 export interface BuildRunExecutionContextInput {

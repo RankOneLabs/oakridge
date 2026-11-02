@@ -23,11 +23,20 @@ import { enqueueJob } from "../src/storage/grading-job-store";
 import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import type { EvaluationJobResponse } from "../src/http/evaluations";
 
+/** Units and collection keys as the development workflow publishes them: tasks and the plan from
+ * the run's single analysis and planning units with no key, briefs and assessments per cohort. */
+function workflowUnit(kind: string): { readonly unit_id: string; readonly collection_key: string | null } {
+  if (kind === "tasks" || kind === "analysis") return { unit_id: "analysis", collection_key: null };
+  if (kind === "plan") return { unit_id: "planning", collection_key: null };
+  if (kind === "brief") return { unit_id: "briefs/cohort-a", collection_key: "cohort-a" };
+  return { unit_id: "implementation/cohort-a", collection_key: "cohort-a" };
+}
+
 async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const revision_id = `${kind}-first`;
   const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
-  return { revision_id, unit_id: kind, collection_key: "cohort-a", artifact_kind: kind, recorded_at: new Date(at),
+  return { revision_id, ...workflowUnit(kind), artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
 
@@ -185,7 +194,7 @@ integration("ingested revisions change derived HTTP gradeability from missing to
         headers: { authorization: "Bearer ingest", "content-type": "application/json", "idempotency-key": `gradeability-${kind}-${revision}` },
         body: JSON.stringify({ format: "observation.artifact-revision/v1", source: { ...tenant,
           revision_id: `oakridge:${tenant.namespace}:gradeability-${kind}-${revision}`, run_id: "gradeability-run",
-          unit_id: `${kind}s/cohort-a`, collection_key: "cohort-a", artifact_kind: kind,
+          ...workflowUnit(kind), artifact_kind: kind,
           artifact_schema_version: "development-v1", definition_bundle: { id: "development", digest: "fixture" } },
           recorded_at: kind === "brief" ? "2026-10-23T17:29:56Z"
             : revision === 1 ? "2026-10-23T17:23:49Z" : "2026-10-23T18:00:00Z",

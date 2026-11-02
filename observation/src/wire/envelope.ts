@@ -1,7 +1,7 @@
 import type { JsonValue } from "../domain/primitives";
 import type { ArtifactRevisionId, CanonicalDigest, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, RelationId, RunId } from "../domain/identity";
 
-/** Wire shapes mirror the producer revision row and the item-address rules in docs/spec-02-handoff.md. */
+/** Wire shapes mirror the producer revision row and its item addresses. */
 export interface RevisionAddress { readonly run_id: RunId; readonly revision_id: ArtifactRevisionId }
 export interface ItemAddress extends RevisionAddress { readonly item_id: string | null; readonly json_pointer: string | null }
 export interface RevisionFields extends RevisionAddress {

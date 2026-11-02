@@ -1,5 +1,5 @@
 import type { OperatorBodyValue, OperatorDecisionDefinition, OperatorUnitView } from "../operator-contracts";
-import type { ParkedGate, SentReviewFeedback } from "../types";
+import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
 import { artifactRevisionId, compositeId, developmentPullRequestUrl, ok, type AdapterResult } from "./core";
 
 export interface GateDecision { readonly action: string; readonly decision: OperatorDecisionDefinition }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReviewItem } from "../../types";
+import type { ReviewItem } from "../../collab-types";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CohortId } from "../types";
+import type { CohortId } from "../run-types";
 import type { PlanCohort } from "./plan";
 import { PLAN_GRAPH_NODE, selectPlanGraphLayout } from "./plan-graph";
 

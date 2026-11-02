@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
-import type { CohortId, RepositoryKey } from "../../types";
+import type { CohortId, RepositoryKey } from "../../run-types";
 import { parseAssessment } from "../../lib/assessment";
 import { readBuildBrief } from "../../lib/build-brief";
 import linkedAssessment from "../../lib/__fixtures__/id-linked-assessment.json";

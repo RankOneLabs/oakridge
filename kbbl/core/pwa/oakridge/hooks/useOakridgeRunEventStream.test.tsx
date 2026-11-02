@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { useOakridgeInvalidationStream } from "./useOakridgeInvalidationStream";
 import { useOakridgeRunEventStream } from "./useOakridgeRunEventStream";
-import type { RunEventFrame } from "../types";
+import type { RunEventFrame } from "../run-types";
 
 class EventSourceStub {
   static instances: EventSourceStub[] = [];

@@ -11,7 +11,8 @@ import { EventSourceStub } from "./run-pane-fixtures";
 import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
+import type { ParkedGate } from "../artifact-types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 
 // Pane-host wiring only. kbbl's frontend convention keeps tests on lib/ logic;
 // what lands here is the handful of behaviours no transform can cover — that a

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Assessment } from "../lib/assessment";
 import type { EditOutcome } from "../lib/edit-outcome";
-import type { ParkedGate } from "../types";
+import type { ParkedGate } from "../artifact-types";
 import type { OperatorUnitView } from "../operator-contracts";
 import { BuilderHandoffPanel } from "../components/organisms/BuilderHandoffPanel";
 import { reviewToGates } from "../adapters/core";

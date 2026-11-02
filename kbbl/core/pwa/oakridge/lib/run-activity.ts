@@ -1,5 +1,5 @@
 import { parseOakridgeRunEventFrame } from "../client";
-import type { RunEvent, RunEventOperation } from "../types";
+import type { RunEvent, RunEventOperation } from "../run-types";
 
 const PAGE_SIZE = 500;
 

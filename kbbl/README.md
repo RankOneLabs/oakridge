@@ -181,5 +181,3 @@ on port 5173; production assets are built into `core/pwa/dist/`.
 - `core/pwa/oakridge/` — workflow UI.
 - `core/pwa/review/` — shared DAG and collaboration components.
 
-The [ACP compatibility report](docs/acp-compatibility.md) records the dated
-agent-selection spike, not current dependency versions or an operator setup guide.

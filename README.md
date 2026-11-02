@@ -46,8 +46,7 @@ rebuilds the Rust WASM module (a no-op when it is current; it stops if cargo is
 missing, and an explicit `OAKRIDGE_CORE_WASM` is used as given), starts PostgreSQL through Docker when
 `DBOS_SYSTEM_DATABASE_URL` is unset, applies the authority baseline, and starts
 the DBOS backend and kbbl PWA; `--observation` also starts the observation
-service from `observation/.env` and connects DBOS to it (see
-[observation operations](docs/observation-operations.md)). It keeps the backend's publication key in
+service from `observation/.env` and connects DBOS to it. It keeps the backend's publication key in
 `~/.local/state/oakridge/publication.key`, generated on first start, and the
 agent workdir beside it. Unless `OAKRIDGE_ALLOWED_ORIGINS` is set, it allows
 browser writes from loopback and, with `--host=0.0.0.0`, from this machine's

@@ -1,4 +1,4 @@
-import type { SlotBinding } from "../../types";
+import type { SlotBinding } from "../../workflow-authoring-types";
 
 type LookupBinding = Extract<SlotBinding, { from: "input_lookup" | "context_lookup" }>;
 

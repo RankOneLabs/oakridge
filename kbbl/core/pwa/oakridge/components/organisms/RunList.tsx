@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "../../hooks/useRuns";
-import type { RunDisplayStatus, RunSummary } from "../../types";
+import type { RunDisplayStatus, RunSummary } from "../../run-types";
 import { formatRelative } from "../../../lib/time";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";

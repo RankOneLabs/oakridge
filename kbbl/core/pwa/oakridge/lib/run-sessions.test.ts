@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunSessionAttempt } from "../types";
+import type { RunSessionAttempt } from "../run-types";
 import { runUnitKeyOf, selectRunSessionRows, selectRunSessionsRead } from "./run-sessions";
 
 // Timestamps are written the way the route actually sends them — Postgres

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ArtifactReviewDescriptor } from "../../types";
+import type { ArtifactReviewDescriptor } from "../../artifact-types";
 
 interface ArtifactReviewShellProps {
   descriptor: ArtifactReviewDescriptor | null;

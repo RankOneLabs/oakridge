@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { FanOutConfig, SlotBinding } from "../../types";
+import type { FanOutConfig, SlotBinding } from "../../workflow-authoring-types";
 import { BindableEditor, BindingEditor } from "./BindingEditor";
 
 const inputClass =

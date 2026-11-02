@@ -3,7 +3,7 @@ import { useState } from "react";
 import { selectStableDecisionQueue, type DecisionQueueEntry } from "../lib/decision-queue";
 import { selectReviewCohortKey } from "../lib/run-attention";
 import { useReviewInbox } from "../hooks/useReviewInbox";
-import type { ReviewInbox, ReviewInboxItem } from "../types";
+import type { ReviewInbox, ReviewInboxItem } from "../artifact-types";
 import { FeedbackMessage } from "../../components/atoms/FeedbackMessage";
 import { WorkItem } from "../components/organisms/WorkItem";
 import { ProgressRow } from "../components/molecules/ProgressRow";

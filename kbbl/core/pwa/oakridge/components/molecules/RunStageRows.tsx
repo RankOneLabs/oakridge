@@ -1,4 +1,4 @@
-import type { StageDetail, StageUnit } from "../../types";
+import type { StageDetail, StageUnit } from "../../run-types";
 import { StatusBadge } from "../atoms/StatusBadge";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";

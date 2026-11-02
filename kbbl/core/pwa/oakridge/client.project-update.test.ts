@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { updateProject } from "./client";
-import type { ProjectId } from "./types";
+import type { ProjectId } from "./project-types";
 
 const projectId = "00000000-0000-4000-8000-000000000001" as ProjectId;
 const command = { id: projectId, project: { name: "Scout", repo_dir: "/code/rol/scout" } };

@@ -4,7 +4,7 @@ import type { Result } from "../../lib/result";
 export type AssessmentPublication = Omit<Assessment, "recommended_next_actions"> & {
   readonly recommended_next_actions: readonly (NextAction | { readonly text: string })[];
 };
-import type { ParkedGate, SentReviewFeedback } from "../types";
+import type { ParkedGate, SentReviewFeedback } from "../artifact-types";
 import { parseCompositeId, REQUEST_BUILD_CHANGES } from "../adapters/core";
 
 /** One editable recommendation from the registered assessment body. */

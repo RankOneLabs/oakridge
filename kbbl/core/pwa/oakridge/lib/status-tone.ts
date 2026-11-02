@@ -1,5 +1,6 @@
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
+import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus } from "../artifact-types";
+import type { RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../run-types";
 
 const RUN_TONE = {
   pending: "muted", running: "info", parked: "warning", failed: "danger",

@@ -3,7 +3,7 @@ import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
 import { selectRepositoryAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
-import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
+import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../artifact-types";
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   if (item.kind !== "artifact_gate" && item.kind !== "merge_confirmation") return null;

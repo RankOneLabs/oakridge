@@ -8,7 +8,7 @@ import type { Assessment } from "../../lib/assessment";
 import { composeHandoffText, hasHandoffItem, NO_REVIEW_REASON, selectHandoffItems, selectHandoffRound, withItemAdded, withItemRemoved, withItemTextChanged, type HandoffItem } from "../../lib/assessment-handoff";
 import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
 import type { EditOutcome } from "../../lib/edit-outcome";
-import type { ParkedGate } from "../../types";
+import type { ParkedGate } from "../../artifact-types";
 import { AddNextAction } from "../molecules/AddNextAction";
 import { ArtifactSection } from "../molecules/ArtifactSection";
 import { EditableBriefText } from "../molecules/EditableBriefText";

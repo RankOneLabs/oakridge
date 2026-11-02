@@ -1,7 +1,7 @@
 import { useId } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { PLAN_GRAPH_NODE, type PlanGraphLayout } from "../../lib/plan-graph";
-import type { CohortId } from "../../types";
+import type { CohortId } from "../../run-types";
 
 interface Props {
   layout: PlanGraphLayout;

@@ -1,4 +1,4 @@
-import type { DelegatedSessionStageConfig, InputSlotDef, OutputSlotDef, StageNodeDef } from "../types";
+import type { DelegatedSessionStageConfig, InputSlotDef, OutputSlotDef, StageNodeDef } from "../workflow-authoring-types";
 import { randomUuid } from "../../lib/random-uuid";
 
 export interface StageFormEntry {

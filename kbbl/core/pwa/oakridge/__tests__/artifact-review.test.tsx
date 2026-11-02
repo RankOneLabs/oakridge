@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 
 import { ArtifactReview } from "../components/organisms/ArtifactReview";
 import { TasksViewer } from "../components/molecules/TasksViewer";
-import type { ArtifactDetail, ParkedGate } from "../types";
+import type { ArtifactDetail, ParkedGate } from "../artifact-types";
 import { invalidateCachedRunUnits } from "../client";
 
 // Split out of oakridge.test.tsx when the chrome union landed: the review

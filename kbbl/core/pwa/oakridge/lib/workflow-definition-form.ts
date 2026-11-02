@@ -1,5 +1,5 @@
 import { stageFormEntryToNodeDef, type StageFormEntry } from "./stage-form";
-import type { EdgeDef, WorkflowDefFull, WorkflowGraph } from "../types";
+import type { EdgeDef, WorkflowDefFull, WorkflowGraph } from "../workflow-authoring-types";
 import type { Result } from "../../lib/result";
 import { randomUuid } from "../../lib/random-uuid";
 

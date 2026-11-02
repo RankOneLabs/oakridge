@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { InputSlotDef, OutputSlotDef } from "../../types";
+import type { InputSlotDef, OutputSlotDef } from "../../workflow-authoring-types";
 import { updateInputSlot } from "../../../lib/input-slots";
 
 const inputClass =

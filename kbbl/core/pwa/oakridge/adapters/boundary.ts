@@ -1,4 +1,4 @@
-import type { Project, ProjectId, ProjectUpdateError } from "../types";
+import type { Project, ProjectId, ProjectUpdateError } from "../project-types";
 import type { Result } from "../../lib/result";
 
 interface ResponseParseError {
