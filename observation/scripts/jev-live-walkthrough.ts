@@ -1,7 +1,6 @@
 /** One live direct-Jev grade against TypeSafe, on a captured planning-and-brief pass.
  *
- * This is the repeatable form of the walkthrough recorded in
- * `docs/observation-operations.md`. It ingests the checked-in run-slice plan and brief
+ * It ingests the checked-in run-slice plan and brief
  * revisions through the Oakridge source-event route, projects their criteria, then grades
  * one pinned pilot question through the durable queue and the real provider runner. The
  * grade is the only network call; everything else is local.
