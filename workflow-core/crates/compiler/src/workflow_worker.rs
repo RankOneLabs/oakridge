@@ -109,6 +109,7 @@ impl StageCheck<'_> {
                 reviews,
                 workspace,
                 session,
+                gated_review,
                 ..
             } => {
                 let input_fields = self.fields(inputs, &scope, &format!("{path}.inputs"));
@@ -190,6 +191,7 @@ impl StageCheck<'_> {
                     inputs: input_fields.expect("valid worker inputs"),
                     creates: creates.clone(),
                     reviews: reviews.clone(),
+                    gated_review: gated_review.clone(),
                     workspace: workspace.expect("valid workspace"),
                     when: when.map(|(expression, _)| expression),
                 })

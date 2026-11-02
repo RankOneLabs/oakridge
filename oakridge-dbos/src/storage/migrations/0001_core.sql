@@ -118,6 +118,7 @@ CREATE TABLE authority.artifact_revision (
   unit_id text NOT NULL,
   artifact text NOT NULL,
   seq integer NOT NULL,
+  decision_cursor integer NOT NULL DEFAULT 0,
   body jsonb NOT NULL,
   -- The attempt that published it; null for an operator's edit (part 1 §12, D2).
   by_id text,

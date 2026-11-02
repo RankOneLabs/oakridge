@@ -32,25 +32,19 @@ export interface AcpClientHandlers {
   ): Promise<schema.RequestPermissionResponse>;
 }
 
-/** A gated-review surface scoped to one worker role: builders only open drafts, assessors set draft state. */
-export type GatedReviewRole = "builder" | "assessor";
-
-const GATED_REVIEW_ROLES: ReadonlyMap<string, GatedReviewRole> = new Map([["builder", "builder"], ["assessor", "assessor"]]);
-
-/**
- * The role a session's worker connects as. Only the cohort's builder and
- * assessor are scoped; every other session, the integrator included, keeps
- * the unscoped surface. A session key includes its worker, so the role is
- * fixed for the session's life.
- */
-export function selectGatedReviewRole(workflow: AcpSessionWorkflowIdentity | null): GatedReviewRole | null {
-  return workflow === null ? null : GATED_REVIEW_ROLES.get(workflow.worker) ?? null;
+/** The validated declaration stored with the workflow session. */
+export function selectGatedReviewAccess(workflow: AcpSessionWorkflowIdentity | null): AcpSessionWorkflowIdentity["gated_review"] {
+  const access = workflow?.gated_review;
+  if (access?.kind === "unscoped") return access;
+  if (access?.kind === "restricted" && (access.role === "builder" || access.role === "assessor")) return access;
+  return null;
 }
 
-/** The MCP server supplied by the launcher, using ACP's session setup contract; a role gets its own endpoint under it. */
-export function selectMcpServers(gatedReviewUrl: string | undefined, role: GatedReviewRole | null): schema.McpServer[] {
-  if (!gatedReviewUrl) return [];
-  const url = role === null ? gatedReviewUrl : `${gatedReviewUrl.replace(/\/+$/, "")}/${role}`;
+/** The MCP server supplied by the launcher, using ACP's session setup contract. */
+export function selectMcpServers(gatedReviewUrl: string | undefined, access: AcpSessionWorkflowIdentity["gated_review"]): schema.McpServer[] {
+  if (!gatedReviewUrl || !access || (access.kind !== "unscoped" && (access.kind !== "restricted" || (access.role !== "builder" && access.role !== "assessor")))) return [];
+  const base = gatedReviewUrl.replace(/\/+$/, "");
+  const url = access.kind === "unscoped" ? base : `${base}/${access.role}`;
   return [{ type: "http", name: "gated-review", url, headers: [] }];
 }
 
@@ -63,9 +57,9 @@ export class AcpClient {
     private readonly sid: KbblSessionId,
     child: AcpChildProcess,
     handlers: AcpClientHandlers,
-    role: GatedReviewRole | null,
+    access: AcpSessionWorkflowIdentity["gated_review"],
   ) {
-    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, role);
+    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, access);
     this.connection = client({ name: `kbbl:${sid}` })
       .onNotification("session/update", (ctx) => {
         handlers.onSessionUpdate(ctx.params);

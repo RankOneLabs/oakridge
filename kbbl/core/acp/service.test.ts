@@ -113,7 +113,7 @@ async function makeDirs(): Promise<{ stateDir: string; workdir: string }> {
   };
 }
 
-test("a configured gated-review server reaches the ACP agent", async () => {
+test("a hand-started session receives no gated-review server", async () => {
   const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
   process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
   try {
@@ -126,7 +126,7 @@ test("a configured gated-review server reaches the ACP agent", async () => {
     const agentSessionId = store.getSession(sid as KbblSessionId)?.acp_session_id;
     if (!agentSessionId) throw new Error("agent session missing");
     const servers = JSON.parse(await readFile(join(stateDir, `${agentSessionId}.mcp-servers.json`), "utf8"));
-    expect(servers).toEqual([{ type: "http", name: "gated-review", url: "http://127.0.0.1:3555/mcp", headers: [] }]);
+    expect(servers).toEqual([]);
   } finally {
     if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
     else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
@@ -140,7 +140,7 @@ test("a cohort builder session reaches the builder-scoped gated-review endpoint"
     const { stateDir, workdir } = await makeDirs();
     const { service, store } = makeHarness({ stateDir });
     const ensured = await service.ensureResumableSession("builder-wiring", spec(workdir),
-      { run_id: "run-1", unit_id: "run-1/implementation/a", worker: "builder" });
+      { run_id: "run-1", unit_id: "run-1/implementation/a", worker: "builder", gated_review: { kind: "restricted", role: "builder" } });
     if (!ensured.ok) throw new Error("ensure failed");
     const sid = ensured.value.session.sid;
     await service.observeInitialTurn(sid, 8000);

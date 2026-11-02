@@ -285,6 +285,7 @@ fn reduce_event(
                     .max()
                     .unwrap_or(0)
                     + 1,
+                decision_cursor: state.decisions.len() as u32,
                 body: body.clone(),
                 predecessor: predecessor.clone(),
                 subject: subject.clone(),

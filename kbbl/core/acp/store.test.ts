@@ -68,7 +68,7 @@ test("startSpecHash over a fixed spec is pinned to a literal digest", () => {
   );
 });
 
-const WORKFLOW: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder" };
+const WORKFLOW: AcpSessionWorkflowIdentity = { run_id: "run-1", unit_id: "run-1/cohort/a", worker: "builder", gated_review: { kind: "restricted", role: "builder" } };
 
 test("a session claimed with an identity stores and reads it back", () => {
   const store = makeStore();

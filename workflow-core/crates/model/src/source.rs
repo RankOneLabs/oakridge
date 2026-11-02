@@ -369,6 +369,7 @@ pub struct WorkerOverrides {
     pub reviews: Option<SymbolKey>,
     pub runtime: Option<WorkerRuntime>,
     pub session: Option<SessionMode>,
+    pub gated_review: Option<GatedReviewAccess>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -795,6 +796,20 @@ pub struct ValidationCheck {
     pub message: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GatedReviewRole {
+    Builder,
+    Assessor,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GatedReviewAccess {
+    Restricted { role: GatedReviewRole },
+    Unscoped,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Worker {
@@ -806,6 +821,7 @@ pub enum Worker {
         runtime: Option<WorkerRuntime>,
         workspace: Option<String>,
         session: Option<SessionMode>,
+        gated_review: Option<GatedReviewAccess>,
         /// Optional guard: the worker is wanted only while it holds, and the
         /// artifacts it proves published type the worker's inputs.
         when: Option<String>,
