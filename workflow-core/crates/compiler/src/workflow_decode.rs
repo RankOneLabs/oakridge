@@ -87,7 +87,13 @@ pub fn expand_workflow_templates_value(value: &mut Value) -> Result<(), CompileE
                 })?;
                 let mut expanded = template.clone();
                 if binding.overrides.is_some() {
-                    merge_fields(&mut expanded, worker["overrides"].clone());
+                    let overrides = worker["overrides"].clone();
+                    merge_fields(&mut expanded, overrides.clone());
+                    // A tagged grant is one variant, not a bag of fields:
+                    // replacing restricted with unscoped must discard role.
+                    if let Some(grant) = overrides.get("gated_review").filter(|grant| !grant.is_null()) {
+                        expanded["gated_review"] = grant.clone();
+                    }
                 }
                 let _: Worker = decode_at(expanded.clone(), &path)?;
                 *worker = expanded;
