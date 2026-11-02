@@ -6,7 +6,7 @@ import type { ReactElement } from "react";
 import { WorkflowDefListView } from "../views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
-import type { WorkflowDefFull } from "../types";
+import type { WorkflowDefFull } from "../workflow-authoring-types";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers

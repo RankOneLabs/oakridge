@@ -1,5 +1,6 @@
 import type { Result } from "../../lib/result";
-import type { PrReviewStatus, RepositoryKey } from "../types";
+import type { PrReviewStatus } from "../artifact-types";
+import type { RepositoryKey } from "../run-types";
 
 /**
  * Mirrors `PrSummaryBody` in oakridge-dbos/src/domain/dev-flow-artifacts.ts.

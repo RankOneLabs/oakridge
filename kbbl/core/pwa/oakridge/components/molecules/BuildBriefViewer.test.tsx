@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { BuildBriefViewer } from "./BuildBriefViewer";
 import legacyBrief from "../../lib/__fixtures__/legacy-brief.json";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
-import type { StageUnit } from "../../types";
+import type { StageUnit } from "../../run-types";
 import { CohortBrief } from "./CohortBrief";
 
 const saved = () => vi.fn().mockResolvedValue({ ok: true, value: undefined });

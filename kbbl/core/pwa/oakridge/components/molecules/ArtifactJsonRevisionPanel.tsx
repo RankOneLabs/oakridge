@@ -1,4 +1,4 @@
-import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../types";
+import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../artifact-types";
 
 /**
  * A whole body or validation payload, pretty-printed. A value that cannot be

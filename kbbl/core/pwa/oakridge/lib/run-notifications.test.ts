@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunEventFrame, WorkflowRunId } from "../types";
+import type { RunEventFrame, WorkflowRunId } from "../run-types";
 import { selectRunFrameNotification } from "./run-notifications";
 
 const frame = (replayed: boolean): RunEventFrame => ({

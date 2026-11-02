@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { CohortLifecycleSummary, ReviewInbox } from "../types";
+import type { CohortLifecycleSummary, ReviewInbox } from "../artifact-types";
 import { useOakridgeInvalidationStream } from "./useOakridgeInvalidationStream";
 
 const pending = vi.hoisted(() => ({ resolutions: [] as Array<(inbox: ReviewInbox) => void> }));

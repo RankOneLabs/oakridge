@@ -1,7 +1,7 @@
 import { Button } from "../../../components/atoms/Button";
 import { useRunGates } from "../../hooks/useRunGates";
 import { useRunSentFeedback } from "../../hooks/useRunSentFeedback";
-import type { ParkedGate } from "../../types";
+import type { ParkedGate } from "../../artifact-types";
 import { SentFeedbackCard } from "../molecules/SentFeedbackCard";
 import { GateDecisionActions } from "./GateDecisionActions";
 

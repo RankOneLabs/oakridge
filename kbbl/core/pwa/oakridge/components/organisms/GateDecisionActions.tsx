@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "../../hooks/useResumeGate";
-import type { MergeStatus, ParkedGate } from "../../types";
+import type { MergeStatus, ParkedGate } from "../../artifact-types";
 import { fetchMergeStatus } from "../../client";
 import { randomUuid } from "../../../lib/random-uuid";
 import { REQUEST_BUILD_CHANGES } from "../../adapters/core";

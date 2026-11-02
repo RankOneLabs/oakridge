@@ -6,7 +6,7 @@ import { randomUuid } from "../../../lib/random-uuid";
 import { useResumeGate } from "../../hooks/useResumeGate";
 import { selectHandoffSendability } from "../../lib/assessment-handoff";
 import { REQUEST_BUILD_CHANGES } from "../../adapters/core";
-import type { ParkedGate } from "../../types";
+import type { ParkedGate } from "../../artifact-types";
 
 /** The assessment review decision that sends the build back with feedback. */
 

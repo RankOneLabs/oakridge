@@ -1,5 +1,5 @@
 import type { RuntimeModelSelection } from "../../types";
-import type { CreateRunContext, LaunchSessionSettings } from "../types";
+import type { CreateRunContext, LaunchSessionSettings } from "../project-types";
 import type { ModelRole } from "./runtime-selection";
 import type { Result } from "../../lib/result";
 

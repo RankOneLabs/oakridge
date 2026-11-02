@@ -1,4 +1,4 @@
-import type { CohortId, RepositoryKey } from "../types";
+import type { CohortId, RepositoryKey } from "../run-types";
 import { parsePlanCriterionList, type PlanCriterion, type PlanTraceId } from "./plan";
 
 interface LegacyBriefDecision {

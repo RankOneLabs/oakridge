@@ -6,7 +6,7 @@ import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import { selectStatusTone } from "../../lib/status-tone";
-import type { AssessmentVerdict } from "../../types";
+import type { AssessmentVerdict } from "../../artifact-types";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { CohortArtifactNote } from "./CohortArtifactNote";
 import { CRITERION_STATUS_LABEL, CriterionCheckItem } from "./CriterionCheckItem";

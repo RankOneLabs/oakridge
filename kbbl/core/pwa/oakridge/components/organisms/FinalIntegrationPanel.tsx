@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { useConfirmFinalPullRequest } from "../../hooks/useConfirmFinalPullRequest";
-import type { EpicRepositoryBinding, EpicWorkflowProfile } from "../../types";
+import type { EpicRepositoryBinding, EpicWorkflowProfile } from "../../run-types";
 import { randomUuid } from "../../../lib/random-uuid";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";

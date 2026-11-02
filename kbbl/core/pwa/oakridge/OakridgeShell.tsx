@@ -11,7 +11,7 @@ import { ReviewInboxView } from "./views/ReviewInboxView";
 import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
 import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
 import type { ArtifactId } from "../lib/ids";
-import type { WorkflowDefSummary } from "./types";
+import type { WorkflowDefSummary } from "./project-types";
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
   runAttentionCounts: ReadonlyMap<string, number>;

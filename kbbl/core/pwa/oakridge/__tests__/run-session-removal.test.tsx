@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RunDetailView } from "../views/RunDetailView";
 import { useStore } from "../../state/store";
 import type { SessionSnapshot } from "../../types";
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 import { writeStoredRunWorkspace } from "../lib/run-workspace-storage";
 import type { Sid } from "../../lib/ids";
 import { EventSourceStub } from "./run-pane-fixtures";

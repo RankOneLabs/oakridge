@@ -1,6 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { selectAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
-import type { CohortLifecycle, CohortLifecycleSummary } from "../../types";
+import type { CohortLifecycle, CohortLifecycleSummary } from "../../artifact-types";
 
 const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
   building: "Building",

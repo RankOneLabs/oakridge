@@ -1,4 +1,4 @@
-import type { WorkflowDefSummary } from "../oakridge/types";
+import type { WorkflowDefSummary } from "../oakridge/project-types";
 
 export function sortWorkflowDefinitions(
   definitions: readonly WorkflowDefSummary[],

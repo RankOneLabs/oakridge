@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { selectStableDecisionQueue, type DecisionQueueEntry } from "./decision-queue";
-import type { ReviewInboxItem } from "../types";
+import type { ReviewInboxItem } from "../artifact-types";
 
 function gate(id: string): ReviewInboxItem {
   return { id, kind: "artifact_gate", state: "actionable", run_id: "run-1", workflow_name: "dev_flow_v14", stage_instance_id: "stage", stage_name: "brief_writer",

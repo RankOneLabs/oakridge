@@ -1,4 +1,4 @@
-import type { InputSlotDef } from "../oakridge/types";
+import type { InputSlotDef } from "../oakridge/workflow-authoring-types";
 
 export function updateInputSlot(
   slots: readonly InputSlotDef[],

@@ -1,5 +1,6 @@
 import type { OperatorArtifactDetail, OperatorArtifactView, OperatorAttemptView, OperatorDecisionDefinition, OperatorRunEvent, OperatorRunView, OperatorUnitView, OperatorUnitStatus } from "../operator-contracts";
-import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor, RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../types";
+import type { ArtifactDetail, ArtifactRevision, ArtifactTypeDescriptor } from "../artifact-types";
+import type { RepositoryKey, RunDetail, RunEventFrame, RunSessionAttempt, RunStatus, RunSummary, StageDetail, StageStatus, StageUnit } from "../run-types";
 import { isWebUrl } from "../lib/pr-summary";
 import { parseRepositoryKey } from "../repository-inputs";
 

@@ -1,4 +1,4 @@
-import type { EdgeDef, StageNodeDef, WorkflowGraph as WorkflowGraphModel } from "../../types";
+import type { EdgeDef, StageNodeDef, WorkflowGraph as WorkflowGraphModel } from "../../workflow-authoring-types";
 
 function SlotList({ label, slots }: { label: string; slots: StageNodeDef["inputs"] | StageNodeDef["outputs"] }) {
   return (

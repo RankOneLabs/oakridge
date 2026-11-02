@@ -1,6 +1,6 @@
 import { Button } from "../../../components/atoms/Button";
 import { useState } from "react";
-import type { DelegatedSessionStageConfig, SlotBinding } from "../../types";
+import type { DelegatedSessionStageConfig, SlotBinding } from "../../workflow-authoring-types";
 import type { RuntimeModelOption } from "../../../types";
 import { BindingEditor, BindableEditor } from "./BindingEditor";
 import { InputSlotEditor, OutputSlotEditor } from "./SlotEditor";

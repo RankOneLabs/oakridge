@@ -1,40 +1,11 @@
 // API client for the Oakridge backend proxy at /oakridge/api/*.
 // All paths are same-origin relative so the PWA needs no CORS config.
 
-import type {
-  CohortPullRequestResponse,
-  ConfirmCohortMergedRequest,
-  OakridgeConfig,
-  Project,
-  ProjectId,
-  ProjectUpdateCommand,
-  ProjectUpdateError,
-  ProjectWriteInput,
-  WorkflowDefSummary,
-  WorkflowDefFull,
-  WorkflowDefInput,
-  CreateRunRequest,
-  RunSummary,
-  RunDetail,
-  ArtifactDetail,
-  ArtifactTypeDescriptor,
-  CollabThread,
-  ReviewItem,
-  PostThreadRequest,
-  PostMessageRequest,
-  PostAtomEditRequest,
-  PostReviewItemRequest,
-  PatchReviewItemRequest,
-  ReviewInbox,
-  ConfirmFinalPullRequestRequest,
-  EpicWorkflowProfile,
-  FinalPullRequestResponse,
-  RepositoryKey,
-  EpicProfileId,
-  WorkflowRunId,
-  RunSessionAttempt,
-  SessionRunLocation,
-} from "./types";
+import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
+import type { CollabThread, ReviewItem, PostThreadRequest, PostMessageRequest, PostAtomEditRequest, PostReviewItemRequest, PatchReviewItemRequest } from "./collab-types";
+import type { OakridgeConfig, Project, ProjectId, ProjectUpdateCommand, ProjectUpdateError, ProjectWriteInput, WorkflowDefSummary } from "./project-types";
+import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
+import type { WorkflowDefFull, WorkflowDefInput } from "./workflow-authoring-types";
 import type { Result } from "../lib/result";
 import type { OperatorArtifactDetail, OperatorCollaborationMessageRow, OperatorCollaborationThreadRow, OperatorCollaborationThreadView, OperatorDefinitionDetail, OperatorDefinitionPage, OperatorDefinitionSummary, OperatorIngressResponse, OperatorProjectList, OperatorProjectView, OperatorReviewItemRow, OperatorRunInboxBatch, OperatorRunPage, OperatorRunView, OperatorUnitView } from "./operator-contracts";
 import { artifactKeyFromComposite, artifactTypes, attemptToWorkOrder, compositeId, latestUnitAttemptPerSession, parseCompositeId, replaceJsonPointer, revisionToArtifact, runSnapshot, runSummary, SCALAR_STAGE_UNIT_ID, unwrap as unwrapAdapter, type CompositeId } from "./adapters/core";

@@ -1,5 +1,5 @@
 import { WorkflowDefList } from "../components/organisms/WorkflowDefList";
-import type { WorkflowDefSummary } from "../types";
+import type { WorkflowDefSummary } from "../project-types";
 
 interface WorkflowDefListViewProps {
   onNew: () => void;

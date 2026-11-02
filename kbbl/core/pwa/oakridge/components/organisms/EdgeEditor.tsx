@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { EdgeDef } from "../../types";
+import type { EdgeDef } from "../../workflow-authoring-types";
 
 const inputClass =
   "rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";

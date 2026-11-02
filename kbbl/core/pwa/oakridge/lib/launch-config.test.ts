@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildEpicProfile, buildRunExecutionContext } from "./launch-config";
-import type { RepositoryKey } from "../types";
+import type { RepositoryKey } from "../run-types";
 
 describe("buildEpicProfile", () => {
   it("builds the durable forge repository contract expected by CreateWorkflowRun", () => {

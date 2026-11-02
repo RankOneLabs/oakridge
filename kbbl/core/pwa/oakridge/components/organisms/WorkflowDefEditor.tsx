@@ -8,7 +8,7 @@ import {
   runtimeDescriptorsForConfig,
   useServerConfig,
 } from "../../../hooks/useServerConfig";
-import type { EdgeDef } from "../../types";
+import type { EdgeDef } from "../../workflow-authoring-types";
 import { StageEditor } from "./StageEditor";
 import { defaultStageEntry, type StageFormEntry } from "../../lib/stage-form";
 import { EdgeEditor } from "./EdgeEditor";

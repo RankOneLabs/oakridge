@@ -1,4 +1,4 @@
-import type { ReviewInboxItem } from "../types";
+import type { ReviewInboxItem } from "../artifact-types";
 
 /**
  * One row of the inbox's decision list. A `settled` row is an item that left

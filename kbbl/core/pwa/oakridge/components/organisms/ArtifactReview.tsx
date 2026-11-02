@@ -13,7 +13,7 @@ import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
-import type { ArtifactRevision } from "../../types";
+import type { ArtifactRevision } from "../../artifact-types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";

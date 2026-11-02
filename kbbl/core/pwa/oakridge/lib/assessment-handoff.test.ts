@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment } from "./assessment";
 import { composeHandoffText, NO_REVIEW_REASON, selectHandoffItems, selectHandoffRound, selectHandoffSendability, selectHandoffSendTarget, withItemAdded, withItemRemoved, withItemTextChanged } from "./assessment-handoff";
-import type { ParkedGate } from "../types";
+import type { ParkedGate } from "../artifact-types";
 import { compositeId } from "../adapters/core";
 
 const assessment: Assessment = {

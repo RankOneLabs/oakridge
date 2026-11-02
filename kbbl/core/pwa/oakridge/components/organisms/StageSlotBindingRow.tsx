@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { SlotBinding } from "../../types";
+import type { SlotBinding } from "../../workflow-authoring-types";
 import { BindingEditor } from "./BindingEditor";
 
 interface StageSlotBindingRowProps {

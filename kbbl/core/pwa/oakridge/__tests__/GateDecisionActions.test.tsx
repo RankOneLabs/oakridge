@@ -7,7 +7,8 @@ import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import mergeFixture from "../__fixtures__/v2-cohort-merge.json";
 import type { OperatorUnitView } from "../operator-contracts";
-import type { ParkedGate, RepositoryKey, RunState } from "../types";
+import type { ParkedGate } from "../artifact-types";
+import type { RepositoryKey, RunState } from "../run-types";
 import { compositeId, reviewToGates } from "../adapters/core";
 
 function gate(id: string, revision: string, overrides: Partial<Pick<ParkedGate, "run_state" | "actionable">> = {}): ParkedGate {

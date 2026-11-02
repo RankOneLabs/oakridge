@@ -1,5 +1,5 @@
 import type { Result } from "../../lib/result";
-import type { AssessmentVerdict, CriterionStatus } from "../types";
+import type { AssessmentVerdict, CriterionStatus } from "../artifact-types";
 import { parseTestEvidence, type TestEvidence } from "./build-result";
 import { planCriterionText, type PlanCriterion, type PlanTraceId } from "./plan";
 

@@ -8,7 +8,7 @@ import { cancelRun, confirmFinalPullRequest, createRun, fetchArtifact, fetchRevi
 import { compositeId } from "./adapters/core";
 import type { OperatorDefinitionDetail, OperatorUnitView } from "./operator-contracts";
 import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/agent-session-targets";
-import type { CreateRunRequest, RepositoryKey } from "./types";
+import type { CreateRunRequest, RepositoryKey } from "./run-types";
 
 const runId = sample.run.run_id;
 const definition = { ...definitionFixture.definition, bundle: { key: "development" }, archived_at: null, graph: {},
