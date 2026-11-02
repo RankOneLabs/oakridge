@@ -94,7 +94,7 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
   } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
 }
 
-async function validateIdentity(trx: DatabaseTransaction, tenant: TenantScope, identity: EvaluationIdentity): Promise<Result<{ readonly question: QuestionDefinition; readonly evidence: EvidenceSet; readonly evaluator: EvaluatorDefinition }, GradingError>> {
+export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantScope, identity: EvaluationIdentity): Promise<Result<{ readonly question: QuestionDefinition; readonly evidence: EvidenceSet; readonly evaluator: EvaluatorDefinition }, GradingError>> {
   const item = await trx.selectFrom("observation.item_occurrence").select(["item_kind"]).where("producer", "=", tenant.producer)
     .where("namespace", "=", tenant.namespace).where("occurrence_id", "=", identity.subject_occurrence_id).executeTakeFirst();
   if (!item) return failure("evaluate", identity.subject_occurrence_id, "subject occurrence does not exist in namespace");
@@ -180,13 +180,24 @@ export async function recoverManualExecution(db: Database, tenant: TenantScope, 
 
 /** Ingest and persist use separate short transactions; the runner is awaited between them. */
 export async function runGrade(db: Database, tenant: TenantScope, input: RunGradeInput & {
-  readonly lease?: { readonly job_id: string; readonly owner: string };
+  readonly lease?: { readonly job_id: string; readonly owner: string; readonly attempt: number };
 }): Promise<Result<RunGradeResult, GradingError>> {
   const { identity } = input;
   const digest = runGradeDigest(identity, input.reviewed_commit);
   if (!digest.ok) return failure("evaluate", identity.subject_occurrence_id, digest.error.detail);
   try {
     const scheduled = await withTenant(db, tenant, async (trx) => {
+      if (input.lease) {
+        const claim = await trx.selectFrom("observation.grading_job")
+          .select(["state", "lease_owner", "attempts", "lease_expires_at"])
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("job_id", "=", input.lease.job_id).executeTakeFirst();
+        if (claim?.state !== "claimed" || claim.lease_owner !== input.lease.owner
+          || claim.attempts !== input.lease.attempt || !claim.lease_expires_at
+          || claim.lease_expires_at.getTime() <= Date.now())
+          return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
+            detail: "grading claim lost before execution", outcome: "lost_lease" as const });
+      }
       const checked = await validateIdentity(trx, tenant, identity);
       if (!checked.ok) return checked;
       if (checked.value.evaluator.kind !== input.runner.kind)
@@ -206,31 +217,47 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
     if (!scheduled.ok) return scheduled;
     const { checked, execution, is_owner } = scheduled.value;
     if (!is_owner && (!input.lease || execution.status !== "running")) {
-      let current = execution;
-      for (let wait = 0; current.status === "running" && wait < 100; wait++) {
-        await Bun.sleep(20);
-        current = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
-          .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("execution_id", "=", execution.execution_id).executeTakeFirstOrThrow());
-      }
-      if (current.status === "running") return failure("evaluate", identity.subject_occurrence_id, "execution is still running");
+      const current = execution;
+      if (current.status === "running") return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
+        detail: "execution is still running", outcome: "in_progress" });
       const lease = input.lease;
-      if (lease) await withTenant(db, tenant, async (trx) => {
-        const claim = await trx.selectFrom("observation.grading_job").selectAll()
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", lease.job_id).forUpdate().executeTakeFirst();
-        if (claim?.state === "claimed" && claim.lease_owner === lease.owner
-          && claim.lease_expires_at && claim.lease_expires_at.getTime() > Date.now())
-          await trx.updateTable("observation.grading_job").set({ state: "terminal",
-            terminal_cause: current.status === "completed" ? null : "runner_failed",
-            lease_owner: null, lease_expires_at: null, updated_at: new Date() })
+      if (lease) {
+        const settled = await withTenant(db, tenant, async (trx) => {
+          const claim = await trx.selectFrom("observation.grading_job").selectAll()
             .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-            .where("job_id", "=", claim.job_id).execute();
-      });
+            .where("job_id", "=", lease.job_id).forUpdate().executeTakeFirst();
+          if (claim?.state === "claimed" && claim.lease_owner === lease.owner
+            && claim.attempts === lease.attempt
+            && claim.lease_expires_at && claim.lease_expires_at.getTime() > Date.now()) {
+            await trx.updateTable("observation.grading_job").set({ state: "terminal",
+              terminal_cause: current.status === "completed" ? null : "runner_failed",
+              lease_owner: null, lease_expires_at: null, updated_at: new Date() })
+              .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+              .where("job_id", "=", claim.job_id).execute();
+            return true;
+          }
+          return false;
+        });
+        if (!settled) return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
+          detail: "grading claim lost before replay", outcome: "lost_lease" });
+      }
       const observation = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
         .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("execution_id", "=", execution.execution_id).executeTakeFirst());
       return ok({ execution: current, observation: observation ?? null, was_replay: true });
+    }
+    if (input.lease) {
+      const isOwned = await withTenant(db, tenant, async (trx) => {
+        const claim = await trx.selectFrom("observation.grading_job")
+          .select(["state", "lease_owner", "attempts", "lease_expires_at"])
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("job_id", "=", input.lease!.job_id).executeTakeFirst();
+        return claim?.state === "claimed" && claim.lease_owner === input.lease!.owner
+          && claim.attempts === input.lease!.attempt && !!claim.lease_expires_at
+          && claim.lease_expires_at.getTime() > Date.now();
+      });
+      if (!isOwned) return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
+        detail: "grading claim lost before dispatch", outcome: "lost_lease" });
     }
     const { question, evidence, evaluator } = checked;
     const snapshot = question.requires_repository_snapshot
@@ -257,10 +284,14 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("job_id", "=", input.lease.job_id).forUpdate().executeTakeFirst();
         if (!claim || claim.state !== "claimed" || claim.lease_owner !== input.lease.owner
+          || claim.attempts !== input.lease.attempt
           || !claim.lease_expires_at || claim.lease_expires_at.getTime() <= Date.now())
-          return failure("evaluate", identity.subject_occurrence_id, "claim expired before persist");
-        if (!result.ok && claim.attempts < claim.retry_limit
-          && result.error.operation !== "disclosure" && result.error.operation !== "evaluate") {
+          return err({ operation: "evaluate", entity_id: identity.subject_occurrence_id,
+            detail: "grading claim lost before persist", outcome: "lost_lease" });
+        const failureCategory = result.ok ? undefined : result.error.category;
+        const retryable = (["rate_limit", "timeout", "transport", "http_error"] as const)
+          .some((category) => category === failureCategory);
+        if (!result.ok && retryable && claim.attempts <= claim.retry_limit) {
           await trx.updateTable("observation.grading_job").set({ state: "reclaimable",
             lease_owner: null, lease_expires_at: null, updated_at: new Date() })
             .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
@@ -292,8 +323,10 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
       if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
         terminal_cause: outcome ? null : blocked || missing ? "ineligible"
           : !result.ok && result.error.operation === "disclosure"
-          ? "disclosure_refused" : !result.ok && result.error.operation === "evaluate"
-            ? "invalid_outcome" : "runner_failed",
+          ? "disclosure_refused" : !result.ok && result.error.category === "invalid_response"
+            ? "invalid_outcome" : !result.ok && (["rate_limit", "timeout", "transport", "http_error"] as const)
+              .some((category) => category === result.error.category) ? "retry_exhausted"
+              : !result.ok && result.error.operation === "evaluate" ? "invalid_outcome" : "runner_failed",
         lease_owner: null, lease_expires_at: null, updated_at: new Date() })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", input.lease.job_id).execute();

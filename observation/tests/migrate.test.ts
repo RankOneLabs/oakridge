@@ -35,6 +35,7 @@ integration("manifest pins all files in historical order", async () => {
     "0008_langfuse_sync.sql", "0009_grade_label_origin.sql", "0010_question_text_and_evaluator_instructions.sql",
     "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql",
     "0014_annotation_evaluator_v2.sql", "0015_definition_identity.sql", "0016_source_event_issue.sql", "0017_source_repair_position.sql",
+    "0018_grading_attempt_accounting.sql",
   ]);
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
   expect(migrations.map((entry) => entry.name).sort()).toEqual(files.filter((name) => name.endsWith(".sql")).sort());

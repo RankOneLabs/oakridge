@@ -1,21 +1,49 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import { runGradeDigest, type EvaluationIdentity } from "../grading/execution";
-import { runnerEntry } from "../grading/runner";
-import { budgetExceeded, type GradingLimits } from "../grading/jobs/budget";
-import { jsonText, withTenant, type Database, type TenantScope } from "./database";
+import { networkRunnerNames, runnerEntry, type GradingContext } from "../grading/runner";
+import { repositorySnapshotEligibility } from "../grading/eligibility";
+import { concurrencyExceeded, spendExceeded, type BudgetUsage, type GradingLimits } from "../grading/jobs/budget";
+import { withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
+import { registerGradingContext, validateIdentity } from "./grading-store";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
-  readonly reviewed_commit?: string; readonly estimated_cost?: number }
+  readonly reviewed_commit?: string; readonly estimated_cost?: number; readonly context?: GradingContext }
 export async function enqueueJob(db: Database, tenant: TenantScope, input: EnqueueInput, limits: GradingLimits): Promise<GradingJob> {
-  if (runnerEntry(input.runner_name)?.network
+  const runner = runnerEntry(input.runner_name);
+  if (!runner) throw new Error(`unknown runner ${input.runner_name}`);
+  if (input.estimated_cost !== undefined && (!Number.isFinite(input.estimated_cost) || input.estimated_cost < 0))
+    throw new Error("estimated_cost must be finite and nonnegative");
+  if (runner.network
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
+  if (input.context) {
+    const { question, evidence, evaluator } = input.context;
+    if (question.question_id !== input.identity.question_id || question.question_version !== input.identity.question_version
+      || evidence.evidence_set_id !== input.identity.evidence_set_id
+      || evaluator.evaluator_definition_id !== input.identity.evaluator_definition_id
+      || evaluator.config_digest !== input.identity.config_digest)
+      throw new Error("context and identity differ");
+    const registered = await registerGradingContext(db, tenant, input.context);
+    if (!registered.ok) throw new Error(registered.error.detail);
+  }
   const digest = runGradeDigest(input.identity, input.reviewed_commit);
   if (!digest.ok) throw new Error(digest.error.detail);
   return withTenant(db, tenant, async (trx) => {
+    const checked = await validateIdentity(trx, tenant, input.identity);
+    if (!checked.ok) throw new Error(checked.error.detail);
+    if (checked.value.evaluator.kind !== runner.kind)
+      throw new Error("runner kind differs from evaluator definition");
+    const { question, evidence } = checked.value;
+    if (evidence.is_incomplete && question.missing_evidence_policy === "fail")
+      throw new Error(evidence.incompleteness_reason ?? "evidence set is incomplete");
+    if (question.requires_repository_snapshot) {
+      const snapshot = repositorySnapshotEligibility(evidence,
+        Number(question.input_recipe.minimum_repository_content ?? 1), input.reviewed_commit ?? "");
+      if (snapshot.tag !== "eligible") throw new Error("repository evidence is not eligible for grading");
+    }
     const item = await trx.selectFrom("observation.item_occurrence as i")
       .innerJoin("observation.source_revision as r", (join) => join
         .onRef("r.revision_id", "=", "i.revision_id")
@@ -37,81 +65,85 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
       .where("idempotency_digest", "=", digest.value).executeTakeFirstOrThrow();
   });
 }
-export async function claimJob(db: Database, tenant: TenantScope, owner: string, limits: GradingLimits): Promise<GradingJob | null> {
+export type ClaimOutcome = { readonly kind: "admitted"; readonly job: GradingJob }
+  | { readonly kind: "deferred"; readonly reason: "concurrency" | "empty" }
+  | { readonly kind: "refused"; readonly job: GradingJob; readonly terminal_cause: "budget_exceeded" | "retry_exhausted" };
+
+/** Admission is serialized per run. The SQL sums use indexed attempt columns, never execution JSON. */
+export async function claimJob(db: Database, tenant: TenantScope, owner: string, limits: GradingLimits): Promise<ClaimOutcome> {
   return withTenant(db, tenant, async (trx) => {
-    const job = await trx.selectFrom("observation.grading_job").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where((eb) => eb.or([eb("state", "in", ["queued", "reclaimable"]),
-        eb.and([eb("state", "=", "claimed"), eb("lease_expires_at", "<", new Date())])]))
-      .orderBy("created_at").limit(1).forUpdate().skipLocked().executeTakeFirst();
-    if (!job) return null;
-    if (job.attempts >= job.retry_limit) {
-      await trx.updateTable("observation.evaluation_execution")
-        .set({ status: "failed", ended_at: new Date(), error: "retry_exhausted" })
+    let deferred = false;
+    const examined: string[] = [];
+    while (true) {
+      let query = trx.selectFrom("observation.grading_job").selectAll()
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
-      return trx.updateTable("observation.grading_job")
-        .set({ state: "terminal", terminal_cause: "retry_exhausted", lease_owner: null, lease_expires_at: null,
-          updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where((eb) => eb.or([eb("state", "in", ["queued", "reclaimable"]),
+          eb.and([eb("state", "=", "claimed"), eb("lease_expires_at", "<", new Date())])]))
+        .orderBy("created_at").limit(1).forUpdate().skipLocked();
+      if (examined.length > 0) query = query.where("job_id", "not in", examined);
+      const job = await query.executeTakeFirst();
+      if (!job) break;
+      examined.push(job.job_id);
+      if (job.attempts > job.retry_limit) {
+        await trx.updateTable("observation.evaluation_execution")
+          .set({ status: "failed", ended_at: new Date(), error: "retry_exhausted" })
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
+        const ended = await trx.updateTable("observation.grading_job")
+          .set({ state: "terminal", terminal_cause: "retry_exhausted", lease_owner: null, lease_expires_at: null,
+            updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+        return { kind: "refused", job: ended, terminal_cause: "retry_exhausted" };
+      }
+      const runLock = await sql<{ locked: boolean }>`SELECT pg_try_advisory_xact_lock(
+        hashtextextended(${`${tenant.producer}:${tenant.namespace}:${job.run_id}:grading`}, 0)) AS locked`.execute(trx);
+      if (!runLock.rows[0]?.locked) { deferred = true; continue; }
+      const active = await trx.selectFrom("observation.grading_job")
+        .select([
+          sql<number>`count(*)::integer`.as("run_claimed"),
+          sql<number>`count(*) FILTER (WHERE stage_id = ${job.stage_id})::integer`.as("stage_claimed"),
+          sql<number>`coalesce(sum(estimated_cost) FILTER (WHERE runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("run_reserved"),
+          sql<number>`coalesce(sum(estimated_cost) FILTER (WHERE stage_id = ${job.stage_id}
+            AND runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("stage_reserved"),
+        ])
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("run_id", "=", job.run_id).where("state", "=", "claimed")
+        .where("lease_expires_at", ">", new Date()).executeTakeFirstOrThrow();
+      const spend = await trx.selectFrom("observation.grading_provider_attempt as a")
+        .innerJoin("observation.grading_job as j", (join) => join
+          .onRef("j.producer", "=", "a.producer").onRef("j.namespace", "=", "a.namespace")
+          .onRef("j.job_id", "=", "a.job_id"))
+        .select([
+          sql<number>`coalesce(sum(CASE WHEN j.state = 'claimed' AND j.lease_expires_at > now()
+            AND j.attempts = a.attempt THEN 0 ELSE a.charged_cost END), 0)`.as("run_spend"),
+          sql<number>`coalesce(sum(CASE WHEN a.stage_id = ${job.stage_id} THEN
+            CASE WHEN j.state = 'claimed' AND j.lease_expires_at > now()
+              AND j.attempts = a.attempt THEN 0 ELSE a.charged_cost END ELSE 0 END), 0)`.as("stage_spend"),
+        ])
+        .where("a.producer", "=", tenant.producer).where("a.namespace", "=", tenant.namespace)
+        .where("a.run_id", "=", job.run_id)
+        .where("j.runner_name", "in", networkRunnerNames).executeTakeFirstOrThrow();
+      const usage: BudgetUsage = { ...active, ...spend };
+      if (concurrencyExceeded(usage, limits)) { deferred = true; continue; }
+      if (spendExceeded(usage, runnerEntry(job.runner_name)?.network ? job.estimated_cost : 0, limits)) {
+        if (job.attempts > 0) await trx.updateTable("observation.evaluation_execution")
+          .set({ status: "failed", ended_at: new Date(), error: "budget_exceeded" })
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
+        const ended = await trx.updateTable("observation.grading_job")
+          .set({ state: job.attempts > 0 ? "terminal" : "skipped_budget",
+            terminal_cause: "budget_exceeded", lease_owner: null, lease_expires_at: null, updated_at: new Date() })
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+        return { kind: "refused", job: ended, terminal_cause: "budget_exceeded" };
+      }
+      const claimed = await trx.updateTable("observation.grading_job").set({ state: "claimed", lease_owner: owner,
+        lease_expires_at: new Date(Date.now() + limits.lease_ms), attempts: job.attempts + 1,
+        updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+      return { kind: "admitted", job: claimed };
     }
-    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenant.producer}:${tenant.namespace}:${job.run_id}:grading`}, 0))`.execute(trx);
-    const active = await trx.selectFrom("observation.grading_job").selectAll()
-      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("state", "=", "claimed").where("lease_expires_at", ">", new Date()).execute();
-    const completed = await trx.selectFrom("observation.evaluation_execution as e")
-      .innerJoin("observation.item_occurrence as i", (join) => join
-        .onRef("i.occurrence_id", "=", "e.subject_occurrence_id")
-        .onRef("i.producer", "=", "e.producer").onRef("i.namespace", "=", "e.namespace"))
-      .innerJoin("observation.source_revision as r", (join) => join
-        .onRef("r.revision_id", "=", "i.revision_id")
-        .onRef("r.producer", "=", "i.producer").onRef("r.namespace", "=", "i.namespace"))
-      .select(["e.cost", "e.provider_attempts", "r.unit_id"]).where("e.producer", "=", tenant.producer)
-      .where("e.namespace", "=", tenant.namespace).where("i.run_id", "=", job.run_id)
-      .execute();
-    // A dispatched attempt is a call in flight or interrupted. While its job still holds a live
-    // lease the reservation already accounts for it, so counting it here too would charge one
-    // call twice; once the lease lapses the reservation is gone and the dispatched record is the
-    // only thing standing between an interrupted paid call and a second admission against zero.
-    const leased = new Set(active.map((row) => row.job_id));
-    const counts = (attempt: Record<string, unknown>): boolean =>
-      attempt.status !== "dispatched" || !leased.has(String(attempt.job_id));
-    const spent = (row: typeof completed[number]): number => Array.isArray(row.provider_attempts) && row.provider_attempts.length > 0
-      ? row.provider_attempts.reduce<number>((sum, attempt) => sum + (
-        attempt && typeof attempt === "object" && !Array.isArray(attempt) && "cost" in attempt
-          && typeof attempt.cost === "number" && counts(attempt as Record<string, unknown>) ? attempt.cost : 0), 0)
-      : row.cost ?? 0;
-    const spend = completed.reduce((sum, row) => sum + spent(row), 0);
-    const stage_spend = completed.filter((row) => row.unit_id === job.stage_id)
-      .reduce((sum, row) => sum + spent(row), 0);
-    const run_active = active.filter((row) => row.run_id === job.run_id);
-    const stage_active = run_active.filter((row) => row.stage_id === job.stage_id);
-    const exceeded = budgetExceeded({ run_claimed: run_active.length, stage_claimed: stage_active.length,
-      run_spend: spend, stage_spend,
-      run_reserved: run_active.reduce((sum, row) => sum + row.estimated_cost, 0),
-      stage_reserved: stage_active.reduce((sum, row) => sum + row.estimated_cost, 0) },
-    job.estimated_cost, limits);
-    if (exceeded) {
-      if (job.attempts > 0) await trx.updateTable("observation.evaluation_execution")
-        .set({ status: "failed", ended_at: new Date(), error: "budget_exceeded" })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("idempotency_digest", "=", job.idempotency_digest).where("status", "=", "running").execute();
-      const skipped = await trx.updateTable("observation.grading_job").set({ state: job.attempts > 0 ? "terminal" : "skipped_budget",
-        terminal_cause: "budget_exceeded", lease_owner: null, lease_expires_at: null, updated_at: new Date() })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
-      await trx.insertInto("observation.evaluation_eligibility").values({ producer: tenant.producer,
-        namespace: tenant.namespace,
-        subject_occurrence_id: job.subject_occurrence_id, question_id: job.question_id,
-        question_version: job.question_version, tag: "skipped_budget",
-        payload: jsonText({ kind: "skipped_budget", detail: "grading cap exceeded" }) })
-        .onConflict((conflict) => conflict.doNothing()).execute();
-      return skipped;
-    }
-    return trx.updateTable("observation.grading_job").set({ state: "claimed", lease_owner: owner,
-      lease_expires_at: new Date(Date.now() + limits.lease_ms), attempts: job.attempts + 1,
-      updated_at: new Date() }).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("job_id", "=", job.job_id).returningAll().executeTakeFirstOrThrow();
+    return { kind: "deferred", reason: deferred ? "concurrency" : "empty" };
   });
 }
 export async function readJob(db: Database, tenant: TenantScope, job_id: string): Promise<GradingJob | undefined> {

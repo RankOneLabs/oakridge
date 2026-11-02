@@ -196,6 +196,24 @@ export interface ObservationGradingJob {
   updated_at: Generated<Date>;
 }
 
+export interface ObservationGradingProviderAttempt {
+  producer: string;
+  namespace: string;
+  job_id: string;
+  attempt: number;
+  run_id: string;
+  stage_id: string;
+  request_sent: Generated<boolean>;
+  outcome: string | null;
+  charged_cost: Generated<number>;
+  admitted_estimate: number;
+  cost_overage: Generated<number>;
+  provider_request_id: string | null;
+  failure_category: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface ObservationIngestReceipt {
   producer: string;
   namespace: string;
@@ -466,6 +484,7 @@ export interface DB {
   "observation.extractor_definition": ObservationExtractorDefinition;
   "observation.grade_observation": ObservationGradeObservation;
   "observation.grading_job": ObservationGradingJob;
+  "observation.grading_provider_attempt": ObservationGradingProviderAttempt;
   "observation.ingest_receipt": ObservationIngestReceipt;
   "observation.item_occurrence": ObservationItemOccurrence;
   "observation.item_relation": ObservationItemRelation;

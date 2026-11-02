@@ -71,7 +71,7 @@ export function unclearChoice(context: GradingContext): string | null {
 }
 
 export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunner {
-  return { kind: "model", async run(context) {
+  return { kind: "model", async run(context, onRequest) {
     if (!config.api_key) return failure(context, config.operation, "provider credential is not configured", "unconfigured_credential");
     const request = systemOneRequest(context);
     if (!request.success) return failure(context, config.operation, "evaluator instruction, evidence or model is invalid", "invalid_request");
@@ -87,6 +87,8 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
     let response: Response;
     const started = Date.now();
     const deadline = AbortSignal.timeout(config.deadline_ms);
+    if (onRequest && !(await onRequest()))
+      return failure(context, config.operation, "grading claim lost before provider request", "invalid_request");
     try {
       response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/systemone`, {
         method: "POST", headers: { "Content-Type": "application/json",

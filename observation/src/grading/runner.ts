@@ -15,6 +15,7 @@ export type ProviderFailureCategory = "unconfigured_credential" | "invalid_reque
   | "invalid_response" | "rate_limit" | "timeout" | "transport" | "http_error";
 export interface GradingError { readonly operation: string; readonly entity_id: string; readonly detail: string;
   readonly category?: ProviderFailureCategory;
+  readonly outcome?: "lost_lease" | "in_progress";
   readonly external_execution_id?: string | null; readonly cost?: number | null }
 export interface GradingContext {
   readonly question: QuestionDefinition;
@@ -56,6 +57,7 @@ export const runnerRegistry = {
 } satisfies Record<string, RunnerRegistryEntry>;
 export type RunnerName = keyof typeof runnerRegistry;
 export const runnerNames = Object.keys(runnerRegistry) as [RunnerName, ...RunnerName[]];
+export const networkRunnerNames = runnerNames.filter((name) => runnerRegistry[name].network);
 export function runnerEntry(name: string): RunnerRegistryEntry | undefined {
   return runnerRegistry[name as RunnerName];
 }
