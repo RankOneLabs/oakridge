@@ -17,6 +17,7 @@ const eligibilityMigration = new URL("./migrations/0011_evaluation_eligibility.s
 const gradingJobMigration = new URL("./migrations/0012_grading_job.sql", import.meta.url);
 const humanCollectionMigration = new URL("./migrations/0013_human_collection_mode.sql", import.meta.url);
 const annotationEvaluatorV2Migration = new URL("./migrations/0014_annotation_evaluator_v2.sql", import.meta.url);
+const dropLangfuseMigration = new URL("./migrations/0015_drop_langfuse.sql", import.meta.url);
 const MINIMUM_SERVER_VERSION = 150000;
 
 export async function migrateEmptyDatabase(db: Database): Promise<void> {
@@ -37,6 +38,7 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
   const gradingJobSql = await Bun.file(gradingJobMigration).text();
   const humanCollectionSql = await Bun.file(humanCollectionMigration).text();
   const annotationEvaluatorV2Sql = await Bun.file(annotationEvaluatorV2Migration).text();
+  const dropLangfuseSql = await Bun.file(dropLangfuseMigration).text();
   const digest = createHash("sha256").update(baseline).digest("hex");
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'observation:baseline'}, 0))`.execute(trx);
@@ -69,8 +71,16 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
     await sql.raw(exportGuardSql).execute(trx);
     const purges = await sql<{ name: string | null }>`SELECT to_regclass('observation.purge_event')::text AS name`.execute(trx);
     if (!purges.rows[0]?.name) await sql.raw(purgeSql).execute(trx);
+    // 0015 removes what 0008 and 0014 add. Once it has run, the generated label_origin no longer
+    // names a Langfuse evaluator, and neither earlier step may run again.
+    const langfuseDropped = await sql<{ dropped: boolean }>`SELECT COALESCE(
+      pg_get_expr(d.adbin, d.adrelid) NOT LIKE '%langfuse%', false) AS dropped
+      FROM pg_attribute a
+      JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = 'observation.grade_observation'::regclass AND a.attname = 'label_origin'`.execute(trx);
+    const isLangfuseDropped = langfuseDropped.rows[0]?.dropped ?? false;
     const langfuseMappings = await sql<{ name: string | null }>`SELECT to_regclass('observation.langfuse_mapping')::text AS name`.execute(trx);
-    if (!langfuseMappings.rows[0]?.name) await sql.raw(langfuseSyncSql).execute(trx);
+    if (!isLangfuseDropped && !langfuseMappings.rows[0]?.name) await sql.raw(langfuseSyncSql).execute(trx);
     const labelOrigin = await sql<{ has_column: boolean }>`SELECT EXISTS (
       SELECT 1 FROM information_schema.columns WHERE table_schema = 'observation'
       AND table_name = 'grade_observation' AND column_name = 'label_origin') AS has_column`.execute(trx);
@@ -96,7 +106,8 @@ export async function migrateEmptyDatabase(db: Database): Promise<void> {
       FROM pg_attribute a
       JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       WHERE a.attrelid = 'observation.grade_observation'::regclass AND a.attname = 'label_origin'`.execute(trx);
-    if (!annotationV2.rows[0]?.knows_v2) await sql.raw(annotationEvaluatorV2Sql).execute(trx);
+    if (!isLangfuseDropped && !annotationV2.rows[0]?.knows_v2) await sql.raw(annotationEvaluatorV2Sql).execute(trx);
+    if (!isLangfuseDropped) await sql.raw(dropLangfuseSql).execute(trx);
   });
 }
 

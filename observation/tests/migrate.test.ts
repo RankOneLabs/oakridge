@@ -9,7 +9,7 @@ import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
 
-integration("0010 through 0014 upgrade 0009 without changing pinned v1 question fields, and extend the generated origin to the v2 annotation evaluator", async () => scratch(async (url) => {
+integration("0010 through 0015 upgrade 0009 without changing pinned v1 question fields, and end with no Langfuse storage or origin", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     const names = ["0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
@@ -41,11 +41,16 @@ integration("0010 through 0014 upgrade 0009 without changing pinned v1 question 
           AND table_name = 'grade_observation' AND column_name = 'label_origin') AS definition`.execute(db);
     expect(humanCollection.rows[0]?.collection_mode).toBe("collection_mode");
     expect(humanCollection.rows[0]?.assignment).toBe("observation.blind_assignment");
-    // 0014 rebuilds the generated origin to recognise 'langfuse-annotation-human/v2' alongside
-    // v1. The two historical classifications are unchanged; only the annotation arm widens.
-    expect(originBefore.rows[0]?.definition).not.toContain("langfuse-annotation-human/v2");
-    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human/v2");
-    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human'");
+    // 0015 drops the 0008 tables and rebuilds the generated origin without the annotation arm.
+    expect(originBefore.rows[0]?.definition).toContain("langfuse-annotation-human");
+    expect(humanCollection.rows[0]?.definition).not.toContain("langfuse");
+    const dropped = await sql<{ mapping: string | null; transition: string | null; quarantine: string | null; check: string }>`
+      SELECT to_regclass('observation.langfuse_mapping')::text AS mapping,
+        to_regclass('observation.langfuse_sync_transition')::text AS transition,
+        to_regclass('observation.langfuse_inbound_quarantine')::text AS quarantine,
+        (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'grade_collection_consistency') AS check`.execute(db);
+    expect(dropped.rows[0]).toMatchObject({ mapping: null, transition: null, quarantine: null });
+    expect(dropped.rows[0]?.check).not.toContain("langfuse");
     expect(humanCollection.rows[0]?.definition).toContain("oakridge_operator_unblinded");
     const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
     expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
@@ -99,7 +104,7 @@ integration("fresh baseline applies and a second apply is a no-op", async () => 
   } finally { await db.destroy(); }
 }));
 
-integration("populated 0001 through 0007 database upgrades additively to Langfuse storage", async () => scratch(async (url) => {
+integration("populated 0001 through 0007 database upgrades without losing rows and ends with no Langfuse storage", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
@@ -121,7 +126,7 @@ integration("populated 0001 through 0007 database upgrades additively to Langfus
       SELECT (SELECT digest FROM observation.schema_baseline) AS digest,
         to_regclass('observation.langfuse_mapping')::text AS mapping,
         (SELECT count(*)::text FROM observation.source_revision) AS revision_count`.execute(db);
-    expect(state.rows[0]).toEqual({ digest, mapping: "observation.langfuse_mapping", revision_count: "1" });
+    expect(state.rows[0]).toEqual({ digest, mapping: null, revision_count: "1" });
     await migrateEmptyDatabase(db);
   } finally { await db.destroy(); }
 }));

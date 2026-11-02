@@ -5,7 +5,6 @@ import { gradingLimits } from "../src/grading/jobs/budget";
 import { readEligibility, recordEligibility } from "../src/storage/eligibility-store";
 import { eligibilityExclusionCounts } from "../src/grading/eligibility";
 import { exclusionReason } from "../src/grading/eligibility";
-import { exclusionCounts, makePopulationManifest } from "../src/langfuse/population-manifest";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { workOneJob } from "../src/grading/jobs/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
@@ -33,16 +32,6 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
     if (!skipped) throw new Error("stored budget exclusion missing");
     const reason = exclusionReason(skipped);
     if (!reason) throw new Error("stored budget exclusion has no population reason");
-    const manifest = makePopulationManifest({ manifest_id: `budget-${cap}`, projection_version: "v1",
-      question_pins: [{ question_id: question.question_id, question_version: question.question_version }],
-      selected: [{ occurrence_id: skipped.subject_occurrence_id, question_id: skipped.question_id,
-        question_version: skipped.question_version, evidence, stratum: "known_failure",
-        disposition: "excluded", reason }] });
-    expect(manifest.ok).toBe(true);
-    if (manifest.ok) {
-      expect(manifest.value.membership[0]?.reason.kind).toBe("skipped_budget");
-      expect(exclusionCounts(manifest.value)[0]?.skipped_budget).toBe(1);
-    }
     expect(claimed?.job_id).toBe(job.job_id);
   }));
 }

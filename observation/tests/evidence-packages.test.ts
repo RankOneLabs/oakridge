@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
@@ -13,7 +12,6 @@ import { registerGradingContext } from "../src/storage/grading-store";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
 import { selectRevision } from "../src/projection/extractor";
-import { buildGraph } from "./dependency-graph";
 
 async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
@@ -23,7 +21,7 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
 
-test("run-slice produces a dry-run manifest without Langfuse dependencies", async () => {
+test("run-slice produces a dry-run manifest", async () => {
   await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json();
   await Bun.file(new URL("../fixtures/oakridge/run-slice/operator-decisions.json", import.meta.url)).json();
   const plan = await captured("plan", "2026-10-23T17:23:49Z");
@@ -70,8 +68,6 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
     && row.decision.tag === "missing_evidence")).toBe(true);
-  const graph = buildGraph([resolve(import.meta.dir, "../src/producers/oakridge/evidence-packages.ts")]);
-  expect([...graph.values()].filter((node) => node.path.includes("/src/langfuse/") || node.packages.some((name) => name.includes("langfuse")))).toEqual([]);
 });
 
 test("a concurrent cohort's brief does not close another brief's assessment window", async () => {
