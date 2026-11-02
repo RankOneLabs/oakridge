@@ -91,7 +91,10 @@ pub fn expand_workflow_templates_value(value: &mut Value) -> Result<(), CompileE
                     merge_fields(&mut expanded, overrides.clone());
                     // A tagged grant is one variant, not a bag of fields:
                     // replacing restricted with unscoped must discard role.
-                    if let Some(grant) = overrides.get("gated_review").filter(|grant| !grant.is_null()) {
+                    if let Some(grant) = overrides
+                        .get("gated_review")
+                        .filter(|grant| !grant.is_null())
+                    {
                         expanded["gated_review"] = grant.clone();
                     }
                 }

@@ -370,37 +370,48 @@ pub(super) fn answered_decision<'a>(
         .find(|revision| &revision.id == decision.target())?;
     Some((revision, decision))
 }
-pub(super) fn feedback_on(state: &StepSnapshot, unit: &UnitId, target_revision: &RevisionId, after: u32) -> Vec<FeedbackEntry> {
-    state.decisions.iter().skip(after as usize).filter_map(|record| {
-        match record {
-            DecisionState::Review { id, unit: decision_unit, review, decision, effect: DecisionEffect::RequestChanges { .. }, target, payload }
-                if decision_unit == unit && target == target_revision =>
-                Some(FeedbackEntry { id: id.clone(), review: review.clone(), decision: decision.clone(), target: target.clone(), payload: payload.clone() }),
-            DecisionState::Validation { id, unit: decision_unit, target, messages, .. }
-                if decision_unit == unit && target == target_revision =>
-                Some(FeedbackEntry { id: id.clone(), review: SymbolKey::from(VALIDATION_REVIEW), decision: SymbolKey::from("request_changes"),
-                    target: target.clone(), payload: serde_json::json!({"feedback": messages.join("; ")}) }),
+pub(super) fn feedback_on(
+    state: &StepSnapshot,
+    unit: &UnitId,
+    target_revision: &RevisionId,
+    after: u32,
+) -> Vec<FeedbackEntry> {
+    state
+        .decisions
+        .iter()
+        .skip(after as usize)
+        .filter_map(|record| match record {
+            DecisionState::Review {
+                id,
+                unit: decision_unit,
+                review,
+                decision,
+                effect: DecisionEffect::RequestChanges { .. },
+                target,
+                payload,
+            } if decision_unit == unit && target == target_revision => Some(FeedbackEntry {
+                id: id.clone(),
+                review: review.clone(),
+                decision: decision.clone(),
+                target: target.clone(),
+                payload: payload.clone(),
+            }),
+            DecisionState::Validation {
+                id,
+                unit: decision_unit,
+                target,
+                messages,
+                ..
+            } if decision_unit == unit && target == target_revision => Some(FeedbackEntry {
+                id: id.clone(),
+                review: SymbolKey::from(VALIDATION_REVIEW),
+                decision: SymbolKey::from("request_changes"),
+                target: target.clone(),
+                payload: serde_json::json!({"feedback": messages.join("; ")}),
+            }),
             _ => None,
-        }
-    }).collect()
-}
-
-#[cfg(test)]
-mod feedback_tests {
-    use super::*;
-
-    #[test]
-    fn a_validation_decision_keeps_its_messages_in_revise_feedback() {
-        let unit = UnitId::from("run/document");
-        let target = RevisionId::from("run/document:draft:1");
-        let state = StepSnapshot { run: RunState { id: "run".into(), root: UnitId::from("run") }, units: vec![], attempts: vec![],
-            revisions: vec![], decisions: vec![DecisionState::Validation { id: DecisionId::from("run/document:d1"),
-                unit: unit.clone(), artifact: SymbolKey::from("draft"), target: target.clone(), messages: vec!["title missing".into(), "body too short".into()] }],
-            retry_events: vec![] };
-        assert_eq!(feedback_on(&state, &unit, &target, 0), vec![FeedbackEntry { id: DecisionId::from("run/document:d1"),
-            review: SymbolKey::from(VALIDATION_REVIEW), decision: SymbolKey::from("request_changes"), target,
-            payload: serde_json::json!({"feedback":"title missing; body too short"}) }]);
-    }
+        })
+        .collect()
 }
 
 /// Previous review of a different subject, followed by every request-change
@@ -412,12 +423,18 @@ pub(super) fn reviewed_before<'a>(
     subject: Option<&RevisionId>,
 ) -> Option<(&'a RevisionState, Vec<FeedbackEntry>)> {
     let revision = artifacts.iter().find_map(|artifact| {
-        state.revisions.iter()
+        state
+            .revisions
+            .iter()
             .filter(|r| r.unit == *unit && r.artifact == *artifact && r.subject.as_ref() != subject)
             .max_by_key(|r| r.seq)
     })?;
-    let feedback = revision.subject.as_ref()
-        .map(|previous_subject| feedback_on(state, unit, previous_subject, revision.decision_cursor))
+    let feedback = revision
+        .subject
+        .as_ref()
+        .map(|previous_subject| {
+            feedback_on(state, unit, previous_subject, revision.decision_cursor)
+        })
         .unwrap_or_default();
     Some((revision, feedback))
 }
@@ -455,4 +472,42 @@ pub(super) fn checked_unit<'a>(
         .iter()
         .find(|candidate| candidate.key.0 == declaration)
         .ok_or_else(|| invalid(format!("checked unit {declaration} absent")))
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+
+    #[test]
+    fn a_validation_decision_keeps_its_messages_in_revise_feedback() {
+        let unit = UnitId::from("run/document");
+        let target = RevisionId::from("run/document:draft:1");
+        let state = StepSnapshot {
+            run: RunState {
+                id: "run".into(),
+                root: UnitId::from("run"),
+            },
+            units: vec![],
+            attempts: vec![],
+            revisions: vec![],
+            decisions: vec![DecisionState::Validation {
+                id: DecisionId::from("run/document:d1"),
+                unit: unit.clone(),
+                artifact: SymbolKey::from("draft"),
+                target: target.clone(),
+                messages: vec!["title missing".into(), "body too short".into()],
+            }],
+            retry_events: vec![],
+        };
+        assert_eq!(
+            feedback_on(&state, &unit, &target, 0),
+            vec![FeedbackEntry {
+                id: DecisionId::from("run/document:d1"),
+                review: SymbolKey::from(VALIDATION_REVIEW),
+                decision: SymbolKey::from("request_changes"),
+                target,
+                payload: serde_json::json!({"feedback":"title missing; body too short"})
+            }]
+        );
+    }
 }

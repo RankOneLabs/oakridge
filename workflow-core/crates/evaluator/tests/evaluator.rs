@@ -781,7 +781,11 @@ fn an_assessment_cannot_be_approved_while_its_subject_is_being_replaced() {
         Some("run/document:critique:1")
     );
     assert_eq!(
-        revise.feedback.iter().map(|entry| &entry.payload).collect::<Vec<_>>(),
+        revise
+            .feedback
+            .iter()
+            .map(|entry| &entry.payload)
+            .collect::<Vec<_>>(),
         vec![&serde_json::json!({"feedback":"Fix the cohort reference"})]
     );
     assert_eq!(
@@ -861,36 +865,70 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
     );
     let first = resolved_for(&first_review, "critic");
     assert!(first.previous.is_none() && first.feedback.is_empty());
-    let after_assessment = step_specs(&program, &first_review.snapshot, &[
-        serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
-        serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Too long"]},"subject":"run/document:draft:1"}),
-        serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
-        serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_build_changes","target":"run/document:draft:1","payload":{"feedback":"Shorten it"}}),
-    ]);
+    let after_assessment = step_specs(
+        &program,
+        &first_review.snapshot,
+        &[
+            serde_json::json!({"op":"started","unit":"run/document","worker":"critic"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"critic","artifact":"critique","body":{"notes":["Too long"]},"subject":"run/document:draft:1"}),
+            serde_json::json!({"op":"ended","unit":"run/document","worker":"critic","result":"succeeded"}),
+            serde_json::json!({"op":"decide","unit":"run/document","review":"critique_check","decision":"request_build_changes","target":"run/document:draft:1","payload":{"feedback":"Shorten it"}}),
+        ],
+    );
     let mut with_feedback = after_assessment.snapshot;
     // Reconstruct an older decision at the start of the shared decision
     // history. The assessment's cursor excludes it even though it names the
     // same build as the two later requests.
-    with_feedback.decisions.insert(0, DecisionState::Review {
-        id: DecisionId::from("run/document:d1"), unit: UnitId::from("run/document"),
-        review: SymbolKey::from("older_feedback"), decision: SymbolKey::from("request_build_changes"),
-        effect: DecisionEffect::RequestChanges { feedback: "Already addressed".to_owned() },
-        target: RevisionId::from("run/document:draft:1"), payload: serde_json::json!({"feedback":"Already addressed"}),
-    });
+    with_feedback.decisions.insert(
+        0,
+        DecisionState::Review {
+            id: DecisionId::from("run/document:d1"),
+            unit: UnitId::from("run/document"),
+            review: SymbolKey::from("older_feedback"),
+            decision: SymbolKey::from("request_build_changes"),
+            effect: DecisionEffect::RequestChanges {
+                feedback: "Already addressed".to_owned(),
+            },
+            target: RevisionId::from("run/document:draft:1"),
+            payload: serde_json::json!({"feedback":"Already addressed"}),
+        },
+    );
     with_feedback.decisions[1] = match &with_feedback.decisions[1] {
-        DecisionState::Review { unit, review, decision, effect, target, payload, .. } => DecisionState::Review {
-            id: DecisionId::from("run/document:d2"), unit: unit.clone(), review: review.clone(),
-            decision: decision.clone(), effect: effect.clone(), target: target.clone(), payload: payload.clone(),
+        DecisionState::Review {
+            unit,
+            review,
+            decision,
+            effect,
+            target,
+            payload,
+            ..
+        } => DecisionState::Review {
+            id: DecisionId::from("run/document:d2"),
+            unit: unit.clone(),
+            review: review.clone(),
+            decision: decision.clone(),
+            effect: effect.clone(),
+            target: target.clone(),
+            payload: payload.clone(),
         },
         _ => unreachable!(),
     };
-    with_feedback.revisions.iter_mut().find(|revision| revision.id.0 == "run/document:critique:1")
-        .unwrap().decision_cursor = 1;
+    with_feedback
+        .revisions
+        .iter_mut()
+        .find(|revision| revision.id.0 == "run/document:critique:1")
+        .unwrap()
+        .decision_cursor = 1;
     with_feedback.decisions.push(DecisionState::Review {
-        id: DecisionId::from("run/document:d3"), unit: UnitId::from("run/document"),
-        review: SymbolKey::from("pr_closed"), decision: SymbolKey::from("closed"),
-        effect: DecisionEffect::RequestChanges { feedback: "PR closed".to_owned() },
-        target: RevisionId::from("run/document:draft:1"), payload: serde_json::json!({"feedback":"PR closed"}),
+        id: DecisionId::from("run/document:d3"),
+        unit: UnitId::from("run/document"),
+        review: SymbolKey::from("pr_closed"),
+        decision: SymbolKey::from("closed"),
+        effect: DecisionEffect::RequestChanges {
+            feedback: "PR closed".to_owned(),
+        },
+        target: RevisionId::from("run/document:draft:1"),
+        payload: serde_json::json!({"feedback":"PR closed"}),
     });
     let reassessment = step_specs(
         &program,
@@ -906,12 +944,33 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
         .iter()
         .find(|wanted| wanted.worker.0 == "critic")
         .unwrap();
-    assert_eq!(critic.resolved.feedback.iter().map(|entry|
-        (entry.id.0.as_str(), entry.review.0.as_str(), entry.decision.0.as_str(), entry.target.0.as_str())
-    ).collect::<Vec<_>>(), vec![
-        ("run/document:d2", "critique_check", "request_build_changes", "run/document:draft:1"),
-        ("run/document:d3", "pr_closed", "closed", "run/document:draft:1"),
-    ]);
+    assert_eq!(
+        critic
+            .resolved
+            .feedback
+            .iter()
+            .map(|entry| (
+                entry.id.0.as_str(),
+                entry.review.0.as_str(),
+                entry.decision.0.as_str(),
+                entry.target.0.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "run/document:d2",
+                "critique_check",
+                "request_build_changes",
+                "run/document:draft:1"
+            ),
+            (
+                "run/document:d3",
+                "pr_closed",
+                "closed",
+                "run/document:draft:1"
+            ),
+        ]
+    );
     assert_eq!(
         (
             &critic.action,
@@ -920,7 +979,12 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
                 .previous
                 .as_ref()
                 .map(|revision| revision.id.0.as_str()),
-            &critic.resolved.feedback.iter().map(|entry| &entry.payload).collect::<Vec<_>>(),
+            &critic
+                .resolved
+                .feedback
+                .iter()
+                .map(|entry| &entry.payload)
+                .collect::<Vec<_>>(),
             critic
                 .resolved
                 .subject
@@ -937,7 +1001,10 @@ fn a_reassessment_reads_the_previous_assessment_and_the_request_that_replaced_it
                 },
             },
             Some("run/document:critique:1"),
-            &vec![&serde_json::json!({"feedback":"Shorten it"}), &serde_json::json!({"feedback":"PR closed"})],
+            &vec![
+                &serde_json::json!({"feedback":"Shorten it"}),
+                &serde_json::json!({"feedback":"PR closed"})
+            ],
             Some("run/document:draft:2"),
         )
     );
@@ -978,8 +1045,16 @@ fn a_retried_reassessment_still_reads_the_assessment_of_the_previous_build() {
         .iter()
         .find(|wanted| wanted.worker.0 == "critic")
         .unwrap();
-    assert_eq!(retried.snapshot.revisions.iter().find(|revision| revision.id.0 == "run/document:critique:2")
-        .unwrap().decision_cursor, 1);
+    assert_eq!(
+        retried
+            .snapshot
+            .revisions
+            .iter()
+            .find(|revision| revision.id.0 == "run/document:critique:2")
+            .unwrap()
+            .decision_cursor,
+        1
+    );
     assert_eq!(
         (
             critic
@@ -987,7 +1062,12 @@ fn a_retried_reassessment_still_reads_the_assessment_of_the_previous_build() {
                 .previous
                 .as_ref()
                 .map(|revision| revision.id.0.as_str()),
-            &critic.resolved.feedback.iter().map(|entry| &entry.payload).collect::<Vec<_>>(),
+            &critic
+                .resolved
+                .feedback
+                .iter()
+                .map(|entry| &entry.payload)
+                .collect::<Vec<_>>(),
         ),
         (
             Some("run/document:critique:1"),
@@ -1429,7 +1509,11 @@ fn revise_receives_the_requested_revision_and_decision_payload() {
                 .previous
                 .as_ref()
                 .map(|revision| revision.id.0.as_str()),
-            &writer.feedback.iter().map(|entry| &entry.payload).collect::<Vec<_>>()
+            &writer
+                .feedback
+                .iter()
+                .map(|entry| &entry.payload)
+                .collect::<Vec<_>>()
         ),
         (
             Some("run/document:draft:1"),
@@ -1549,7 +1633,11 @@ fn revise_answers_the_decision_its_cause_names_not_the_newest() {
                 .previous
                 .as_ref()
                 .map(|revision| revision.id.0.as_str()),
-            &writer.feedback.iter().map(|entry| &entry.payload).collect::<Vec<_>>()
+            &writer
+                .feedback
+                .iter()
+                .map(|entry| &entry.payload)
+                .collect::<Vec<_>>()
         ),
         (
             Some("run/work:plan:1"),

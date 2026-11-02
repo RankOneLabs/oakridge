@@ -813,11 +813,17 @@ pub struct ValidationCheck {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum GatedReviewRole { Builder, Assessor }
+pub enum GatedReviewRole {
+    Builder,
+    Assessor,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GatedReviewAccess { Restricted { role: GatedReviewRole }, Unscoped }
+pub enum GatedReviewAccess {
+    Restricted { role: GatedReviewRole },
+    Unscoped,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

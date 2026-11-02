@@ -175,7 +175,13 @@ fn a_worker_grant_override_replaces_the_tagged_variant() {
         "overrides":{"gated_review":{"kind":"unscoped"}}});
     let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
     let worker = &source.stages["cohort"].workers["builder"];
-    assert!(matches!(worker, Worker::Agent { gated_review: Some(GatedReviewAccess::Unscoped), .. }));
+    assert!(matches!(
+        worker,
+        Worker::Agent {
+            gated_review: Some(GatedReviewAccess::Unscoped),
+            ..
+        }
+    ));
 }
 
 #[test]
