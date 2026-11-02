@@ -76,7 +76,7 @@ export async function migrateEmptyDatabase(db: Database, entries: readonly Migra
       const baselineExists = await assertBaseline(trx, baseline);
       const ledgerExists = await hasLedger(trx);
       if (!ledgerExists) {
-        if (baselineExists) throw new Error(`${SCHEMA} ledger is absent; run storage:adopt on a restored copy before startup`);
+        if (baselineExists) throw new Error(`${SCHEMA} database has a baseline but no migration ledger; recreate it empty`);
         await assertEmpty(trx);
         await sql.raw(migration.source).execute(trx);
         await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${migration.digest})`.execute(trx);

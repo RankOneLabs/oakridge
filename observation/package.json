@@ -8,8 +8,7 @@
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "storage:generate": "bun scripts/generate-storage-records.ts",
     "storage:check": "bun scripts/generate-storage-records.ts --check",
-    "start": "bun src/main.ts",
-    "storage:adopt": "bun src/storage/migrate.ts --adopt"
+    "start": "bun src/main.ts"
   },
   "dependencies": {
     "canonical-json": "workspace:*",
