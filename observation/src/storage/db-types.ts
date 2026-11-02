@@ -149,11 +149,11 @@ export interface ObservationGradeObservation {
   quality_flags: GeneratedJsonColumn<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
+  label_origin: Generated<string | null>;
   collection_mode: string | null;
   blind_assignment_id: string | null;
   model_answers_visible: boolean | null;
   workflow_decisions_visible: boolean | null;
-  label_origin: Generated<string | null>;
 }
 
 export interface ObservationGradingJob {
