@@ -370,8 +370,8 @@ pub(super) fn answered_decision<'a>(
         .find(|revision| &revision.id == decision.target())?;
     Some((revision, decision))
 }
-pub(super) fn feedback_on(state: &StepSnapshot, unit: &UnitId, target_revision: &RevisionId) -> Vec<FeedbackEntry> {
-    state.decisions.iter().filter_map(|record| {
+pub(super) fn feedback_on(state: &StepSnapshot, unit: &UnitId, target_revision: &RevisionId, after: u32) -> Vec<FeedbackEntry> {
+    state.decisions.iter().skip(after as usize).filter_map(|record| {
         if let DecisionState::Review { id, unit: decision_unit, review, decision, effect: DecisionEffect::RequestChanges { .. }, target, payload } = record {
             if decision_unit == unit && target == target_revision {
                 return Some(FeedbackEntry { id: id.clone(), review: review.clone(), decision: decision.clone(), target: target.clone(), payload: payload.clone() });
@@ -395,7 +395,7 @@ pub(super) fn reviewed_before<'a>(
             .max_by_key(|r| r.seq)
     })?;
     let feedback = revision.subject.as_ref()
-        .map(|previous_subject| feedback_on(state, unit, previous_subject))
+        .map(|previous_subject| feedback_on(state, unit, previous_subject, revision.decision_cursor))
         .unwrap_or_default();
     Some((revision, feedback))
 }

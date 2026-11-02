@@ -399,7 +399,7 @@ pub(super) fn resolve_run_worker(
     };
     let (previous, feedback) = match action.mode {
         Mode::Revise => match answered_decision(state, &unit.id, checked.creates(), action.cause) {
-            Some((revision, _decision)) => (Some(revision.clone()), feedback_on(state, &unit.id, &revision.id)),
+            Some((revision, _decision)) => (Some(revision.clone()), feedback_on(state, &unit.id, &revision.id, revision.decision_cursor)),
             None => (None, Vec::new()),
         },
         Mode::Review => match reviewed_before(

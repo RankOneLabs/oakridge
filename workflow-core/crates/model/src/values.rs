@@ -174,6 +174,12 @@ pub struct RevisionState {
     #[serde(with = "crate::wire_numbers::word")]
     #[schemars(schema_with = "crate::wire_numbers::word::schema")]
     pub seq: u32,
+    /// Number of decisions recorded when this revision was published. Together
+    /// with snapshot decision order, this locates the revision in the shared
+    /// revision/decision history without comparing unrelated artifact seqs.
+    #[serde(default, with = "crate::wire_numbers::word")]
+    #[schemars(schema_with = "crate::wire_numbers::word::schema")]
+    pub decision_cursor: u32,
     #[serde(with = "crate::wire_numbers::json")]
     #[schemars(with = "Value")]
     pub body: Value,

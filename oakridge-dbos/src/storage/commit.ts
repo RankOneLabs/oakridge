@@ -503,6 +503,7 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, plan: DeltaP
       .where("action_id", "=", attempt.action_id).where("seq", "=", attempt.seq).execute();
   for (const revision of plan.created_revisions)
     await trx.insertInto("authority.artifact_revision").values({ id: revision.id, run_id, unit_id: revision.unit, artifact: revision.artifact, seq: revision.seq,
+      decision_cursor: revision.decision_cursor ?? 0,
       body: jsonText(revision.body), by_id: revision.by, predecessor_id: revision.predecessor ?? null, subject: revision.subject ?? null }).execute();
   for (const decision of plan.created_decisions) {
     const is_validation = decision.kind === "validation";
