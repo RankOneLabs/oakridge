@@ -7,7 +7,7 @@ import { concurrencyExceeded, spendExceeded, type BudgetUsage, type GradingLimit
 import { withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
 import { registerGradingContext, validateIdentity } from "./grading-store";
-import { deriveSubjectGradeability } from "../producers/oakridge/gradeability";
+import { deriveSubjectGradeability, matchesDerivedEvidence } from "../producers/oakridge/gradeability";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
@@ -20,6 +20,17 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
   if (runner.network
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
+  const derived = await deriveSubjectGradeability(db, tenant, {
+    subject_occurrence_id: input.identity.subject_occurrence_id,
+    question_id: input.identity.question_id, question_version: input.identity.question_version,
+    selection_policy: "live_all_revisions" });
+  if (!derived.ok) throw new Error(derived.error.detail);
+  if (derived.value.decision !== null && (derived.value.decision.tag !== "eligible"
+    || derived.value.decision.payload.evidence_set_id !== input.identity.evidence_set_id))
+    throw new Error("current captured evidence is not eligible for this grading job");
+  if (input.context && derived.value.decision !== null
+    && !matchesDerivedEvidence(input.context.evidence, derived.value))
+    throw new Error("grading context evidence differs from current captured evidence");
   if (input.context) {
     const { question, evidence, evaluator } = input.context;
     if (question.question_id !== input.identity.question_id || question.question_version !== input.identity.question_version
@@ -30,12 +41,6 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
     const registered = await registerGradingContext(db, tenant, input.context);
     if (!registered.ok) throw new Error(registered.error.detail);
   }
-  const derived = await deriveSubjectGradeability(db, tenant, input.identity.subject_occurrence_id,
-    input.identity.question_id, input.identity.question_version);
-  if (!derived.ok) throw new Error(derived.error.detail);
-  if (derived.value.decision !== null && (derived.value.decision.tag !== "eligible"
-    || derived.value.decision.payload.evidence_set_id !== input.identity.evidence_set_id))
-    throw new Error("current captured evidence is not eligible for this grading job");
   const digest = runGradeDigest(input.identity, input.reviewed_commit);
   if (!digest.ok) throw new Error(digest.error.detail);
   return withTenant(db, tenant, async (trx) => {
@@ -44,6 +49,8 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
     if (checked.value.evaluator.kind !== runner.kind)
       throw new Error("runner kind differs from evaluator definition");
     const { question, evidence } = checked.value;
+    if (derived.value.decision !== null && !matchesDerivedEvidence(evidence, derived.value))
+      throw new Error("stored evidence differs from current captured evidence");
     if (evidence.is_incomplete && question.missing_evidence_policy === "fail")
       throw new Error(evidence.incompleteness_reason ?? "evidence set is incomplete");
     if (question.requires_repository_snapshot) {

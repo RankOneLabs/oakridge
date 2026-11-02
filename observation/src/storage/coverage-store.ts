@@ -28,8 +28,8 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
 async function readQuestionCoverage(db: Database, tenant: TenantScope, selection: CoverageSelection): Promise<CoverageProjection> {
   const question_id = selection.question_id!;
   const question_version = selection.question_version!;
-  const derived = await readDerivedEligibility(db, tenant, question_id, question_version,
-    "live_all_revisions", selection.run_id);
+  const derived = await readDerivedEligibility(db, tenant, { question_id, question_version,
+    selection_policy: "live_all_revisions", run_id: selection.run_id });
   if (!derived.ok) {
     if (derived.error.code === "unknown_question_pin") return { run_id: selection.run_id,
       selection_revision_id: selection.revision_id, query_version: COVERAGE_QUERY_VERSION,

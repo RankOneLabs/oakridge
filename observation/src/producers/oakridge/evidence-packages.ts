@@ -149,13 +149,14 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
       && revision.recorded_at >= brief.recorded_at
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
+    const current_assessment = assessments.at(-1);
     for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
-      const dangling = assessments.flatMap((assessment) => assessment.items.flatMap((item) => item.links
+      const dangling = current_assessment ? current_assessment.items.flatMap((item) => item.links
         .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
           && link.target_item_kind === "criterion"
           && link.target_local_id === criterion.producer_local_id
           && link.target_scope !== criterion.item_scope)
-        .map((link) => link.evidence_ref)));
+        .map((link) => link.evidence_ref)) : [];
       if (dangling.length > 0) {
         exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
           reason: { kind: "dangling_citation", evidence_refs: dangling } });

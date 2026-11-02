@@ -2,6 +2,7 @@ import type { ItemOccurrenceId, QuestionId } from "../../domain/identity";
 import { err, ok, type Result } from "../../domain/primitives";
 import type { EligibilityDecision, EligibilityRow } from "../../grading/eligibility";
 import type { EvidenceSet } from "../../grading/evidence";
+import { canonicalJson } from "../../canonical/canonical-json";
 import type { RevisionSelection } from "../../grading/evidence-packages/capture";
 import { withTenant, type Database, type TenantScope } from "../../storage/database";
 import { loadRunCapture } from "../../storage/run-capture-store";
@@ -20,6 +21,13 @@ export interface GradeabilityInput {
   readonly question_id: QuestionId;
   readonly question_version: string;
   readonly selection_policy: RevisionSelection["policy"];
+}
+export type SubjectGradeabilitySelection = Omit<GradeabilityInput, "run_id">;
+export interface EligibilityReadSelection {
+  readonly question_id: string;
+  readonly question_version: string;
+  readonly selection_policy: RevisionSelection["policy"];
+  readonly run_id?: string;
 }
 export interface GradeabilityResult {
   /** Null means this question has no Oakridge capture recipe; registered generic grading remains available. */
@@ -56,10 +64,21 @@ export async function deriveGradeability(db: Database, tenant: TenantScope, inpu
   return ok({ decision: row.decision, evidence });
 }
 
+export function matchesDerivedEvidence(candidate: EvidenceSet, derived: GradeabilityResult): boolean {
+  if (derived.decision?.tag !== "eligible" || !derived.evidence
+    || candidate.evidence_set_id !== derived.decision.payload.evidence_set_id) return false;
+  const content = (evidence: EvidenceSet) => ({ evidence_set_id: evidence.evidence_set_id,
+    references: evidence.references, is_incomplete: evidence.is_incomplete,
+    incompleteness_reason: evidence.incompleteness_reason });
+  const actual = canonicalJson(content(candidate));
+  const expected = canonicalJson(content(derived.evidence));
+  return actual.ok && expected.ok && actual.value === expected.value;
+}
+
 export async function deriveSubjectGradeability(db: Database, tenant: TenantScope,
-  subject_occurrence_id: ItemOccurrenceId, question_id: QuestionId, question_version: string,
-  selection_policy: RevisionSelection["policy"] = "live_all_revisions")
+  selection: SubjectGradeabilitySelection)
   : Promise<Result<GradeabilityResult, GradeabilityError>> {
+  const { subject_occurrence_id, question_id, question_version, selection_policy } = selection;
   const subject = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
     .select("run_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("occurrence_id", "=", subject_occurrence_id).executeTakeFirst());
@@ -70,9 +89,9 @@ export async function deriveSubjectGradeability(db: Database, tenant: TenantScop
 }
 
 export async function readDerivedEligibility(db: Database, tenant: TenantScope,
-  question_id: string, question_version: string,
-  policy: RevisionSelection["policy"] = "live_all_revisions", run_id?: string)
+  selection: EligibilityReadSelection)
   : Promise<Result<readonly EligibilityRow[], GradeabilityError>> {
+  const { question_id, question_version, selection_policy, run_id } = selection;
   if (!isPilotQuestionPin(question_id, question_version))
     return err({ operation: "gradeability", entity_id: question_id, detail: "unknown pilot question pin",
       code: "unknown_question_pin" });
@@ -83,7 +102,7 @@ export async function readDerivedEligibility(db: Database, tenant: TenantScope,
   });
   const rows: EligibilityRow[] = [];
   for (const id of run_ids) {
-    const built = await packagesForRun(db, tenant, id, policy);
+    const built = await packagesForRun(db, tenant, id, selection_policy);
     if (!built.ok) return built;
     rows.push(...built.value.eligibility.filter((item) => item.question_id === question_id).map((item) => ({
       producer: tenant.producer, namespace: tenant.namespace,

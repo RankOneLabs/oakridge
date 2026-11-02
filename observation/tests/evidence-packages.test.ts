@@ -21,6 +21,7 @@ import { instructionDigest } from "../src/grading/evaluator";
 import { runGradeDigest } from "../src/grading/execution";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { gradingLimits } from "../src/grading/jobs/budget";
+import { enqueueJob } from "../src/storage/grading-job-store";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import type { EvaluationJobResponse } from "../src/http/evaluations";
 
@@ -158,6 +159,20 @@ test("a broken assesses scope excludes only the named criterion", async () => {
     ?.decision.tag).toBe("eligible");
 });
 
+test("a corrected assessment clears a dangling citation from an older revision", async () => {
+  const brief = await captured("brief", "2026-10-23T17:29:56Z");
+  const assessment = await captured("assessment", "2026-10-23T17:40:00Z");
+  const broken: CapturedRevision = { ...assessment, revision_id: "assessment-broken",
+    items: assessment.items.map((item) => ({ ...item,
+      links: item.links.map((link) => link.type === "assesses" && link.target_local_id === "criterion-lineage"
+        ? { ...link, target_scope: "wrong-scope" } : link) })) };
+  const corrected: CapturedRevision = { ...assessment, revision_id: "assessment-corrected",
+    recorded_at: new Date("2026-10-23T17:45:00Z") };
+  const result = runPackages([brief, broken, corrected]);
+  expect(result.ok && result.value.eligibility.filter((row) => row.question_id === "assessment.coverage")
+    .every((row) => row.decision.tag === "eligible")).toBe(true);
+});
+
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("ingested revisions change derived HTTP gradeability from missing to eligible", async () =>
   scratchGrading(async (db) => {
@@ -195,8 +210,9 @@ integration("ingested revisions change derived HTTP gradeability from missing to
     const row = rows.find((item) => item.tag === "eligible" && !!item.payload.evidence_set_id);
     expect(row).toBeDefined();
     if (!row) return;
-    const derived = await deriveSubjectGradeability(db, tenant, row.subject_occurrence_id,
-      "brief.source_fidelity" as QuestionId, "v2");
+    const derived = await deriveSubjectGradeability(db, tenant, {
+      subject_occurrence_id: row.subject_occurrence_id, question_id: "brief.source_fidelity" as QuestionId,
+      question_version: "v2", selection_policy: "live_all_revisions" });
     expect(derived.ok && derived.value.evidence?.references.map((ref) => ref.ref.split(":")[0]))
       .toEqual(["plan_criterion", "brief_criterion"]);
     if (!derived.ok || !derived.value.evidence) return;
@@ -208,6 +224,26 @@ integration("ingested revisions change derived HTTP gradeability from missing to
     const model = { ...evaluator("model"), model: "jev-1.14.0", instruction_text,
       prompt_digest: instructionDigest(instruction_text) };
     const context = { question, evidence: derived.value.evidence, evaluator: model };
+    const identity = { subject_occurrence_id: row.subject_occurrence_id,
+      evidence_set_id: derived.value.evidence.evidence_set_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: model.evaluator_definition_id,
+      config_digest: model.config_digest, attempt_label: "pilot-first" };
+    const altered = { ...derived.value.evidence, references: derived.value.evidence.references.map((ref, index) =>
+      index === 0 ? { ...ref, content: "altered content" } : ref) };
+    await expect(enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "altered" },
+      context: { ...context, evidence: altered }, runner_name: "jev_direct", estimated_cost: 0.01 }, gradingLimits()))
+      .rejects.toThrow("grading context evidence differs from current captured evidence");
+    const alteredJob = await app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade", "content-type": "application/json" },
+      body: JSON.stringify({ identity: { ...identity, attempt_label: "altered-http" },
+        context: { ...context, evidence: altered }, runner: "jev_direct", estimated_cost: 0.01 }) });
+    expect(alteredJob.status).toBe(422);
+    const unregisteredAssignment = await app.request("/v1/blind-assignments", { method: "POST",
+      headers: { authorization: "Bearer grade", "content-type": "application/json" },
+      body: JSON.stringify({ subject_occurrence_id: row.subject_occurrence_id,
+        evidence_set_id: derived.value.evidence.evidence_set_id,
+        question_id: "brief.source_fidelity", question_version: "v2" }) });
+    expect(unregisteredAssignment.status).toBe(409);
     expect((await registerGradingContext(db, tenant, context)).ok).toBe(true);
     const assignment = await app.request("/v1/blind-assignments", { method: "POST",
       headers: { authorization: "Bearer grade", "content-type": "application/json" },
@@ -215,10 +251,6 @@ integration("ingested revisions change derived HTTP gradeability from missing to
         evidence_set_id: derived.value.evidence.evidence_set_id,
         question_id: "brief.source_fidelity", question_version: "v2" }) });
     expect(assignment.status).toBe(201);
-    const identity = { subject_occurrence_id: row.subject_occurrence_id,
-      evidence_set_id: derived.value.evidence.evidence_set_id, question_id: question.question_id,
-      question_version: question.question_version, evaluator_definition_id: model.evaluator_definition_id,
-      config_digest: model.config_digest, attempt_label: "pilot-first" };
     let providerCalls = 0;
     const runner = createJevDirectRunner({ api_key: "controlled", base_url: "https://provider.test/v1",
       transport: async (_url, init) => {

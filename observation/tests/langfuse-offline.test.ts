@@ -153,8 +153,9 @@ integration("pilot measures captured revisions through the real app and reports 
   const selected = [] as PilotRunPlan["population"]["selected"][number][];
   const attempts = [] as PilotRunPlan["attempts"][number][];
   for (const [index, row] of rows.entries()) {
-    const derived = await deriveSubjectGradeability(db, tenant, row.subject_occurrence_id,
-      question.question_id, question.question_version);
+    const derived = await deriveSubjectGradeability(db, tenant, {
+      subject_occurrence_id: row.subject_occurrence_id, question_id: question.question_id,
+      question_version: question.question_version, selection_policy: "live_all_revisions" });
     if (!derived.ok || !derived.value.evidence) throw new Error("captured evidence missing");
     const evidence = derived.value.evidence;
     const identity = { subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: evidence.evidence_set_id,

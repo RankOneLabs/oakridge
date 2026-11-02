@@ -61,8 +61,8 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     const policy = params.get("selection_policy") ?? "live_all_revisions";
     if (policy !== "live_all_revisions" && policy !== "historical_latest_per_unit_kind")
       return errorResponse(c, 400, "invalid_selection", "unknown revision selection policy");
-    const derived = await readDerivedEligibility(deps.db, credential, question_id, question_version,
-      policy, params.get("run_id") ?? undefined);
+    const derived = await readDerivedEligibility(deps.db, credential, { question_id, question_version,
+      selection_policy: policy, run_id: params.get("run_id") ?? undefined });
     return derived.ok ? c.json({ items: derived.value })
       : derived.error.detail === "no captured revisions for run"
         ? errorResponse(c, 403, "forbidden", "run is unavailable to this credential")
@@ -119,8 +119,6 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
-      const registered = await registerGradingContext(deps.db, credential, context);
-      if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
     try {
       const job = await enqueueJob(deps.db, credential, { identity, runner_name: parsed.data.runner,
