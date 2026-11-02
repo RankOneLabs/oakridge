@@ -4,7 +4,7 @@ import { listGrades, readExecution, registerGradingContext, runGrade } from "../
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
 import { withTenant } from "../src/storage/database";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { LANGFUSE_PILOT_QUESTIONS_V1 as LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { LANGFUSE_PILOT_QUESTIONS_V1 as LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import { instructionDigest } from "../src/grading/evaluator";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { registerGradingContext, runGrade } from "../src/storage/grading-store";

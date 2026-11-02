@@ -6,7 +6,7 @@ import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { repositorySnapshotEligibility } from "../grading/eligibility";
-import { evaluatorIdentity, instructionDigest, isLangfuseAnnotationEvaluator,
+import { blindSubmissionIsValid, evaluatorIdentity, instructionDigest,
   type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
@@ -39,6 +39,9 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
   const { question, evidence, evaluator } = context;
   if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
     return failure("register_context", question.question_id, "choice question requires allowed values");
+  if (question.unclear_value != null && (question.response_kind !== "choice"
+    || !question.allowed_values?.includes(question.unclear_value)))
+    return failure("register_context", question.question_id, "unclear value must be an allowed choice");
   const digest = evaluatorIdentity(evaluator);
   if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
   if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
@@ -52,9 +55,9 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
       const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
         .where("question_version", "=", question.question_version).executeTakeFirst();
-      if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
+      if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.unclear_value, q.missing_evidence_policy,
         q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot],
-        [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
+        [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.unclear_value ?? null, question.missing_evidence_policy,
           question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot]))
         return failure("register_context", question.question_id, "question definition identity conflict");
       if (q && ((q.question_text !== null && q.question_text !== question.question_text)
@@ -64,6 +67,7 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         question_id: question.question_id, question_version: question.question_version,
         target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
         response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : jsonText(asJson(question.allowed_values)),
+        unclear_value: question.unclear_value ?? null,
         missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
         unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
         requires_repository_snapshot: question.requires_repository_snapshot,
@@ -322,8 +326,7 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         .returningAll().executeTakeFirstOrThrow();
       if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
         terminal_cause: outcome ? null : blocked || missing ? "ineligible"
-          : !result.ok && result.error.operation === "disclosure"
-          ? "disclosure_refused" : !result.ok && result.error.category === "invalid_response"
+          : !result.ok && result.error.category === "invalid_response"
             ? "invalid_outcome" : !result.ok && (["rate_limit", "timeout", "transport", "http_error"] as const)
               .some((category) => category === result.error.category) ? "retry_exhausted"
               : !result.ok && result.error.operation === "evaluate" ? "invalid_outcome" : "runner_failed",
@@ -391,8 +394,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
       if (!details.collection_mode || details.model_answers_visible === undefined || details.workflow_decisions_visible === undefined)
         return failure("human_grade", identity.subject_occurrence_id, "collection mode and visibility required");
       if (details.collection_mode === "blind") {
-        const is_imported_annotation = isLangfuseAnnotationEvaluator(identity.evaluator_definition_id);
-        if ((!details.blind_assignment_id && !is_imported_annotation) || details.model_answers_visible || details.workflow_decisions_visible)
+        if (!blindSubmissionIsValid(details, identity.evaluator_definition_id))
           return failure("human_grade", identity.subject_occurrence_id, "blind submission requires a hidden claimed assignment");
         if (details.blind_assignment_id) {
           const assignment = await trx.selectFrom("observation.blind_assignment").selectAll()

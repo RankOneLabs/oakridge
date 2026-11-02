@@ -8,6 +8,7 @@ export interface CapturedItem extends SelectedItem {
 export interface CapturedRevision {
   readonly revision_id: string;
   readonly unit_id: string;
+  readonly collection_key: string | null;
   readonly artifact_kind: string;
   readonly recorded_at: Date;
   readonly predecessor_id?: string | null;
@@ -18,7 +19,7 @@ export interface CapturedRevision {
 export function latestRevisions(revisions: readonly CapturedRevision[]): readonly CapturedRevision[] {
   const latest = new Map<string, CapturedRevision>();
   for (const revision of revisions) {
-    const key = `${revision.unit_id}\u0000${revision.artifact_kind}`;
+    const key = `${revision.collection_key}\u0000${revision.unit_id}\u0000${revision.artifact_kind}`;
     const current = latest.get(key);
     if (!current || revision.recorded_at > current.recorded_at) latest.set(key, revision);
   }

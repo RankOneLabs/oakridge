@@ -15,7 +15,7 @@ export interface EvidenceReference {
   readonly is_unreadable?: boolean;
   readonly incompleteness_reason?: string;
 }
-/** Pre-migration rows can lack classification and are denied by disclosure. */
+/** Pre-classification rows can lack a kind; export and redaction handle them explicitly. */
 export type StoredEvidenceReference = Omit<EvidenceReference, "kind"> & { readonly kind?: EvidenceKind };
 export interface EvidenceSet {
   readonly evidence_set_id: EvidenceSetId;

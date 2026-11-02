@@ -18,7 +18,7 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
   try {
     return await withTenant(db, tenant, async (trx) => {
       const revisions = await trx.selectFrom("observation.source_revision")
-        .select(["revision_id", "unit_id", "artifact_kind", "artifact_schema_version", "body", "recorded_at", "predecessor_id"])
+        .select(["revision_id", "unit_id", "collection_key", "artifact_kind", "artifact_schema_version", "body", "recorded_at", "predecessor_id"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("run_id", "=", run_id).execute();
       if (revisions.length === 0) return err({ operation: "run_capture", entity_id: run_id, detail: "no captured revisions for run" });
@@ -36,7 +36,8 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
             item.item_selector, item.item_id_or_path));
           return occurrence_id ? [{ ...item, occurrence_id, revision_id: revision.revision_id }] : [];
         });
-        return { revision_id: revision.revision_id, unit_id: revision.unit_id, artifact_kind: revision.artifact_kind,
+        return { revision_id: revision.revision_id, unit_id: revision.unit_id, collection_key: revision.collection_key,
+          artifact_kind: revision.artifact_kind,
           recorded_at: revision.recorded_at, predecessor_id: revision.predecessor_id, items };
       }));
     });

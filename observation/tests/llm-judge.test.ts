@@ -48,6 +48,17 @@ test("explicit insufficient evidence choice becomes an abstention with full dist
   if (result.ok) expect(result.value.probabilities).toEqual(answer.probabilities);
 });
 
+test("explicit unclear value records unclear separately from abstention", async () => {
+  const unclearContext = { ...context, question: { ...context.question,
+    allowed_values: ["faithful", "changed", "unclear_value", "insufficient_evidence"],
+    unclear_value: "unclear_value" } };
+  const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
+    transport: async () => completion({ choice: "unclear_value", confidence: 0.2,
+      probabilities: { faithful: 0.2, changed: 0.2, unclear_value: 0.4, insufficient_evidence: 0.2 } }) });
+  const result = await runner.run(unclearContext);
+  expect(result.ok && result.value.answer).toEqual({ state: "unclear", kind: "choice", reason: "unclear_value" });
+});
+
 test("a low-confidence non-abstain choice stays answered", async () => {
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
     transport: async () => completion({ ...answer, confidence: 0.01,

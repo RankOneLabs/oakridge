@@ -50,7 +50,13 @@ the new shape.
 
 ## Pilot catalogue and evidence boundary
 
-The four `v1` definitions, one per stage, live in `observation/src/grading/catalogue/langfuse-pilot.ts`.
+The four original `v1` definitions remain immutable in `observation/src/grading/catalogue/langfuse-pilot.ts`.
+The three choice questions have `v2` definitions with distinct `unclear` and
+`insufficient_evidence` values. `assessment.coverage` remains Boolean at `v1`.
+
+Previously published direct Jev walkthrough results used a superseded evidence builder
+and v1 choices. They remain historical observations and require a rerun through the
+current production package path before comparison with current pilot measurements.
 Their pinned recipes live in `observation/src/langfuse/evidence-recipe.ts`.
 Each projected reference carries only its role, source ref, digest and deep link;
 whole artifact bodies, raw code and specification text remain in the observation

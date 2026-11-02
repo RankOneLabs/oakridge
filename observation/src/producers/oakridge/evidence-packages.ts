@@ -38,36 +38,41 @@ function itemsOf(revisions: readonly CapturedRevision[], artifact_kind: string, 
     .flatMap((revision) => revision.items.filter((item) => item.item_kind === item_kind));
 }
 
-/** A brief sees the most recent matching plan that existed at its capture time. */
-function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevision): CapturedRevision | undefined {
-  return revisions.filter((revision) => revision.artifact_kind === "plan" && revision.recorded_at <= brief.recorded_at)
-    .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
+/** A collection identifies the cohort; only revisions of one unit can supersede each other. */
+function cohortRevision(revisions: readonly CapturedRevision[], subject: CapturedRevision, artifact_kind: string)
+  : CapturedRevision | undefined {
+  if (subject.collection_key === null) return undefined;
+  const matching = revisions.filter((revision) => revision.collection_key === subject.collection_key
+    && revision.artifact_kind === artifact_kind);
+  const units = new Set(matching.map((revision) => revision.unit_id));
+  if (units.size !== 1) return undefined;
+  return matching.sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
 }
 
-/** The item body is withheld; a later disclosure gate can only project addresses and
- * digests. Classification is derived from the declared sensitivity of the source body
- * field, so a field reclassified as public or repository content becomes disclosable
- * without touching this producer. */
+/** References pin the selected content, its canonical digest, and its source address. */
 function reference(role: string, artifact_kind: string, item: CapturedItem) {
   const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
   if (!kind.ok) return err({ operation: "evidence_packages" as const, entity_id: item.occurrence_id,
     detail: kind.error.detail });
-  return capturedReference(role, item, kind.value);
+  return capturedReference(role, item, kind.value, item.selected_value);
 }
 
 function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "plan")) {
-    const task_revision = revisions.filter((candidate) => candidate.artifact_kind === "tasks"
-      && candidate.recorded_at <= revision.recorded_at)
-      .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
+    const task_revision = cohortRevision(revisions, revision, "tasks");
     const tasks = task_revision ? task_revision.items.filter((item) => item.item_kind === "task") : null;
     const decisions = revision.items.filter((item) => item.item_kind === "decision");
     for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
       const eligibility = planCriterionEligibility(criterion, { tasks, plan_decisions: decisions });
       if (!eligibility.ok) return err({ operation: "evidence_packages", entity_id: criterion.occurrence_id, detail: eligibility.error.detail });
       const outcome = eligibility.value;
+      if (outcome.kind === "tasks_uncaptured") {
+        exclusions.push({ question_id: "plan.criterion_traceability", occurrence_id: criterion.occurrence_id,
+          reason: { kind: "unevidenced" } });
+        continue;
+      }
       if (outcome.kind === "uncited" || outcome.kind === "dangling_citation") {
         exclusions.push({ question_id: "plan.criterion_traceability", occurrence_id: criterion.occurrence_id,
           reason: outcome.kind === "uncited" ? { kind: "uncited" } : { kind: "dangling_citation", evidence_refs: outcome.evidence_refs } });
@@ -78,8 +83,7 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
         ...cited.map((task) => reference("plan_task", task_revision?.artifact_kind ?? "tasks", task)),
         ...outcome.decisions.map((decision) => reference("plan_decision", revision.artifact_kind, decision))]);
       if (!references.ok) return references;
-      const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value,
-        outcome.kind === "tasks_uncaptured" ? "the run's tasks revision was not captured" : null);
+      const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value, null);
       if (!evidence.ok) return evidence;
       packages.push({ question_id: "plan.criterion_traceability", subject: criterion,
         revision_id: revision.revision_id, evidence: evidence.value });
@@ -92,7 +96,7 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "brief")) {
-    const plan = planAtBrief(revisions, revision);
+    const plan = cohortRevision(revisions, revision, "plan");
     const plan_criteria = plan?.items.filter((item) => item.item_kind === "criterion") ?? [];
     for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
       const link = criterion.links.find((candidate) => candidate.type === "derived_from"
@@ -106,7 +110,7 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
         && item.producer_local_id === link.target_local_id);
       if (!source) {
         exclusions.push({ question_id: "brief.source_fidelity", occurrence_id: criterion.occurrence_id,
-          reason: { kind: "dangling_citation", evidence_refs: [link.evidence_ref] } });
+          reason: plan ? { kind: "dangling_citation", evidence_refs: [link.evidence_ref] } : { kind: "unevidenced" } });
         continue;
       }
       const references = collectReferences([reference("plan_criterion", plan?.artifact_kind ?? "plan", source),
@@ -121,27 +125,9 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
 }
 
-const criterionKey = (scope: string | null, local_id: string | null): string => `${scope}\u0000${local_id}`;
-
-/** Every brief criterion an assessment's findings explicitly assess. */
-function assessedCriterionKeys(assessment: CapturedRevision): ReadonlySet<string> {
-  return new Set(assessment.items.flatMap((item) => item.links
-    .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
-      && link.target_item_kind === "criterion")
-    .map((link) => criterionKey(link.target_scope, link.target_local_id))));
-}
-
-/** A brief and its assessment sit in different units — `briefs/<cohort>` against
- * `implementation/<cohort>` — and no captured revision links them structurally. Criterion
- * identity is flat and run-unique, so an `assesses` link names exactly one brief revision's
- * criterion and is the reliable key. An assessment that assesses no captured brief criterion
- * at all cannot be placed that way; it is attributed by capture time, which is what lets a
- * findings-free assessment still answer coverage negatively. */
+/** Assessment ownership comes from the authority collection, including empty assessments. */
 function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevision): boolean {
-  const assessed = assessedCriterionKeys(assessment);
-  if (assessed.size === 0) return true;
-  return brief.items.some((item) => item.item_kind === "criterion"
-    && assessed.has(criterionKey(item.item_scope, item.producer_local_id)));
+  return assessment.collection_key !== null && assessment.collection_key === brief.collection_key;
 }
 
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
@@ -156,13 +142,26 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
     // supersedes this brief.
-    const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id);
+    const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id
+      && candidate.collection_key === brief.collection_key);
     const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
       && assessmentCoversBrief(revision, brief)
       && revision.recorded_at >= brief.recorded_at
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
+    const current_assessment = assessments.at(-1);
     for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
+      const dangling = current_assessment ? current_assessment.items.flatMap((item) => item.links
+        .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
+          && link.target_item_kind === "criterion"
+          && link.target_local_id === criterion.producer_local_id
+          && link.target_scope !== criterion.item_scope)
+        .map((link) => link.evidence_ref)) : [];
+      if (dangling.length > 0) {
+        exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+          reason: { kind: "dangling_citation", evidence_refs: dangling } });
+        continue;
+      }
       if (needs_repository) {
         eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
           decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",

@@ -3,7 +3,9 @@ import { sql } from "kysely";
 import { err, ok, type Result } from "../domain/primitives";
 import type { BlindAssignmentId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
+import type { EvidenceSet } from "../grading/evidence";
 import { withTenant, type Database, type TenantScope } from "./database";
+import { deriveSubjectGradeability, matchesDerivedEvidence } from "../producers/oakridge/gradeability";
 
 export type BlindAssignmentIdentity = Pick<EvaluationIdentity,
   "subject_occurrence_id" | "evidence_set_id" | "question_id" | "question_version">;
@@ -35,15 +37,24 @@ export function assignmentState(row: { readonly submitted_observation_id: string
 export async function createBlindAssignment(db: Database, tenant: TenantScope, identity: BlindAssignmentIdentity)
   : Promise<Result<BlindAssignmentView, BlindAssignmentError>> {
   try {
+    const derived = await deriveSubjectGradeability(db, tenant, {
+      subject_occurrence_id: identity.subject_occurrence_id, question_id: identity.question_id,
+      question_version: identity.question_version, selection_policy: "live_all_revisions" });
+    if (!derived.ok || (derived.value.decision !== null && (derived.value.decision.tag !== "eligible"
+      || derived.value.decision.payload.evidence_set_id !== identity.evidence_set_id)))
+      return failure(identity.subject_occurrence_id, "current captured evidence is not eligible for a blind assignment");
     return await withTenant(db, tenant, async (trx) => {
-      const eligible = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("subject_occurrence_id", "=", identity.subject_occurrence_id)
-        .where("question_id", "=", identity.question_id).where("question_version", "=", identity.question_version)
-        .orderBy("recorded_at", "desc").executeTakeFirst();
-      if (!eligible || eligible.tag !== "eligible" ||
-        (eligible.payload as { evidence_set_id?: string }).evidence_set_id !== identity.evidence_set_id)
-        return failure(identity.subject_occurrence_id, "eligible frozen subject and evidence required");
+      if (derived.value.decision !== null) {
+        const stored = await trx.selectFrom("observation.evidence_set").selectAll()
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("evidence_set_id", "=", identity.evidence_set_id).executeTakeFirst();
+        const evidence: EvidenceSet | null = stored ? {
+          evidence_set_id: identity.evidence_set_id, references: stored.evidence_refs as unknown as EvidenceSet["references"],
+          is_incomplete: stored.is_incomplete, incompleteness_reason: stored.incompleteness_reason,
+        } : null;
+        if (!evidence || !matchesDerivedEvidence(evidence, derived.value))
+          return failure(identity.subject_occurrence_id, "stored evidence differs from current captured evidence");
+      }
       const assignment_id = randomUUID() as BlindAssignmentId;
       const row = await trx.insertInto("observation.blind_assignment").values({
         producer: tenant.producer, namespace: tenant.namespace, assignment_id, ...identity,

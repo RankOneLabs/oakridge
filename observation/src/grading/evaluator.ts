@@ -39,3 +39,10 @@ export const LANGFUSE_ANNOTATION_EVALUATOR_IDS = ["langfuse-annotation-human",
 export const LANGFUSE_ANNOTATION_EVALUATOR_ID = "langfuse-annotation-human/v2";
 export const isLangfuseAnnotationEvaluator = (evaluator_definition_id: string): boolean =>
   (LANGFUSE_ANNOTATION_EVALUATOR_IDS as readonly string[]).includes(evaluator_definition_id);
+
+export function blindSubmissionIsValid(details: { readonly blind_assignment_id?: string | null;
+  readonly model_answers_visible: boolean; readonly workflow_decisions_visible: boolean },
+  evaluator_definition_id: string): boolean {
+  return !details.model_answers_visible && !details.workflow_decisions_visible
+    && (!!details.blind_assignment_id || isLangfuseAnnotationEvaluator(evaluator_definition_id));
+}

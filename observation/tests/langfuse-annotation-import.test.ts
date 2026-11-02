@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createApp } from "../src/http/app";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { LANGFUSE_PILOT_QUESTIONS_V1 as LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import type { EvidenceSetId, ExecutionId } from "../src/domain/identity";
 import { importLangfuseAnnotation } from "../src/langfuse/annotation-import";
 import { createLangfuseHttpClient } from "../src/langfuse/http-client";

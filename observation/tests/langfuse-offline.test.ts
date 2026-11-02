@@ -7,13 +7,16 @@ import type { JsonValue } from "../src/domain/primitives";
 import { createApp } from "../src/http/app";
 import { langfuseConfigFromEnv } from "../src/langfuse/config";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
-import type { EvidenceSet } from "../src/grading/evidence";
 import type { EvaluatorDefinition } from "../src/grading/evaluator";
 import type { ItemOccurrenceId } from "../src/domain/identity";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { isNetworkRunner, runPilot, type PilotRunner, type PilotRunPlan } from "../scripts/langfuse-pilot-run";
 import { dropScratchDatabase } from "./database-fixture";
+import { deriveSubjectGradeability } from "../src/producers/oakridge/gradeability";
+import { createJevDirectRunner } from "../src/runners/jev-direct";
+import { workOneJob } from "../src/grading/jobs/worker";
+import { gradingLimits } from "../src/grading/jobs/budget";
 
 const tenant = { producer: "oakridge", namespace: "langfuse-offline" };
 const credentials = { ingest: [{ ...tenant, token: "ingest-token" }],
@@ -116,131 +119,86 @@ test("pilot runner uses authenticated HTTP instead of opening observation storag
   expect(source).not.toMatch(/openDatabase\s*\(|withTenant\s*\(|from ["']\.\.\/src\/storage\/database["']/);
 });
 
-test("pilot reads tenant-qualified source revisions with a read credential", async () => {
-  const catalogue = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"];
+integration("pilot measures captured revisions through the real app and reports a refused attempt", async () => scratch(async (db) => {
+  const app = createApp({ db, credentials });
+  const body = await Bun.file(new URL("../fixtures/oakridge/run-slice/plan-revision.json", import.meta.url)).json() as {
+    cohorts: { acceptance_criteria: { id: string; text: string; task_ids: string[]; decision_ids: string[] }[] }[] };
+  body.cohorts[0]!.acceptance_criteria = Array.from({ length: 10 }, (_, index) => ({
+    id: `criterion-${index}`, text: `Criterion ${index}`, task_ids: [], decision_ids: ["decision-capture"] }));
+  const digest = canonicalDigest(body);
+  if (!digest.ok) throw new Error(digest.error.detail);
+  const delivered = await app.request("/v1/sources/oakridge/sync", { method: "POST", headers: {
+    authorization: "Bearer ingest-token", "idempotency-key": "pilot-plan", "content-type": "application/json" },
+    body: JSON.stringify({ format: "observation.artifact-revision/v1", source: { ...tenant,
+      revision_id: `${tenant.producer}:${tenant.namespace}:pilot-plan`, run_id: "pilot-run", unit_id: "planning/slice", collection_key: "slice",
+      artifact_kind: "plan", artifact_schema_version: "development-v1",
+      definition_bundle: { id: "development", digest: "fixture-bundle" } },
+      recorded_at: "2026-10-28T10:00:00.000Z", body, body_digest: digest.value }) });
+  expect(delivered.status).toBe(201);
+  const catalogue = LANGFUSE_PILOT_QUESTIONS["plan.criterion_traceability"];
   const question = catalogue.definition;
-  const evidence: EvidenceSet = { evidence_set_id: "pilot-evidence" as EvidenceSet["evidence_set_id"],
-    references: [], is_incomplete: false, incompleteness_reason: null };
-  const evaluator: EvaluatorDefinition = { evaluator_definition_id: "pilot-code", kind: "code",
-    backend_kind: "local", provider: "pilot-test", model: null,
-    prompt_digest: instructionDigest("pilot-test"), instruction_text: "pilot-test", config_digest: "pilot-config",
-    runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
-  const occurrence_ids = Array.from({ length: 10 }, (_, index) => `occurrence-${index}` as ItemOccurrenceId);
-  const strata = ["clearly_easy", "borderline", "known_failure"] as const;
-  const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-http", projection_version: "1",
-    question_pins: [{ question_id: question.question_id, question_version: question.question_version }],
-    selected: occurrence_ids.map((occurrence_id, index) => ({ occurrence_id,
+  const eligibility = await app.request(`/v1/evaluation-eligibility?question_id=${question.question_id}&question_version=${question.question_version}&run_id=pilot-run`,
+    { headers: { authorization: "Bearer read-token" } });
+  expect(eligibility.status).toBe(200);
+  const rows = (await eligibility.json() as { items: { subject_occurrence_id: ItemOccurrenceId; tag: string;
+    payload: { evidence_set_id: string } }[] }).items.filter((row) => row.tag === "eligible");
+  expect(rows).toHaveLength(10);
+  const model: EvaluatorDefinition = { evaluator_definition_id: "pilot-model", kind: "model",
+    backend_kind: "local", provider: "typesafe", model: "jev-1.14.0",
+    prompt_digest: instructionDigest(JSON.stringify({ system_one: { type: "choice", instructions: "Judge traceability",
+      criteria: Object.fromEntries(question.allowed_values!.map((value) => [value, String(value)])) } })),
+    instruction_text: JSON.stringify({ system_one: { type: "choice", instructions: "Judge traceability",
+      criteria: Object.fromEntries(question.allowed_values!.map((value) => [value, String(value)])) } }),
+    config_digest: "pilot-config", runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
+  const selected = [] as PilotRunPlan["population"]["selected"][number][];
+  const attempts = [] as PilotRunPlan["attempts"][number][];
+  for (const [index, row] of rows.entries()) {
+    const derived = await deriveSubjectGradeability(db, tenant, {
+      subject_occurrence_id: row.subject_occurrence_id, question_id: question.question_id,
+      question_version: question.question_version, selection_policy: "live_all_revisions" });
+    if (!derived.ok || !derived.value.evidence) throw new Error("captured evidence missing");
+    const evidence = derived.value.evidence;
+    const identity = { subject_occurrence_id: row.subject_occurrence_id, evidence_set_id: evidence.evidence_set_id,
       question_id: question.question_id, question_version: question.question_version,
-      evidence, stratum: strata[index % strata.length]!, disposition: "included", reason: { kind: "operator", detail: "selected" } })) },
-    attempts: occurrence_ids.map((occurrence_id) => ({ identity: { subject_occurrence_id: occurrence_id,
-      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
-      question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
-      config_digest: evaluator.config_digest, attempt_label: "first" },
-      context: { question, evidence, evaluator }, runner: "deterministic", split: "exploratory",
-      question_text: catalogue.text, disagreement_cause: null })),
-    human_grades: [], annotation_imports: [], examples: [] };
-  const revision_reads: string[] = [];
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
-    const path = new URL(request.url).pathname;
-    const token = request.headers.get("authorization");
-    const expected = request.method === "GET" || path === "/v1/exports/assay"
-      ? "Bearer read-token" : "Bearer grade-token";
-    if (token !== expected) return Response.json({ error: "forbidden" }, { status: 403 });
-    if (path === "/v1/evaluation-eligibility") return Response.json({ items: occurrence_ids.map((occurrence_id) => ({
-      ...tenant, subject_occurrence_id: occurrence_id, question_id: question.question_id,
-      question_version: question.question_version, tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } })) });
-    if (path.startsWith("/v1/items/") && path.endsWith("/grades"))
-      return Response.json({ items: [], total: 0, limit: 200, offset: 0 });
-    if (path.startsWith("/v1/items/")) return Response.json({ ...tenant, revision_id: "local-revision" });
-    if (path.startsWith("/v1/source-revisions/")) {
-      const identity = decodeURIComponent(path.slice("/v1/source-revisions/".length));
-      if (identity !== `${tenant.producer}:${tenant.namespace}:local-revision`)
-        return Response.json({ error: "not_found" }, { status: 404 });
-      revision_reads.push(identity);
-      return Response.json({ revision_id: "local-revision" });
-    }
-    if (path.startsWith("/v1/evaluations/by-digest/"))
-      return Response.json({ error: "not_found" }, { status: 404 });
-    if (path === "/v1/evaluations") return Response.json({ error: "not_graded" }, { status: 422 });
-    if (path === "/v1/exports/assay") return Response.json({ error: "not_exported" }, { status: 409 });
-    return Response.json({ error: "not_found" }, { status: 404 });
-  } });
+      evaluator_definition_id: model.evaluator_definition_id, config_digest: index === 9 ? "refused-config" : model.config_digest,
+      attempt_label: "pilot" };
+    const context = { question, evidence, evaluator: model };
+    selected.push({ occurrence_id: row.subject_occurrence_id, question_id: question.question_id,
+      question_version: question.question_version, evidence,
+      stratum: (["clearly_easy", "borderline", "known_failure"] as const)[index % 3]!,
+      disposition: "included", reason: { kind: "operator", detail: "selected" } });
+    attempts.push({ identity, context, runner: "jev_direct", split: "exploratory", question_text: catalogue.text,
+      disagreement_cause: null, estimated_cost: 0.01 });
+  }
+  const runner = createJevDirectRunner({ api_key: "controlled", base_url: "https://provider.test/v1",
+    transport: async () => Response.json({ model: "jev-1.14.0", answers: { [question.question_id]: {
+      type: "choice", choice: "traceable", confidence: 0.8,
+      probabilities: Object.fromEntries(question.allowed_values!.map((value) => [value, value === "traceable" ? 0.7 : 0.1])) } },
+      usage: { input_tokens: 10, output_tokens: 2 }, cost: 0.01, id: "controlled" }) });
+  for (const attempt of attempts.slice(0, 9)) {
+    const response = await app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade-token", "content-type": "application/json" },
+      body: JSON.stringify({ identity: attempt.identity, context: attempt.context, runner: "jev_direct", estimated_cost: 0.01 }) });
+    expect(response.status).toBe(201);
+    await workOneJob(db, tenant, { ...gradingLimits(), run_spend: 10, stage_spend: 10 }, "pilot-worker", runner);
+  }
+  const server = Bun.serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
   try {
+    const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-real", projection_version: "1",
+      question_pins: [{ question_id: question.question_id, question_version: question.question_version }], selected },
+      attempts, human_grades: [], annotation_imports: [], examples: [] };
     const environment = { OBSERVATION_PILOT_BASE_URL: `http://127.0.0.1:${server.port}`,
       OBSERVATION_PILOT_GRADE_TOKEN: "grade-token", OBSERVATION_PILOT_READ_TOKEN: "read-token" };
     await expect(runPilot(plan, { ...environment, OBSERVATION_PILOT_READ_TOKEN: "wrong-token" }))
       .rejects.toThrow("eligibility read failed: 403");
-    let did_freeze = false;
-    const result = await runPilot(plan, environment, async () => { did_freeze = true; });
-    expect(did_freeze).toBe(true);
-    expect(revision_reads).toHaveLength(10);
-    expect(result.measurements).toHaveLength(10);
+    const result = await runPilot(plan, environment);
+    expect(result.population.membership.filter((member) => member.disposition === "included")).toHaveLength(10);
+    expect(result.measurements).toHaveLength(9);
+    expect(result.operations.some((entry) => entry.operation === "enqueue" && entry.status >= 300)).toBe(true);
+    expect(result.operations.some((entry) => entry.operation === "measurement"
+      && entry.status === 409 && entry.detail.includes("no execution"))).toBe(true);
   } finally { server.stop(); }
-});
-
-test("a network-runner pilot attempt goes through the durable queue, not the synchronous route", async () => {
-  const catalogue = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"];
-  const question = catalogue.definition;
-  const evidence: EvidenceSet = { evidence_set_id: "queued-evidence" as EvidenceSet["evidence_set_id"],
-    references: [], is_incomplete: false, incompleteness_reason: null };
-  const evaluator: EvaluatorDefinition = { evaluator_definition_id: "pilot-model", kind: "model",
-    backend_kind: "local", provider: "typesafe", model: "jev-latest",
-    prompt_digest: instructionDigest("pilot-test"), instruction_text: "pilot-test", config_digest: "pilot-config",
-    runtime_revision: "1", cost_metadata: null, seed: null, attempt_controls: null };
-  const occurrence_ids = Array.from({ length: 10 }, (_, index) => `queued-${index}` as ItemOccurrenceId);
-  const strata = ["clearly_easy", "borderline", "known_failure"] as const;
-  const plan: PilotRunPlan = { tenant, population: { manifest_id: "pilot-queued", projection_version: "1",
-    question_pins: [{ question_id: question.question_id, question_version: question.question_version }],
-    selected: occurrence_ids.map((occurrence_id, index) => ({ occurrence_id,
-      question_id: question.question_id, question_version: question.question_version,
-      evidence, stratum: strata[index % strata.length]!, disposition: "included", reason: { kind: "operator", detail: "selected" } })) },
-    attempts: occurrence_ids.map((occurrence_id) => ({ identity: { subject_occurrence_id: occurrence_id,
-      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
-      question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
-      config_digest: evaluator.config_digest, attempt_label: "first" },
-      context: { question, evidence, evaluator }, runner: "jev_direct", split: "exploratory",
-      question_text: catalogue.text, disagreement_cause: null, estimated_cost: 0.01 })),
-    human_grades: [], annotation_imports: [], examples: [] };
-
-  const synchronous_calls: string[] = [];
-  const enqueued: { readonly estimated_cost: unknown; readonly runner: unknown }[] = [];
-  const projected: string[] = [];
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const path = new URL(request.url).pathname;
-    if (path === "/v1/evaluation-eligibility") return Response.json({ items: occurrence_ids.map((occurrence_id) => ({
-      ...tenant, subject_occurrence_id: occurrence_id, question_id: question.question_id,
-      question_version: question.question_version, tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } })) });
-    if (path.startsWith("/v1/items/") && path.endsWith("/grades"))
-      return Response.json({ items: [], total: 0, limit: 200, offset: 0 });
-    if (path.startsWith("/v1/items/")) return Response.json({ ...tenant, revision_id: "local-revision" });
-    if (path.startsWith("/v1/source-revisions/")) return Response.json({ revision_id: "local-revision" });
-    if (path === "/v1/evaluation-jobs") {
-      const body = await request.json() as { estimated_cost: unknown; runner: unknown };
-      enqueued.push({ estimated_cost: body.estimated_cost, runner: body.runner });
-      // Already settled, so the pilot resolves the execution without polling.
-      return Response.json({ job_id: `job-${enqueued.length}`, state: "terminal",
-        idempotency_digest: `digest-${enqueued.length}` }, { status: 201 });
-    }
-    if (path.startsWith("/v1/evaluations/by-digest/"))
-      return Response.json({ execution: { execution_id: `execution-${path.split("-").at(-1)}` } });
-    if (path === "/v1/evaluations") { synchronous_calls.push(path);
-      return Response.json({ error: { code: "queued_evaluation_required" } }, { status: 422 }); }
-    if (path === "/v1/langfuse/projections") { projected.push(path); return Response.json({ recorded: true }); }
-    if (path === "/v1/exports/assay") return Response.json({ error: "not_exported" }, { status: 409 });
-    return Response.json({ error: "not_found" }, { status: 404 });
-  } });
-  try {
-    const result = await runPilot(plan, { OBSERVATION_PILOT_BASE_URL: `http://127.0.0.1:${server.port}`,
-      OBSERVATION_PILOT_GRADE_TOKEN: "grade-token", OBSERVATION_PILOT_READ_TOKEN: "read-token" });
-    // The synchronous route refuses network runners, so the pilot must never reach for it.
-    expect(synchronous_calls).toEqual([]);
-    expect(enqueued).toHaveLength(10);
-    expect(enqueued.every((job) => job.runner === "jev_direct" && job.estimated_cost === 0.01)).toBe(true);
-    expect(projected).toHaveLength(10);
-    expect(result.operations.filter((entry) => entry.operation === "enqueue"
-      && entry.status === 201)).toHaveLength(10);
-  } finally { server.stop(); }
-});
+}));
 
 test("only the three provider runners are routed through the queue", () => {
   const network: readonly PilotRunner[] = ["jev_direct", "fastino_glide", "llm_judge"];

@@ -62,9 +62,11 @@ export function systemOneRequest(context: GradingContext): ReturnType<typeof sys
     questions: { [context.question.question_id]: recipe.data.system_one } });
 }
 
-/** The question's "Choose <value> when ..." instruction designates one exact option. */
+/** New questions carry a validated value; historical definitions retain their prose designation. */
 export function unclearChoice(context: GradingContext): string | null {
   const allowed = context.question.allowed_values?.filter((value): value is string => typeof value === "string") ?? [];
+  if (context.question.unclear_value != null)
+    return allowed.includes(context.question.unclear_value) ? context.question.unclear_value : null;
   const designated = /^\s*Choose\s+(.+?)\s+when\b/iu.exec(context.question.unclear_semantics)?.[1]?.trim();
   const matches = allowed.filter((value) => value === designated);
   return matches.length === 1 ? matches[0]! : null;
@@ -119,10 +121,12 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
         return failure(context, config.operation, "provider choice distribution omits an option",
           "invalid_response", parsed.data.id, parsed.data.cost);
     }
+    const is_insufficient = answer.type === "choice" && answer.choice === "insufficient_evidence"
+      && context.question.unclear_value != null;
     const is_unclear = answer.type === "choice" && answer.choice === unclear_choice;
     const mapped = answer.type === "choice"
-      ? { answer: is_unclear
-        ? { state: "unclear", kind: "choice", reason: answer.choice } as const
+      ? { answer: is_insufficient || is_unclear
+        ? { state: is_insufficient ? "abstain" : "unclear", kind: "choice", reason: answer.choice } as const
         : { state: "answered", kind: "choice", value: answer.choice } as const,
         probabilities: answer.probabilities, confidence: answer.confidence }
       : answer.type === "score"
