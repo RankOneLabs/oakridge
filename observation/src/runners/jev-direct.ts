@@ -42,9 +42,9 @@ export interface SystemOneRunnerConfig {
 }
 
 function failure(context: GradingContext, operation: string, detail: string,
-  category: ProviderFailureCategory, external_execution_id?: string | null): RunnerResult {
+  category: ProviderFailureCategory, external_execution_id?: string | null, cost?: number | null): RunnerResult {
   return err({ operation, entity_id: context.evaluator.evaluator_definition_id, detail,
-    category, external_execution_id } satisfies GradingError);
+    category, external_execution_id, cost } satisfies GradingError);
 }
 
 export function systemOneRequest(context: GradingContext): ReturnType<typeof systemOneRequestSchema.safeParse> {
@@ -71,7 +71,7 @@ export function unclearChoice(context: GradingContext): string | null {
 }
 
 export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunner {
-  return { kind: "model", async run(context) {
+  return { kind: "model", async run(context, onRequest) {
     if (!config.api_key) return failure(context, config.operation, "provider credential is not configured", "unconfigured_credential");
     const request = systemOneRequest(context);
     if (!request.success) return failure(context, config.operation, "evaluator instruction, evidence or model is invalid", "invalid_request");
@@ -87,6 +87,8 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
     let response: Response;
     const started = Date.now();
     const deadline = AbortSignal.timeout(config.deadline_ms);
+    if (onRequest && !(await onRequest()))
+      return failure(context, config.operation, "grading claim lost before provider request", "invalid_request");
     try {
       response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/systemone`, {
         method: "POST", headers: { "Content-Type": "application/json",
@@ -106,13 +108,16 @@ export function createSystemOneRunner(config: SystemOneRunnerConfig): GradeRunne
     const parsed = systemOneResponseSchema.safeParse(raw);
     if (!parsed.success) return failure(context, config.operation, "provider response does not match System One schema", "invalid_response");
     const answer = parsed.data.answers[context.question.question_id];
-    if (!answer || answer.type !== question.type) return failure(context, config.operation, "provider answer does not match question", "invalid_response");
+    if (!answer || answer.type !== question.type) return failure(context, config.operation,
+      "provider answer does not match question", "invalid_response", parsed.data.id, parsed.data.cost);
     if (answer.type === "choice" && question.type === "choice") {
       if (!context.question.allowed_values?.includes(answer.choice))
-        return failure(context, config.operation, "provider choice is outside question vocabulary", "invalid_choice");
+        return failure(context, config.operation, "provider choice is outside question vocabulary",
+          "invalid_response", parsed.data.id, parsed.data.cost);
       const options = Object.keys(question.criteria);
       if (!options.includes(answer.choice) || options.some((option) => !(option in answer.probabilities)))
-        return failure(context, config.operation, "provider choice distribution omits an option", "invalid_response");
+        return failure(context, config.operation, "provider choice distribution omits an option",
+          "invalid_response", parsed.data.id, parsed.data.cost);
     }
     const is_unclear = answer.type === "choice" && answer.choice === unclear_choice;
     const mapped = answer.type === "choice"

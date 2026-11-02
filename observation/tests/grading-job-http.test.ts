@@ -4,6 +4,7 @@ import { workOneJob } from "../src/grading/jobs/worker";
 import { gradingLimits } from "../src/grading/jobs/budget";
 import { registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
+import { enqueueJob } from "../src/storage/grading-job-store";
 import type { GradeRunner } from "../src/ports/grade-runner";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
@@ -50,6 +51,31 @@ integration("network runner requires the durable route and its pending job is re
   expect((await readAs("/v1/items/" + encodeURIComponent(occurrence_id) + "/grades")).status).toBe(200);
 }));
 
+integration("enqueue checks supplied and stored identity, evaluator kind and evidence", async () => scratchGrading(async (db, occurrence_id) => {
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "direct" };
+  const context = { question, evidence, evaluator: evaluator("model") };
+  const limits = gradingLimits();
+  await expect(enqueueJob(db, tenant, { identity, context, runner_name: "deterministic" }, limits))
+    .rejects.toThrow("runner kind differs");
+  await expect(enqueueJob(db, tenant, { identity: { ...identity, question_id: "missing" as typeof question.question_id },
+    runner_name: "stub_model" }, limits)).rejects.toThrow("question definition does not exist");
+  const incomplete = { ...evidence, evidence_set_id: "incomplete-evidence" as typeof evidence.evidence_set_id,
+    is_incomplete: true, incompleteness_reason: "missing pinned source" };
+  await expect(enqueueJob(db, tenant, { identity: { ...identity, evidence_set_id: incomplete.evidence_set_id },
+    context: { question, evidence: incomplete, evaluator: evaluator("model") }, runner_name: "stub_model" }, limits))
+    .rejects.toThrow("missing pinned source");
+  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+  const bad = await app.request("/v1/evaluation-jobs", { method: "POST",
+    headers: { authorization: "Bearer grade-token", "content-type": "application/json" },
+    body: JSON.stringify({ identity: { ...identity, attempt_label: "http-bad" }, context,
+      runner: "deterministic" }) });
+  expect(bad.status).toBe(400);
+  expect((await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job")
+    .select("job_id").execute()))).toHaveLength(0);
+}));
+
 integration("grade operator fences an abandoned manual execution and retries with a new attempt", async () => scratchGrading(async (db, occurrence_id) => {
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
@@ -63,6 +89,8 @@ integration("grade operator fences an abandoned manual execution and retries wit
   const held: GradeRunner = { kind: "model", async run() { entered(); await waiting; return runner.run({} as never); } };
   const pending = runGrade(db, tenant, { identity, runner: held });
   await started;
+  const contended = await runGrade(db, tenant, { identity, runner });
+  expect(contended.ok ? null : contended.error.outcome).toBe("in_progress");
   const execution = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
     .selectAll().executeTakeFirstOrThrow());
   const path = `/v1/evaluation-executions/${execution.execution_id}/recover`;

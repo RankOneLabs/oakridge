@@ -18,53 +18,61 @@ const completionSchema = z.object({ id: z.string().min(1), model: z.string().min
 export type JudgeTransport = (url: string, init: RequestInit) => Promise<Response>;
 export interface JudgeConfig { readonly api_key: string | undefined; readonly base_url: string;
   readonly transport?: JudgeTransport; readonly deadline_ms?: number }
-function failure(context: GradingContext, detail: string, external_execution_id?: string | null): RunnerResult {
+function failure(context: GradingContext, detail: string, category: import("../grading/runner").ProviderFailureCategory,
+  external_execution_id?: string | null): RunnerResult {
   return err({ operation: "llm_judge", entity_id: context.evaluator.evaluator_definition_id, detail,
-    external_execution_id });
+    category, external_execution_id });
 }
 
 /** A single atomic, pinned rubric over an explicit, bounded evidence allowlist. */
 export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
-  return { kind: "model", async run(context) {
-    if (!config.api_key) return failure(context, "judge credential is not configured");
+  return { kind: "model", async run(context, onRequest) {
+    if (!config.api_key) return failure(context, "judge credential is not configured", "unconfigured_credential");
     if (!context.evaluator.model || context.question.response_kind !== "choice")
-      return failure(context, "judge requires a pinned model and choice question");
+      return failure(context, "judge requires a pinned model and choice question", "invalid_request");
     const values = context.question.allowed_values;
     if (!values || !values.every((value): value is string => typeof value === "string")
       || !values.includes("insufficient_evidence"))
-      return failure(context, "judge question requires explicit insufficient_evidence choice");
+      return failure(context, "judge question requires explicit insufficient_evidence choice", "invalid_choice");
     const recipe = judgeRecipeSchema.safeParse(context.question.input_recipe);
-    if (!recipe.success) return failure(context, "judge recipe is invalid");
+    if (!recipe.success) return failure(context, "judge recipe is invalid", "invalid_request");
     const references = recipe.data.judge.evidence_refs.map((ref) => context.evidence.references.find((item) => item.ref === ref));
     if (references.some((ref) => !ref) || recipe.data.judge.evidence_refs.some((ref) =>
       /(?:original|assessor).*(?:verdict|decision)|(?:verdict|decision).*(?:original|assessor)/i.test(ref)))
-      return failure(context, "judge evidence selection is missing or includes a hidden verdict");
+      return failure(context, "judge evidence selection is missing or includes a hidden verdict", "invalid_request");
     const selected = references.map((reference) => ({ ref: reference!.ref, content: reference!.content }));
     const evidence = JSON.stringify(selected);
     if (evidence.length > recipe.data.judge.max_evidence_chars)
-      return failure(context, "judge evidence exceeds its pinned bound");
+      return failure(context, "judge evidence exceeds its pinned bound", "invalid_request");
     const prompt = { rubric: recipe.data.judge.rubric, target: recipe.data.judge.target,
       allowed_values: values, evidence,
       instruction: "Return JSON with choice, probabilities for every allowed value, confidence and optional explanation. Judge only the named target. Do not infer correctness from an explanation." };
     let response: Response;
     const started = Date.now();
+    const deadline = AbortSignal.timeout(config.deadline_ms ?? 30_000);
+    if (onRequest && !(await onRequest()))
+      return failure(context, "grading claim lost before provider request", "invalid_request");
     try { response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST", signal: AbortSignal.timeout(config.deadline_ms ?? 30_000), headers: { Authorization: `Bearer ${config.api_key}`, "Content-Type": "application/json" },
+      method: "POST", signal: deadline, headers: { Authorization: `Bearer ${config.api_key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: context.evaluator.model, temperature: 0, response_format: { type: "json_object" },
         messages: [{ role: "user", content: JSON.stringify(prompt) }] }),
-    }); } catch { return failure(context, "judge transport failed"); }
-    if (!response.ok) return failure(context, `judge HTTP ${response.status}`, response.headers.get("x-request-id"));
+    }); } catch { return failure(context, deadline.aborted ? "judge timeout" : "judge transport failed",
+      deadline.aborted ? "timeout" : "transport"); }
+    if (!response.ok) return failure(context, `judge HTTP ${response.status}`,
+      response.status === 429 ? "rate_limit" : "http_error", response.headers.get("x-request-id"));
     let raw: unknown;
-    try { raw = await response.json(); } catch { return failure(context, "judge response is not JSON"); }
+    try { raw = await response.json(); } catch { return failure(context,
+      deadline.aborted ? "judge timeout" : "judge response is not JSON",
+      deadline.aborted ? "timeout" : "invalid_response"); }
     const completion = completionSchema.safeParse(raw);
-    if (!completion.success) return failure(context, "judge completion does not match expected schema");
+    if (!completion.success) return failure(context, "judge completion does not match expected schema", "invalid_response");
     let content: unknown;
     try { content = JSON.parse(completion.data.choices[0]!.message.content); }
-    catch { return failure(context, "judge answer is not JSON"); }
+    catch { return failure(context, "judge answer is not JSON", "invalid_response"); }
     const answer = judgeAnswerSchema.safeParse(content);
     if (!answer.success || !values.includes(answer.data.choice)
       || values.some((value) => !(value in answer.data.probabilities)))
-      return failure(context, "judge answer does not match question choices");
+      return failure(context, "judge answer does not match question choices", "invalid_response");
     const is_insufficient = answer.data.choice === "insufficient_evidence";
     const is_unclear = answer.data.choice === "unclear";
     return ok({ answer: is_insufficient || is_unclear

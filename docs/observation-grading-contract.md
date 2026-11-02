@@ -54,6 +54,14 @@ the evaluation context, as the direct Jev walkthrough in
 
 The idempotency digest is canonical JSON v1 over the ordered tuple `(subject_occurrence_id, evidence_set_id, question_id, question_version, evaluator_definition_id, config_digest, attempt_label)`. When `reviewed_commit` is supplied, a versioned digest of that tuple and the commit is used instead. Reusing a label and commit means retrying the same measurement; a deliberate repeat uses a different label. The interfaces in `observation/src/ports/` keep external evaluation backends, artifact producers, and JSONL/Assay experiment exporters outside the service's dependency tree. The local evaluation backend is a no-op mirror; the PostgreSQL grading store is authoritative.
 
+## Queued grading admission
+
+`claimJob` reports `admitted`, `deferred`, or `refused`. Run and stage concurrency limits defer work in `queued` or `reclaimable` state, and the scheduler considers later jobs in other stages and runs. Spend refusal records `budget_exceeded` on the job only; it does not change subject eligibility or blind assignment availability. A zero spend cap refuses network grading while local grading can proceed. A zero concurrency cap defers every claim. Invalid environment limits fail with the variable name instead of silently using a fallback.
+
+`retry_limit` counts retries after the first attempt. A value of zero allows one attempt. Migration `0018_grading_attempt_accounting.sql` subtracts one from each live job's earlier total-attempt limit and leaves terminal history unchanged. Claims and settlement are fenced by job, lease owner, and attempt number. A lost lease means a worker must discard its result; a completed remote call may still have been charged.
+
+`grading_provider_attempt` records each network `(job_id, attempt)` with separate request-sent, outcome, and charge fields. Before a provider request is issued, an attempt has `request_sent=false` and zero charge. A sent request carries its admitted estimate until a provider-reported cost replaces it. Reported overages remain visible and count against subsequent admissions. Run and stage spend are aggregated from the structured attempt records in SQL. The execution's `provider_attempts` JSON remains an audit record and is no longer the admission accounting source.
+
 ## Direct System One provider contract
 
 `EvaluatorDefinition.instruction_text` is JSON containing `system_one` (question type, instructions, criteria) and optional `state_fields`. Registration requires `prompt_digest` to equal the canonical digest of that exact text. A changed instruction needs a new evaluator id and creates a new evaluator identity; stored evaluator rows remain immutable. The pilot question's `input_recipe` stays the evidence descriptor `{recipe_id, recipe_version, input_roles, output_roles, projected_fields}`. The runner adds captured evidence content to `state` under each reference key and refuses a duplicate key.

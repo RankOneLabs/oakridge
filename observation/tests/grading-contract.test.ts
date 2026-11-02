@@ -5,11 +5,26 @@ import { runGrade } from "../src/storage/grading-store";
 import { sql } from "kysely";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import { withTenant } from "../src/storage/database";
+import { createLlmJudgeRunner } from "../src/runners/llm-judge";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 const gradeToken = "grade-token"; const readToken = "read-token";
 const headers = { authorization: `Bearer ${gradeToken}`, "content-type": "application/json" };
+
+test("judge deadline failure retains the timeout category", async () => {
+  const selected = { ...question, response_kind: "choice" as const,
+    allowed_values: ["yes", "insufficient_evidence"],
+    input_recipe: { judge: { rubric: "grade", evidence_refs: ["fixture"],
+      max_evidence_chars: 100, target: "report" } } };
+  const runner = createLlmJudgeRunner({ api_key: "test-key", base_url: "https://example.invalid",
+    deadline_ms: 1, transport: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      throw new Error("deadline expired");
+    } });
+  const result = await runner.run({ question: selected, evidence, evaluator: evaluator("model") });
+  expect(result.ok ? null : result.error.category).toBe("timeout");
+});
 
 integration("registration rejects an instruction digest that does not match its text", async () => scratchGrading(async (db) => {
   const result = await registerGradingContext(db, tenant, { question, evidence,
