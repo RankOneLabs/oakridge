@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import { runGradeDigest, type EvaluationIdentity } from "../grading/execution";
 import { budgetExceeded, type GradingLimits } from "../grading/jobs/budget";
-import { withTenant, type Database, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
@@ -103,7 +103,7 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
         namespace: tenant.namespace,
         subject_occurrence_id: job.subject_occurrence_id, question_id: job.question_id,
         question_version: job.question_version, tag: "skipped_budget",
-        payload: sql`${JSON.stringify({ kind: "skipped_budget", detail: "grading cap exceeded" })}::jsonb` })
+        payload: jsonText({ kind: "skipped_budget", detail: "grading cap exceeded" }) })
         .onConflict((conflict) => conflict.doNothing()).execute();
       return skipped;
     }

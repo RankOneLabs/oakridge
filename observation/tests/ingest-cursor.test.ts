@@ -38,7 +38,9 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
       const send = () => app.request("/v1/sources/oakridge/events", { method: "POST", headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify(delivery) });
       const accepted = await send();
-      expect({ status: accepted.status, body: await accepted.json() }).toEqual({ status: 200, body: { cursor: delivery.cursor } });
+      const acceptedBody = await accepted.json() as { cursor: unknown; issue: { cause: string } };
+      expect({ status: accepted.status, cursor: acceptedBody.cursor, cause: acceptedBody.issue.cause })
+        .toEqual({ status: 200, cursor: delivery.cursor, cause: "unmapped_event" });
       expect((await send()).status).toBe(409);
       const cursor = await app.request("/v1/sources/oakridge/cursor", { headers: auth });
       const unmapped = await app.request("/v1/sources/oakridge/unmapped", { headers: { authorization: "Bearer read-secret" } });

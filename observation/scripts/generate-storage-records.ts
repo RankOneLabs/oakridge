@@ -12,6 +12,10 @@ interface CatalogColumn { readonly table_name: string; readonly column_name: str
   readonly udt_name: string; readonly is_nullable: string; readonly column_default: string | null; readonly is_generated: string }
 
 function columnType(column: CatalogColumn): string {
+  if (column.udt_name === "jsonb") {
+    const type = column.is_nullable === "YES" ? "NullableJsonColumn<JsonValue>" : "JsonColumn<JsonValue>";
+    return column.column_default !== null || column.is_generated !== "NEVER" ? "GeneratedJsonColumn<JsonValue>" : type;
+  }
   const type = column.udt_name === "jsonb" ? "JsonValue" : column.udt_name === "timestamptz" ? "Date"
     : column.udt_name === "bool" ? "boolean" : ["int2", "int4", "int8", "numeric", "float4", "float8"].includes(column.udt_name)
       ? "number" : "string";
@@ -34,7 +38,8 @@ async function generateRecords(serverUrl: string): Promise<string> {
         tables.set(column.table_name, columns);
       }
       const lines = ["// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
-        'import type { Generated } from "kysely";', 'import type { JsonValue } from "../domain/primitives";', ""];
+        'import type { Generated } from "kysely";', 'import type { JsonValue } from "../domain/primitives";',
+        'import type { JsonColumn, NullableJsonColumn, GeneratedJsonColumn } from "./json-column-types";', ""];
       const names: string[] = [];
       for (const [table, columns] of tables) {
         const interfaceName = `Observation${table.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join("")}`;

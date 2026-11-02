@@ -103,6 +103,9 @@ integration("failed provider request id and cost remain on the canonical executi
     external_execution_id: "request-failed", cost: 0.04 } }; } };
   await workOneJob(db, tenant, limits, "first", failed);
   expect((await outcome(db, job.job_id)).job.state).toBe("reclaimable");
+  expect((await outcome(db, job.job_id)).executions[0]?.provider_attempts).toEqual([
+    { job_id: job.job_id, attempt: 1, status: "failed", request_id: "request-failed", cost: 0.04, estimated_cost: 0 },
+  ]);
   await workOneJob(db, tenant, limits, "second", good);
   const stored = await outcome(db, job.job_id);
   expect(stored.executions).toHaveLength(1);

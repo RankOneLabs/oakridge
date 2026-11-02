@@ -46,6 +46,8 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
     || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
-  if (!["artifact_revision", "human_grade", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
+  if (outcome.kind === "collaboration_thread" && (!(outcome.revision_id === null || typeof outcome.revision_id === "string")
+    || !record(outcome.context) || typeof outcome.context.title !== "string" || !Array.isArray(outcome.messages))) return null;
+  if (!["artifact_revision", "human_grade", "collaboration_thread", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
   return value as unknown as SourceEventDelivery;
 }

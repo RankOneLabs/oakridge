@@ -1,8 +1,7 @@
-import { sql } from "kysely";
-import type { JsonValue, Result } from "../domain/primitives";
+import type { Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { EligibilityRow } from "../grading/eligibility";
-import { withTenant, type Database, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type TenantScope } from "./database";
 
 export interface EligibilityStoreError { readonly operation: "eligibility_store"; readonly entity_id: string; readonly detail: string }
 
@@ -15,7 +14,7 @@ export async function recordEligibility(db: Database, tenant: TenantScope, row: 
     await withTenant(db, tenant, (trx) => trx.insertInto("observation.evaluation_eligibility").values({
       producer: row.producer, namespace: row.namespace, subject_occurrence_id: row.subject_occurrence_id,
       question_id: row.question_id, question_version: row.question_version, tag: row.tag,
-      payload: sql<JsonValue>`${JSON.stringify(row.payload)}::jsonb`,
+      payload: jsonText(row.payload),
     }).execute());
     return ok(undefined);
   } catch (cause) {

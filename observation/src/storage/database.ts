@@ -1,9 +1,14 @@
 import { Kysely, PostgresDialect, sql, type Transaction } from "kysely";
 import pg from "pg";
 import type { DB } from "./db-types";
+import type { JsonText } from "./json-column-types";
 
 export type Database = Kysely<DB>;
 export type DatabaseTransaction = Transaction<DB>;
+/** pg must receive JSON as encoded text: arrays and scalar strings otherwise bind incorrectly. */
+export function jsonText<Value>(value: Value): JsonText<Value> {
+  return JSON.stringify(value) as JsonText<Value>;
+}
 export function openDatabase(database_url: string): Database {
   return new Kysely<DB>({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database_url }) }) });
 }
