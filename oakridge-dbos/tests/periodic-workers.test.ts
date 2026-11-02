@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Cause, Workflow, WorkerResult } from "../src/core-client/core-types";
@@ -11,7 +12,7 @@ import { createProductionComposition } from "../src/runtime/compose";
 import { readLatestRevisionId } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
 import { intentWorkflowId, runWorkflowId, wakeRun } from "../src/workflows/topology";
-import { launch, openAuthority, pinWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { launch, openAuthority, submitter, unitOf, type Authority } from "./authority-fixture";
 import { eventually } from "./stub-kbbl";
 
 /**
@@ -85,8 +86,8 @@ async function runAttempt(run_id: RunId, attempt: { readonly action_id: string; 
 
 /** Launched WATCH with the builder's `pr` published as "one"; returns the run and its first watch. */
 async function watchingOne(): Promise<{ readonly run_id: RunId; readonly unit: string; readonly first: string }> {
-  const { bundle_id } = await pinWorkflow(authority, WATCH);
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: {} });
+  const { definition_id } = await commitTestDefinition({ source: WATCH });
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: {} });
   const unit = unitOf(run_id, "watch");
   const [builder] = await attemptsOf(run_id, "builder");
   if (!builder) throw new Error("launch opened no builder attempt");
@@ -175,8 +176,8 @@ test("a failed watch, retried, succeeds on an unchanged observation and its sche
 });
 
 test("an unchanged pull request observation publishes no new revision and its attempt succeeds", async () => {
-  const { bundle_id } = await pinWorkflow(authority, PR_WATCH);
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { query: QUERY } });
+  const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { query: QUERY } });
   const unit = unitOf(run_id, "watch");
   const pull_request = { number: 7, html_url: QUERY.pr_url, state: "open", merged_at: null,
     head: { ref: QUERY.head_branch, sha: "abc123", repo: { full_name: `${QUERY.head_owner}/app` } }, base: { ref: QUERY.base_branch } };
@@ -196,7 +197,7 @@ test("an unchanged pull request observation publishes no new revision and its at
 
 test("a transient pr_watch outage backs off and observes a merge, while a terminal failure settles", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
   const calls: number[] = [];
   const operation_runner: OperationRunner = { async run(call) {
     const input = decodePullRequestObserveInput(call.inputs);
@@ -212,7 +213,7 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
   try {
     const start = async (head_branch: string): Promise<RunId> => {
       const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: { ...QUERY, head_branch } } }) });
+        body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: { query: { ...QUERY, head_branch } } }) });
       if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
       return (await response.json() as { run_id: RunId }).run_id;
     };
@@ -245,7 +246,7 @@ test("a transient pr_watch outage backs off and observes a merge, while a termin
 
 test("a watch rolls over during repeated unavailable operations and resumes its running attempt", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
   let calls = 0;
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
     operation_runner: { async run() {
@@ -257,7 +258,7 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
     timing: { retry_initial_seconds: 0.02, retry_cap_seconds: 0.02, carrier_max_iterations: 2 } });
   try {
     const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+      body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: { query: QUERY } }) });
     if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
     const { run_id } = await response.json() as { run_id: RunId };
     const intent = await eventually("watch intent", async () => await live.db.selectFrom("authority.effect_intent")
@@ -279,7 +280,7 @@ test("a watch rolls over during repeated unavailable operations and resumes its 
 
 test("a wake sent during carrier dispatch advances the run before its wake timeout", async () => {
   const live = await openAuthority();
-  const { digest } = await pinWorkflow(live, PR_WATCH);
+  const { definition_id } = await commitTestDefinition({ source: PR_WATCH });
   let release_operation = (): void => undefined;
   const operation_released = new Promise<void>((resolve) => { release_operation = resolve; });
   const composition = await createProductionComposition({ database_url: live.url, host: "127.0.0.1",
@@ -305,7 +306,7 @@ test("a wake sent during carrier dispatch advances the run before its wake timeo
   }) as never);
   try {
     const response = await composition.app.request("/api/runs", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ request_id: crypto.randomUUID(), digest, input: { query: QUERY } }) });
+      body: JSON.stringify({ request_id: crypto.randomUUID(), definition_id, input: { query: QUERY } }) });
     if (response.status !== 201) throw new Error(`launch failed: ${await response.text()}`);
     const { run_id } = await response.json() as { run_id: RunId };
     await dispatch_entered;

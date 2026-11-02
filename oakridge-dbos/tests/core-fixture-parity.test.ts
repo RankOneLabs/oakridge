@@ -78,3 +78,36 @@ test("a core that trapped is replaced, so later requests still run", async () =>
   expect(await compile()).toMatchObject({ ok: true, value: { kind: "compiled" } });
   client.close();
 });
+
+test("cached compilation still checks changed prompt inputs", async () => {
+  const { compileWorkflow } = await import("../src/core-client/client");
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(started.error.detail.detail);
+  try {
+    const first = await compileWorkflow(started.value, { workflow, prompts: { "write.md": "write" } });
+    if (!first.ok) throw new Error(first.error.detail);
+    const changed = await compileWorkflow(started.value, { workflow, prompts: { "write.md": "write {{undeclared}}" } });
+    expect(changed.ok).toBe(false);
+  } finally { started.value.close(); }
+});
+
+test("cached programs recompile after the WASM instance is replaced", async () => {
+  const { compileWorkflow } = await import("../src/core-client/client");
+  const started = CoreClient.start();
+  if (!started.ok) throw new Error(started.error.detail.detail);
+  const client = started.value;
+  try {
+    const input = { workflow, prompts: { "write.md": "write" } };
+    const first = await compileWorkflow(client, input);
+    if (!first.ok) throw new Error(first.error.detail);
+    const { core } = client as unknown as { core: { memory: WebAssembly.Memory; core_process(pointer: number, length: number): number } };
+    expect(() => core.core_process(core.memory.buffer.byteLength, 64)).toThrow();
+    await client.request("compile", input);
+    const compiled = await compileWorkflow(client, input);
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+    const result = await client.request("step", { workflow_digest: compiled.value.digest,
+      snapshot: { run: { id: "cache-run", root: "cache-run" }, units: [], attempts: [], revisions: [], decisions: [], retry_events: [] },
+      incoming: { event: { kind: "launched", input: {} }, writer: { kind: "engine" } } });
+    expect(result.ok && result.value.kind).toBe("stepped");
+  } finally { client.close(); }
+});

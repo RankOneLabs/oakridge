@@ -13,8 +13,8 @@ import type { OperationRunner } from "../operations/runner";
 import type { Database } from "../storage/database";
 import { abandonIntent, claimStart, isStartOwed, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, readLatestAttempt, recordTryFailure,
   settleIntent, settleStartIntent, type EffectStatus, type LatestAttempt, type SettledStatus, type StartClaim, type StopOrigin } from "../storage/executor-store";
-import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readSessionHistory } from "../storage/read-store";
-import { readPromptTexts } from "../storage/registry-store";
+import { listRunsNeedingWork, readLatestRevisionId, readRunStanding, readRunDefinitionId, readSessionHistory } from "../storage/read-store";
+import { resolveDefinition } from "../runtime/definition-store";
 import { reportWorker, type ExecutorReport } from "./executor-ingress";
 
 /**
@@ -201,10 +201,14 @@ const prepareSessionStep = DBOS.registerStep(async (instruction: EffectInstructi
   const { db } = current();
   const worker = instruction.worker;
   if (worker.kind !== "agent") return { kind: "invalid", detail: "only an agent attempt has a session task" };
-  const texts = await readPromptTexts(db, [worker.prompt.digest, ...(worker.handoff ? [worker.handoff.digest] : [])]);
-  const prompt_text = texts.get(worker.prompt.digest);
+  const definition_id = await readRunDefinitionId(db, instruction.run_id);
+  if (definition_id === null) return { kind: "invalid", detail: `run ${instruction.run_id} is missing` };
+  const resolved = resolveDefinition(definition_id);
+  if (!resolved.ok) return { kind: "invalid", detail: JSON.stringify(resolved.error) };
+  const texts = resolved.value.prompts;
+  const prompt_text = texts[worker.prompt.path];
   if (prompt_text === undefined) return { kind: "invalid", detail: `prompt ${worker.prompt.path} has no pinned text` };
-  const handoff_text = worker.handoff ? texts.get(worker.handoff.digest) ?? null : null;
+  const handoff_text = worker.handoff ? texts[worker.handoff.path] ?? null : null;
   if (worker.handoff && handoff_text === null) return { kind: "invalid", detail: `prompt ${worker.handoff.path} has no pinned text` };
   const history = await readSessionHistory(db, { run_id: instruction.run_id, unit_id: instruction.action.unit, worker: instruction.action.worker,
     attempt: instruction.attempt, artifacts: worker.creates.map((artifact) => artifact.key) });

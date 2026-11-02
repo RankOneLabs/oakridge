@@ -1,51 +1,22 @@
 import { useWorkflowDef } from "../../hooks/useWorkflowDef";
-import { WorkflowGraph } from "../molecules/WorkflowGraph";
 import { Button } from "../../../components/atoms/Button";
 
-interface WorkflowDefDetailProps {
-  definitionId: string;
-  onBack: () => void;
-  onClone: () => void;
-}
-
-export function WorkflowDefDetail({
-  definitionId,
-  onBack,
-  onClone,
-}: WorkflowDefDetailProps) {
+interface WorkflowDefDetailProps { readonly definitionId: string; readonly onBack: () => void }
+export function WorkflowDefDetail({ definitionId, onBack }: WorkflowDefDetailProps) {
   const query = useWorkflowDef(definitionId);
-
-  if (query.isPending) {
-    return <div className="or-loading" data-testid="or-def-detail-loading">Loading definition…</div>;
-  }
-  if (query.isError || !query.data) {
-    return (
-      <div className="or-error" role="alert" data-testid="or-def-detail-error">
-        {query.error instanceof Error ? query.error.message : "Failed to load definition"}
-      </div>
-    );
-  }
-
+  if (query.isPending) return <div data-testid="or-def-detail-loading">Loading definition…</div>;
+  if (query.isError || !query.data) return <div role="alert" data-testid="or-def-detail-error">{query.error?.message ?? "Definition unavailable"}</div>;
   const definition = query.data;
-  return (
-    <div className="or-def-detail" data-testid="or-def-detail">
-      <header className="or-def-detail__header">
-        <div>
-          <Button variant="secondary" onClick={onBack}>← Workflows</Button>
-          <h2>{definition.name} <span>v{definition.version}</span></h2>
-          <p>ID: <code>{definition.id}</code> · Created {new Date(definition.created_at).toLocaleString()}</p>
-        </div>
-        <Button variant="secondary" onClick={onClone}>
-          Clone to new version
-        </Button>
-      </header>
-
-      <WorkflowGraph graph={definition.graph} />
-
-      <details className="or-def-detail__raw">
-        <summary>Raw definition JSON</summary>
-        <pre>{JSON.stringify(definition.graph, null, 2)}</pre>
-      </details>
-    </div>
-  );
+  return <div className="or-page or-page--wide" data-testid="or-def-detail">
+    <Button variant="secondary" onClick={onBack}>← Workflows</Button>
+    <h2>{definition.bundle.key}</h2>
+    <p>Definition ID: <code>{definition.definition_id}</code></p>
+    <h3>Schemas</h3>
+    <ul>{definition.bundle.schemas.map((schema) => <li key={schema.key}>{schema.key}</li>)}</ul>
+    <h3>Stages</h3>
+    <ul>{definition.bundle.stages.map((stage) => <li key={stage}>{stage}</li>)}</ul>
+    <h3>Units</h3>
+    <ul>{definition.bundle.units.map((unit) => <li key={unit.key}>{unit.label}{unit.stage ? ` · ${unit.stage}` : ""}</li>)}</ul>
+    <details><summary>Committed definition JSON</summary><pre>{JSON.stringify(definition.workflow, null, 2)}</pre></details>
+  </div>;
 }

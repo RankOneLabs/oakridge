@@ -229,7 +229,7 @@ export function runSnapshot(run: OperatorRunView, units: readonly OperatorUnitVi
   const input = objectValue(root?.input);
   const repositories = Array.isArray(input?.repositories) ? input.repositories : [];
   const repository_keys = repositories.flatMap((value): string[] => { const key = textValue(objectValue(value)?.key); return key ? [key] : []; });
-  return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_bundle_id, status,
+  return ok({ id: run.run_id, title: textValue(input?.title), repository_keys, workflow_name: root?.label ?? run.definition_id, status,
     stages: grouped.value, parked_count: childStatuses.filter((item) => item === "parked").length,
     updated_at: run.updated_at, is_stuck: isStuck, epic_profile: null });
 }

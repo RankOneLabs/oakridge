@@ -1,21 +1,22 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { CoreClient } from "../src/core-client/client";
 import type { Event } from "../src/core-client/core-types";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { commitEvent } from "../src/storage/commit";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 async function launched(): Promise<RunId> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }

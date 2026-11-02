@@ -1,5 +1,5 @@
 import type { CodeOperation } from "../../oakridge-dbos/src/core-client/core-types";
-import type { Prompts, WorkflowDefinitionDescriptor } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import type { Prompts, WorkflowDefinitionDescriptor } from "../../oakridge-dbos/src/core-client/source-types";
 import type { DefinitionId, OperationRegistryId, PromptId } from "./definition-identity";
 
 /** Mirrors workflow-model::AuthoredWorkflow, without expanding templates. */

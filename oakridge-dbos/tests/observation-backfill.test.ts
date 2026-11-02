@@ -1,3 +1,4 @@
+import { sampleDefinition } from "./committed-fixture";
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import { createApp } from "../../observation/src/http/app";
@@ -12,7 +13,7 @@ import { INITIAL_BACKFILL_POSITION, runObservationBackfill } from "../src/adapte
 import { publishObservationOnce, publishObservationOperatorOnce, type ObservationOptions } from "../src/adapters/observation";
 import { jsonText } from "../src/storage/database";
 import type { RunId } from "../src/domain/primitives";
-import { launch, openAuthority, pinSample, scratchDatabase, unitOf } from "./authority-fixture";
+import { launch, openAuthority, scratchDatabase, unitOf } from "./authority-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 const tenant = { producer: "oakridge", namespace: "backfill-test" };
@@ -35,9 +36,9 @@ integration("bounded backfill covers active and archived labels, anchors, replay
       ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] } });
     const options: ObservationOptions = { url: "http://observation.test", namespace: tenant.namespace, token: "ingest",
       fetcher: async (input, init) => app.request(new Request(input, init)) };
-    const { bundle_id } = await pinSample(authority);
+    const { definition_id } = await sampleDefinition();
     async function seed(archived: boolean, effect: "approve" | "request_changes", number: number, has_event = true) {
-      const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: `run-${number}` } });
+      const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: `run-${number}` } });
       const unit_id = unitOf(run_id, "document");
       const revision_id = `${unit_id}:brief:1`;
       await authority.db.insertInto("authority.artifact_revision").values({ id: revision_id, run_id, unit_id,
@@ -47,7 +48,7 @@ integration("bounded backfill covers active and archived labels, anchors, replay
         (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
          definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
         VALUES (${tenant.producer}, ${tenant.namespace}, ${revision_id}, ${run_id}, ${unit_id},
-          'brief', '1', ${bundle_id}, 'bundle-digest', ${JSON.stringify(brief)}::jsonb, ${digest(brief)}, now())`.execute(trx));
+          'brief', '1', ${definition_id}, 'bundle-digest', ${JSON.stringify(brief)}::jsonb, ${digest(brief)}, now())`.execute(trx));
       expect(await projectRevision(observation, tenant, revision_id)).toMatchObject({ occurrences: 3, relations: 1 });
       const decision_id = `${unit_id}:d${number}`;
       const event_id = crypto.randomUUID();

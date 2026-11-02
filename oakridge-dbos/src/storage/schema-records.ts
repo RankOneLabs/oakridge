@@ -1,8 +1,8 @@
 import type { Selectable } from "kysely";
 import type { DB } from "./db-types";
-import type { ActionId, CollaborationMessageId, CollaborationThreadId, DecisionId, DefinitionBundleId, EffectIntentId, EventId, OperatorEventId, ProjectId, ReviewItemId, RevisionId, RunId, UnitId } from "../domain/primitives";
+import type { ActionId, CollaborationMessageId, CollaborationThreadId, DecisionId, DefinitionId, EffectIntentId, EventId, OperatorEventId, ProjectId, ReviewItemId, RevisionId, RunId, UnitId } from "../domain/primitives";
 
-export type { ActionId, DecisionId, DefinitionBundleId, EffectIntentId, EventId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
+export type { ActionId, DecisionId, DefinitionId, EffectIntentId, EventId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 export type { CommitReceipt } from "./json-column-types";
 
 /**
@@ -19,10 +19,8 @@ export type EffectStatus = Row<"authority.effect_intent">["status"];
 /** Generated from the authority.stop_origin enum. */
 export type StopOrigin = NonNullable<Row<"authority.effect_intent">["stop_origin"]>;
 
-export type DefinitionBundleRecord = Branded<Row<"authority.definition_bundle">, { id: DefinitionBundleId }>;
-export type PromptContentRecord = Readonly<Row<"authority.prompt_content">>;
 export type ProjectRecord = Branded<Row<"authority.project">, { id: ProjectId }>;
-export type RunRecord = Branded<Row<"authority.run">, { id: RunId; definition_bundle_id: DefinitionBundleId; project_id: ProjectId; root_unit_id: UnitId }>;
+export type RunRecord = Branded<Row<"authority.run">, { id: RunId; definition_id: DefinitionId; project_id: ProjectId; root_unit_id: UnitId }>;
 export type UnitRecord = Branded<Row<"authority.unit">, { id: UnitId; run_id: RunId; parent_id: UnitId }>;
 export type UnitDependencyRecord = Branded<Row<"authority.unit_dependency">, { run_id: RunId; unit_id: UnitId; depends_on_id: UnitId }>;
 export type AttemptRecord = Branded<Row<"authority.attempt">, { action_id: ActionId; run_id: RunId; unit_id: UnitId }>;

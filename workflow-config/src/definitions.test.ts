@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
-import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionStoreFailure } from "./definition-store";
@@ -308,7 +308,7 @@ function generatorFixture(): string {
   for (const path of [
     "workflow-config/src", "workflow-config/prompts", "workflow-config/samples", "workflow-config/development.yaml",
     "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
-    "kbbl/core/pwa/oakridge/workflow-definition-types.ts",
+    "oakridge-dbos/src/core-client/source-types.ts",
   ]) {
     mkdirSync(dirname(resolve(root, path)), { recursive: true });
     cpSync(resolve(repository_root, path), resolve(root, path), { recursive: true });

@@ -1,18 +1,19 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { abandonIntent, claimStart, listOwedIntents, markAcknowledged, readAttemptSession, readIntent, recordTryFailure, settleIntent, settleStartIntent } from "../src/storage/executor-store";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 async function launchedIntent(): Promise<{ readonly run_id: RunId; readonly intent_id: string }> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const [owed] = await listOwedIntents(authority.db, run_id);
   if (!owed) throw new Error("launch wanted no worker");

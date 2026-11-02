@@ -11,8 +11,7 @@ import { selectAgentSessionTargets, selectLaunchSessionSettings } from "./lib/ag
 import type { CreateRunRequest, RepositoryKey } from "./run-types";
 
 const runId = sample.run.run_id;
-const definition = { ...definitionFixture.definition, bundle: { key: "development" }, archived_at: null, graph: {},
-  bundle_id: sample.run.definition_bundle_id, digest: sample.run.definition_digest } as unknown as OperatorDefinitionDetail;
+const definition = definitionFixture.definition as unknown as OperatorDefinitionDetail;
 const sessionTargets = selectAgentSessionTargets(definition.workflow);
 const selectedSettings = selectLaunchSessionSettings(sessionTargets, Object.fromEntries(sessionTargets.map((target) =>
   [target.key, { runtime: "claude-code" as const, model: "sonnet" }])));
@@ -34,7 +33,7 @@ const calls = (respond: (path: string, init?: RequestInit) => unknown) => vi.spy
 afterEach(() => { vi.restoreAllMocks(); invalidateCachedRunUnits(null); });
 
 const createRunRequest = (): CreateRunRequest => ({
-  workflow_def_id: sample.run.definition_bundle_id, project_id: null,
+  workflow_def_id: sample.run.definition_id, project_id: null,
   context: { brief_notes: "Build it", repositories: [{ key: "api" as RepositoryKey, path: "/repo", integration_branch: "main" }],
     worktree_path: "/repo", base_branch: "epic/x", oakridge_url: "http://oakridge", session_settings: sessionSettings },
   epic_profile: { title: "Build it", slug: "build-it", final_merge_policy: "guarded",
@@ -115,9 +114,9 @@ describe("v2 Oakridge client", () => {
         builder: { harness: "codex", model: "gpt-6-sol", effort: null } } } } }, "launch-1");
     const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
     const body = JSON.parse(String(launch?.[1]?.body));
-    expect([result.id, body.request_id, body.digest, Object.hasOwn(body.input, "admission"), Object.keys(body.config.sessions).sort(),
+    expect([result.id, body.request_id, body.definition_id, Object.hasOwn(body.input, "admission"), Object.keys(body.config.sessions).sort(),
       body.config.sessions.cohort.assessor, body.config.sessions.cohort.builder]).toEqual([
-      runId, "launch-1", sample.run.definition_digest, false,
+      runId, "launch-1", sample.run.definition_id, false,
       ["analysis", "brief", "cohort", "integration", "planning"],
       { harness: "claude-code", model: "sonnet", effort: null },
       { harness: "codex", model: "gpt-6-sol", effort: null },
@@ -131,7 +130,7 @@ describe("v2 Oakridge client", () => {
         ...definitionFixture.definition.workflow,
         workers: { author_template: { kind: "agent" }, watch_template: { kind: "code" } },
         stages: { ...definitionFixture.definition.workflow.stages,
-          analysis: { workers: { author: { template: "author_template" }, watch: { template: "watch_template" } } } },
+          analysis: { workers: { author: { template: "author_template" }, spec_editor: { template: "author_template" }, watch: { template: "watch_template" } } } },
       },
     } as unknown as OperatorDefinitionDetail;
     const fetch = calls((path) => path.includes("/api/definitions/") ? templated

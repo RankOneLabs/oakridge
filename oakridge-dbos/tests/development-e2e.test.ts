@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -286,11 +287,9 @@ async function operate(run_id: string, decided: Set<string>, confirmation: "none
 }
 
 test("D1: the development workflow runs to completion with two cohorts, b after a", async () => {
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (pinned.status !== 201 && pinned.status !== 200) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Two cohorts", spec: "Build the thing in two parts.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -392,11 +391,9 @@ test("D1: the development workflow runs to completion with two cohorts, b after 
 }, 150_000);
 
 test("analysis, spec, and tasks need approval after joint republication", async () => {
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Analysis handoff", spec: "Original specification.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -485,11 +482,9 @@ test("analysis, spec, and tasks need approval after joint republication", async 
 test("manual confirmation completes the development run with no PR reader", async () => {
   forge.pulls.clear();
   operationServices.pull_requests = null;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Confirm PRs", spec: "Confirm both PR stages.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -554,11 +549,9 @@ test("manual confirmation completes the development run with no PR reader", asyn
 test("a replacement cohort PR ignores the previous PR's closed observation", async () => {
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace cohort PR", spec: "Require the current cohort PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -610,11 +603,9 @@ test("a replacement cohort PR ignores the previous PR's closed observation", asy
 test("merge confirmation waits for the accepted assessment and closes again for a new build", async () => {
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Gate merge on assessment", spec: "Confirm merges only after the assessment.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -659,11 +650,9 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
   forge.withhold_integration_observation = false;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace closed PR", spec: "Require a merged integration PR.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -736,11 +725,9 @@ test("a closed unmerged integration PR asks for replacement, not merge confirmat
 test("an old integration PR merge cannot complete a replacement PR", async () => {
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Replace merged integration PR", spec: "Do not reuse an old merge.", final_merge_policy: "require_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });
@@ -797,11 +784,9 @@ test("allow_close_without_merge completes on an observed close without claiming 
   forge.pulls.clear();
   operationServices.pull_requests = forge.reader;
   forge.withhold_integration_observation = false;
-  const pinned = await api("POST", "/api/definitions", developmentWorkflow());
-  if (!pinned.ok) throw new Error(`pin refused: ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: developmentWorkflow() });
   const request_id = crypto.randomUUID();
-  const launched = await api("POST", "/api/runs", { request_id, digest, input: {
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input: {
     title: "Allow closed PR", spec: "Complete after an unmerged close.", final_merge_policy: "allow_close_without_merge", primary_repository_key: "app",
     repositories: [{ key: "app", preparation: { repository_path: repository, expected_head: null },
       forge: { owner: "oakridge-e2e", name: "app", build_base: "develop", final_base: "main" } }] } });

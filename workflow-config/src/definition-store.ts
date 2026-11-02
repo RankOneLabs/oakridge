@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
-import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 

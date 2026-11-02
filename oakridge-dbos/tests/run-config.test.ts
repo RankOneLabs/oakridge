@@ -41,7 +41,7 @@ test("an omitted effort reads as none", () => {
 });
 
 test("a launch with malformed config is malformed; one without config has none", () => {
-  const base = { request_id: "r1", digest: "d", input: {} };
+  const base = { request_id: "r1", definition_id: "0".repeat(64), input: {} };
   const bad = parseLaunchRequest({ ...base, config: { sessions: { planning: { planner: {} } } } });
   const none = parseLaunchRequest(base);
   expect([bad.ok, none.ok ? none.value.config : "failed"]).toEqual([false, null]);

@@ -1,3 +1,4 @@
+import { resolveLaunchableDefinition, type DefinitionId } from "../runtime/definition-store";
 import type { Context, Hono } from "hono";
 import { createHash } from "node:crypto";
 import type { Event, Writer } from "../core-client/core-types";
@@ -5,7 +6,7 @@ import { err, ok, type ProjectId, type Result, type RunId } from "../domain/prim
 import { parseRunConfig, type RunConfig } from "../domain/run-config";
 import { commitEvent, launchRunId, type CommitDependencies, type CommitOutcome, type CommitRequest, type CommitResult } from "../storage/commit";
 import { readSessionAttempt } from "../storage/read-store";
-import { findLaunchableDefinition, hasProject } from "../storage/registry-store";
+import { hasProject } from "../storage/operator-store";
 import { operatorWriterFromCredential } from "./control-auth";
 import { ConflictError, errorResponse, fault, MalformedRequestError, MissingEntityError, requestBody, UnauthorizedError } from "./errors";
 
@@ -19,7 +20,7 @@ import { ConflictError, errorResponse, fault, MalformedRequestError, MissingEnti
 /** Every ingress request carries the id that makes it idempotent. */
 export interface IngressRequest { readonly request_id: string }
 export interface LaunchRequest extends IngressRequest {
-  readonly digest: string; readonly input: unknown; readonly project_id?: string | null;
+  readonly definition_id: DefinitionId; readonly input: unknown; readonly project_id?: string | null;
   /** Session settings keyed by stage, then by agent worker. */
   readonly config?: RunConfig | null;
 }
@@ -44,12 +45,12 @@ export function parseIngressRequest(raw: unknown): Parsed<IngressRequest> {
   return isFields(raw) && isRequestId(raw.request_id) ? ok({ request_id: raw.request_id }) : malformed("request_id (1 to 200 characters) is required");
 }
 export function parseLaunchRequest(raw: unknown): Parsed<LaunchRequest> {
-  if (!isFields(raw) || !isRequestId(raw.request_id) || typeof raw.digest !== "string" || !("input" in raw) || !isOptionalId(raw.project_id))
-    return malformed("request_id (1 to 200 characters), digest and input are required");
+  if (!isFields(raw) || !isRequestId(raw.request_id) || typeof raw.definition_id !== "string" || !/^[0-9a-f]{64}$/.test(raw.definition_id) || !("input" in raw) || !isOptionalId(raw.project_id))
+    return malformed("request_id (1 to 200 characters), definition_id and input are required");
   const config = raw.config === undefined || raw.config === null ? null : parseRunConfig(raw.config);
   if (raw.config !== undefined && raw.config !== null && config === null)
     return malformed("config.sessions maps each stage and worker to { harness, model, effort }");
-  return ok({ request_id: raw.request_id, digest: raw.digest, input: raw.input, project_id: raw.project_id ?? null, config });
+  return ok({ request_id: raw.request_id, definition_id: raw.definition_id as DefinitionId, input: raw.input, project_id: raw.project_id ?? null, config });
 }
 export function parseDecideRequest(raw: unknown): Parsed<DecideRequest> {
   if (!isFields(raw) || !isRequestId(raw.request_id) || !isKey(raw.decision) || !isKey(raw.target) || !("payload" in raw))
@@ -108,13 +109,14 @@ export function installIngress(app: Hono, deps: IngressDependencies): void {
     if (!parsed.ok) return errorResponse(parsed.error);
     const request = parsed.value;
     try {
-      const definition_bundle_id = await findLaunchableDefinition(deps.db, request.digest);
-      if (!definition_bundle_id) return errorResponse(new MissingEntityError("definition not found"));
+      const resolved = resolveLaunchableDefinition(request.definition_id);
+      if (!resolved.ok) return Response.json(resolved.error, { status: resolved.error.kind === "definition_not_launchable" ? 404 : 422 });
+      const definition_id = resolved.value.definition_id;
       const project_id = request.project_id ? request.project_id as ProjectId : null;
       if (project_id && !await hasProject(deps.db, project_id)) return errorResponse(new MissingEntityError("project not found"));
       const run_id = launchRunId(request.request_id);
       return ingressResponse(run_id, await commit({ run_id, ingress_id: request.request_id, event: { kind: "launched", input: request.input },
-        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_bundle_id, project_id, config: request.config ?? null } }));
+        writer: operatorWriterFromCredential(c.req.raw), launch: { definition_id, project_id, config: request.config ?? null } }));
     } catch (cause) { return fault(cause); }
   });
 

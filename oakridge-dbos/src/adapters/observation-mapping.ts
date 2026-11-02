@@ -21,7 +21,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const event = row.payload;
   const identity = { run_id: row.run_id ?? "", event_id: row.id };
   const provenance = { format: "observation.source-event/v1", definition_bundle: definition
-    ? { id: definition.bundle_id, digest: definition.digest } : null, artifact_schema_version: null } as const;
+    ? { id: definition.definition_id, digest: definition.definition_id } : null, artifact_schema_version: null } as const;
   const unmapped = (reason: string): SourceEventOutcome => ({ ...provenance, kind: "unmapped", event_kind: event.kind, ...identity, reason });
   switch (event.kind) {
     case "revision_published": {
@@ -36,7 +36,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
         revision: { format: "observation.artifact-revision/v1", source: {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
           run_id: identity.run_id, unit_id: event.unit, artifact_kind: event.artifact, artifact_schema_version: version,
-          definition_bundle: { id: definition.bundle_id, digest: definition.digest },
+          definition_bundle: { id: definition.definition_id, digest: definition.definition_id },
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },
           recorded_at: row.created_at.toISOString(), body: event.body as JsonValue, body_digest: bodyDigest(event.body as JsonValue) } };
@@ -74,7 +74,7 @@ export function mapCollaborationThread(input: { readonly thread: Selectable<Auth
   readonly messages: readonly Selectable<AuthorityCollaborationMessage>[]; readonly definition: PinnedDefinitionRead | null }): SourceEventOutcome {
   const { thread, messages, definition } = input;
   return { format: "observation.source-event/v1", definition_bundle: definition
-    ? { id: definition.bundle_id, digest: definition.digest } : null, artifact_schema_version: null,
+    ? { id: definition.definition_id, digest: definition.definition_id } : null, artifact_schema_version: null,
     kind: "collaboration_thread", event_kind: "collaboration_thread", run_id: thread.run_id,
     event_id: thread.id, unit: thread.unit_id, revision_id: thread.artifact_revision_id,
     context: thread.context, messages: messages.map((message) => ({ id: message.id, body: message.body,

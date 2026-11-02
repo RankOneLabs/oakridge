@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { resolveDefinition } from "../runtime/definition-store";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CORE_PROTOCOL_VERSION, decodeCoreResponse, hasSafeWireNumbers } from "./core-types";
@@ -82,6 +84,7 @@ export class CoreClient {
       // Replace it. Its program cache goes with it; commit recompiles a pinned
       // program the core has not cached.
       this.core = instantiate(this.module);
+      compilation_cache.delete(this);
       this.restartCount += 1;
       return transport("malformed_request", `core invocation failed: ${String(cause)}`);
     }
@@ -90,14 +93,18 @@ export class CoreClient {
       if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
       switch (response.result.status) {
         case "ok": return { ok: true, value: response.result.value };
-        case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
+        case "domain_error":
+          // Rust bounds its program cache independently of these compile results.
+          // A miss must make the next compilation reach the WASM instance again.
+          if (response.result.value.kind === "unknown_bundle") compilation_cache.delete(this);
+          return { ok: false, error: { kind: "domain", detail: response.result.value } };
         case "compile_errors": return { ok: false, error: { kind: "compile", detail: response.result.value } };
         case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
       }
     } catch (cause) { return transport("malformed_request", `core response is not valid JSON: ${String(cause)}`); }
   }
 
-  close(): void { this.closed = true; }
+  close(): void { this.closed = true; compilation_cache.delete(this); }
 }
 
 /**
@@ -106,15 +113,21 @@ export class CoreClient {
  * pinned definition recorded the one it was pinned under.
  */
 export interface CompileInput {
-  readonly workflow: Workflow;
+  readonly workflow: import("./source-types").WorkflowDefinitionDescriptor | Workflow;
   readonly prompts: { readonly [path: string]: string };
   readonly operations?: readonly CodeOperation[];
 }
 /** A compile result with the operations it was checked against, which pinning records beside it. */
 export type CompiledAgainst = CompiledWorkflow & { readonly operations: readonly CodeOperation[] };
+/** Cache entries belong to a specific deployed WASM instance; every source, prompt and operation byte participates. */
+const compilation_cache = new WeakMap<CoreClient, Map<string, CompiledAgainst>>();
 /** Compile a workflow against code operations and leave it in the core's program cache. */
 export async function compileWorkflow(core: CoreClient, input: CompileInput): Promise<Traced<CompiledAgainst>> {
   const operations = input.operations ?? OPERATION_REGISTRY;
+  const key = createHash("sha256").update(JSON.stringify({ workflow: input.workflow, prompts: input.prompts, operations })).digest("hex");
+  const cache = compilation_cache.get(core) ?? new Map<string, CompiledAgainst>();
+  const cached = cache.get(key);
+  if (cached) return { ok: true, value: cached };
   const response = await core.request("compile", { workflow: input.workflow, prompts: input.prompts, operations: [...operations] });
   if (!response.ok) {
     const detail = response.error.kind === "compile"
@@ -123,7 +136,10 @@ export async function compileWorkflow(core: CoreClient, input: CompileInput): Pr
     return traced("compile", input.workflow.workflow, detail);
   }
   if (response.value.kind !== "compiled") return traced("compile", input.workflow.workflow, "core returned a non-compiled response");
-  return { ok: true, value: { ...response.value.value, operations: [...operations] } };
+  const compiled = { ...response.value.value, operations: [...operations] };
+  cache.set(key, compiled);
+  compilation_cache.set(core, cache);
+  return { ok: true, value: compiled };
 }
 
 /** Each active stage's wanted workers, including an empty set when none are wanted. */
@@ -131,4 +147,14 @@ export interface WantedForUnit { readonly unit_id: string; readonly actions: rea
 export function selectWanted(step: StepResult): readonly WantedForUnit[] {
   return step.snapshot.units.filter((unit) => unit.kind.kind === "stage" && unit.status.kind === "active")
     .map((unit) => ({ unit_id: unit.id, actions: step.wanted.filter((wanted) => wanted.unit === unit.id) }));
+}
+
+/** Verified disk inputs compiled by this deployed core; never a stored program. */
+export type CompiledDefinition = import("../runtime/definition-store").ResolvedDefinition & { readonly checked_program: CompiledWorkflow };
+export async function compileDefinition(core: CoreClient, definition_id: import("../runtime/definition-store").DefinitionId): Promise<Traced<CompiledDefinition>> {
+  const resolved = resolveDefinition(definition_id);
+  if (!resolved.ok) return traced(resolved.error.operation, resolved.error.identifier, `${resolved.error.kind}: ${resolved.error.detail}`);
+  const definition = resolved.value;
+  const compiled = await compileWorkflow(core, { workflow: definition.source, prompts: definition.prompts, operations: definition.operations });
+  return compiled.ok ? { ok: true, value: { ...definition, checked_program: compiled.value } } : compiled;
 }

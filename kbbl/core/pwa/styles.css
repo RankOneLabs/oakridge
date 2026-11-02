@@ -2644,18 +2644,11 @@ a:focus-visible {
 
 .or-page [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent-blue); color: var(--accent-blue); }
 
-[data-testid="or-def-editor"] > div.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 25rem);
-  gap: clamp(1.5rem, 4vw, 3rem);
-}
-
-[data-testid="or-def-editor"] form, [data-testid="or-run-detail"] { display: flex; flex-direction: column; gap: 1.5rem; }
+[data-testid="or-run-detail"] { display: flex; flex-direction: column; gap: 1.5rem; }
 [data-testid="or-run-detail"] header > div, [data-testid="or-run-list"] > div, [data-testid="or-def-list"] > div { min-width: 0; }
 [data-testid="or-run-detail"] header > div:last-child, [data-testid="or-run-detail"] header > div:last-child > div, .or-def-list__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .or-page > [role="alert"] { padding: 0.9rem 1rem; border: 1px solid var(--danger-card-border); border-radius: 0.55rem; background: var(--danger-bg); color: var(--danger-fg); }
 
-[data-testid="or-def-editor"] form > section,
 [data-testid="or-run-detail"] > section,
 .or-def-detail__graph,
 .or-def-edges {
@@ -2799,9 +2792,6 @@ a:focus-visible {
   .or-page-header, .or-page-header--back { flex-direction: column; gap: 1rem; }
   .or-page-title { font-size: 2.5rem; }
   .or-page-actions { width: 100%; justify-content: flex-start; }
-  [data-testid="or-def-editor"] > div.grid { grid-template-columns: minmax(0, 1fr); }
-  .or-data-table, .or-page > table { min-width: 42rem; }
-  .or-page:has(> .or-data-table), .or-page:has(> table) { overflow-x: auto; }
 }
 
 .or-unavailable {

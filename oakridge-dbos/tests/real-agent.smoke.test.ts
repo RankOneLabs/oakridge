@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,8 +54,8 @@ afterAll(async () => {
 test.skipIf(!kbbl_url)("I5: sample A runs once against real kbbl with a real agent, revising in the same session", async () => {
   const post = async (path: string, body: unknown): Promise<Response> =>
     fetch(`${base_url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const { digest } = await (await post("/api/definitions", sampleWorkflow("review-loop"))).json() as { readonly digest: string };
-  const launched = await post("/api/runs", { request_id: crypto.randomUUID(), digest, input: { topic: "why durable workflows checkpoint each step" } });
+  const { definition_id } = await commitTestDefinition({ source: sampleWorkflow("review-loop") });
+  const launched = await post("/api/runs", { request_id: crypto.randomUUID(), definition_id, input: { topic: "why durable workflows checkpoint each step" } });
   const { run_id } = await launched.json() as { readonly run_id: string };
   const unit = `${run_id}/document`;
   const drafts = () => db.selectFrom("authority.artifact_revision").select(["id", "body"]).where("run_id", "=", run_id).where("artifact", "=", "draft")

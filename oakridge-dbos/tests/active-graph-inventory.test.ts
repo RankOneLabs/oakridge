@@ -24,7 +24,7 @@ test("active schema and symbols reflect the authority", () => {
   const tables = [...sql.matchAll(/CREATE TABLE\s+([\w.]+)/g)].map((match) => match[1]);
   expect(tables).toEqual([
     "authority.schema_baseline",
-    "authority.definition_bundle", "authority.project", "authority.prompt_content", "authority.run", "authority.unit",
+    "authority.project", "authority.run", "authority.unit",
     "authority.unit_dependency", "authority.attempt", "authority.artifact_revision", "authority.review_decision",
     "authority.event", "authority.wanted_log", "authority.effect_intent", "authority.ingress_receipt",
     "authority.collaboration_thread",

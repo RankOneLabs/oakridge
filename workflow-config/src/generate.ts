@@ -4,7 +4,7 @@ import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
-import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
 import { isPromptPath } from "./definition-store";

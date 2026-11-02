@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Action, FeedbackEntry, GatedReviewAccess, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
+import type { Action, FeedbackEntry, GatedReviewAccess, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression } from "../core-client/core-types";
 import { selectWorkerSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { ActionId, Result, RunId } from "./primitives";
 
@@ -79,7 +79,7 @@ export const selectSharedSessionUnit = (unit: string): string => unit.slice(0, u
 
 export interface InstructionSource {
   readonly run_id: RunId;
-  readonly workflow: Workflow;
+  readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor;
   readonly parsed_workflow?: ParsedWorkflow;
   /** prompt path -> content digest, as pinned on the definition bundle. */
   readonly prompts: { readonly [path: string]: string };
@@ -129,7 +129,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   const stage = source.workflow.stages[source.stage];
   const declared = source.parsed_workflow?.stages[source.stage]?.workers[action.worker]
     ?? stage?.workers[action.worker];
-  if (!stage || !declared) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
+  if (!stage || !declared || !("kind" in declared)) return failure(resolved.action_id, `worker ${action.worker} is not declared on stage ${source.stage}`);
   const pin = (path: string): Result<PinnedPrompt, InstructionError> => {
     const digest = source.prompts[path];
     return digest === undefined ? failure(resolved.action_id, `prompt ${path} is not pinned`) : { ok: true, value: { path, digest } };
