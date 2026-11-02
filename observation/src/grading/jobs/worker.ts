@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { EvaluationIdentity } from "../execution";
 import { runnerEntry, type RunnerResult } from "../runner";
-import { checkDisclosure } from "../disclosure";
 import type { GradeRunner } from "../../ports/grade-runner";
 import { err } from "../../domain/primitives";
 import { runGrade, startDelegatedExecution } from "../../storage/grading-store";
@@ -83,22 +82,6 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     execution_id = started.value.execution_id;
   }
   const guarded: GradeRunner = { kind: base.kind, async run(context) {
-    if (isNetwork) {
-      const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
-      if (!disclosure.ok) {
-        await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_provider_attempt")
-          .set({ outcome: "failed", updated_at: new Date() })
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", job.job_id).where("attempt", "=", job.attempts).execute());
-        return err(disclosure.error);
-      }
-      await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
-        .set({ disclosure: sql`${jsonText(disclosure.value)}::jsonb` })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("job_id", "=", job.job_id).where("state", "=", "claimed")
-        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
-        .where("lease_expires_at", ">", new Date()).execute());
-    }
     let wasSent = false;
     const onRequest = async (): Promise<boolean> => {
       if (!isNetwork) return true;

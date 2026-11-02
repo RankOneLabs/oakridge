@@ -50,9 +50,25 @@ const coverage: QuestionDefinition = {
 };
 
 /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
-export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
+export const LANGFUSE_PILOT_QUESTIONS_V1: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
   "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?"),
   "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?"),
   "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?"),
   "assessment.coverage": pinnedQuestion(coverage, "Does at least one assessment finding explicitly assess this brief criterion?"),
+};
+
+function currentChoice(question: PilotQuestion): PilotQuestion {
+  const definition = question.definition;
+  return pinnedQuestion({ ...definition, question_version: "v2",
+    allowed_values: definition.allowed_values?.map((value) => value === "unclear_insufficient_evidence" ? "unclear" : value)
+      .concat("insufficient_evidence") ?? null,
+    unclear_value: "unclear", unclear_semantics: "Choose unclear when the available captured evidence does not settle the answer; choose insufficient_evidence to abstain." },
+  question.text);
+}
+
+export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
+  "analysis.finding_relevance": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["analysis.finding_relevance"]),
+  "plan.criterion_traceability": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["plan.criterion_traceability"]),
+  "brief.source_fidelity": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["brief.source_fidelity"]),
+  "assessment.coverage": LANGFUSE_PILOT_QUESTIONS_V1["assessment.coverage"],
 };

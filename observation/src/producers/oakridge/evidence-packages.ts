@@ -68,6 +68,11 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
       const eligibility = planCriterionEligibility(criterion, { tasks, plan_decisions: decisions });
       if (!eligibility.ok) return err({ operation: "evidence_packages", entity_id: criterion.occurrence_id, detail: eligibility.error.detail });
       const outcome = eligibility.value;
+      if (outcome.kind === "tasks_uncaptured") {
+        exclusions.push({ question_id: "plan.criterion_traceability", occurrence_id: criterion.occurrence_id,
+          reason: { kind: "unevidenced" } });
+        continue;
+      }
       if (outcome.kind === "uncited" || outcome.kind === "dangling_citation") {
         exclusions.push({ question_id: "plan.criterion_traceability", occurrence_id: criterion.occurrence_id,
           reason: outcome.kind === "uncited" ? { kind: "uncited" } : { kind: "dangling_citation", evidence_refs: outcome.evidence_refs } });
@@ -78,8 +83,7 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
         ...cited.map((task) => reference("plan_task", task_revision?.artifact_kind ?? "tasks", task)),
         ...outcome.decisions.map((decision) => reference("plan_decision", revision.artifact_kind, decision))]);
       if (!references.ok) return references;
-      const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value,
-        outcome.kind === "tasks_uncaptured" ? "the run's tasks revision was not captured" : null);
+      const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value, null);
       if (!evidence.ok) return evidence;
       packages.push({ question_id: "plan.criterion_traceability", subject: criterion,
         revision_id: revision.revision_id, evidence: evidence.value });
@@ -134,6 +138,9 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   const needs_repository = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
+  const capturedCriterionKeys = new Set(briefs.flatMap((revision) => revision.items
+    .filter((item) => item.item_kind === "criterion")
+    .map((item) => `${item.item_scope}\u0000${item.producer_local_id}`)));
   for (const [index, brief] of briefs.entries()) {
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
@@ -146,6 +153,16 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
     for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
+      const dangling = assessments.flatMap((assessment) => assessment.items.flatMap((item) => item.links
+        .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
+          && link.target_item_kind === "criterion"
+          && !capturedCriterionKeys.has(`${link.target_scope}\u0000${link.target_local_id}`))
+        .map((link) => link.evidence_ref)));
+      if (dangling.length > 0) {
+        exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+          reason: { kind: "dangling_citation", evidence_refs: dangling } });
+        continue;
+      }
       if (needs_repository) {
         eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
           decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { LANGFUSE_PILOT_QUESTIONS, LANGFUSE_PILOT_QUESTIONS_V1 } from "../src/grading/catalogue/langfuse-pilot";
 import { PILOT_EVIDENCE_RECIPES, projectPilotEvidence, type EvidenceSource } from "../src/langfuse/evidence-recipe";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
@@ -26,16 +26,25 @@ test("each pilot question projects only its declared digest and deep-link refere
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 integration("all three pilot definitions satisfy the stored question constraints", async () => scratchGrading(async (db) => {
-  for (const entry of Object.values(LANGFUSE_PILOT_QUESTIONS)) {
+  for (const entry of [...Object.values(LANGFUSE_PILOT_QUESTIONS_V1), ...Object.values(LANGFUSE_PILOT_QUESTIONS)]) {
     const registered = await registerGradingContext(db, tenant, { question: entry.definition, evidence, evaluator: evaluator("human") });
     expect(registered.ok).toBe(true);
   }
+  const invalidChoice = { ...LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].definition,
+    unclear_value: "value-not-allowed" };
+  expect((await registerGradingContext(db, tenant, { question: invalidChoice, evidence,
+    evaluator: evaluator("human") })).ok).toBe(false);
   const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition")
-    .select(["question_id", "question_version", "target_item_kinds", "input_recipe", "response_kind", "allowed_values",
+    .select(["question_id", "question_version", "target_item_kinds", "input_recipe", "response_kind", "allowed_values", "unclear_value",
       "missing_evidence_policy", "abstain_semantics", "unclear_semantics", "interpretation_caveats"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("question_version", "=", "v1").execute());
-  expect(rows.map((row) => row.question_id).sort()).toEqual(Object.keys(LANGFUSE_PILOT_QUESTIONS).sort());
+    .execute());
+  expect(rows.length).toBe(7);
+  for (const id of ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity"]) {
+    expect(rows.find((row) => row.question_id === id && row.question_version === "v1")?.allowed_values).toContain("unclear_insufficient_evidence");
+    expect(rows.find((row) => row.question_id === id && row.question_version === "v2")?.allowed_values).toContain("insufficient_evidence");
+    expect(rows.find((row) => row.question_id === id && row.question_version === "v2")?.unclear_value).toBe("unclear");
+  }
   expect(rows.every((row) => Array.isArray(row.target_item_kinds) && row.target_item_kinds.length > 0
     && row.input_recipe !== null && typeof row.input_recipe === "object"
     && ["boolean", "choice", "ordinal", "numeric", "text", "structured"].includes(row.response_kind)

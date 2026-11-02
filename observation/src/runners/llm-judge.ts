@@ -74,7 +74,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       || values.some((value) => !(value in answer.data.probabilities)))
       return failure(context, "judge answer does not match question choices", "invalid_response");
     const is_insufficient = answer.data.choice === "insufficient_evidence";
-    const is_unclear = answer.data.choice === "unclear";
+    const is_unclear = context.question.unclear_value != null && answer.data.choice === context.question.unclear_value;
     return ok({ answer: is_insufficient || is_unclear
       ? { state: is_insufficient ? "abstain" : "unclear", kind: "choice", reason: answer.data.choice }
       : { state: "answered", kind: "choice", value: answer.data.choice },

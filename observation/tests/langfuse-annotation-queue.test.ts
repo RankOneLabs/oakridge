@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { LANGFUSE_PILOT_QUESTIONS_V1 as LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import type { EvidenceSet } from "../src/grading/evidence";
 import { createLangfuseHttpClient } from "../src/langfuse/http-client";
 import { mappingKey } from "../src/langfuse/mapping";

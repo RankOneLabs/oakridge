@@ -276,7 +276,7 @@ integration("duplicate delivery retains one job while an evaluator regrade adds 
   expect(stored.executions).toHaveLength(2);
 }));
 
-integration("restricted evidence terminates before runner invocation", async () => scratchGrading(async (db, occurrence_id) => {
+integration("network runner receives required internal evidence", async () => scratchGrading(async (db, occurrence_id) => {
   const restricted = { ...evidence, evidence_set_id: "restricted-evidence" as typeof evidence.evidence_set_id,
     references: [{ ref: "hidden", kind: "internal" as const, content: "secret", digest: "digest" }] };
   expect((await registerGradingContext(db, tenant, { question, evidence: restricted,
@@ -286,14 +286,17 @@ integration("restricted evidence terminates before runner invocation", async () 
     evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "restricted" };
   const job = await enqueueJob(db, tenant, { identity, runner_name: "jev_direct", estimated_cost: 0.1 }, limits);
   let calls = 0;
-  const forbidden: GradeRunner = { kind: "model", async run() { calls++; return good.run({} as never); } };
-  await workOneJob(db, tenant, limits, "restricted-worker", forbidden);
+  const provider: GradeRunner = { kind: "model", async run(context) {
+    calls++;
+    expect(context.evidence.references[0]?.content).toBe("secret");
+    return good.run(context);
+  } };
+  await workOneJob(db, tenant, limits, "restricted-worker", provider);
   const stored = await outcome(db, job.job_id);
-  expect(calls).toBe(0);
+  expect(calls).toBe(1);
   expect(stored.job.state).toBe("terminal");
-  expect(stored.job.terminal_cause).toBe("disclosure_refused");
-  expect(stored.job.disclosure).toBeNull();
-  expect(JSON.stringify(stored)).not.toContain("secret");
+  expect(stored.job.terminal_cause).toBeNull();
+  expect(stored.grades).toHaveLength(1);
 }));
 
 integration("queued local runner can grade internal evidence without outbound disclosure", async () => scratchGrading(async (db, occurrence_id) => {
@@ -308,7 +311,6 @@ integration("queued local runner can grade internal evidence without outbound di
   await workOneJob(db, tenant, limits, "local-worker", good);
   const stored = await outcome(db, job.job_id);
   expect(stored.job.state).toBe("terminal");
-  expect(stored.job.disclosure).toBeNull();
   expect(stored.grades).toHaveLength(1);
 }));
 

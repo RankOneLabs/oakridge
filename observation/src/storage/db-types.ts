@@ -191,7 +191,6 @@ export interface ObservationGradingJob {
   retry_limit: number;
   terminal_cause: string | null;
   estimated_cost: Generated<number>;
-  disclosure: NullableJsonColumn<JsonValue>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -350,6 +349,7 @@ export interface ObservationQuestionDefinition {
   requires_repository_snapshot: boolean;
   question_text: string | null;
   evidence_recipe_provenance: NullableJsonColumn<JsonValue>;
+  unclear_value: string | null;
 }
 
 export interface ObservationSchemaBaseline {

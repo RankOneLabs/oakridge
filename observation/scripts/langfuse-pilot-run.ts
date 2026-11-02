@@ -10,6 +10,7 @@ import type { GradingContext } from "../src/grading/runner";
 import type { GradeDetails, GradePage, RunGradeResult } from "../src/storage/grading-store";
 import type { ObservationItemOccurrence } from "../src/storage/db-types";
 import type { EligibilityRow } from "../src/grading/eligibility";
+import type { EvaluationJobResponse } from "../src/http/evaluations";
 import type { ExportManifest } from "../src/export/manifest";
 import { assayItemEvidenceDigest, makePopulationManifestFromEligibility, type PopulationManifest,
   type PopulationSelection } from "../src/langfuse/population-manifest";
@@ -33,6 +34,7 @@ export interface PilotAttempt {
   readonly disagreement_cause: DisagreementCause | null;
   /** Required for a network runner: the queue admits one only against a positive estimate. */
   readonly estimated_cost?: number;
+  readonly reviewed_commit?: string;
 }
 export interface PilotHumanGrade { readonly identity: EvaluationIdentity; readonly context: GradingContext;
   readonly details: GradeDetails }
@@ -83,7 +85,6 @@ async function read(input: PilotHttpRequest): Promise<PilotHttpResponse> {
     { headers: { authorization: `Bearer ${input.token}` } });
   return { status: response.status, value: await response.json() };
 }
-interface PilotJobResponse { readonly job_id: string; readonly state: string; readonly idempotency_digest: string }
 interface QueuedAttemptOutcome { readonly operations: readonly PilotOperation[];
   readonly execution_id: string | null }
 
@@ -99,10 +100,10 @@ async function queuedAttempt(input: { readonly base_url: string; readonly grade_
     throw new Error(`network attempt requires a positive estimated_cost: ${entity_id}`);
   const enqueued = await request({ base_url, token: grade_token, path: "/v1/evaluation-jobs",
     body: { identity: attempt.identity, context: attempt.context, runner: attempt.runner,
-      estimated_cost: attempt.estimated_cost } });
+      estimated_cost: attempt.estimated_cost, reviewed_commit: attempt.reviewed_commit } });
   operations.push(operation("enqueue", entity_id, enqueued));
   if (enqueued.status >= 300) return { operations, execution_id: null };
-  const job = enqueued.value as PilotJobResponse;
+  const job = enqueued.value as EvaluationJobResponse;
   let state = job.state;
   for (let poll = 0; poll < JOB_POLL_ATTEMPTS && state !== "terminal" && state !== "skipped_budget"; poll++) {
     await Bun.sleep(JOB_POLL_INTERVAL_MS);
@@ -111,7 +112,7 @@ async function queuedAttempt(input: { readonly base_url: string; readonly grade_
       operations.push(operation("await_job", entity_id, polled));
       return { operations, execution_id: null };
     }
-    state = (polled.value as PilotJobResponse).state;
+    state = (polled.value as EvaluationJobResponse).state;
   }
   if (state !== "terminal" && state !== "skipped_budget") {
     operations.push({ operation: "await_job", entity_id, status: 504,

@@ -16,17 +16,18 @@
  * reserves against the configured spend caps; TypeSafe reports no cost of its own.
  */
 import { randomBytes } from "node:crypto";
-import { Client } from "pg";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest } from "../src/grading/evaluator";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
-import { listRunItems } from "../src/storage/projection-store";
 import { readJob } from "../src/storage/grading-job-store";
 import { openDatabase, withTenant, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { createScratchDatabase } from "./scratch-database";
+import { loadRunCapture } from "../src/storage/run-capture-store";
+import { runPackages, type PilotPackage } from "../src/producers/oakridge/evidence-packages";
 
 type LiveQuestionId = "plan.criterion_traceability" | "brief.source_fidelity";
 interface Options { readonly question_id: LiveQuestionId; readonly keep_database: boolean;
@@ -34,31 +35,6 @@ interface Options { readonly question_id: LiveQuestionId; readonly keep_database
 interface EnqueuedJob { readonly job_id: string }
 
 /** The two pilot questions whose evidence a captured planning-and-brief pass can supply. */
-const SYSTEM_ONE_CRITERIA: Readonly<Record<LiveQuestionId, Readonly<Record<string, string>>>> = {
-  "plan.criterion_traceability": {
-    traceable: "The cited decision supports the plan criterion",
-    unsupported: "The cited decision does not support the plan criterion",
-    unclear_insufficient_evidence: "The captured excerpts do not settle support",
-  },
-  "brief.source_fidelity": {
-    faithful: "The brief criterion preserves the meaning of its plan criterion",
-    changed_meaning: "The brief criterion changes the meaning of its plan criterion",
-    unclear_insufficient_evidence: "The captured excerpts do not settle the relationship",
-  },
-};
-const SYSTEM_ONE_INSTRUCTIONS: Readonly<Record<LiveQuestionId, string>> = {
-  "plan.criterion_traceability": "Does plan_criterion follow from its cited plan_decision? "
-    + "Choose traceable when the decision supports the criterion; unsupported when it does not; "
-    + "unclear_insufficient_evidence only when the present excerpts cannot settle the relationship. "
-    + "Do not infer uncited sources.",
-  "brief.source_fidelity": "Does brief_criterion preserve the meaning of the plan_criterion it derives from? "
-    + "Choose faithful when the meaning is preserved; changed_meaning when it is not; "
-    + "unclear_insufficient_evidence only when the present excerpts cannot settle the relationship. "
-    + "Rewording alone is not changed_meaning.",
-};
-
-const CRITERION_LOCAL_ID = "criterion-lineage";
-const DECISION_LOCAL_ID = "decision-capture";
 const tenant = { producer: "oakridge", namespace: "jev-live-walkthrough" };
 const credentials = {
   ingest: [{ ...tenant, token: "ingest-live" }],
@@ -99,12 +75,23 @@ interface EventFixture { readonly run_id: string; readonly rows: readonly Revisi
 
 const revisionRef = (row: RevisionEvent): string => `${row.payload.unit}:${row.payload.artifact}:1`;
 
+function fixtureCollectionKey(row: RevisionEvent): string | null {
+  const body = row.payload.body;
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  if (row.payload.artifact === "brief") return typeof body.cohort_id === "string" ? body.cohort_id : null;
+  if (row.payload.artifact === "plan" && Array.isArray(body.cohorts) && body.cohorts.length === 1) {
+    const cohort = body.cohorts[0];
+    return typeof cohort === "object" && cohort !== null && !Array.isArray(cohort) && typeof cohort.id === "string"
+      ? cohort.id : null;
+  }
+  return null;
+}
+
 /** Deliver the captured revisions in their observed transaction order, as the source route requires. */
-async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: EventFixture): Promise<readonly RevisionEvent[]> {
+async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: EventFixture): Promise<void> {
   const headers = { authorization: `Bearer ${credentials.ingest[0]!.token}`, "content-type": "application/json" };
   let cursor = { commit_txid: "0", id: "" };
   const bundle = { id: "development", digest: "fixture-bundle" };
-  const delivered: RevisionEvent[] = [];
   for (const row of events.rows) {
     const next = { commit_txid: row.commit_txid, id: row.id };
     const outcome = row.payload.kind === "launched"
@@ -117,7 +104,8 @@ async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: Eve
           artifact_schema_version: "development-v1",
           revision: { format: "observation.artifact-revision/v1",
             source: { ...tenant, revision_id: `${tenant.producer}:${tenant.namespace}:${revisionRef(row)}`,
-              run_id: row.run_id, unit_id: row.unit_id, artifact_kind: row.payload.artifact,
+              run_id: row.run_id, unit_id: row.unit_id, collection_key: fixtureCollectionKey(row),
+              artifact_kind: row.payload.artifact,
               artifact_schema_version: "development-v1", definition_bundle: bundle,
               predecessor_id: row.payload.predecessor, subject_id: row.payload.subject, by_id: row.payload.by },
             recorded_at: row.created_at, body: row.payload.body, body_digest: digestOf(row.payload.body) } }
@@ -128,43 +116,16 @@ async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: Eve
       body: JSON.stringify({ previous: cursor, cursor: next, outcome }) });
     if (response.status !== 200) throw new Error(`ingest refused with HTTP ${response.status}: ${await response.text()}`);
     cursor = next;
-    if (row.payload.kind === "revision_published") delivered.push(row);
   }
-  return delivered;
 }
-
-interface GradeSubject {
-  readonly subject_occurrence_id: string;
-  readonly references: readonly { readonly ref: string; readonly kind: "public"; readonly content: JsonValue;
-    readonly digest: string }[];
-}
-
-/** The pinned recipe's input and output roles, filled from the projected criteria of this pass. */
-async function gradeSubject(db: Database, run_id: string, question_id: LiveQuestionId,
-  revisions: readonly RevisionEvent[]): Promise<GradeSubject> {
-  const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
-  const revisionOf = (artifact: string): string => {
-    const row = revisions.find((candidate) => candidate.payload.artifact === artifact);
-    if (!row) throw new Error(`the fixture has no ${artifact} revision`);
-    return revisionRef(row);
-  };
-  const item = (artifact: string, item_kind: string, local_id: string) => {
-    const found = page.items.find((entry) => entry.revision_id === revisionOf(artifact)
-      && entry.item_kind === item_kind && entry.producer_local_id === local_id);
-    if (!found) throw new Error(`the projection has no ${artifact} ${item_kind} ${local_id}`);
-    return found;
-  };
-  const reference = (ref: string, selected: { readonly selected_value: JsonValue }) =>
-    ({ ref, kind: "public" as const, content: selected.selected_value, digest: digestOf(selected.selected_value) });
-  const planCriterion = item("plan", "criterion", CRITERION_LOCAL_ID);
-  if (question_id === "plan.criterion_traceability") {
-    const decision = item("plan", "decision", DECISION_LOCAL_ID);
-    return { subject_occurrence_id: planCriterion.occurrence_id,
-      references: [reference("plan_criterion", planCriterion), reference("plan_decision", decision)] };
-  }
-  const briefCriterion = item("brief", "criterion", CRITERION_LOCAL_ID);
-  return { subject_occurrence_id: briefCriterion.occurrence_id,
-    references: [reference("plan_criterion", planCriterion), reference("brief_criterion", briefCriterion)] };
+async function gradeSubject(db: Database, run_id: string, question_id: LiveQuestionId): Promise<PilotPackage> {
+  const captured = await loadRunCapture(db, tenant, run_id);
+  if (!captured.ok) throw new Error(captured.error.detail);
+  const built = runPackages(captured.value, "live_all_revisions");
+  if (!built.ok) throw new Error(built.error.detail);
+  const selected = built.value.packages.find((item) => item.question_id === question_id);
+  if (!selected) throw new Error(`the captured run has no eligible ${question_id} subject`);
+  return selected;
 }
 
 async function main(): Promise<void> {
@@ -175,33 +136,30 @@ async function main(): Promise<void> {
 
   const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   const name = `observation_jev_live_${stamp}_${randomBytes(4).toString("hex")}`;
-  const admin = new Client({ connectionString: serverUrl });
-  await admin.connect();
-  await admin.query(`CREATE DATABASE ${name}`);
-  const url = new URL(serverUrl);
-  url.pathname = `/${name}`;
-  const db = openDatabase(url.href);
+  const scratch = await createScratchDatabase(serverUrl, name);
+  const db = openDatabase(scratch.url);
   console.log(`database ${name}, tenant ${tenant.producer}/${tenant.namespace}`);
 
   try {
     await migrateEmptyDatabase(db);
     const app = createApp({ db, credentials });
     const events = await readFixture("events.json") as unknown as EventFixture;
-    const revisions = await ingestCapturedPass(app, events);
-    const subject = await gradeSubject(db, events.run_id, options.question_id, revisions);
+    await ingestCapturedPass(app, events);
+    const subject = await gradeSubject(db, events.run_id, options.question_id);
 
     const pilot = LANGFUSE_PILOT_QUESTIONS[options.question_id];
     const question = pilot.definition;
-    const evidence = { evidence_set_id: digestOf(subject.references as unknown as JsonValue),
-      references: subject.references, is_incomplete: false, incompleteness_reason: null };
+    const evidence = subject.evidence;
+    const values = question.allowed_values?.filter((value): value is string => typeof value === "string") ?? [];
     const instruction_text = JSON.stringify({ system_one: { type: "choice",
-      instructions: SYSTEM_ONE_INSTRUCTIONS[options.question_id],
-      criteria: SYSTEM_ONE_CRITERIA[options.question_id] } });
+      instructions: [pilot.text, question.abstain_semantics, question.unclear_semantics,
+        question.interpretation_caveats].join(" "),
+      criteria: Object.fromEntries(values.map((value) => [value, value])) } });
     const evaluator = { evaluator_definition_id: `jev-direct-${options.question_id}`, kind: "model",
       backend_kind: "local", provider: "typesafe", model: "jev-latest", instruction_text,
       prompt_digest: instructionDigest(instruction_text), config_digest: "jev-live-1", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: null };
-    const identity = { subject_occurrence_id: subject.subject_occurrence_id,
+    const identity = { subject_occurrence_id: subject.subject.occurrence_id,
       evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
       question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
       config_digest: evaluator.config_digest, attempt_label: "live-1" };
@@ -212,8 +170,8 @@ async function main(): Promise<void> {
         estimated_cost: options.estimated_cost }) });
     if (enqueued.status !== 201) throw new Error(`enqueue refused with HTTP ${enqueued.status}: ${await enqueued.text()}`);
     const enqueuedJob = await enqueued.json() as EnqueuedJob;
-    console.log(`question ${question.question_id}/${question.question_version}, subject ${subject.subject_occurrence_id}`);
-    console.log(`request state refs: ${subject.references.map((entry) => entry.ref).join(", ")}`);
+    console.log(`question ${question.question_id}/${question.question_version}, subject ${subject.subject.occurrence_id}`);
+    console.log(`request state refs: ${evidence.references.map((entry) => entry.ref).join(", ")}`);
 
     await workOneJob(db, tenant);
     const job = await readJob(db, tenant, enqueuedJob.job_id);
@@ -241,10 +199,10 @@ async function main(): Promise<void> {
       probabilities: observation?.probabilities ?? null,
       confidence: observation?.confidence ?? null,
     }, null, 2));
-    if (!options.keep_database) console.log(`\nretained database ${name}; drop it with: DROP DATABASE ${name}`);
+    if (options.keep_database) console.log(`\nretained database ${name}`);
   } finally {
     await db.destroy();
-    await admin.end();
+    if (!options.keep_database) await scratch.drop();
   }
 }
 

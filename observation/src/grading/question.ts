@@ -11,6 +11,8 @@ export interface QuestionDefinition {
   readonly input_recipe: { readonly [key: string]: JsonValue };
   readonly response_kind: ResponseKind;
   readonly allowed_values: readonly JsonValue[] | null;
+  /** The allowed choice that records an explicit unclear answer. Null for questions without one. */
+  readonly unclear_value?: string | null;
   readonly missing_evidence_policy: "fail" | "abstain";
   readonly abstain_semantics: string;
   readonly unclear_semantics: string;

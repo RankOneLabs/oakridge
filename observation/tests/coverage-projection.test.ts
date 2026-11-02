@@ -98,7 +98,7 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
     graded_by_collection_mode: { blind: 0, in_context: 1, unknown: 1 } });
 }));
 
-integration("pilot manifest requires recorded eligibility before freezing selection", async () => scratchGrading(async (db, occurrence_id) => {
+integration("pilot ignores a stale stored eligibility decision", async () => scratchGrading(async (db, occurrence_id) => {
   const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }],
     grade: [{ ...tenant, token: "grade", reviewer_id: "reviewer" }] } });
   const server = Bun.serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
@@ -112,12 +112,12 @@ integration("pilot manifest requires recorded eligibility before freezing select
       attempts: [], human_grades: [], annotation_imports: [], examples: [] };
     const environment = { OBSERVATION_PILOT_BASE_URL: `http://127.0.0.1:${server.port}`,
       OBSERVATION_PILOT_GRADE_TOKEN: "grade", OBSERVATION_PILOT_READ_TOKEN: "read" };
-    await expect(runPilot(plan, environment)).rejects.toThrow("recorded eligibility required");
+    await expect(runPilot(plan, environment)).rejects.toThrow("eligibility read failed: 422");
     expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
     await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
       (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
       VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id},
         ${question.question_version}, 'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
-    await expect(runPilot(plan, environment)).rejects.toThrow("pilot requires 10 to 30 included item-level cases");
+    await expect(runPilot(plan, environment)).rejects.toThrow("eligibility read failed: 422");
   } finally { server.stop(); }
 }));

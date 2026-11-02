@@ -7,6 +7,7 @@ import { concurrencyExceeded, spendExceeded, type BudgetUsage, type GradingLimit
 import { withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
 import { registerGradingContext, validateIdentity } from "./grading-store";
+import { deriveSubjectGradeability, isPilotQuestionPin } from "../producers/oakridge/gradeability";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
@@ -28,6 +29,14 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
       throw new Error("context and identity differ");
     const registered = await registerGradingContext(db, tenant, input.context);
     if (!registered.ok) throw new Error(registered.error.detail);
+  }
+  if (isPilotQuestionPin(input.identity.question_id, input.identity.question_version)) {
+    const derived = await deriveSubjectGradeability(db, tenant, input.identity.subject_occurrence_id,
+      input.identity.question_id, input.identity.question_version);
+    if (!derived.ok) throw new Error(derived.error.detail);
+    if (derived.value.decision.tag !== "eligible"
+      || derived.value.decision.payload.evidence_set_id !== input.identity.evidence_set_id)
+      throw new Error("current captured evidence is not eligible for this grading job");
   }
   const digest = runGradeDigest(input.identity, input.reviewed_commit);
   if (!digest.ok) throw new Error(digest.error.detail);
@@ -57,7 +66,7 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
       runner_name: input.runner_name, run_id: item.run_id, stage_id: item.unit_id,
       state: "queued", lease_owner: null, lease_expires_at: null, attempts: 0,
       retry_limit: limits.retry_limit, terminal_cause: null, estimated_cost: input.estimated_cost ?? 0,
-      disclosure: null })
+    })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
       .returningAll().executeTakeFirst();
     return inserted ?? trx.selectFrom("observation.grading_job").selectAll()

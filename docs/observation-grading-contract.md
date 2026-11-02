@@ -23,8 +23,7 @@ reads the declared sensitivity of the top-level body field through
 `public`, a `repository_content` field becomes `repository_content`, and `internal`,
 `restricted` and `unclassified_content` all fail closed to `internal`. An artifact kind
 with no declared policy, such as `tasks`, and a field absent from the policy also fail
-closed. Reclassifying a body field therefore changes what may be disclosed without
-editing the Oakridge evidence producer.
+closed. Classification remains available to export and redaction consumers.
 
 On the current development body schemas this derivation classifies every pilot evidence
 role as `internal`: plan criteria and decisions are selected from the plan's `cohorts`
@@ -32,11 +31,10 @@ field, brief criteria from the brief's `acceptance_criteria`, assessment finding
 the assessment's `findings`, and all four are declared `internal`. Plan tasks come from
 the unclassified `tasks` artifact kind. No development field is declared
 `repository_content` today, so that branch of the mapping is currently unreachable from
-this producer. Because `checkDisclosure` admits only `public` and `repository_content`,
-an evidence set built by `runPackages` cannot be dispatched to an external provider as
-the bodies stand; a live external grade supplies its own classified references through
-the evaluation context, as the direct Jev walkthrough in
-`docs/observation-operations.md` does.
+this producer. Production packages include each selected item's content, digest and
+deep link. The class-based provider refusal was removed by
+`0020_remove_disclosure_gate.sql`; authenticated provider jobs may use the complete
+pinned package.
 
 ## HTTP routes
 
@@ -46,9 +44,9 @@ the evaluation context, as the direct Jev walkthrough in
 
 `0013_human_collection_mode.sql` adds the nullable, explicitly written collection mode, blind assignment reference, and visibility booleans. Older rows remain null in storage and report `collection_mode: "unknown"` in grade readback. `0014_annotation_evaluator_v2.sql` rebuilds the generated `label_origin` so its annotation arm recognises `langfuse-annotation-human/v2` alongside the original id; the imported-annotation evaluator gained that versioned id because v1 rows written before 0010 carry the literal config string as their prompt digest and no instruction text, which would otherwise conflict on registration. No existing row is reclassified: a v1 observation still matches the v1 id, and historical Oakridge operator decisions retain `oakridge_operator_unblinded`. A native correction remains a separate append-only observation; its `supersedes_observation_id` points to the previous answer. Workflow approval decisions are not rubric answers and are omitted from human coverage.
 
-`POST /v1/blind-assignments` freezes a recorded eligible subject occurrence, evidence set, and question pin. `GET /v1/blind-assignments?limit=50` lists at most 50 unclaimed or expired assignments. `POST /v1/blind-assignments/{id}/claim` binds a reviewer to it for 15 minutes; a live claim blocks another claim, while an expired unsubmitted claim can be reassigned without changing the frozen identity. `GET /v1/blind-assignments/{id}` reports `unsubmitted`, `claimed`, `expired`, or `submitted` to its reviewer. Before submission the response contains only frozen identifiers, question text, claim state, and timestamps. It carries no model grade, agreement summary, approval outcome, or evidence content. A blind submission to `/v1/grades` must name its claimed assignment; the transaction checks its reviewer, frozen identity, expiry, and unused state before inserting the grade and marking the assignment submitted. Blind submissions require both visibility booleans to be false.
+`POST /v1/blind-assignments` freezes an eligible subject occurrence, evidence set, and question pin. `GET /v1/blind-assignments?limit=50` lists at most 50 unclaimed or expired assignments. `POST /v1/blind-assignments/{id}/claim` binds a reviewer to it for 15 minutes; a live claim blocks another claim, while an expired unsubmitted claim can be reassigned without changing the frozen identity. `GET /v1/blind-assignments/{id}` reports `unsubmitted`, `claimed`, `expired`, or `submitted` to its reviewer. Before submission the response contains only frozen identifiers, question text, claim state, and timestamps. It carries no model grade, agreement summary, approval outcome, or evidence content. A blind submission to `/v1/grades` must name its claimed assignment, except for the imported-annotation evaluator ids whose blinding occurred in Langfuse; the transaction checks any named assignment's reviewer, frozen identity, expiry, and unused state before inserting the grade and marking the assignment submitted. Blind submissions require both visibility booleans to be false.
 
-`GET /v1/runs/{run-id}/coverage` uses the read credential. Optional `revision_id` selects one captured revision; optional `question_id` and `question_version` select a pinned question together. The bounded response contains at most 50 question pins with `eligible`, `graded`, `excluded`, typed exclusion counts including `skipped_budget`, `graded_by_collection_mode`, `query_version`, `lag_seconds` per pin, and `truncated`. The mode counts distinguish `blind`, `in_context`, and `unknown` historical grades. Each mode counts distinct eligible subjects; a subject graded in several modes appears in each applicable count, so their sum can exceed `graded`. Counts use the latest recorded eligibility decision for each subject occurrence and question pin. The pilot runner calls `makePopulationManifestFromEligibility` with those same stored decisions, so the eligible denominator agrees for the same selection. A grade counts only for its exact occurrence and question pin; operator workflow decisions do not count as deliberate human grades.
+`GET /v1/runs/{run-id}/coverage` uses the read credential. Optional `revision_id` selects one captured revision; optional `question_id` and `question_version` select a pinned question together. The bounded response contains at most 50 question pins with `eligible`, `graded`, `excluded`, typed exclusion counts, `graded_by_collection_mode`, `query_version`, `lag_seconds` per pin, and `truncated`. The mode counts distinguish `blind`, `in_context`, and `unknown` historical grades. For a selected pilot question pin, counts derive current gradeability from captured revisions; a human grade counts only when its recorded `evidence_set_id` equals the current derived set. Historical grades remain readable after supersession. Other question pins still use the legacy stored eligibility projection pending the table cutover.
 
 `GET /v1/items/{occurrence-id}/grades?limit=50&offset=0` uses the existing read credential. URL encode the occurrence ID because a canonical digest contains `/`. The result is `{items,total,limit,offset}`, ordered by recording time and observation id. Each item contains the raw `answer`, full observation including probabilities, evaluator definition and kind, and execution including evidence identity, status, provider link, and external execution id. `limit` ranges from 1 to 200.
 

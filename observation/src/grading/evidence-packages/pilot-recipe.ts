@@ -63,7 +63,7 @@ export function projectPilotEvidence(question: QuestionDefinition, sources: read
   const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
   const expected = recipe ? canonicalJson(pinnedInputRecipe(recipe)) : null;
   const actual = canonicalJson(question.input_recipe);
-  if (!recipe || question.question_version !== recipe.recipe_version || !expected?.ok || !actual.ok
+  if (!recipe || (question.question_version !== recipe.recipe_version && question.question_version !== "v2") || !expected?.ok || !actual.ok
     || expected.value !== actual.value)
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
   const slots = [...recipe.input, ...recipe.output];

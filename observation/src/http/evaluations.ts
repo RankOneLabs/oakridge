@@ -6,11 +6,17 @@ import { runnerEntry, runnerNames } from "../grading/runner";
 import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
-import { readEligibility } from "../storage/eligibility-store";
+import { readDerivedEligibility } from "../producers/oakridge/gradeability";
 import { gradingLimits } from "../grading/jobs/budget";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
 import { errorResponse } from "./errors";
+
+export interface EvaluationJobResponse {
+  readonly job_id: string;
+  readonly state: string;
+  readonly idempotency_digest: string;
+}
 
 export const responseKindSchema = z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]);
 export const contextSchema = z.object({
@@ -18,6 +24,7 @@ export const contextSchema = z.object({
     question_text: z.string().optional(), evidence_recipe_provenance: z.object({ recipe_id: z.string(), recipe_version: z.string(), source: z.string() }).optional(),
     target_item_kinds: z.array(z.string().min(1)).min(1), input_recipe: z.record(z.string(), z.unknown()),
     response_kind: responseKindSchema, allowed_values: z.array(z.unknown()).nullable(),
+    unclear_value: z.string().nullable().optional(),
     missing_evidence_policy: z.enum(["fail", "abstain"]), abstain_semantics: z.string(),
     unclear_semantics: z.string(), interpretation_caveats: z.string(), requires_repository_snapshot: z.boolean() }),
   evidence: z.object({ evidence_set_id: z.string().min(1),
@@ -51,7 +58,15 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     const question_id = params.get("question_id");
     const question_version = params.get("question_version");
     if (!question_id || !question_version) return errorResponse(c, 400, "invalid_selection", "question id and version required");
-    return c.json({ items: await readEligibility(deps.db, credential, question_id, question_version) });
+    const policy = params.get("selection_policy") ?? "live_all_revisions";
+    if (policy !== "live_all_revisions" && policy !== "historical_latest_per_unit_kind")
+      return errorResponse(c, 400, "invalid_selection", "unknown revision selection policy");
+    const derived = await readDerivedEligibility(deps.db, credential, question_id, question_version,
+      policy, params.get("run_id") ?? undefined);
+    return derived.ok ? c.json({ items: derived.value })
+      : derived.error.detail === "no captured revisions for run"
+        ? errorResponse(c, 403, "forbidden", "run is unavailable to this credential")
+        : errorResponse(c, 422, "gradeability_failed", derived.error.detail);
   });
   app.get("/v1/evaluations/by-digest/:digest", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
@@ -112,7 +127,9 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
         reviewed_commit: parsed.data.reviewed_commit, estimated_cost: parsed.data.estimated_cost,
         context: parsed.data.context as GradingContext | undefined },
       deps.gradingLimits ?? gradingLimits());
-      return c.json({ job_id: job.job_id, state: job.state }, 201);
+      const response: EvaluationJobResponse = { job_id: job.job_id, state: job.state,
+        idempotency_digest: job.idempotency_digest };
+      return c.json(response, 201);
     } catch (cause) { return errorResponse(c, 422, "job_refused", String(cause)); }
   });
   app.get("/v1/evaluation-jobs/:id", async (c) => {

@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../domain/primitives";
 import type { BlindAssignmentId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
 import { withTenant, type Database, type TenantScope } from "./database";
+import { deriveSubjectGradeability, isPilotQuestionPin } from "../producers/oakridge/gradeability";
 
 export type BlindAssignmentIdentity = Pick<EvaluationIdentity,
   "subject_occurrence_id" | "evidence_set_id" | "question_id" | "question_version">;
@@ -35,14 +36,23 @@ export function assignmentState(row: { readonly submitted_observation_id: string
 export async function createBlindAssignment(db: Database, tenant: TenantScope, identity: BlindAssignmentIdentity)
   : Promise<Result<BlindAssignmentView, BlindAssignmentError>> {
   try {
+    if (isPilotQuestionPin(identity.question_id, identity.question_version)) {
+      const derived = await deriveSubjectGradeability(db, tenant, identity.subject_occurrence_id,
+        identity.question_id, identity.question_version);
+      if (!derived.ok || derived.value.decision.tag !== "eligible"
+        || derived.value.decision.payload.evidence_set_id !== identity.evidence_set_id)
+        return failure(identity.subject_occurrence_id, "current captured evidence is not eligible for a blind assignment");
+    }
     return await withTenant(db, tenant, async (trx) => {
-      const eligible = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
+      const eligible = isPilotQuestionPin(identity.question_id, identity.question_version) ? null
+        : await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("subject_occurrence_id", "=", identity.subject_occurrence_id)
         .where("question_id", "=", identity.question_id).where("question_version", "=", identity.question_version)
         .orderBy("recorded_at", "desc").executeTakeFirst();
-      if (!eligible || eligible.tag !== "eligible" ||
+      if (!isPilotQuestionPin(identity.question_id, identity.question_version) && (!eligible || eligible.tag !== "eligible" ||
         (eligible.payload as { evidence_set_id?: string }).evidence_set_id !== identity.evidence_set_id)
+        )
         return failure(identity.subject_occurrence_id, "eligible frozen subject and evidence required");
       const assignment_id = randomUUID() as BlindAssignmentId;
       const row = await trx.insertInto("observation.blind_assignment").values({
