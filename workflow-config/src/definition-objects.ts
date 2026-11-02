@@ -28,14 +28,11 @@ export interface ResolvedDefinition {
 }
 
 export type DefinitionInputs = Pick<CommittedDefinition, "source" | "operation_registry_id" | "prompts">;
+export type DefinitionOrder = Pick<CommittedDefinition, "schema_names" | "stage_names">;
 
-/** Call on the YAML document's toJS() result, before canonicalizing its mappings. */
-export function commitDefinition(inputs: DefinitionInputs): CommittedDefinition {
-  return {
-    ...inputs,
-    schema_names: Object.keys(inputs.source.schemas ?? {}),
-    stage_names: Object.keys(inputs.source.stages),
-  };
+/** Order must come from YAML mapping nodes, before toJS() reorders integer-like keys. */
+export function commitDefinition(inputs: DefinitionInputs, order: DefinitionOrder): CommittedDefinition {
+  return { ...inputs, ...order };
 }
 
 function promptValues(prompts: Prompts | null | undefined): string[] {

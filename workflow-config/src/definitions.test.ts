@@ -7,7 +7,7 @@ import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
 import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
-import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type OperationRegistry } from "./definition-objects";
+import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionStoreFailure } from "./definition-store";
 import { WORKFLOW_SOURCES } from "./workflow-sources";
 
@@ -39,12 +39,22 @@ function authoredSource(yaml = authored): AuthoredWorkflow {
   if (source === null) throw new Error("invalid test source");
   return source;
 }
+function authoredOrder(yaml = authored): DefinitionOrder {
+  const document = YAML.parseDocument(yaml, { uniqueKeys: true });
+  const schemas = document.get("schemas");
+  const stages = document.get("stages");
+  if ((schemas != null && !YAML.isMap(schemas)) || !YAML.isMap(stages)) throw new Error("invalid test mappings");
+  return {
+    schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
+    stage_names: stages.items.map(({ key }) => String(key)),
+  };
+}
 function definitionId(inputs: IdentityInputs = {}): DefinitionId {
   return unwrap(jsonIdentity<DefinitionId>(commitDefinition({
     source: authoredSource(inputs.yaml),
     operation_registry_id: unwrap(jsonIdentity<OperationRegistryId>(inputs.registry ?? operations)),
     prompts: { "write.md": bytesIdentity(inputs.prompt ?? Buffer.from("Write.\n")) },
-  })));
+  }, authoredOrder(inputs.yaml))));
 }
 
 test("identities are unprefixed lowercase SHA-256 over the shared canonical UTF-8 bytes", () => {
@@ -120,7 +130,7 @@ function storeFixture(prompt = Buffer.from("\ufeffWrite.\r\n")): StoreFixture {
   writeFileSync(resolve(root, "operations", `${operation_registry_id}.json`), unwrap(canonicalJson(operations)));
   const prompt_id = bytesIdentity(prompt);
   writeFileSync(resolve(root, "prompts", `${prompt_id}.md`), prompt);
-  const definition = commitDefinition({ source: authoredSource(), prompts: { "write.md": prompt_id }, operation_registry_id });
+  const definition = commitDefinition({ source: authoredSource(), prompts: { "write.md": prompt_id }, operation_registry_id }, authoredOrder());
   return { root, definition, prompt_id, definition_id: writeDefinition(root, definition) };
 }
 function readFailure<Value>(result: Result<Value, DefinitionStoreFailure>): DefinitionStoreFailure {
@@ -263,8 +273,8 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
     const document = YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8"), { uniqueKeys: true });
     const source = decodeWorkflowSource(document.toJS());
     if (source === null) throw new Error("invalid authored source");
-    expect({ source: definition.source, schemas: definition.schema_names, stages: definition.stage_names }).toEqual({
-      source, schemas: Object.keys(source.schemas ?? {}), stages: Object.keys(source.stages),
+    expect({ source: definition.source, schema_names: definition.schema_names, stage_names: definition.stage_names }).toEqual({
+      source, ...authoredOrder(readFileSync(resolve(repository_root, path), "utf8")),
     });
   });
 }
@@ -343,6 +353,35 @@ test("two generator runs produce identical store filenames and bytes and preserv
   const check = runGenerator(root, true);
   expect({ code: check.exitCode, errors: check.stderr.toString() }).toEqual({ code: 0, errors: "" });
 });
+
+for (const mapping of ["schemas", "stages"] as const) {
+  test(`numeric-looking ${mapping} names preserve authored order and change identity when reordered`, () => {
+    const root = generatorFixture();
+    const path = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+    const numeric_names = authored.replace(/\bfirst\b/g, '"2"').replace(/\bsecond\b/g, '"1"')
+      .replaceAll("write.md", "review-loop/write.md");
+    writeFileSync(path, numeric_names);
+    const generated = runGenerator(root);
+    if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
+    const store = resolve(root, "workflow-config/definitions");
+    const previous = unwrap(resolveLaunchableDefinition("review-loop", store));
+    expect({ schemas: previous.schema_names, stages: previous.stage_names }).toEqual({
+      schemas: ["2", "1"], stages: ["2", "1"],
+    });
+
+    const document = YAML.parseDocument(numeric_names, { uniqueKeys: true });
+    const names = document.get(mapping);
+    if (!YAML.isMap(names)) throw new Error(`missing ${mapping}`);
+    names.items.reverse();
+    writeFileSync(path, document.toString());
+    const regenerated = runGenerator(root);
+    if (regenerated.exitCode !== 0) throw new Error(regenerated.stderr.toString());
+    const next = unwrap(resolveLaunchableDefinition("review-loop", store));
+    expect(mapping === "schemas" ? next.schema_names : next.stage_names).toEqual(["1", "2"]);
+    expect(next.definition_id).not.toBe(previous.definition_id);
+    expect(runGenerator(root, true).exitCode).toBe(0);
+  });
+}
 
 for (const directory of ["workflows", "prompts", "operations", "catalog"] as const) {
   test(`--check names a differing ${directory} file and does not write`, () => {

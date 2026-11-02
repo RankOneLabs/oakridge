@@ -6,7 +6,7 @@ import { WORKFLOW_SOURCES } from "./workflow-sources";
 import { OPERATION_REGISTRY } from "../../oakridge-dbos/src/operations/registry";
 import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
 import { bytesIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
-import { commitDefinition, referencedPromptPaths, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
+import { commitDefinition, referencedPromptPaths, type DefinitionOrder, type LaunchableCatalog, type PromptReferences } from "./definition-objects";
 import { isPromptPath } from "./definition-store";
 
 const root = resolve(import.meta.dir, "../..");
@@ -56,8 +56,17 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
   if (document.errors.length > 0) {
     throw new Error(`${sourcePath}: ${document.errors.map((error) => error.message).join("; ")}`);
   }
-  // toJS preserves authored schemas/stages insertion order; capture it before
-  // the canonical serializer sorts mapping keys in the committed object.
+  // YAML nodes preserve authored order, including integer-like names that
+  // JavaScript object enumeration would reorder after toJS().
+  const schemas = document.get("schemas");
+  const stages = document.get("stages");
+  if ((schemas != null && !YAML.isMap(schemas)) || !YAML.isMap(stages)) {
+    throw new Error(`${sourcePath}: invalid authored schemas or stages mapping`);
+  }
+  const order: DefinitionOrder = {
+    schema_names: schemas?.items.map(({ key }) => String(key)) ?? [],
+    stage_names: stages.items.map(({ key }) => String(key)),
+  };
   const authored = document.toJS();
   const source = decodeWorkflowSource(authored);
   if (source === null) throw new Error(`${sourcePath}: invalid authored workflow shape`);
@@ -66,7 +75,7 @@ for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
     if (!isPromptPath(path) || prompt === undefined) throw new Error(`${sourcePath}: missing or invalid prompt path ${path}`);
     return [path, prompt.id];
   }));
-  const definition = commitDefinition({ source, operation_registry_id: registryId, prompts: references });
+  const definition = commitDefinition({ source, operation_registry_id: registryId, prompts: references }, order);
   const definitionId = required(jsonIdentity<DefinitionId>(definition));
   launchableEntries.push([name, definitionId]);
   generated.push(

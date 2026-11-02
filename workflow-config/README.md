@@ -40,7 +40,9 @@ settings cannot change those identity inputs. Every file under `prompts/` is
 copied; each workflow pins exactly the paths named in its shared declarations,
 workers, reviews, and template overrides.
 
-Authored YAML mapping order is captured before canonicalization: reordering
+Authored order is captured from YAML mapping nodes before conversion to JavaScript
+objects, whose enumeration would sort integer-like names such as `"2"` and `"1"`.
+This order is retained through canonicalization: reordering
 `schemas:` or `stages:` changes the corresponding ordered array and therefore the
 definition ID. This preserves the author's schema and stage list order for later
 consumers. Other mappings, including a stage's `workers:` and an `input:` record's
