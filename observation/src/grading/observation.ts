@@ -34,7 +34,7 @@ export interface GradeObservationListing extends Omit<GradeObservation, "answer"
   readonly blind_assignment_id: string | null;
   readonly model_answers_visible: boolean | null;
   readonly workflow_decisions_visible: boolean | null;
-  readonly label_origin: "oakridge_operator_unblinded" | "langfuse_annotation_blinded" | "other";
+  readonly label_origin: "oakridge_operator_unblinded" | "other";
   readonly producer: string;
   readonly namespace: string;
   readonly execution_id: ExecutionId;

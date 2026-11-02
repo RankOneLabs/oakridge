@@ -9,56 +9,46 @@ import { question, evidence, evaluator, scratchGrading, tenant } from "./grading
 import { canonicalDigest } from "../src/canonical/canonical-json";
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 
-integration("both imported annotation evaluator ids obey the shared blind rule", async () =>
+integration("a blind grade without a claimed assignment is refused by the route, the store and the constraint", async () =>
   scratchGrading(async (db, occurrence_id) => {
     const app = createApp({ db, credentials: { ingest: [], read: [],
       grade: [{ ...tenant, token: "grade", reviewer_id: "reviewer" }] } });
-    for (const evaluator_definition_id of ["langfuse-annotation-human", "langfuse-annotation-human/v2"]) {
-      const definition = { ...evaluator("human"), evaluator_definition_id, runtime_revision: evaluator_definition_id };
-      const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: definition });
-      if (!registered.ok) throw new Error(registered.error.detail);
-      const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
-        question_id: question.question_id, question_version: question.question_version,
-        evaluator_definition_id, config_digest: definition.config_digest, attempt_label: evaluator_definition_id };
-      const details = { answer: { state: "answered" as const, kind: "boolean" as const, value: true },
-        probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
-        decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
-        comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null,
-        collection_mode: "blind" as const, blind_assignment_id: null,
-        model_answers_visible: false, workflow_decisions_visible: false };
-      const accepted = await app.request("/v1/grades", { method: "POST",
-        headers: { authorization: "Bearer grade", "content-type": "application/json" },
-        body: JSON.stringify({ identity, details }) });
-      expect(accepted.status).toBe(201);
-      const bad = { ...details, model_answers_visible: true };
-      expect((await app.request("/v1/grades", { method: "POST",
-        headers: { authorization: "Bearer grade", "content-type": "application/json" },
-        body: JSON.stringify({ identity: { ...identity, attempt_label: `bad-${evaluator_definition_id}` },
-          details: bad }) })).status).toBe(400);
-      expect((await recordHumanGrade(db, tenant, { ...identity, attempt_label: `store-bad-${evaluator_definition_id}`,
-        details: bad })).ok).toBe(false);
-      const digest = canonicalDigest(["invalid-blind", evaluator_definition_id]);
-      if (!digest.ok) throw new Error(digest.error.detail);
-      const execution_id = `invalid-blind-${evaluator_definition_id}`;
-      await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_execution
-        (producer, namespace, execution_id, subject_occurrence_id, evidence_set_id, question_id,
-          question_version, evaluator_definition_id, config_digest, attempt_label, idempotency_digest,
-          status, ended_at)
-        VALUES (${tenant.producer}, ${tenant.namespace}, ${execution_id}, ${occurrence_id},
-          ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version},
-          ${evaluator_definition_id}, ${definition.config_digest}, 'invalid', ${digest.value}, 'completed', now())`.execute(trx));
-      await expect(withTenant(db, tenant, (trx) => sql`INSERT INTO observation.grade_observation
-        (producer, namespace, observation_id, execution_id, subject_occurrence_id, evidence_set_id,
-          question_id, question_version, evaluator_definition_id, answer_kind, answer_state,
-          answer_payload, reviewer_id, collection_mode, model_answers_visible, workflow_decisions_visible)
-        VALUES (${tenant.producer}, ${tenant.namespace}, ${execution_id}, ${execution_id}, ${occurrence_id},
-          ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version},
-          ${evaluator_definition_id}, 'boolean', 'answered',
-          '{"state":"answered","kind":"boolean","value":true}'::jsonb, 'reviewer', 'blind', true, false)`.execute(trx)))
-        .rejects.toThrow(/grade_collection_consistency/);
-    }
+    const definition = evaluator("human");
+    const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: definition });
+    if (!registered.ok) throw new Error(registered.error.detail);
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: definition.evaluator_definition_id, config_digest: definition.config_digest,
+      attempt_label: "unassigned-blind" };
+    const details = { answer: { state: "answered" as const, kind: "boolean" as const, value: true },
+      probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
+      decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
+      comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null,
+      collection_mode: "blind" as const, blind_assignment_id: null,
+      model_answers_visible: false, workflow_decisions_visible: false };
+    expect((await app.request("/v1/grades", { method: "POST",
+      headers: { authorization: "Bearer grade", "content-type": "application/json" },
+      body: JSON.stringify({ identity, details }) })).status).toBe(400);
+    expect((await recordHumanGrade(db, tenant, { ...identity, attempt_label: "store-unassigned", details })).ok).toBe(false);
+    const digest = canonicalDigest(["unassigned-blind", occurrence_id]);
+    if (!digest.ok) throw new Error(digest.error.detail);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_execution
+      (producer, namespace, execution_id, subject_occurrence_id, evidence_set_id, question_id,
+        question_version, evaluator_definition_id, config_digest, attempt_label, idempotency_digest,
+        status, ended_at)
+      VALUES (${tenant.producer}, ${tenant.namespace}, 'unassigned-blind', ${occurrence_id},
+        ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version},
+        ${definition.evaluator_definition_id}, ${definition.config_digest}, 'unassigned', ${digest.value}, 'completed', now())`.execute(trx));
+    await expect(withTenant(db, tenant, (trx) => sql`INSERT INTO observation.grade_observation
+      (producer, namespace, observation_id, execution_id, subject_occurrence_id, evidence_set_id,
+        question_id, question_version, evaluator_definition_id, answer_kind, answer_state,
+        answer_payload, reviewer_id, collection_mode, model_answers_visible, workflow_decisions_visible)
+      VALUES (${tenant.producer}, ${tenant.namespace}, 'unassigned-blind', 'unassigned-blind', ${occurrence_id},
+        ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version},
+        ${definition.evaluator_definition_id}, 'boolean', 'answered',
+        '{"state":"answered","kind":"boolean","value":true}'::jsonb, 'reviewer', 'blind', false, false)`.execute(trx)))
+      .rejects.toThrow(/grade_collection_consistency/);
   }));
-
 
 integration("blind assignment hides model results and refuses duplicate or expired claims", async () => scratchGrading(async (db, occurrence_id) => {
   const model = evaluator("model");

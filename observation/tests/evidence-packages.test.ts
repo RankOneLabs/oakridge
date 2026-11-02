@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
@@ -13,7 +12,6 @@ import { readCoverage } from "../src/storage/coverage-store";
 import { tenant, evaluator, scratchGrading } from "./grading-fixture";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
 import { selectRevision } from "../src/projection/extractor";
-import { buildGraph } from "./dependency-graph";
 import { createApp } from "../src/http/app";
 import { deriveSubjectGradeability } from "../src/producers/oakridge/gradeability";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
@@ -22,7 +20,7 @@ import { runGradeDigest } from "../src/grading/execution";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { gradingLimits } from "../src/grading/jobs/budget";
 import { enqueueJob } from "../src/storage/grading-job-store";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import type { EvaluationJobResponse } from "../src/http/evaluations";
 
 async function captured(kind: string, at: string): Promise<CapturedRevision> {
@@ -34,11 +32,11 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
 }
 
 test("a question version is pinned per recipe, including the boolean question", () => {
-  const question = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition;
+  const question = OAKRIDGE_QUESTIONS["assessment.coverage"].definition;
   expect(projectPilotEvidence({ ...question, question_version: "v2" }, []).ok).toBe(false);
 });
 
-test("run-slice produces a dry-run manifest without Langfuse dependencies", async () => {
+test("run-slice produces a dry-run manifest", async () => {
   await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json();
   await Bun.file(new URL("../fixtures/oakridge/run-slice/operator-decisions.json", import.meta.url)).json();
   const plan = await captured("plan", "2026-10-23T17:23:49Z");
@@ -83,8 +81,6 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
     && row.decision.tag === "missing_evidence")).toBe(true);
-  const graph = buildGraph([resolve(import.meta.dir, "../src/producers/oakridge/evidence-packages.ts")]);
-  expect([...graph.values()].filter((node) => node.path.includes("/src/langfuse/") || node.packages.some((name) => name.includes("langfuse")))).toEqual([]);
 });
 
 test("a concurrent cohort's brief does not close another brief's assessment window", async () => {
@@ -217,7 +213,7 @@ integration("ingested revisions change derived HTTP gradeability from missing to
       .toEqual(["plan_criterion", "brief_criterion"]);
     if (!derived.ok || !derived.value.evidence) return;
     expect(derived.value.evidence.references.every((ref) => ref.content !== null && !!ref.digest && !!ref.deep_link)).toBe(true);
-    const question = LANGFUSE_PILOT_QUESTIONS["brief.source_fidelity"].definition;
+    const question = OAKRIDGE_QUESTIONS["brief.source_fidelity"].definition;
     const values = question.allowed_values!.map(String);
     const instruction_text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge fidelity",
       criteria: Object.fromEntries(values.map((value) => [value, value])) } });
@@ -303,35 +299,10 @@ integration("ingested revisions change derived HTTP gradeability from missing to
           answer: { state: "answered", kind: "choice", value: "faithful" }, collection_mode: "in_context",
           model_answers_visible: false, workflow_decisions_visible: false } }) });
     expect(humanGrade.status).toBe(201);
-    let historicalAnnotationId: string | null = null;
-    for (const evaluator_definition_id of ["langfuse-annotation-human", "langfuse-annotation-human/v2"]) {
-      const annotation = { ...evaluator("human"), evaluator_definition_id, runtime_revision: evaluator_definition_id };
-      expect((await registerGradingContext(db, tenant, { question, evidence: derived.value.evidence,
-        evaluator: annotation })).ok).toBe(true);
-      const submitted = await app.request("/v1/grades", { method: "POST",
-        headers: { authorization: "Bearer grade", "content-type": "application/json" },
-        body: JSON.stringify({ identity: { ...identity, evaluator_definition_id,
-          attempt_label: evaluator_definition_id }, details: {
-          answer: { state: "answered", kind: "choice", value: "faithful" }, collection_mode: "blind",
-          blind_assignment_id: null, model_answers_visible: false, workflow_decisions_visible: false } }) });
-      expect(submitted.status).toBe(201);
-      if (evaluator_definition_id === "langfuse-annotation-human") {
-        historicalAnnotationId = (await submitted.json()).observation.observation_id as string;
-        const before = await listGrades(db, tenant, row.subject_occurrence_id, { limit: 20, offset: 0 });
-        expect(before?.items.find((item) => item.observation.observation_id === historicalAnnotationId)
-          ?.observation.label_origin).toBe("langfuse_annotation_blinded");
-      }
-    }
     const coverageSelection = { run_id: "gradeability-run", revision_id: null,
       question_id: question.question_id, question_version: question.question_version };
     expect((await readCoverage(db, tenant, coverageSelection)).questions[0]?.graded).toBe(1);
-    expect((await readCoverage(db, tenant, coverageSelection)).questions[0]?.graded_by_collection_mode.blind).toBe(1);
-    const annotationHistory = await listGrades(db, tenant, row.subject_occurrence_id, { limit: 20, offset: 0 });
-    expect(annotationHistory?.items.filter((item) => item.observation.evaluator_definition_id.startsWith("langfuse-annotation-human"))
-      .map((item) => item.observation.label_origin)).toEqual([
-        "langfuse_annotation_blinded", "langfuse_annotation_blinded"]);
-    expect(annotationHistory?.items.find((item) => item.observation.observation_id === historicalAnnotationId)
-      ?.observation.label_origin).toBe("langfuse_annotation_blinded");
+    expect((await readCoverage(db, tenant, coverageSelection)).questions[0]?.graded_by_collection_mode.in_context).toBe(1);
     await deliver("plan", 2);
     const currentCoverage = await readCoverage(db, tenant, coverageSelection);
     expect(currentCoverage.questions[0]?.graded).toBe(0);

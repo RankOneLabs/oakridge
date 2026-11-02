@@ -4,7 +4,7 @@ import { listGrades, readExecution, registerGradingContext, runGrade } from "../
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
 import { withTenant } from "../src/storage/database";
-import { LANGFUSE_PILOT_QUESTIONS_V1 as LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS_V1 as OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 
@@ -43,7 +43,7 @@ test("a deadline while reading the provider body is a timeout", async () => {
 });
 
 test("a pinned pilot recipe reaches the provider using evaluator instructions", async () => {
-  const pilot = LANGFUSE_PILOT_QUESTIONS["plan.criterion_traceability"].definition;
+  const pilot = OAKRIDGE_QUESTIONS["plan.criterion_traceability"].definition;
   const criteria = Object.fromEntries((pilot.allowed_values ?? []).map((value) => [String(value), String(value)]));
   const text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge traceability", criteria } });
   let was_sent = false;
@@ -69,7 +69,7 @@ test("all four pilot input recipes retain their pinned bytes", () => {
     "brief.source_fidelity": '{"recipe_id":"brief.source_fidelity","recipe_version":"v1","input_roles":["plan_criterion"],"output_roles":["brief_criterion"],"projected_fields":["ref","digest","deep_link"]}',
     "assessment.coverage": '{"recipe_id":"assessment.coverage","recipe_version":"v1","input_roles":["brief_criterion"],"output_roles":["assessment_finding"],"projected_fields":["ref","digest","deep_link"]}',
   };
-  for (const [id, pilot] of Object.entries(LANGFUSE_PILOT_QUESTIONS)) {
+  for (const [id, pilot] of Object.entries(OAKRIDGE_QUESTIONS)) {
     expect(JSON.stringify(pilot.definition.input_recipe)).toBe(expected[id]);
     expect(pilot.definition.input_recipe).toEqual(pinnedInputRecipe(PILOT_EVIDENCE_RECIPES[id as keyof typeof PILOT_EVIDENCE_RECIPES]));
   }

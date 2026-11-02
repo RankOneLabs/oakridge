@@ -394,7 +394,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
       if (!details.collection_mode || details.model_answers_visible === undefined || details.workflow_decisions_visible === undefined)
         return failure("human_grade", identity.subject_occurrence_id, "collection mode and visibility required");
       if (details.collection_mode === "blind") {
-        if (!blindSubmissionIsValid(details, identity.evaluator_definition_id))
+        if (!blindSubmissionIsValid(details))
           return failure("human_grade", identity.subject_occurrence_id, "blind submission requires a hidden claimed assignment");
         if (details.blind_assignment_id) {
           const assignment = await trx.selectFrom("observation.blind_assignment").selectAll()

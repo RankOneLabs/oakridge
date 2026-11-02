@@ -50,12 +50,12 @@ test("running grading service imports only its declared local infrastructure pac
   expect(external.filter((name) => !allowed.has(name))).toEqual([]);
   const manifest = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"));
   expect(Object.keys(manifest.dependencies).sort()).toEqual([...allowed].sort());
-  for (const forbidden of ["langfuse", "openai", "@anthropic-ai/sdk", "@google/generative-ai", "jig", "assay"])
+  for (const forbidden of ["openai", "@anthropic-ai/sdk", "@google/generative-ai", "jig", "assay"])
     expect(external).not.toContain(forbidden);
 });
 
 test("grading ports do not depend on storage modules", () => {
-  for (const name of ["grade-runner", "evaluation-backend", "artifact-source", "experiment-exporter"]) {
+  for (const name of ["grade-runner", "artifact-source", "experiment-exporter"]) {
     const entry = resolve(import.meta.dir, `../src/ports/${name}.ts`);
     const portGraph = buildGraph([entry]);
     expect(reachable(portGraph, entry).some((node) => node.path.includes("/storage/"))).toBe(false);

@@ -39,17 +39,79 @@ integration("manifest pins all files in historical order", async () => {
     "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql",
     "0014_annotation_evaluator_v2.sql", "0015_definition_identity.sql", "0016_source_event_issue.sql", "0017_source_repair_position.sql",
     "0018_grading_attempt_accounting.sql", "0019_question_unclear_choice.sql", "0020_remove_disclosure_gate.sql",
-    "0021_drop_evaluation_eligibility.sql",
+    "0021_drop_evaluation_eligibility.sql", "0022_drop_langfuse.sql",
   ]);
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
   expect(migrations.map((entry) => entry.name).sort()).toEqual(files.filter((name) => name.endsWith(".sql")).sort());
   for (const entry of migrations) expect(await Bun.file(entry.file).exists()).toBe(true);
 });
 
+const migrationsBefore = (name: string) => migrations.slice(0, migrations.findIndex((entry) => entry.name === name));
+
+async function seedOccurrence(db: ObservationDatabase): Promise<ItemOccurrenceId> {
+  const occurrence_id = `canonical-json/v1:${"2".repeat(64)}` as ItemOccurrenceId;
+  await withTenant(db, tenant, async (trx) => {
+    await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+      artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
+      VALUES (${tenant.producer}, ${tenant.namespace}, 'seed-rev', 'seed-run', 'unit',
+        'brief', '1', 'bundle', 'digest', '{}'::jsonb, ${occurrence_id}, now())`.execute(trx);
+    await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
+      extractor_id, extractor_version, item_kind, item_selector) VALUES
+      (${tenant.producer}, ${tenant.namespace}, 'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion')`.execute(trx);
+    await sql`INSERT INTO observation.item_occurrence (producer, namespace, occurrence_id, revision_id, run_id,
+      artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector, item_id_or_path, selected_value)
+      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, 'seed-rev', 'seed-run',
+        'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion', 'criterion-1', '{}'::jsonb)`.execute(trx);
+  });
+  return occurrence_id;
+}
+
+integration("dropping Langfuse removes its tables and the annotation exemption", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db, migrationsBefore("0022_drop_langfuse.sql"));
+    const before = await sql<{ mapping: string | null }>`SELECT to_regclass('observation.langfuse_mapping')::text AS mapping`.execute(db);
+    expect(before.rows[0]?.mapping).toBe("observation.langfuse_mapping");
+    await migrateEmptyDatabase(db);
+    const after = await sql<{ mapping: string | null; transition: string | null; quarantine: string | null;
+      check_definition: string; origin: string }>`
+      SELECT to_regclass('observation.langfuse_mapping')::text AS mapping,
+        to_regclass('observation.langfuse_sync_transition')::text AS transition,
+        to_regclass('observation.langfuse_inbound_quarantine')::text AS quarantine,
+        (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'grade_collection_consistency') AS check_definition,
+        (SELECT generation_expression FROM information_schema.columns WHERE table_schema = 'observation'
+          AND table_name = 'grade_observation' AND column_name = 'label_origin') AS origin`.execute(db);
+    expect(after.rows[0]).toMatchObject({ mapping: null, transition: null, quarantine: null });
+    expect(after.rows[0]?.check_definition).not.toContain("langfuse");
+    expect(after.rows[0]?.origin).not.toContain("langfuse");
+  } finally { await db.destroy(); }
+}));
+
+integration("dropping Langfuse refuses a database holding a Langfuse annotation grade", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db, migrationsBefore("0022_drop_langfuse.sql"));
+    const occurrence_id = await seedOccurrence(db);
+    const annotation = { ...evaluator("human"), evaluator_definition_id: "langfuse-annotation-human/v2" };
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: annotation })).ok).toBe(true);
+    const grade = await recordHumanGrade(db, tenant, { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: annotation.evaluator_definition_id, config_digest: annotation.config_digest, attempt_label: "imported",
+      details: { answer: { state: "answered", kind: "boolean", value: true }, collection_mode: "in_context",
+        model_answers_visible: false, workflow_decisions_visible: false, probabilities: null, confidence: null,
+        normalized_score: null, decision_policy_id: null, decision_policy_version: null, reviewer_id: "reviewer",
+        reviewer_details: null, comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
+    expect(grade.ok).toBe(true);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow(/Langfuse annotation evaluator/);
+    const kept = await sql<{ mapping: string | null }>`SELECT to_regclass('observation.langfuse_mapping')::text AS mapping`.execute(db);
+    expect(kept.rows[0]?.mapping).toBe("observation.langfuse_mapping");
+  } finally { await db.destroy(); }
+}));
+
 integration("dropping eligibility preserves execution, grade and blind-assignment evidence identities", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
-    await migrateEmptyDatabase(db, migrations.slice(0, -1));
+    await migrateEmptyDatabase(db, migrationsBefore("0021_drop_evaluation_eligibility.sql"));
     const occurrence_id = `canonical-json/v1:${"1".repeat(64)}` as ItemOccurrenceId;
     await withTenant(db, tenant, async (trx) => {
       await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,

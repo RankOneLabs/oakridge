@@ -7,11 +7,11 @@ import type { RevisionSelection } from "../../grading/evidence-packages/capture"
 import { withTenant, type Database, type TenantScope } from "../../storage/database";
 import { loadRunCapture } from "../../storage/run-capture-store";
 import { runPackages, type RunPackages } from "./evidence-packages";
-import { LANGFUSE_PILOT_QUESTIONS, LANGFUSE_PILOT_QUESTIONS_V1 } from "../../grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS, OAKRIDGE_QUESTIONS_V1 } from "../../grading/catalogue/oakridge-questions";
 
 export function isPilotQuestionPin(question_id: string, question_version: string): boolean {
-  const current = LANGFUSE_PILOT_QUESTIONS[question_id as keyof typeof LANGFUSE_PILOT_QUESTIONS];
-  const historical = LANGFUSE_PILOT_QUESTIONS_V1[question_id as keyof typeof LANGFUSE_PILOT_QUESTIONS_V1];
+  const current = OAKRIDGE_QUESTIONS[question_id as keyof typeof OAKRIDGE_QUESTIONS];
+  const historical = OAKRIDGE_QUESTIONS_V1[question_id as keyof typeof OAKRIDGE_QUESTIONS_V1];
   return current?.definition.question_version === question_version || historical?.definition.question_version === question_version;
 }
 
