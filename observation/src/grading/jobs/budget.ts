@@ -18,7 +18,12 @@ function limit(env: NodeJS.ProcessEnv, name: string, fallback: number, integer =
 }
 export function gradingLimits(env: NodeJS.ProcessEnv = process.env): GradingLimits {
   const provider_deadline_ms = limit(env, "OBSERVATION_PROVIDER_DEADLINE_MS", 30_000);
-  return { provider_deadline_ms, lease_ms: limit(env, "OBSERVATION_GRADING_LEASE_MS", 45_000),
+  const required_lease_ms = provider_deadline_ms + 15_000;
+  if (!Number.isFinite(required_lease_ms)) throw new Error("OBSERVATION_PROVIDER_DEADLINE_MS is too large");
+  const lease_ms = limit(env, "OBSERVATION_GRADING_LEASE_MS", Math.max(45_000, required_lease_ms));
+  if (lease_ms > 0 && lease_ms < required_lease_ms)
+    throw new Error("OBSERVATION_GRADING_LEASE_MS must exceed OBSERVATION_PROVIDER_DEADLINE_MS by 15000 ms");
+  return { provider_deadline_ms, lease_ms,
     retry_limit: limit(env, "OBSERVATION_GRADING_RETRY_LIMIT", 3, true),
     run_concurrency: limit(env, "OBSERVATION_GRADING_RUN_CONCURRENCY", 2, true),
     stage_concurrency: limit(env, "OBSERVATION_GRADING_STAGE_CONCURRENCY", 1, true),

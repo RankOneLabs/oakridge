@@ -203,9 +203,8 @@ integration("failure categories decide retry count independently of operation na
       : category === "invalid_response" ? "invalid_outcome" : "runner_failed");
     expect(stored.attempts.map((attempt) => attempt.failure_category)).toEqual(
       Array.from({ length: retryable ? 2 : 1 }, () => category));
-    expect(stored.attempts.every((attempt) => attempt.charged_cost === (
-      ["unconfigured_credential", "invalid_request", "invalid_unclear_designation", "invalid_choice"].includes(category)
-        ? 0 : 0.1))).toBe(true);
+    // The override represents an already-sent request; category changes retryability, not its charge.
+    expect(stored.attempts.every((attempt) => attempt.request_sent && attempt.charged_cost === 0.1)).toBe(true);
   }
 }));
 

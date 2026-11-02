@@ -137,10 +137,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
       detail: String(cause), category: wasSent ? "transport" : "invalid_request" }); }
     if (isNetwork) {
       const reported_cost = response.ok ? response.value.cost ?? null : response.error.cost ?? null;
-      const nonbillable = !response.ok && (["unconfigured_credential", "invalid_request",
-        "invalid_unclear_designation", "invalid_choice"] as const)
-        .some((category) => category === response.error.category);
-      const cost = wasSent && !nonbillable ? reported_cost ?? job.estimated_cost : 0;
+      const cost = wasSent ? reported_cost ?? job.estimated_cost : 0;
       const overage = cost > 0 && reported_cost !== null ? Math.max(0, reported_cost - job.estimated_cost) : 0;
       const request_id = response.ok ? response.value.external_execution_id ?? null
         : response.error.external_execution_id ?? null;

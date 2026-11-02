@@ -23,6 +23,11 @@ test("grading limits retain zero and reject invalid named settings", () => {
       expect(() => gradingLimits({ [name]: value })).toThrow(name);
     }
   }
+  expect(gradingLimits({ OBSERVATION_PROVIDER_DEADLINE_MS: "60000" }).lease_ms).toBe(75_000);
+  expect(() => gradingLimits({ OBSERVATION_PROVIDER_DEADLINE_MS: "60000",
+    OBSERVATION_GRADING_LEASE_MS: "65000" })).toThrow("OBSERVATION_GRADING_LEASE_MS");
+  expect(gradingLimits({ OBSERVATION_PROVIDER_DEADLINE_MS: "60000",
+    OBSERVATION_GRADING_LEASE_MS: "0" }).lease_ms).toBe(0);
 });
 
 integration("a blocked oldest stage does not starve another stage or run", async () => scratchGrading(async (db, occurrence_id) => {
@@ -271,6 +276,45 @@ integration("reported overage blocks the next admission", async () => scratchGra
   await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "overage-second" },
     runner_name: "llm_judge", estimated_cost: 0.1 }, limits);
   expect((await claimJob(db, tenant, "after-overage", limits)).kind).toBe("refused");
+}));
+
+integration("a settled overage remains reserved while its claim is live", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+  const limits = { ...gradingLimits(), run_spend: 0.5, stage_spend: 0.5,
+    run_concurrency: 2, stage_concurrency: 2 };
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "live-overage" };
+  const first = await enqueueJob(db, tenant, { identity, runner_name: "llm_judge", estimated_cost: 0.1 }, limits);
+  expect((await claimJob(db, tenant, "first", limits)).kind).toBe("admitted");
+  await withTenant(db, tenant, (trx) => trx.insertInto("observation.grading_provider_attempt")
+    .values({ ...tenant, job_id: first.job_id, attempt: 1, run_id: first.run_id, stage_id: first.stage_id,
+      request_sent: true, outcome: "completed", charged_cost: 0.4, admitted_estimate: 0.1,
+      cost_overage: 0.3, provider_request_id: "request-overage", failure_category: null }).execute());
+  const next = await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "after-live-overage" },
+    runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
+  const refused = await claimJob(db, tenant, "second", limits);
+  expect(refused.kind === "refused" && refused.job.job_id).toBe(next.job_id);
+}));
+
+integration("a sent invalid choice keeps its reported charge", async () => scratchGrading(async (db, occurrence_id) => {
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
+  const limits = { ...gradingLimits(), run_spend: 0.5, stage_spend: 0.5 };
+  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "sent-invalid-choice" };
+  const invalid: GradeRunner = { kind: "model", async run() { return { ok: false, error: {
+    operation: "provider", entity_id: "model", detail: "choice outside vocabulary",
+    category: "invalid_choice", cost: 0.4 } }; } };
+  const first = await enqueueJob(db, tenant, { identity, runner_name: "llm_judge", estimated_cost: 0.1 }, limits);
+  await workOneJob(db, tenant, limits, "first", invalid);
+  const attempt = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_provider_attempt")
+    .selectAll().where("job_id", "=", first.job_id).executeTakeFirstOrThrow());
+  expect(attempt).toMatchObject({ request_sent: true, outcome: "failed", charged_cost: 0.4,
+    failure_category: "invalid_choice" });
+  await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "after-invalid-choice" },
+    runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
+  expect((await claimJob(db, tenant, "second", limits)).kind).toBe("refused");
 }));
 
 integration("active cost reservations prevent concurrent claims from exceeding a spend cap", async () => scratchGrading(async (db, occurrence_id) => {

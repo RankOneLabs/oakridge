@@ -31,6 +31,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 type LiveQuestionId = "plan.criterion_traceability" | "brief.source_fidelity";
 interface Options { readonly question_id: LiveQuestionId; readonly keep_database: boolean;
   readonly estimated_cost: number }
+interface EnqueuedJob { readonly job_id: string }
 
 /** The two pilot questions whose evidence a captured planning-and-brief pass can supply. */
 const SYSTEM_ONE_CRITERIA: Readonly<Record<LiveQuestionId, Readonly<Record<string, string>>>> = {
@@ -210,11 +211,12 @@ async function main(): Promise<void> {
       body: JSON.stringify({ identity, context: { question, evidence, evaluator }, runner: "jev_direct",
         estimated_cost: options.estimated_cost }) });
     if (enqueued.status !== 201) throw new Error(`enqueue refused with HTTP ${enqueued.status}: ${await enqueued.text()}`);
+    const enqueuedJob = await enqueued.json() as EnqueuedJob;
     console.log(`question ${question.question_id}/${question.question_version}, subject ${subject.subject_occurrence_id}`);
     console.log(`request state refs: ${subject.references.map((entry) => entry.ref).join(", ")}`);
 
-    const claimed = await workOneJob(db, tenant);
-    const job = claimed ? await readJob(db, tenant, claimed.job_id) : null;
+    await workOneJob(db, tenant);
+    const job = await readJob(db, tenant, enqueuedJob.job_id);
     console.log(`job ${job?.job_id ?? "none"} finished in state ${job?.state ?? "none"}`);
 
     const execution = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")

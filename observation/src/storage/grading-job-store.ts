@@ -98,17 +98,22 @@ export async function claimJob(db: Database, tenant: TenantScope, owner: string,
       const runLock = await sql<{ locked: boolean }>`SELECT pg_try_advisory_xact_lock(
         hashtextextended(${`${tenant.producer}:${tenant.namespace}:${job.run_id}:grading`}, 0)) AS locked`.execute(trx);
       if (!runLock.rows[0]?.locked) { deferred = true; continue; }
-      const active = await trx.selectFrom("observation.grading_job")
+      const active = await trx.selectFrom("observation.grading_job as j")
+        .leftJoin("observation.grading_provider_attempt as a", (join) => join
+          .onRef("a.producer", "=", "j.producer").onRef("a.namespace", "=", "j.namespace")
+          .onRef("a.job_id", "=", "j.job_id").onRef("a.attempt", "=", "j.attempts"))
         .select([
           sql<number>`count(*)::integer`.as("run_claimed"),
-          sql<number>`count(*) FILTER (WHERE stage_id = ${job.stage_id})::integer`.as("stage_claimed"),
-          sql<number>`coalesce(sum(estimated_cost) FILTER (WHERE runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("run_reserved"),
-          sql<number>`coalesce(sum(estimated_cost) FILTER (WHERE stage_id = ${job.stage_id}
-            AND runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("stage_reserved"),
+          sql<number>`count(*) FILTER (WHERE j.stage_id = ${job.stage_id})::integer`.as("stage_claimed"),
+          sql<number>`coalesce(sum(CASE WHEN a.outcome IS NOT NULL THEN a.charged_cost
+            ELSE j.estimated_cost END) FILTER (WHERE j.runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("run_reserved"),
+          sql<number>`coalesce(sum(CASE WHEN a.outcome IS NOT NULL THEN a.charged_cost
+            ELSE j.estimated_cost END) FILTER (WHERE j.stage_id = ${job.stage_id}
+            AND j.runner_name = ANY(${networkRunnerNames}::text[])), 0)`.as("stage_reserved"),
         ])
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("run_id", "=", job.run_id).where("state", "=", "claimed")
-        .where("lease_expires_at", ">", new Date()).executeTakeFirstOrThrow();
+        .where("j.producer", "=", tenant.producer).where("j.namespace", "=", tenant.namespace)
+        .where("j.run_id", "=", job.run_id).where("j.state", "=", "claimed")
+        .where("j.lease_expires_at", ">", new Date()).executeTakeFirstOrThrow();
       const spend = await trx.selectFrom("observation.grading_provider_attempt as a")
         .innerJoin("observation.grading_job as j", (join) => join
           .onRef("j.producer", "=", "a.producer").onRef("j.namespace", "=", "a.namespace")
