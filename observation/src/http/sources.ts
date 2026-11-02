@@ -35,29 +35,27 @@ function decodeOperatorDelivery(value: unknown): OperatorDelivery | null {
 function isBackfillPosition(value: unknown): value is BackfillPosition {
   if (!isRecord(value)) return false;
   if (value.source === "done") return true;
-  return (value.source === "review_decision" || value.source === "collaboration_thread")
+  return value.source === "collaboration_thread"
     && typeof value.created_at === "string" && !Number.isNaN(Date.parse(value.created_at)) && typeof value.id === "string";
 }
 function decodeBackfillDelivery(value: unknown): BackfillDelivery | null {
   if (!isRecord(value) || !isBackfillPosition(value.previous) || !isBackfillPosition(value.position)
     || !isRecord(value.counts)) return null;
   if (value.replay !== undefined && typeof value.replay !== "boolean") return null;
-  for (const source of ["review_decision", "collaboration_thread"]) {
+  for (const source of ["collaboration_thread"]) {
     const counts = value.counts[source];
     if (!isRecord(counts) || !Number.isSafeInteger(counts.active) || !Number.isSafeInteger(counts.archived)
       || Number(counts.active) < 0 || Number(counts.archived) < 0) return null;
   }
   const outcome = value.outcome;
   if (outcome !== null && (!isRecord(outcome) || typeof outcome.event_id !== "string"
-    || typeof outcome.run_id !== "string" || outcome.format !== "observation.source-event/v1")) return null;
-  if (isRecord(outcome) && outcome.kind === "human_grade" && (!isRecord(outcome.evaluator)
-    || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
-    || typeof outcome.decided_at !== "string"
-    || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
+    || typeof outcome.run_id !== "string" || outcome.format !== "observation.source-event/v1"
+    || !(outcome.definition_id === null || typeof outcome.definition_id === "string")
+    || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string"))) return null;
   if (isRecord(outcome) && outcome.kind === "collaboration_thread" && (!isRecord(outcome.context)
     || typeof outcome.context.title !== "string" || !(outcome.context.anchor === null || typeof outcome.context.anchor === "string")
     || !Array.isArray(outcome.messages))) return null;
-  if (isRecord(outcome) && !["human_grade", "collaboration_thread"].includes(String(outcome.kind))) return null;
+  if (isRecord(outcome) && !["collaboration_thread"].includes(String(outcome.kind))) return null;
   return value as unknown as BackfillDelivery;
 }
 async function readOperatorCursor(db: Database, tenant: { readonly producer: string; readonly namespace: string }): Promise<OperatorCursor> {

@@ -140,8 +140,8 @@ integration("missing and cross-namespace references refuse grades without partia
   if (!betaId.ok) throw new Error(betaId.error.detail);
   await withTenant(db, beta, async (trx) => {
     await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-      artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-      VALUES (${beta.producer}, ${beta.namespace}, 'rev-beta', 'run-beta', 'unit-beta', 'brief', '1', 'bundle', 'digest',
+      artifact_kind, artifact_schema_version, definition_id, body, body_digest, recorded_at)
+      VALUES (${beta.producer}, ${beta.namespace}, 'rev-beta', 'run-beta', 'unit-beta', 'brief', '1', 'definition-1',
       '{}'::jsonb, ${betaId.value}, now())`.execute(trx);
     await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
       extractor_id, extractor_version, item_kind, item_selector) VALUES

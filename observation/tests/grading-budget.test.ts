@@ -51,9 +51,9 @@ integration("a blocked oldest stage does not starve another stage or run", async
       ["rev-3", "run-2", "unit-3", thirdOccurrence, "criterion-3"]]) {
       await sql`INSERT INTO observation.source_revision
         (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
-         definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
+         definition_id, body, body_digest, recorded_at)
         SELECT producer, namespace, ${revision}, ${run}, ${stage}, artifact_kind, artifact_schema_version,
-          definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at
+          definition_id, body, body_digest, recorded_at
         FROM observation.source_revision WHERE revision_id = 'rev-1'`.execute(trx);
       await sql`INSERT INTO observation.item_occurrence
         (producer, namespace, occurrence_id, revision_id, run_id, artifact_kind, schema_version,

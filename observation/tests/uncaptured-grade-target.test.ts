@@ -29,7 +29,7 @@ async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
   } finally { await admin.end(); }
 }
 
-const decisionOn = (event_id: string, decision_id: string) => ({ format: "observation.source-event/v1", definition_bundle: null,
+const decisionOn = (event_id: string, decision_id: string) => ({ format: "observation.source-event/v1", definition_id: null,
   artifact_schema_version: null, kind: "human_grade", event_kind: "operator_decided", run_id: "run-1", event_id, decision_id,
   evaluator: { kind: "human" }, unit: "run-1/implementation/a", review: "assessment_review", decision: "accept",
   target: "run-1/implementation/a:assessment:1", feedback: {}, effect: "approve", decided_at: "2026-10-30T15:37:07.999Z" });
@@ -48,20 +48,20 @@ integration("a live decision on an uncaptured revision is kept and the cursor mo
   });
 });
 
-integration("a backfilled decision on an uncaptured revision is kept and the backfill moves past it", async () => {
+integration("the collaboration sweep rejects a historical decision without moving its checkpoint", async () => {
   await scratch(async (db) => {
     const app = createApp({ db, credentials });
-    const before = { source: "review_decision", created_at: new Date(0).toISOString(), id: "" };
-    const after = { source: "review_decision", created_at: "2026-10-30T05:10:00.000Z", id: "decision-2" };
+    const before = { source: "collaboration_thread", created_at: new Date(0).toISOString(), id: "" };
+    const after = { source: "collaboration_thread", created_at: "2026-10-30T05:10:00.000Z", id: "decision-2" };
     const backfilled = await app.request("/v1/sources/oakridge/backfill", { method: "POST", headers: ingestHeaders,
       body: JSON.stringify({ previous: before, position: after,
-        counts: { review_decision: { active: 1, archived: 0 }, collaboration_thread: { active: 0, archived: 0 } },
-        outcome: decisionOn("review_decision:decision-2", "decision-2") }) });
+        counts: { collaboration_thread: { active: 1, archived: 0 } },
+        outcome: decisionOn("decision-event-2", "decision-2") }) });
     const stored = await (await app.request("/v1/sources/oakridge/human-grades", { headers: readHeaders })).json() as
       { items: { decision_id: string }[] };
     const checkpoint = await (await app.request("/v1/sources/oakridge/backfill",
       { headers: { authorization: "Bearer ingest-fixture" } })).json() as { position: unknown };
     expect({ status: backfilled.status, decisions: stored.items.map((item) => item.decision_id), position: checkpoint.position })
-      .toEqual({ status: 200, decisions: ["decision-2"], position: after });
+      .toEqual({ status: 400, decisions: [], position: before });
   });
 });

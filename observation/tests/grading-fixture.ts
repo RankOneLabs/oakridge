@@ -41,8 +41,8 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
       const occurrence_id = id.value as unknown as ItemOccurrenceId;
       await withTenant(db, tenant, async (trx) => {
         await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-          artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-          VALUES (${tenant.producer}, ${tenant.namespace}, 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'bundle', 'digest',
+          artifact_kind, artifact_schema_version, definition_id, body, body_digest, recorded_at)
+          VALUES (${tenant.producer}, ${tenant.namespace}, 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'definition-1',
           '{}'::jsonb, ${id.value}, now())`.execute(trx);
         await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
           extractor_id, extractor_version, item_kind, item_selector) VALUES

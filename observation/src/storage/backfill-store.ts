@@ -5,15 +5,14 @@ import type { SourceEventOutcome } from "../ingest/cursor";
 import { issueId, type ExtractionIssue } from "../projection/issues";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
-export type BackfillPosition = { readonly source: "review_decision" | "collaboration_thread";
+export type BackfillPosition = { readonly source: "collaboration_thread";
   readonly created_at: string; readonly id: string } | { readonly source: "done" };
-export interface BackfillCounts { readonly review_decision: { readonly active: number; readonly archived: number };
-  readonly collaboration_thread: { readonly active: number; readonly archived: number } }
+export interface BackfillCounts { readonly collaboration_thread: { readonly active: number; readonly archived: number } }
 export interface BackfillCheckpoint { readonly position: BackfillPosition; readonly counts: BackfillCounts }
 export interface BackfillDelivery extends BackfillCheckpoint { readonly previous: BackfillPosition;
-  readonly outcome: SourceEventOutcome | null; readonly replay?: boolean }
-const INITIAL: BackfillCheckpoint = { position: { source: "review_decision", created_at: new Date(0).toISOString(), id: "" },
-  counts: { review_decision: { active: 0, archived: 0 }, collaboration_thread: { active: 0, archived: 0 } } };
+  readonly outcome: Extract<SourceEventOutcome, { kind: "collaboration_thread" }> | null; readonly replay?: boolean }
+const INITIAL: BackfillCheckpoint = { position: { source: "collaboration_thread", created_at: new Date(0).toISOString(), id: "" },
+  counts: { collaboration_thread: { active: 0, archived: 0 } } };
 const digest = (value: JsonValue): string => {
   const result = canonicalDigest(value);
   if (!result.ok) throw new Error(result.error.detail);
@@ -29,7 +28,7 @@ const scope = (tenant: TenantScope): TenantScope => ({ producer: tenant.producer
  */
 export type HumanGradeStorage = { readonly kind: "graded" } | { readonly kind: "target_not_captured" };
 
-/** Both live and historical human decisions enter this exact L2 writer. */
+/** Live operator decisions enter the normalized L2 grade store. */
 export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, tenant: TenantScope,
   outcome: Extract<SourceEventOutcome, { kind: "human_grade" }>): Promise<HumanGradeStorage> {
   const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "run_id"])
@@ -141,17 +140,6 @@ export async function deliverBackfill(db: Database, tenant: TenantScope, deliver
     const previous = canonicalJson(delivery.previous);
     if (!delivery.replay && (!current.ok || !previous.ok || current.value !== previous.value)) return "conflict";
     const outcome = delivery.outcome;
-    if (outcome?.kind === "human_grade") {
-      await storeHumanGradeInTransaction(trx, tenant, outcome);
-      await trx.insertInto("observation.source_event_outcome").values({ ...scope(tenant),
-        event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: 0,
-        event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: json(outcome as unknown as JsonValue) })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
-      await trx.insertInto("observation.source_human_grade").values({ ...scope(tenant), event_id: outcome.event_id,
-        run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review, decision: outcome.decision,
-        target_revision_id: outcome.target, evaluator_kind: "human", feedback: json(outcome.feedback as JsonValue) })
-        .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
-    }
     if (outcome?.kind === "collaboration_thread") await storeCollaboration(trx, tenant, outcome);
     if (!delivery.replay) await trx.updateTable("observation.source_backfill_position").set({ position: json(delivery.position),
       counts: json(delivery.counts as unknown as JsonValue), updated_at: new Date() })

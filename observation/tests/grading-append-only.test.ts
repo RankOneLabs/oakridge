@@ -12,7 +12,7 @@ test("the store has no grade update or delete API", () => {
 });
 
 test("grading schema has no consensus, aggregate, ground truth, latest, or accepted column", async () => {
-  const schema = await Bun.file(new URL("../src/storage/migrations/0003_grading.sql", import.meta.url)).text();
+  const schema = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
   const columns = [...schema.matchAll(/^  (\w+) (?:text|jsonb|boolean|numeric|double precision|integer|bigint|timestamptz)\b/gm)].map((match) => match[1]);
   for (const forbidden of ["consensus", "aggregate", "ground_truth", "latest", "accepted"])
     expect(columns.some((column) => column.includes(forbidden))).toBe(false);
