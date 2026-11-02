@@ -20,7 +20,7 @@ import { Client } from "pg";
 import { canonicalDigest } from "canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest } from "../src/grading/evaluator";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
 import { listRunItems } from "../src/storage/projection-store";
@@ -189,7 +189,7 @@ async function main(): Promise<void> {
     const revisions = await ingestCapturedPass(app, events);
     const subject = await gradeSubject(db, events.run_id, options.question_id, revisions);
 
-    const pilot = LANGFUSE_PILOT_QUESTIONS[options.question_id];
+    const pilot = OAKRIDGE_QUESTIONS[options.question_id];
     const question = pilot.definition;
     const evidence = { evidence_set_id: digestOf(subject.references as unknown as JsonValue),
       references: subject.references, is_incomplete: false, incompleteness_reason: null };

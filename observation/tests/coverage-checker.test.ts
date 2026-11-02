@@ -4,7 +4,7 @@ import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakrid
 import { selectRevision } from "../src/projection/extractor";
 import { checkAssessmentCoverage, coverageInput } from "../src/runners/coverage-checker";
 import { createApp } from "../src/http/app";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 test("a brief criterion with no covering assessment finding is a coverage miss", async () => {
@@ -40,7 +40,7 @@ test("an assessment finding without criterion_id adds no miss or inferred link",
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 integration("the service runs the deterministic coverage checker over local link evidence", async () => scratchGrading(async (db, occurrence_id) => {
-  const question = { ...LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition,
+  const question = { ...OAKRIDGE_QUESTIONS["assessment.coverage"].definition,
     target_item_kinds: ["cohort_criterion"] };
   const links = { brief_criterion: { item_kind: "criterion", item_scope: "criterion",
     producer_local_id: "crit-a" }, assessment_findings: [{ item_kind: "assessment_finding", links: [] }] };

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import { instructionDigest } from "../src/grading/evaluator";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { registerGradingContext, runGrade } from "../src/storage/grading-store";
@@ -10,7 +10,7 @@ const pilotIds = ["analysis.finding_relevance", "plan.criterion_traceability", "
 
 test("each pilot choice maps its designated option to unclear", async () => {
   for (const id of pilotIds) {
-    const pilot = LANGFUSE_PILOT_QUESTIONS[id].definition;
+    const pilot = OAKRIDGE_QUESTIONS[id].definition;
     const values = pilot.allowed_values!.map(String);
     const instruction_text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge the evidence",
       criteria: Object.fromEntries(values.map((value) => [value, value])) } });

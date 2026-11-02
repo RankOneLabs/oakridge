@@ -50,7 +50,7 @@ const coverage: QuestionDefinition = {
 };
 
 /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
-export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
+export const OAKRIDGE_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
   "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?"),
   "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?"),
   "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?"),

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { classifyProjectionField, evidenceKindForCapturedPath, projectClassifiedBody,
-  type ProjectionArtifactKind } from "../src/langfuse/classification";
+  type ProjectionArtifactKind } from "../src/producers/oakridge/classification";
 
 const inheritedFields = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"] as const;
 

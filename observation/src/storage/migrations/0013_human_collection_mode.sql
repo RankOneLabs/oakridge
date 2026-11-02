@@ -33,7 +33,7 @@ ALTER TABLE observation.grade_observation
   ADD CONSTRAINT grade_collection_consistency CHECK (
     collection_mode IS NULL OR
     (model_answers_visible IS NOT NULL AND workflow_decisions_visible IS NOT NULL AND
-      (collection_mode <> 'blind' OR ((blind_assignment_id IS NOT NULL OR evaluator_definition_id = 'langfuse-annotation-human')
+      (collection_mode <> 'blind' OR (blind_assignment_id IS NOT NULL
         AND NOT model_answers_visible AND NOT workflow_decisions_visible))));
 ALTER TABLE observation.blind_assignment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE observation.blind_assignment FORCE ROW LEVEL SECURITY;
