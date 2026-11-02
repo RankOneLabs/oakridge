@@ -76,7 +76,7 @@ export interface RuntimeOption {
  *
  * Both lists are pinned to the agent versions in kbbl/package.json and
  * guarded two ways: `runtime-vocabulary.test.ts` checks every entry resolves
- * against each vocabulary variant recorded in the fixture, and the opt-in
+ * against a recorded vocabulary variant, and the opt-in
  * real-agent smoke test checks the installed binary still answers with one
  * of those variants. Bumping `@agentclientprotocol/*` means re-running the
  * smoke test and updating both the fixture and these lists together — the
@@ -96,6 +96,7 @@ export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]
   ],
   // @agentclientprotocol/codex-acp 1.13.0, config option `model`.
   codex: [
+    { value: "gpt-6.1-sol", label: "gpt-6.1 sol" },
     { value: "gpt-6-astra", label: "gpt-6 astra" },
     { value: "gpt-6-sol", label: "gpt-6 sol" },
     { value: "gpt-6-luna", label: "gpt-6 luna" },
