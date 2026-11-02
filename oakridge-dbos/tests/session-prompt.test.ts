@@ -16,8 +16,9 @@ function writerInstruction(input: { readonly action: RunWorkerAction; readonly f
   const is_revise = input.action.mode.kind === "revise";
   const selected = selectEffectInstruction({ run_id: "run-1" as import("../src/domain/primitives").RunId, workflow: source, stage: "document", config: null, action: input.action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
-    resolved: { action_id: "a2", inputs: { topic: "Oakridge", critique: null },
-      ...(is_revise ? { previous: r1, feedback: { feedback: "shorter" } } : {}) } });
+    resolved: { action_id: "a2", inputs: { topic: "Oakridge", critique: null }, feedback: is_revise
+      ? [{ id: `${unit}:d1`, review: "draft_review", decision: "request_changes", target: r1.id, payload: { feedback: "shorter" } }] : [],
+      ...(is_revise ? { previous: r1 } : {}) } });
   if (!selected.ok) throw new Error(selected.error.detail);
   return selected.value;
 }
@@ -92,4 +93,15 @@ test("a shared session's stable preamble leaves each brief's endpoint in its tas
   expect([delivered.includes("Authorization: Bearer session-secret"),
     delivered.includes("PUT http://oakridge.test/api/runs/run-1/units/run-1%2Fbriefs%2Fa/artifacts/draft"),
     delivered.includes("Do not use the backend publication key")]).toEqual([true, true, true]);
+});
+
+test("feedback history renders every review identity in recorded order", () => {
+  const base = writerInstruction({ action: revise });
+  const feedback = [
+    { id: `${unit}:d1`, review: "assessment_review", decision: "request_build_changes", target: r1.id, payload: { feedback: "first" } },
+    { id: `${unit}:d2`, review: "pr_closed", decision: "closed", target: r1.id, payload: { feedback: "second" } },
+  ];
+  const task = renderSessionTask({ ...base, engine_inputs: { ...base.engine_inputs, feedback } }, context());
+  expect([task.indexOf("assessment_review") < task.indexOf("pr_closed"), task.includes("request_build_changes"), task.includes("second")])
+    .toEqual([true, true, true]);
 });

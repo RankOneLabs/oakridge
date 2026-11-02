@@ -8,7 +8,7 @@ import { stat } from "node:fs/promises";
  */
 const MAX_ARTIFACT_ID_LENGTH = 200;
 import type { AcpSessionService } from "../../acp/session-service";
-import type { AcpError, AcpSessionSnapshot, AcpSessionStartSpec, AcpSessionStatus, AcpSessionWorkflowIdentity, TerminalObservation } from "../../acp/types";
+import { parseGatedReviewAccess, type AcpError, type AcpSessionSnapshot, type AcpSessionStartSpec, type AcpSessionStatus, type AcpSessionWorkflowIdentity, type TerminalObservation } from "../../acp/types";
 import { toPwaSessionSnapshot } from "../../acp/pwa-wire";
 import type { ResumableEnd, ResumableEnsureRequest, ResumableEnsureResponse, ResumablePendingBody, ResumableSessionSnapshot, ResumableSessionStatus, ResumableTerminalBody, ResumableWorkflowIdentity } from "../../acp/resumable-wire";
 import { buildResumeContext } from "../../acp/resume-context";
@@ -218,7 +218,9 @@ export function parseWorkflowIdentity(
     if (typeof field !== "string" || field.trim() === "") return { error: `workflow.${name} must be a non-empty string` };
     if (field.trim().length > 200) return { error: `workflow.${name} must be at most 200 characters` };
   }
-  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim() } };
+  const gated_review = parseGatedReviewAccess(value.gated_review);
+  return { value: { run_id: (fields.run_id as string).trim(), unit_id: (fields.unit_id as string).trim(), worker: (fields.worker as string).trim(),
+    ...(gated_review ? { gated_review } : {}) } };
 }
 
 /** A service-layer AcpError as an HTTP status, with the ACP code carried in the body. */

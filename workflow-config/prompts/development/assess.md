@@ -22,10 +22,7 @@ You are the post-build assessment agent for one cohort. Evaluate only this cohor
 
 {{feedback}}
 
-When the previous assessment is `none`, this is the first assessment of this cohort. Otherwise it is one of two cases:
-
-- **The build was revised.** The previous assessment's `head_sha` differs from the build result's. Assess the new build in full as below. For each recommended next action of the previous assessment, and each change the operator requested of the builder, say in the matching finding's evidence whether the current worktree addresses it. Carry forward only the next actions that remain unaddressed.
-- **The operator asked you to revise your assessment** of the same build. Make the changes requested above.
+When the previous assessment is `none`, this is the first assessment of this cohort. Otherwise, assess this new build in full. For each recommended next action of the previous assessment and each requested change in the feedback history, state in the matching finding's evidence whether the current worktree addresses it. Carry forward only the next actions that remain unaddressed.
 
 ## Scope boundary
 

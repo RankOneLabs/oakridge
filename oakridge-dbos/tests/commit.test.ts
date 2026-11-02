@@ -125,7 +125,26 @@ test("a revise instruction carries the requested revision and the decision paylo
   const revise = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload))
     .find((decoded) => decoded.ok && decoded.value.action.mode.kind === "revise");
   expect(revise?.ok ? { previous: revise.value.engine_inputs.previous?.id, feedback: revise.value.engine_inputs.feedback } : null)
-    .toEqual({ previous: `${unit}:draft:1`, feedback: { feedback: "shorter" } });
+    .toEqual({ previous: `${unit}:draft:1`, feedback: [{ id: `${unit}:d1`, review: "editor", decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "shorter" } }] });
+});
+
+test("a revision after a decision persists its position in the decision history", async () => {
+  const run_id = await launched();
+  const submit = submitter(authority);
+  const unit = unitOf(run_id, "document");
+  const first = await writerAction(run_id);
+  await submit({ run_id, event: { kind: "worker_started", action: first, kbbl_session_id: "sid-first" }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: first }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "worker_ended", action: first, result: { kind: "succeeded" } }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes",
+    target: `${unit}:draft:1`, payload: { feedback: "shorter" } } });
+  const revised = await writerAction(run_id);
+  await submit({ run_id, event: { kind: "worker_started", action: revised, kbbl_session_id: "sid-revised" }, writer: executor(revised) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Short" },
+    by: revised, predecessor: `${unit}:draft:1` }, writer: executor(revised) });
+  const rows = await authority.db.selectFrom("authority.artifact_revision").select(["seq", "decision_cursor"])
+    .where("run_id", "=", run_id).where("artifact", "=", "draft").orderBy("seq").execute();
+  expect(rows.map((row) => [row.seq, row.decision_cursor])).toEqual([[1, 0], [2, 1]]);
 });
 
 test("a replayed ingress id returns its stored result, and reused with other content it conflicts", async () => {
