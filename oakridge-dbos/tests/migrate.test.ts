@@ -16,7 +16,7 @@ test("an empty database takes the baseline once, and a repeat confirms it", asyn
     const baselines = await sql<{ count: number }>`SELECT count(*)::int AS count FROM authority.schema_baseline`.execute(db);
     expect(baselines.rows[0]?.count).toBe(1);
     const ledger = await sql<{ name: string; digest: string; applied_at: Date }>`SELECT name, digest, applied_at FROM authority.schema_migration`.execute(db);
-    expect(ledger.rows.map((row) => row.name)).toEqual(["0001_core.sql", "0002_historical_runs.sql"]);
+    expect(ledger.rows.map((row) => row.name)).toEqual(["0001_core.sql", "0002_historical_runs.sql", "0003_revision_decision_cursor.sql"]);
     expect(ledger.rows[0]?.digest).toBe(createHash("sha256").update(new Uint8Array(await Bun.file(migrations[0]!.file).arrayBuffer())).digest("hex"));
     expect(ledger.rows[0]?.applied_at).toBeInstanceOf(Date);
   } finally { await db.destroy(); await scratch.drop(); }
@@ -51,7 +51,7 @@ test("a database with other tables is refused, and changed migration bytes are d
 
 test("manifest lists every committed authority migration", async () => {
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
-  expect(migrations.map((entry) => entry.name)).toEqual(files.filter((name) => name.endsWith(".sql")));
+  expect(migrations.map((entry) => entry.name)).toEqual(files.filter((name) => name.endsWith(".sql")).sort());
 });
 
 test("historic authority baseline is adopted after catalog validation", async () => {
@@ -67,7 +67,7 @@ test("historic authority baseline is adopted after catalog validation", async ()
     expect(adopted.rows.map((row) => row.name)).toEqual(["0001_core.sql"]);
     await migrateEmptyDatabase(db);
     const ledger = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM authority.schema_migration`.execute(db);
-    expect(ledger.rows[0]?.count).toBe(2);
+    expect(ledger.rows[0]?.count).toBe(3);
   } finally { await db.destroy(); await scratch.drop(); }
 });
 

@@ -57,8 +57,12 @@ test("events are read in numeric commit order across a digit boundary", async ()
   // Every server's transaction ids are past 100 (a new cluster starts near 700), so both rows are visible.
   const [nines, boundary] = [event(99), event(100)];
   await authority.db.insertInto("authority.event").values([boundary, nines]).execute();
-  const rows = await readCommittedEventsAfter(authority.db, "authority.event", { after: { commit_txid: "98", id: "" }, limit: 2 });
-  expect(rows.map((row) => row.commit_txid)).toEqual(["99", "100"]);
+  try {
+    const rows = await readCommittedEventsAfter(authority.db, "authority.event", { after: { commit_txid: "98", id: "" }, limit: 2 });
+    expect(rows.map((row) => row.commit_txid)).toEqual(["99", "100"]);
+  } finally {
+    await authority.db.deleteFrom("authority.event").where("id", "in", [nines.id, boundary.id]).execute();
+  }
 });
 
 test("reader preserves numeric order across the long text-inverting boundary", async () => {

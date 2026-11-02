@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Action, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
+import type { Action, FeedbackEntry, GatedReviewAccess, Mode, ParsedWorkflow, ResolvedRunWorker, RevisionState, SessionMode, TypeExpression, Workflow } from "../core-client/core-types";
 import { selectWorkerSessionSettings, type RunConfig, type SessionSettings } from "./run-config";
 import type { ActionId, Result, RunId } from "./primitives";
 
@@ -16,7 +16,7 @@ export interface CreatedArtifact { readonly key: string; readonly schema: TypeEx
 /** The prompt key whose template words a fresh session's handoff (part 1 §2.5). */
 export const HANDOFF_PROMPT = "handoff";
 export type WorkerInstruction =
-  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly prompt: PinnedPrompt;
+  | { readonly kind: "agent"; readonly session_key: string; readonly session: SessionMode; readonly gated_review: GatedReviewAccess | null; readonly prompt: PinnedPrompt;
       /** The collection path that owns a shared session; absent for unit-owned sessions. */
       readonly shared_session_unit?: string;
       /** Pinned for `session: fresh` when the worker declares `prompts.handoff`; null otherwise. */
@@ -28,10 +28,10 @@ export type WorkerInstruction =
   | { readonly kind: "code"; readonly operation: string; readonly every: string | null;
       /** The one artifact a code worker creates, which its output is published as. */
       readonly artifact: string };
-/** Inputs the engine adds for the action's mode; null where the mode has none. */
+/** Inputs the engine adds for the action's mode; feedback is in snapshot order. */
 export interface EngineInputs {
   readonly previous: RevisionState | null;
-  readonly feedback: unknown;
+  readonly feedback: readonly FeedbackEntry[];
   readonly subject: RevisionState | null;
 }
 /**
@@ -152,7 +152,8 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
       if (!artifact) return failure(resolved.action_id, `artifact ${key} is not declared on stage ${source.stage}`);
       creates.push({ key, schema: selectResolvedSchema(artifact.schema, source.workflow.schemas ?? {}) });
     }
-    worker = { kind: "agent", session, session_key: selectSessionKey(action, resolved.action_id, session),
+    const gated_review = declared.gated_review ?? null;
+    worker = { kind: "agent", session, gated_review, session_key: selectSessionKey(action, resolved.action_id, session),
       ...(session === "shared" ? { shared_session_unit: selectSharedSessionUnit(action.unit) } : {}),
       prompt: prompt.value, handoff: handoff?.value ?? null,
       settings: selectWorkerSessionSettings(source.config,
@@ -168,7 +169,7 @@ export function selectEffectInstruction(source: InstructionSource): Result<Effec
   }
   return { ok: true, value: { version: 1, run_id: source.run_id, action, attempt: { action_id: resolved.action_id as ActionId, seq: source.seq }, worker,
     inputs: resolved.inputs,
-    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? null, subject: resolved.subject ?? null },
+    engine_inputs: { previous: resolved.previous ?? null, feedback: resolved.feedback ?? [], subject: resolved.subject ?? null },
     workspace: resolved.workspace ?? null,
     deadline_ms: DEFAULT_PROVIDER_DEADLINE_MS, max_start_attempts: DEFAULT_MAX_START_ATTEMPTS } };
 }
@@ -212,20 +213,30 @@ function isTypeExpression(value: unknown, depth = 0): value is TypeExpression {
   return depth < 64 && isFields(value) && Object.values(value).every((member) => isTypeExpression(member, depth + 1));
 }
 const isCreatedArtifact = (value: unknown): value is CreatedArtifact => isFields(value) && isString(value.key) && isTypeExpression(value.schema);
+function isGatedReviewAccess(value: unknown): value is GatedReviewAccess | null {
+  return value === null || isFields(value) && (
+    value.kind === "unscoped" || value.kind === "restricted" && (value.role === "builder" || value.role === "assessor")
+  );
+}
 function isWorkerInstruction(value: unknown): value is WorkerInstruction {
   if (!isFields(value)) return false;
   if (value.kind === "code") return isString(value.operation) && isNullableString(value.every) && isString(value.artifact);
   if (value.kind !== "agent") return false;
   const settings = value.settings;
-  return isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
+  return isGatedReviewAccess(value.gated_review) && isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
     && (value.session !== "shared" || isString(value.shared_session_unit) && value.shared_session_unit !== "")
     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
     && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort))
     && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)
     && isFields(value.schemas) && Object.values(value.schemas).every((schema) => isTypeExpression(schema));
 }
+function isFeedbackEntry(value: unknown): value is FeedbackEntry {
+  return isFields(value) && isString(value.id) && isString(value.review) && isString(value.decision)
+    && isString(value.target) && "payload" in value;
+}
 function isEngineInputs(value: unknown): value is EngineInputs {
-  return isFields(value) && isNullableRevision(value.previous) && "feedback" in value && isNullableRevision(value.subject);
+  return isFields(value) && isNullableRevision(value.previous) && Array.isArray(value.feedback)
+    && value.feedback.every(isFeedbackEntry) && isNullableRevision(value.subject);
 }
 
 /** The executor's only way in: an `effect_intent.payload` that is not a version-1 instruction is refused. */
