@@ -5,6 +5,8 @@ import { withTenant } from "../src/storage/database";
 import { enqueueJob, claimJob } from "../src/storage/grading-job-store";
 import { gradingLimits } from "../src/grading/jobs/budget";
 import { readEligibility, recordEligibility } from "../src/storage/eligibility-store";
+import { readCoverage } from "../src/storage/coverage-store";
+import { createBlindAssignment } from "../src/storage/blind-assignment-store";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { workOneJob } from "../src/grading/jobs/worker";
 import type { GradeRunner } from "../src/ports/grade-runner";
@@ -170,7 +172,15 @@ integration("indexed attempt aggregation counts a large run without execution JS
     FROM generate_series(1, 500) AS series`.execute(trx));
   await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: "after-many" },
     runner_name: "llm_judge", estimated_cost: 0.1 }, limits);
-  expect((await claimJob(db, tenant, "after-many", limits)).kind).toBe("refused");
+  const admissionQueries: string[] = [];
+  const observedDb = db.withPlugin({
+    transformQuery({ node }) { admissionQueries.push(JSON.stringify(node)); return node; },
+    async transformResult({ result }) { return result; },
+  });
+  expect((await claimJob(observedDb, tenant, "after-many", limits)).kind).toBe("refused");
+  expect(admissionQueries.some((query) => query.includes("grading_provider_attempt"))).toBe(true);
+  expect(admissionQueries.some((query) => query.includes("evaluation_execution"))).toBe(false);
+  expect(admissionQueries.some((query) => query.includes("provider_attempts"))).toBe(false);
 }));
 for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurrency"] as const) {
   integration(`${cap} refuses paid work or defers at zero without changing eligibility`, async () => scratchGrading(async (db, occurrence_id) => {
@@ -184,10 +194,30 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
     expect((await recordEligibility(db, tenant, { ...tenant, subject_occurrence_id: occurrence_id,
       question_id: question.question_id, question_version: question.question_version,
       tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } })).ok).toBe(true);
+    const selection = { run_id: job.run_id, revision_id: null, question_id: question.question_id,
+      question_version: question.question_version };
+    const beforeCoverage = (await readCoverage(db, tenant, selection)).questions[0];
+    expect(beforeCoverage?.eligible).toBe(1);
+    expect(beforeCoverage?.excluded).toBe(0);
+    const assignmentIdentity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version };
+    if (cap.endsWith("spend")) {
+      const beforeAssignment = await createBlindAssignment(db, tenant, assignmentIdentity);
+      expect(beforeAssignment.ok).toBe(true);
+      if (!beforeAssignment.ok) throw new Error(beforeAssignment.error.detail);
+      await withTenant(db, tenant, (trx) => trx.deleteFrom("observation.blind_assignment")
+        .where("assignment_id", "=", beforeAssignment.value.assignment_id).execute());
+    }
     const claimed = await claimJob(db, tenant, "budget-worker", limits);
     if (cap.endsWith("spend")) {
       expect(claimed.kind).toBe("refused");
       expect(claimed.kind === "refused" && claimed.job.state).toBe("skipped_budget");
+      const afterCoverage = (await readCoverage(db, tenant, selection)).questions[0];
+      expect(afterCoverage?.eligible).toBe(beforeCoverage?.eligible);
+      expect(afterCoverage?.excluded).toBe(beforeCoverage?.excluded);
+      expect(afterCoverage?.exclusion_reasons).toEqual(beforeCoverage?.exclusion_reasons);
+      const afterAssignment = await createBlindAssignment(db, tenant, assignmentIdentity);
+      expect(afterAssignment.ok).toBe(true);
       const local = await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: `${cap}-local` },
         runner_name: "stub_model" }, limits);
       const localClaim = await claimJob(db, tenant, "local-worker", limits);
