@@ -179,6 +179,17 @@ The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
 with create/drop database permission; each test file creates and drops its own
 scratch database. Point it at a server of its own, never at a live one.
 
+### Adapter fixture regeneration
+
+`bun oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts --regenerate`
+refreshes committed-definition projections and references over frozen
+execution scenarios. It preserves their execution evidence rather than
+recapturing live run snapshots. `--check` verifies that those generated
+projections match the committed sources. Source matching and byte-identical
+output across repeated regenerations are verified; this behavior is a
+documentation note, with no fixture recapture change required. To capture a
+live snapshot, use the script's existing `<run-id> [fixture-name]` mode.
+
 ## Database cutover
 
 The authority baseline requires PostgreSQL 15 or newer. Repeating start against
