@@ -372,13 +372,35 @@ pub(super) fn answered_decision<'a>(
 }
 pub(super) fn feedback_on(state: &StepSnapshot, unit: &UnitId, target_revision: &RevisionId, after: u32) -> Vec<FeedbackEntry> {
     state.decisions.iter().skip(after as usize).filter_map(|record| {
-        if let DecisionState::Review { id, unit: decision_unit, review, decision, effect: DecisionEffect::RequestChanges { .. }, target, payload } = record {
-            if decision_unit == unit && target == target_revision {
-                return Some(FeedbackEntry { id: id.clone(), review: review.clone(), decision: decision.clone(), target: target.clone(), payload: payload.clone() });
-            }
+        match record {
+            DecisionState::Review { id, unit: decision_unit, review, decision, effect: DecisionEffect::RequestChanges { .. }, target, payload }
+                if decision_unit == unit && target == target_revision =>
+                Some(FeedbackEntry { id: id.clone(), review: review.clone(), decision: decision.clone(), target: target.clone(), payload: payload.clone() }),
+            DecisionState::Validation { id, unit: decision_unit, target, messages, .. }
+                if decision_unit == unit && target == target_revision =>
+                Some(FeedbackEntry { id: id.clone(), review: SymbolKey::from(VALIDATION_REVIEW), decision: SymbolKey::from("request_changes"),
+                    target: target.clone(), payload: serde_json::json!({"feedback": messages.join("; ")}) }),
+            _ => None,
         }
-        None
     }).collect()
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+
+    #[test]
+    fn a_validation_decision_keeps_its_messages_in_revise_feedback() {
+        let unit = UnitId::from("run/document");
+        let target = RevisionId::from("run/document:draft:1");
+        let state = StepSnapshot { run: RunState { id: "run".into(), root: UnitId::from("run") }, units: vec![], attempts: vec![],
+            revisions: vec![], decisions: vec![DecisionState::Validation { id: DecisionId::from("run/document:d1"),
+                unit: unit.clone(), artifact: SymbolKey::from("draft"), target: target.clone(), messages: vec!["title missing".into(), "body too short".into()] }],
+            retry_events: vec![] };
+        assert_eq!(feedback_on(&state, &unit, &target, 0), vec![FeedbackEntry { id: DecisionId::from("run/document:d1"),
+            review: SymbolKey::from(VALIDATION_REVIEW), decision: SymbolKey::from("request_changes"), target,
+            payload: serde_json::json!({"feedback":"title missing; body too short"}) }]);
+    }
 }
 
 /// Previous review of a different subject, followed by every request-change

@@ -2794,7 +2794,8 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         // The base corpus serialized through serde_json::Value has this
         // canonical-key-order digest; w6_projection restores its old shape.
         // A second review of a newer subject resolves `previous` and
-        // `feedback`, which a review left null before.
-        "f516c880735328944756c3d4a1a2fc2346cfe9378a6f50301d7de82be3f1469f"
+        // `feedback`, which a review left null before. Validation failures
+        // also remain in revise feedback with their check messages.
+        "641f80a7799e3559c5ae1bcbc984346b510458ed2bf0d4aef62f6880059e50e3"
     );
 }
