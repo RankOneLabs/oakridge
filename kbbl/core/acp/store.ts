@@ -24,6 +24,7 @@ import type {
   TerminalSessionSummaryDraft,
   TurnKey,
 } from "./types";
+import { parseGatedReviewAccess } from "./types";
 
 // Stable canonicalization of a start spec: sort object keys recursively, then sha256 the JSON. Same spec must hash identically
 // regardless of property order in the HTTP body.
@@ -165,13 +166,8 @@ interface RawAcpSessionRow {
 function decodeStoredGatedReview(raw: string | null): AcpSessionWorkflowIdentity["gated_review"] {
   if (raw === null) return null;
   try {
-    const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null || !("kind" in value)) return null;
-    if (value.kind === "unscoped") return { kind: "unscoped" };
-    if (value.kind === "restricted" && "role" in value && (value.role === "builder" || value.role === "assessor"))
-      return { kind: "restricted", role: value.role };
+    return parseGatedReviewAccess(JSON.parse(raw));
   } catch { return null; }
-  return null;
 }
 
 /** Absence is the nullable: yields `null` unless all three columns are non-null. */
