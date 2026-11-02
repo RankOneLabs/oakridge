@@ -11,3 +11,9 @@ kbbl/core/pwa/oakridge/operator-contracts.ts linguist-generated=true
 workflow-core/fixtures/bundles/development.json linguist-generated=true
 workflow-core/fixtures/bundles/fan-out.json linguist-generated=true
 workflow-core/fixtures/bundles/review-loop.json linguist-generated=true
+workflow-config/definitions/** linguist-generated=true
+
+# Prompt identities hash exact bytes. Preserve both the authored inputs and
+# generated copies even on checkouts with core.autocrlf=true.
+workflow-config/prompts/** -text
+workflow-config/definitions/prompts/** -text

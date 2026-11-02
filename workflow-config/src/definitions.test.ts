@@ -1,14 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
 import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type OperationRegistry } from "./definition-objects";
-import { resolveDefinition, type DefinitionStoreFailure } from "./definition-store";
+import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionStoreFailure } from "./definition-store";
+import { WORKFLOW_SOURCES } from "./workflow-sources";
 
 function unwrap<Value, Failure>(result: Result<Value, Failure>): Value {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -227,6 +228,15 @@ test("the reader rejects hash-valid noncanonical JSON instead of normalizing it"
   expect(readFailure(resolveDefinition(id, fixture.root))).toMatchObject({ kind: "malformed_object", operation: "read_definition", identifier: id });
 });
 
+for (const invalid_json of ["{", `${"[".repeat(300)}null${"]".repeat(300)}`]) {
+  test(`the reader returns MalformedObject for ${invalid_json.length === 1 ? "invalid JSON" : "JSON exceeding wire depth"}`, () => {
+    const fixture = storeFixture();
+    const id = createHash("sha256").update(invalid_json, "utf8").digest("hex") as DefinitionId;
+    writeFileSync(resolve(fixture.root, "workflows", `${id}.json`), invalid_json);
+    expect(readFailure(resolveDefinition(id, fixture.root))).toMatchObject({ kind: "malformed_object", operation: "read_definition", identifier: id });
+  });
+}
+
 test("prompt references include shared workers/reviews and both kinds of template override", () => {
   const source = authoredSource(`${authored}
 workers:
@@ -244,4 +254,149 @@ reviews:
   expect(referencedPromptPaths(with_overrides)).toEqual([
     "handoff.md", "review-override.md", "review.md", "revise.md", "shared-review.md", "shared.md", "worker-override.md", "write.md",
   ]);
+});
+
+const repository_root = resolve(import.meta.dir, "../..");
+for (const [name, path] of Object.entries(WORKFLOW_SOURCES)) {
+  test(`${name} resolves all transitive references through the committed launchable catalog`, () => {
+    const definition = unwrap(resolveLaunchableDefinition(name));
+    const document = YAML.parseDocument(readFileSync(resolve(repository_root, path), "utf8"), { uniqueKeys: true });
+    const source = decodeWorkflowSource(document.toJS());
+    if (source === null) throw new Error("invalid authored source");
+    expect({ source: definition.source, schemas: definition.schema_names, stages: definition.stage_names }).toEqual({
+      source, schemas: Object.keys(source.schemas ?? {}), stages: Object.keys(source.stages),
+    });
+  });
+}
+
+test("the catalog contains exactly the authored names and no r5-cohort definition", () => {
+  expect(Object.keys(unwrap(readLaunchableCatalog())).sort()).toEqual(Object.keys(WORKFLOW_SOURCES).sort());
+});
+
+test("every stored prompt is byte-identical to its authoring source, compared as buffers", () => {
+  const prompt_root = resolve(repository_root, "workflow-config/prompts");
+  const expected_ids = readdirSync(prompt_root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const authored_bytes = readFileSync(resolve(entry.parentPath, entry.name));
+      const id = bytesIdentity(authored_bytes);
+      expect(readFileSync(resolve(DEFINITION_STORE_ROOT, "prompts", `${id}.md`))).toEqual(authored_bytes);
+      return `${id}.md`;
+    });
+  expect(readdirSync(resolve(DEFINITION_STORE_ROOT, "prompts")).sort()).toEqual([...new Set(expected_ids)].sort());
+});
+
+test("git attributes enforce prompt byte preservation and mark the store generated", () => {
+  const attributes = readFileSync(resolve(repository_root, ".gitattributes"), "utf8");
+  expect(attributes).toMatch(/^workflow-config\/definitions\/prompts\/\*\* -text$|^\* text=auto eol=lf$/m);
+  expect(attributes).toContain("workflow-config/definitions/** linguist-generated=true");
+});
+
+function generatorFixture(): string {
+  const root = mkdtempSync(resolve(tmpdir(), "oakridge-generator-"));
+  temporary_stores.push(root);
+  for (const path of [
+    "workflow-config/src", "workflow-config/prompts", "workflow-config/samples", "workflow-config/development.yaml",
+    "workflow-core/fixtures/bundles", "oakridge-dbos/src/operations/registry.ts", "oakridge-dbos/src/effects/provider-catalog.ts",
+    "kbbl/core/pwa/oakridge/workflow-definition-types.ts",
+  ]) {
+    mkdirSync(dirname(resolve(root, path)), { recursive: true });
+    cpSync(resolve(repository_root, path), resolve(root, path), { recursive: true });
+  }
+  mkdirSync(resolve(root, "node_modules"));
+  for (const dependency of ["canonical-json", "yaml"]) {
+    symlinkSync(realpathSync(resolve(repository_root, "workflow-config/node_modules", dependency)), resolve(root, "node_modules", dependency), "dir");
+  }
+  return root;
+}
+function runGenerator(root: string, is_check = false) {
+  return Bun.spawnSync({
+    cmd: [process.execPath, "workflow-config/src/generate.ts", ...(is_check ? ["--check"] : [])],
+    cwd: root,
+    // The worker's debugger binding is not available to child processes.
+    env: { ...process.env, BUN_INSPECT: undefined },
+    stdout: "pipe", stderr: "pipe",
+  });
+}
+interface StoreSnapshot { readonly [path: string]: Buffer }
+function storeSnapshot(root: string): StoreSnapshot {
+  const store = resolve(root, "workflow-config/definitions");
+  return Object.fromEntries(readdirSync(store, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const path = resolve(entry.parentPath, entry.name);
+      return [path.slice(store.length + 1), readFileSync(path)];
+    }));
+}
+
+test("two generator runs produce identical store filenames and bytes and preserve every Rust fixture", () => {
+  const root = generatorFixture();
+  const fixtures = readdirSync(resolve(root, "workflow-core/fixtures/bundles"))
+    .map((name) => ({ path: resolve(root, "workflow-core/fixtures/bundles", name), bytes: readFileSync(resolve(root, "workflow-core/fixtures/bundles", name)) }));
+  const first = runGenerator(root);
+  if (first.exitCode !== 0) throw new Error(first.stderr.toString());
+  const snapshot = storeSnapshot(root);
+  const second = runGenerator(root);
+  if (second.exitCode !== 0) throw new Error(second.stderr.toString());
+  expect(storeSnapshot(root)).toEqual(snapshot);
+  expect(fixtures.map((fixture) => readFileSync(fixture.path).equals(fixture.bytes))).toEqual(fixtures.map(() => true));
+  const check = runGenerator(root, true);
+  expect({ code: check.exitCode, errors: check.stderr.toString() }).toEqual({ code: 0, errors: "" });
+});
+
+for (const directory of ["workflows", "prompts", "operations", "catalog"] as const) {
+  test(`--check names a differing ${directory} file and does not write`, () => {
+    const root = generatorFixture();
+    const generated = runGenerator(root);
+    if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
+    const store = resolve(root, "workflow-config/definitions");
+    const path = directory === "catalog" ? resolve(store, "launchable.json")
+      : resolve(store, directory, readdirSync(resolve(store, directory))[0]);
+    const changed = Buffer.from("corrupted");
+    writeFileSync(path, changed);
+    const check = runGenerator(root, true);
+    expect(check.exitCode).not.toBe(0);
+    expect(check.stderr.toString()).toContain(path);
+    expect(readFileSync(path)).toEqual(changed);
+  });
+}
+
+test("regeneration publishes new identities after an authored prompt byte change", () => {
+  const root = generatorFixture();
+  const generated = runGenerator(root);
+  if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
+  const store = resolve(root, "workflow-config/definitions");
+  const previous = unwrap(readLaunchableCatalog(store))["review-loop"];
+  const prompt_path = resolve(root, "workflow-config/prompts/review-loop/write.md");
+  writeFileSync(prompt_path, Buffer.concat([readFileSync(prompt_path), Buffer.from("\r\nChanged.\r\n")]));
+  expect(runGenerator(root, true).exitCode).not.toBe(0);
+  expect(runGenerator(root).exitCode).toBe(0);
+  expect(runGenerator(root, true).exitCode).toBe(0);
+  const next = unwrap(resolveLaunchableDefinition("review-loop", store));
+  expect(next.definition_id).not.toBe(previous);
+  expect(next.prompts["review-loop/write.md"]).toBe(readFileSync(prompt_path, "utf8"));
+  expect(readdirSync(resolve(store, "workflows"))).not.toContain(`${previous}.json`);
+});
+
+test("--check names a missing store file", () => {
+  const root = generatorFixture();
+  const generated = runGenerator(root);
+  if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
+  const path = resolve(root, "workflow-config/definitions/launchable.json");
+  rmSync(path);
+  const check = runGenerator(root, true);
+  expect(check.exitCode).not.toBe(0);
+  expect(check.stderr.toString()).toContain(path);
+});
+
+test("--check names stale generated objects without removing them", () => {
+  const root = generatorFixture();
+  const generated = runGenerator(root);
+  if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
+  const path = resolve(root, "workflow-config/definitions/workflows", `${"a".repeat(64)}.json`);
+  writeFileSync(path, "{}");
+  const check = runGenerator(root, true);
+  expect(check.exitCode).not.toBe(0);
+  expect(check.stderr.toString()).toContain(path);
+  expect(readFileSync(path, "utf8")).toBe("{}");
 });

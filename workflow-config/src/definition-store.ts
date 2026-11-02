@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
-import { decodeWorkflowSource, type TypeExpression } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import { decodeWorkflowSource, hasSafeWireNumbers, type TypeExpression } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
 import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-identity";
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
@@ -98,6 +98,7 @@ function readJson(request: ObjectRead): Result<unknown, DefinitionStoreFailure> 
   } catch (error) {
     return failure("malformed_object", request, String(error));
   }
+  if (!hasSafeWireNumbers(value)) return failure("malformed_object", request, "JSON exceeds the wire depth or safe numeric bounds");
   const canonical = canonicalJson(value);
   if (!canonical.ok) return failure("malformed_object", request, canonical.error.detail);
   if (canonical.value !== text.value) return failure("malformed_object", request, "stored JSON is not byte-exact canonical JSON");
