@@ -1,3 +1,4 @@
+import { sampleDefinition, commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { Event } from "../src/core-client/core-types";
 import type { Workflow } from "../src/core-client/core-types";
@@ -8,7 +9,7 @@ import { publishObservationOnce, startObservationPublisher, type ObservationOpti
 import { artifactSchemaVersion } from "../src/adapters/observation-schema-version";
 import { jsonText, openDatabase } from "../src/storage/database";
 import { readDefinition } from "../src/storage/read-store";
-import { actionOf, executor, launch, openAuthority, pinSample, pinWorkflow, sampleWorkflow, scratchDatabase, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, sampleWorkflow, scratchDatabase, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
 beforeAll(async () => { authority = await openAuthority(); });
@@ -40,18 +41,18 @@ test("adapter, Oakridge and observation outages replay committed events from the
         await publisher.stop();
       }
     };
-    const { bundle_id } = await pinSample(authority);
-    const prompted = await pinWorkflow(authority, sampleWorkflow("review-loop"), { path: "review-loop/write.md", content: "changed prompt" });
+    const { definition_id } = await sampleDefinition();
+    const prompted = await commitTestDefinition({ source: sampleWorkflow("review-loop"), prompt_edit: { path: "review-loop/write.md", content: "changed prompt" } });
     const changedSchema = sampleWorkflow("review-loop") as unknown as { stages: { document: { artifacts: { draft: { schema: { extra?: string } } } } } };
     changedSchema.stages.document.artifacts.draft.schema.extra = "text";
-    const typed = await pinWorkflow(authority, changedSchema as unknown as Workflow);
+    const typed = await commitTestDefinition({ source: changedSchema as unknown as Workflow });
     const [originalDefinition, promptDefinition, typeDefinition] = await Promise.all([
-      readDefinition(authority.db, bundle_id), readDefinition(authority.db, prompted.bundle_id), readDefinition(authority.db, typed.bundle_id),
+      readDefinition(authority.db, definition_id), readDefinition(authority.db, prompted.definition_id), readDefinition(authority.db, typed.definition_id),
     ]);
     expect({ prompt: artifactSchemaVersion(promptDefinition!, "document", "draft") === artifactSchemaVersion(originalDefinition!, "document", "draft"),
       type: artifactSchemaVersion(typeDefinition!, "document", "draft") === artifactSchemaVersion(originalDefinition!, "document", "draft") })
       .toEqual({ prompt: true, type: false });
-    const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "capture" } });
+    const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "capture" } });
     expect(await runUntil(1)).toBe(1);
     // A new adapter instance starts from the cursor persisted in observation.
     const unit = unitOf(run_id, "document");

@@ -5,7 +5,7 @@ import { DELIBERATELY_UNMAPPED_EVENTS, MAPPED_EVENTS, mapObservationEvent } from
 import type { CommittedEventRow, PinnedDefinitionRead } from "../src/storage/read-store";
 
 const definition = (schema: unknown, digest = "bundle-a"): PinnedDefinitionRead => ({
-  bundle_id: "bundle-1", digest, archived_at: null, source: {} as PinnedDefinitionRead["source"],
+  definition_id: digest as PinnedDefinitionRead["definition_id"], operation_registry_id: "0" as PinnedDefinitionRead["operation_registry_id"], prompts: {}, operations: [], schema_names: [], stage_names: [], source: {} as PinnedDefinitionRead["source"],
   checked_program: { digest, stages: ["writing"], workflow: { workflow: "test", input: { kind: "text" },
     run: {} as PinnedDefinitionRead["checked_program"]["workflow"]["run"], schemas: {},
     stages: { writing: { input: { kind: "text" }, artifacts: { draft: { schema: schema as { kind: "text" } } },

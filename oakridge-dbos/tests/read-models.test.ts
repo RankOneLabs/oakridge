@@ -1,22 +1,23 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { sql } from "kysely";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { createHttpApp, installDefinitionApi } from "../src/http/app";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import type { ArtifactDetail, DefinitionDetail, DefinitionPage, InboxPage, PinnedDefinition, RunInboxBatch, RunInspectView, RunPage, RunView,
   UnitDiagnostics, UnitHistory, UnitView } from "../src/http/operator-api";
 import type { RunEvent } from "../src/projections/run-event";
 import type { SessionHoldResponse } from "../src/projections/session-hold";
-import { setRunArchived } from "../src/storage/registry-store";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { setRunArchived } from "../src/storage/operator-store";
+import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Authority } from "./authority-fixture";
 
 /**
  * Each read model carries exactly its contract's fields, and every derived
  * field is tested. Runs go through commit; reads go through the HTTP surface.
  */
 const CONTRACT_FIELDS = {
-  RunView: ["archived_at", "created_at", "definition_bundle_id", "definition_digest", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
+  RunView: ["archived_at", "created_at", "definition_id", "repository_keys", "run_id", "status", "title", "units", "updated_at"],
   RunUnitSummary: ["asks", "is_terminal", "label", "stage", "status", "unit_id", "unit_key"],
   UnitView: ["artifacts", "attempts", "attention", "collection_key", "decisions", "depends_on", "input", "is_terminal", "label", "outcome",
     "recorded_decisions", "run_id", "stage", "status", "unit_id", "unit_key"],
@@ -35,10 +36,10 @@ const CONTRACT_FIELDS = {
   UnitDiagnostics: ["attempts", "effects", "rejected", "unit_id"],
   EffectDiagnostic: ["action_id", "id", "last_error", "next_try_at", "seq", "status", "tries", "updated_at"],
   ArtifactDetail: ["artifact_key", "decisions", "is_editable", "is_reviewable", "original_spec", "revisions", "run_id", "schema", "status", "unit_id"],
-  DefinitionSummary: ["archived_at", "bundle", "bundle_id", "digest"],
-  PinnedDefinition: ["archived_at", "bundle", "bundle_id", "checked_program", "digest"],
-  DefinitionDetail: ["archived_at", "bundle", "bundle_id", "digest", "graph", "workflow"],
-  DefinitionBundle: ["key", "root", "schemas", "units"],
+  DefinitionSummary: ["bundle", "definition_id"],
+  PinnedDefinition: ["bundle", "definition_id"],
+  DefinitionDetail: ["bundle", "definition_id", "graph", "workflow"],
+  DefinitionBundle: ["key", "root", "schemas", "stages", "units"],
   UnitDefinition: ["artifacts", "input_schema", "key", "label", "stage"],
   ArtifactDefinition: ["key", "schema"],
   Schema: ["key", "shape"],
@@ -48,14 +49,14 @@ const CONTRACT_FIELDS = {
 type ReadModelName = keyof typeof CONTRACT_FIELDS;
 let authority: Authority;
 let app: Hono;
-let review_loop: DefinitionBundleId;
-let fan_out: DefinitionBundleId;
+let review_loop: DefinitionId;
+let fan_out: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
   app = new Hono();
   installDefinitionApi(app, { db: authority.db, core: authority.core, wake: () => undefined, is_operator_request: () => false });
-  review_loop = (await pinSample(authority)).bundle_id;
-  fan_out = (await pinSample(authority, "fan-out")).bundle_id;
+  review_loop = (await sampleDefinition()).definition_id;
+  fan_out = (await sampleDefinition("fan-out")).definition_id;
 });
 afterAll(async () => { await authority.close(); });
 
@@ -73,8 +74,8 @@ const holds = (model: ReadModelName, value: object | null | undefined): void => 
   expect({ model, fields: fields(value) }).toEqual({ model, fields: [...CONTRACT_FIELDS[model]] });
 };
 
-async function launched(bundle_id: DefinitionBundleId, input: unknown): Promise<RunId> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input });
+async function launched(definition_id: DefinitionId, input: unknown): Promise<RunId> {
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }
@@ -391,7 +392,7 @@ describe("derived fields", () => {
     await app.request(`/api/runs/${segment(run.run_id)}/unarchive`, { method: "POST" });
 
     const fillers = Array.from({ length: 110 }, (_, index) => ({ id: `00000000-w9-${String(index).padStart(3, "0")}`,
-      definition_bundle_id: review_loop, root_unit_id: `00000000-w9-${String(index).padStart(3, "0")}` }));
+      definition_id: review_loop, root_unit_id: `00000000-w9-${String(index).padStart(3, "0")}` }));
     try {
       await authority.db.transaction().execute(async (trx) => {
         await trx.insertInto("authority.run").values(fillers).execute();

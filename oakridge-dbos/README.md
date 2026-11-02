@@ -152,7 +152,7 @@ editing the baseline, run `bun run generate:records`; CI fails when the
 committed file differs.
 
 Queries are Kysely queries and live in `src/storage/`: `commit.ts`,
-`snapshot-store.ts`, `read-store.ts`, `executor-store.ts`, `registry-store.ts`,
+`snapshot-store.ts`, `read-store.ts`, `executor-store.ts`, `operator-store.ts`,
 `collaboration-store.ts`, `run-deletion.ts` and `migrate.ts`.
 `tests/storage-boundaries.test.ts` fails the build on raw SQL, on a query
 outside `storage/`, or on a write to workflow-state tables outside commit and

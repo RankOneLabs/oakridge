@@ -1,26 +1,27 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Hono } from "hono";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { installEventStream } from "../src/http/events";
 import type { OperatorEventPayload } from "../src/projections/operator-event";
 import type { RunEvent } from "../src/projections/run-event";
 import { jsonText, openDatabase, type DatabaseTransaction } from "../src/storage/database";
-import { setRunArchived } from "../src/storage/registry-store";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
+import { setRunArchived } from "../src/storage/operator-store";
+import { actionOf, executor, launch, openAuthority, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 let app: Hono;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
   app = new Hono();
   installEventStream(app, { db: authority.db, timing: { poll_ms: 20, heartbeat_ms: 1_000 } });
 });
 afterAll(async () => { await authority.close(); });
 
 async function launched(): Promise<RunId> {
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   return run_id;
 }
 const announce = (db: Pick<DatabaseTransaction, "insertInto">, key: string, payload: OperatorEventPayload) =>

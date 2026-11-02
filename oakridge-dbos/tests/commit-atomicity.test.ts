@@ -1,21 +1,22 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
 import type { CoreClient } from "../src/core-client/client";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { commitEvent } from "../src/storage/commit";
 import { listRuns } from "../src/storage/read-store";
-import { launch, openAuthority, pinSample, type Authority } from "./authority-fixture";
+import { launch, openAuthority, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 async function launched(): Promise<RunId> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }
@@ -49,7 +50,7 @@ test("a fault on the receipt rolls back the event, writer, delta, intent stops a
 
 test("a rejected launch stores its receipt and nothing else, leaving no run row", async () => {
   const request_id = crypto.randomUUID();
-  const { run_id, result } = await launch(authority, { bundle_id, request_id, input: { topic: 42 } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id, input: { topic: 42 } });
   const runs = await listRuns(authority.db, { after: null, limit: 100, is_archived: false });
   expect({ kind: result.ok && result.value.kind, after: await counts(run_id), listed: runs.items.some((read) => read.run.id === run_id) })
     .toEqual({ kind: "rejected", after: { status: null, events: 0, units: 0, receipts: 1 }, listed: false });

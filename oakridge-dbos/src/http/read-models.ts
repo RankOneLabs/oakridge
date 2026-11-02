@@ -155,9 +155,7 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     if (limit instanceof MalformedRequestError) return errorResponse(limit);
     const after = decodeCursor(c.req.query("cursor"), definitionCursor, "definitions");
     if (after instanceof MalformedRequestError) return errorResponse(after);
-    const is_archived = archivedQuery(c.req.query("archived"));
-    if (is_archived instanceof MalformedRequestError) return errorResponse(is_archived);
-    const page = await listDefinitions(db, { after, limit, is_archived });
+    const page = await listDefinitions(db, { after, limit });
     return c.json({ items: page.items.map(selectDefinitionSummary), next_cursor: page.next === null ? null : encodeCursor(page.next) });
   } catch (cause) { return fault(cause); } });
 
@@ -167,8 +165,8 @@ export function installReadModels(app: Hono, deps: ReadModelDependencies): void 
     return c.json({ hold, location } satisfies SessionHoldResponse);
   } catch (cause) { return fault(cause); } });
 
-  app.get("/api/definitions/:bundle_id", async (c) => { try {
-    const definition = await readDefinition(db, c.req.param("bundle_id"));
+  app.get("/api/definitions/:definition_id", async (c) => { try {
+    const definition = await readDefinition(db, c.req.param("definition_id"));
     return found(c, definition && selectDefinitionDetail(definition), "definition");
   } catch (cause) { return fault(cause); } });
 }

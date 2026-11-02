@@ -70,9 +70,7 @@ export type OakridgeSubRoute =
   | { sub: "new-run" }
   | { sub: "create-project" }
   | { sub: "defs" }
-  | { sub: "def"; id: string }
-  | { sub: "def-new" }
-  | { sub: "def-edit"; id: string };
+  | { sub: "def"; id: string };
 
 export type HashRoute =
   | { view: "sessions"; route: { sub: "sessions" } }
@@ -182,16 +180,6 @@ export function readHashRoute(
       if (raw) {
         const id = tryDecode(raw);
         return { view: "oakridge", route: { sub: "def", id } };
-      }
-    }
-    if (rest === "/def-new") {
-      return { view: "oakridge", route: { sub: "def-new" } };
-    }
-    if (rest.startsWith("/def-edit/")) {
-      const raw = rest.slice("/def-edit/".length);
-      if (raw) {
-        const id = tryDecode(raw);
-        return { view: "oakridge", route: { sub: "def-edit", id } };
       }
     }
     return { view: "oakridge", route: { sub: "runs" } };

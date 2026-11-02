@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
@@ -36,8 +37,8 @@ test("ops lists and inspects a live run, forks an ERROR run, and migrates idempo
   const compose = () => createProductionComposition({ database_url: scratch.url, host: "127.0.0.1", timing: { wake_timeout_seconds: 5 } });
   let composition = await compose();
   try {
-    const pinned = await (await composition.app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string };
-    const launched = await composition.app.request("/api/runs", json({ digest: pinned.digest, input: { topic: "Oakridge" }, request_id: "ops-live" }));
+    const pinned = await commitTestDefinition({ source: sampleWorkflow("review-loop") });
+    const launched = await composition.app.request("/api/runs", json({ definition_id: pinned.definition_id, input: { topic: "Oakridge" }, request_id: "ops-live" }));
     const { run_id } = await launched.json() as { readonly run_id: string };
     const id = runWorkflowId(run_id);
     await eventually(async () => (await DBOS.getWorkflowStatus(id))?.status === "PENDING");

@@ -5,9 +5,9 @@ import type { AuthoredWorkflow, ParsedWorkflow, Type, Workflow } from "../src/co
 import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { selectDefinitionBundle } from "../src/projections/definition-view";
 import { typeNode, schemaKey, selectDecisionPayloadType, selectWorkflowSchemas, typeSchemaKey } from "../src/projections/schema-view";
-import { readWorkflowPrompts, selectPromptPaths } from "../src/runtime/prompt-files";
+import { referencedPromptPaths as selectPromptPaths, resolveDefinition, readLaunchableCatalog } from "../src/runtime/definition-store";
 
-test("prompt discovery applies worker and review template overrides", () => {
+test("committed prompt discovery includes shared declarations and template overrides", () => {
   const source: AuthoredWorkflow = {
     workflow: "template_prompts", input: {}, run: { units: {}, outcome: {} },
     workers: { writer: { kind: "agent", prompts: { initial: "unused.md" }, inputs: {}, creates: [] } },
@@ -16,7 +16,7 @@ test("prompt discovery applies worker and review template overrides", () => {
       writer: { template: "writer", overrides: { prompts: { initial: "used.md" } } } },
       reviews: { approval: { template: "approval", overrides: { prompt: "used-review.md" } } } } },
   };
-  expect(selectPromptPaths(source)).toEqual(["used-review.md", "used.md"]);
+  expect(selectPromptPaths(source)).toEqual(["unused-review.md", "unused.md", "used-review.md", "used.md"]);
 });
 
 const workflow: ParsedWorkflow = {
@@ -108,13 +108,15 @@ test("the bundle lists the root with the run input and each staged unit with its
 
 test("the development bundle lists each direct collection declaration", async () => {
   const source = JSON.parse(readFileSync(resolve(import.meta.dir, "../../workflow-core/fixtures/bundles/development.json"), "utf8")) as Workflow;
-  const prompts = readWorkflowPrompts(source);
-  if (!prompts.ok) throw new Error(prompts.error.detail);
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const prompts = resolveDefinition(catalog.value.development);
+  if (!prompts.ok) throw new Error(JSON.stringify(prompts.error));
   const started = CoreClient.start();
   if (!started.ok) throw new Error(started.error.detail.detail);
   try {
     const compiled = await compileWorkflow(started.value, { workflow: source,
-      prompts: Object.fromEntries(Object.entries(prompts.value).map(([path, prompt]) => [path, prompt.content])) });
+      prompts: prompts.value.prompts });
     if (!compiled.ok) throw new Error(compiled.error.detail);
     expect(selectDefinitionBundle(compiled.value.workflow, source).units.map((unit) => [unit.key, unit.stage])).toEqual([["$root", null],
     ["prepare", "prepare"], ["analysis", "analysis"], ["planning", "planning"], ["briefs", "brief"],

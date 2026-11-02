@@ -1,16 +1,13 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RunConfig } from "../src/domain/run-config";
 import { resolve } from "node:path";
 import { createScratchDatabase, type ScratchDatabase } from "../scripts/scratch-database";
-import { CoreClient, compileWorkflow } from "../src/core-client/client";
+import { CoreClient } from "../src/core-client/client";
 import type { Event, Workflow, Writer } from "../src/core-client/core-types";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
-import { readWorkflowPrompts } from "../src/runtime/prompt-files";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { commitEvent, launchRunId, type CommitResult } from "../src/storage/commit";
 import { openDatabase, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import { pinDefinition } from "../src/storage/registry-store";
 
 /** A migrated scratch database on OAKRIDGE_TEST_DATABASE_URL's server and an in-process core. */
 export interface Authority {
@@ -46,27 +43,6 @@ export function sampleWorkflow(name: "review-loop" | "fan-out"): Workflow {
   return JSON.parse(readFileSync(resolve(root, "workflow-core/fixtures/bundles", `${name}.json`), "utf8")) as Workflow;
 }
 
-/** Compile and pin a sample, as POST /api/definitions does. */
-export function pinSample(authority: Pick<Authority, "db" | "core">, name: "review-loop" | "fan-out" = "review-loop"):
-  Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
-  return pinWorkflow(authority, sampleWorkflow(name));
-}
-/** A prompt's text replaced before pinning, as an edit to its file would. */
-export interface PromptEdit { readonly path: string; readonly content: string }
-
-export async function pinWorkflow(authority: Pick<Authority, "db" | "core">, workflow: Workflow, edit?: PromptEdit):
-  Promise<{ readonly bundle_id: DefinitionBundleId; readonly digest: string }> {
-  const read = readWorkflowPrompts(workflow);
-  if (!read.ok) throw new Error(read.error.detail);
-  const prompts = edit === undefined ? read.value : { ...read.value,
-    [edit.path]: { content_digest: createHash("sha256").update(edit.content).digest("hex"), content: edit.content } };
-  const compiled = await compileWorkflow(authority.core, { workflow,
-    prompts: Object.fromEntries(Object.entries(prompts).map(([path, prompt]) => [path, prompt.content])) });
-  if (!compiled.ok) throw new Error(compiled.error.detail);
-  const pinned = await pinDefinition(authority.db, { source: workflow, compiled: compiled.value, prompts });
-  return { bundle_id: pinned.bundle.id, digest: pinned.bundle.digest };
-}
-
 export const OPERATOR: Writer = { kind: "operator", subject: "credential:test" };
 export const executor = (action: string): Writer => ({ kind: "executor", attempt: action });
 
@@ -80,11 +56,11 @@ export function submitter(authority: Pick<Authority, "db" | "core">, wakes: RunI
 
 /** Launch a pinned definition as POST /api/runs does. */
 export async function launch(authority: Pick<Authority, "db" | "core">,
-  input: { readonly bundle_id: DefinitionBundleId; readonly request_id: string; readonly input: unknown; readonly config?: RunConfig | null }):
+  input: { readonly definition_id: DefinitionId; readonly request_id: string; readonly input: unknown; readonly config?: RunConfig | null }):
   Promise<{ readonly run_id: RunId; readonly result: CommitResult }> {
   const run_id = launchRunId(input.request_id);
   const result = await commitEvent({ db: authority.db, core: authority.core, wake: () => undefined }, { run_id, ingress_id: input.request_id,
-    event: { kind: "launched", input: input.input }, writer: OPERATOR, launch: { definition_bundle_id: input.bundle_id, project_id: null, config: input.config ?? null } });
+    event: { kind: "launched", input: input.input }, writer: OPERATOR, launch: { definition_id: input.definition_id, project_id: null, config: input.config ?? null } });
   return { run_id, result };
 }
 

@@ -231,3 +231,18 @@ export function resolveLaunchableDefinition(definition_id: DefinitionId, store_r
   if (!Object.values(catalog.value).includes(definition_id)) return failure("definition_not_launchable", { operation: "read_launchable", identifier: definition_id }, "definition ID is absent from launchable.json");
   return resolveDefinition(definition_id, store_root);
 }
+
+/** Inspection reads the same verified objects as execution. */
+export interface CommittedPromptSummary { readonly key: string; readonly path: string; readonly content_digest: string }
+export function listCommittedPrompts(): readonly CommittedPromptSummary[] {
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const prompts = new Map<string, string>();
+  for (const id of Object.values(catalog.value)) {
+    const resolved = resolveDefinition(id);
+    if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
+    for (const [path, content] of Object.entries(resolved.value.prompts)) prompts.set(path, content);
+  }
+  return [...prompts].map(([path, content]) => ({ key: `workflow-config/prompts/${path}`, path: `workflow-config/prompts/${path}`,
+    content_digest: createHash("sha256").update(content).digest("hex") })).sort((left, right) => left.path.localeCompare(right.path));
+}

@@ -48,3 +48,25 @@ for (const id of ["/etc/passwd", "../outside", "..\\outside"]) {
     expect(!result.ok && result.error.kind).toBe("malformed_object");
   });
 }
+
+test("malformed canonical objects fail by name after their hash is verified", () => fixture((root) => {
+  const bytes = '{"source":true}';
+  const id = new Bun.CryptoHasher("sha256").update(bytes).digest("hex") as DefinitionId;
+  writeFileSync(resolve(root, "workflows", `${id}.json`), bytes);
+  const result = resolveDefinition(id, root);
+  expect(!result.ok && result.error.kind).toBe("malformed_object");
+}));
+test("noncanonical JSON is refused without normalizing its content", () => fixture((root) => {
+  const bytes = '{ "source": true }\n';
+  const id = new Bun.CryptoHasher("sha256").update(bytes).digest("hex") as DefinitionId;
+  writeFileSync(resolve(root, "workflows", `${id}.json`), bytes);
+  const result = resolveDefinition(id, root);
+  expect(!result.ok && result.error.kind).toBe("malformed_object");
+}));
+test("changed prompt bytes fail their content hash", () => fixture((root, id) => {
+  const object = JSON.parse(readFileSync(resolve(root, "workflows", `${id}.json`), "utf8"));
+  const prompt = Object.values(object.prompts)[0];
+  writeFileSync(resolve(root, "prompts", `${prompt}.md`), "changed\r\n");
+  const result = resolveDefinition(id, root);
+  expect(!result.ok && result.error.kind).toBe("hash_mismatch");
+}));

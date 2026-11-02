@@ -5,7 +5,7 @@ export function sortWorkflowDefinitions(
 ): WorkflowDefSummary[] {
   return [...definitions].sort((left, right) => {
     if (left.name !== right.name) return left.name.localeCompare(right.name);
-    return right.version - left.version;
+    return left.id.localeCompare(right.id);
   });
 }
 

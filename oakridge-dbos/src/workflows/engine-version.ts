@@ -38,7 +38,6 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "storage/database.ts",
   "storage/executor-store.ts",
   "storage/read-store.ts",
-  "storage/registry-store.ts",
   "storage/snapshot-store.ts",
   "workflows/engine-version.ts",
   "workflows/executor-ingress.ts",

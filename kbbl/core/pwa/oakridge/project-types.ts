@@ -2,7 +2,6 @@
 
 import type { RuntimeId } from "../../runtime";
 import type { ForgeRepositoryIdentity, RepositoryInput } from "./run-types";
-import type { WorkflowGraph } from "./workflow-authoring-types";
 export interface OakridgeConfig {
   available: boolean;
   core_url?: string | null;
@@ -36,14 +35,8 @@ export interface ProjectUpdateError {
 }
 
 export interface WorkflowDefSummary {
-  id: string;
-  name: string;
-  version: number;
-  // Retired from the launcher. The def still resolves for the runs that used it.
-  archived?: boolean;
-  // GET /workflow_defs returns the full def today; keep this optional for a
-  // future trimmed summary response.
-  graph?: WorkflowGraph;
+  readonly id: string;
+  readonly name: string;
 }
 
 /** One agent worker's launch choice, mirroring OperatorSessionSettings. */
