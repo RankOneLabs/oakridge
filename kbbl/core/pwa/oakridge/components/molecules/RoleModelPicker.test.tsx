@@ -69,6 +69,7 @@ describe("Oakridge v2 role model choices", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6.1 sol");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 astra");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 sol");
     expect(screen.getByLabelText("Planner model").textContent).toContain("gpt-6 luna");

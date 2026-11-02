@@ -8,10 +8,10 @@
  * cosmetic mismatch, it is a button that always fails, and nothing outside
  * these tests notices until an operator clicks it.
  *
- * "The" vocabulary is really several: Claude Code's ids move between
- * `session/new` calls as the 1M context entitlement comes and goes (see the
- * fixture). Every picker entry therefore has to resolve against *each*
- * recorded variant, not against one snapshot.
+ * "The" vocabulary is really several: an agent's ids can move between
+ * `session/new` calls as entitlements change (see the fixture). Picker entries
+ * resolve against each recorded variant, except the explicitly checked
+ * entitlement-dependent gpt-6.1-sol option.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -96,12 +96,11 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
   }));
 
   for (const [index, variant] of variants.entries()) {
-    test(`every offered model resolves against advertised variant ${index}`, () => {
+    test(`every generally offered model resolves against advertised variant ${index}`, () => {
       const unresolvable = RUNTIME_MODELS[runtimeId]
         .map((option) => option.value)
-        .filter(
-          (value) => !resolveRequestedOption(variant.options, "model", value).ok,
-        );
+        .filter((value) => value !== "gpt-6.1-sol")
+        .filter((value) => !resolveRequestedOption(variant.options, "model", value).ok);
       expect(unresolvable).toEqual([]);
     });
 
@@ -126,14 +125,25 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     expect(unresolvable).toEqual([]);
   });
 
-  // The resolver checks above catch a picker entry the agent dropped. This
-  // catches the other direction — a bump that *adds* a model and leaves the
-  // picker unable to offer it, which no resolver check can see.
+  if (runtimeId === "codex") {
+    test("gpt-6.1-sol resolves when the agent advertises it", () => {
+      const offered = RUNTIME_MODELS.codex.some((option) => option.value === "gpt-6.1-sol");
+      const supported = variants.some((variant) =>
+        resolveRequestedOption(variant.options, "model", "gpt-6.1-sol").ok,
+      );
+      expect(offered && supported).toBe(true);
+    });
+  }
+
+  // Every universally available model belongs in the picker. Codex's
+  // gpt-6.1-sol is the one known option seen only with some entitlements.
   test("the picker offers every model family all variants agree on", () => {
     const offered = RUNTIME_MODELS[runtimeId]
-      .map((option) => withoutContextHint(option.value.toLowerCase()))
-      .sort();
-    expect(offered).toEqual(familiesInEveryVariant(vocabulary));
+      .map((option) => withoutContextHint(option.value.toLowerCase()));
+    const missing = familiesInEveryVariant(vocabulary).filter(
+      (family) => !offered.includes(family),
+    );
+    expect(missing).toEqual([]);
   });
 
   test("the offered efforts are exactly the efforts the agent advertises", () => {
