@@ -38,15 +38,14 @@ function itemsOf(revisions: readonly CapturedRevision[], artifact_kind: string, 
     .flatMap((revision) => revision.items.filter((item) => item.item_kind === item_kind));
 }
 
-/** A collection identifies the cohort; only revisions of one unit can supersede each other. */
-function cohortRevision(revisions: readonly CapturedRevision[], subject: CapturedRevision, artifact_kind: string)
-  : CapturedRevision | undefined {
-  if (subject.collection_key === null) return undefined;
-  const matching = revisions.filter((revision) => revision.collection_key === subject.collection_key
+/** Tasks and the plan come from the run's single analysis and planning units, which carry no
+ * collection key; only revisions of that one unit can supersede each other. */
+function runRevision(revisions: readonly CapturedRevision[], artifact_kind: string): CapturedRevision | undefined {
+  const matching = revisions.filter((revision) => revision.collection_key === null
     && revision.artifact_kind === artifact_kind);
   const units = new Set(matching.map((revision) => revision.unit_id));
   if (units.size !== 1) return undefined;
-  return matching.sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
+  return [...matching].sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
 }
 
 /** References pin the selected content, its canonical digest, and its source address. */
@@ -61,7 +60,7 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "plan")) {
-    const task_revision = cohortRevision(revisions, revision, "tasks");
+    const task_revision = runRevision(revisions, "tasks");
     const tasks = task_revision ? task_revision.items.filter((item) => item.item_kind === "task") : null;
     const decisions = revision.items.filter((item) => item.item_kind === "decision");
     for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
@@ -96,7 +95,7 @@ function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackag
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "brief")) {
-    const plan = cohortRevision(revisions, revision, "plan");
+    const plan = runRevision(revisions, "plan");
     const plan_criteria = plan?.items.filter((item) => item.item_kind === "criterion") ?? [];
     for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
       const link = criterion.links.find((candidate) => candidate.type === "derived_from"
