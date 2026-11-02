@@ -49,17 +49,21 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       instruction: "Return JSON with choice, probabilities for every allowed value, confidence and optional explanation. Judge only the named target. Do not infer correctness from an explanation." };
     let response: Response;
     const started = Date.now();
+    const deadline = AbortSignal.timeout(config.deadline_ms ?? 30_000);
     if (onRequest && !(await onRequest()))
       return failure(context, "grading claim lost before provider request", "invalid_request");
     try { response = await (config.transport ?? fetch)(`${config.base_url.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST", signal: AbortSignal.timeout(config.deadline_ms ?? 30_000), headers: { Authorization: `Bearer ${config.api_key}`, "Content-Type": "application/json" },
+      method: "POST", signal: deadline, headers: { Authorization: `Bearer ${config.api_key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: context.evaluator.model, temperature: 0, response_format: { type: "json_object" },
         messages: [{ role: "user", content: JSON.stringify(prompt) }] }),
-    }); } catch { return failure(context, "judge transport failed", "transport"); }
+    }); } catch { return failure(context, deadline.aborted ? "judge timeout" : "judge transport failed",
+      deadline.aborted ? "timeout" : "transport"); }
     if (!response.ok) return failure(context, `judge HTTP ${response.status}`,
       response.status === 429 ? "rate_limit" : "http_error", response.headers.get("x-request-id"));
     let raw: unknown;
-    try { raw = await response.json(); } catch { return failure(context, "judge response is not JSON", "invalid_response"); }
+    try { raw = await response.json(); } catch { return failure(context,
+      deadline.aborted ? "judge timeout" : "judge response is not JSON",
+      deadline.aborted ? "timeout" : "invalid_response"); }
     const completion = completionSchema.safeParse(raw);
     if (!completion.success) return failure(context, "judge completion does not match expected schema", "invalid_response");
     let content: unknown;
