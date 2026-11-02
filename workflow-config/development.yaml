@@ -409,7 +409,7 @@ stages:
     workers:
       integrator:
         kind: agent
-        gated_review: { kind: unscoped }
+        gated_review: { kind: restricted, role: builder }
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
         inputs: { repository: input.repository, cohorts: input.cohorts }
         workspace: repository(input.workspace)

@@ -785,7 +785,8 @@
         "integrator": {
           "kind": "agent",
           "gated_review": {
-            "kind": "unscoped"
+            "kind": "restricted",
+            "role": "builder"
           },
           "prompts": {
             "initial": "development/integrate.md",
