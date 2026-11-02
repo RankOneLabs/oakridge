@@ -10,7 +10,7 @@ import { upsertLangfuseMapping } from "../storage/langfuse-store";
 import type { CanonicalDigest, EvidenceSetId, ExecutionId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { pilotGradedArtifact, scoreConfigFromQuestion, scoreConfigName } from "./score-config";
 import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { PilotQuestionId } from "./evidence-recipe";
 
 export interface AnnotationTarget { readonly mapping_key: string; readonly sources: readonly EvidenceSource[];

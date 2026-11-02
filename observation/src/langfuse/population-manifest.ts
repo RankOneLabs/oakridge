@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { CanonicalDigest, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { ExportManifest } from "../export/manifest";

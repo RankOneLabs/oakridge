@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
+import { canonicalDigest, canonicalJson } from "canonical-json";
 import type { JsonValue } from "../domain/primitives";
 import type { SourceEventOutcome } from "../ingest/cursor";
 import { issueId, type ExtractionIssue } from "../projection/issues";

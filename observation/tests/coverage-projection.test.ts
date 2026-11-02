@@ -5,7 +5,7 @@ import { withTenant } from "../src/storage/database";
 import { readCoverage } from "../src/storage/coverage-store";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { readEligibility } from "../src/storage/eligibility-store";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { makePopulationManifestFromEligibility } from "../src/langfuse/population-manifest";
 import { question, evidence, evaluator, scratchGrading, tenant } from "./grading-fixture";
 import { runPilot, type PilotRunPlan } from "../scripts/langfuse-pilot-run";

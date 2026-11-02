@@ -1,6 +1,6 @@
 /** Run a deliberately selected, revisioned pilot population. No credentials enter the output file. */
 import { randomUUID } from "node:crypto";
-import { canonicalJson } from "../src/canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import { evaluationDigest, type EvaluationIdentity, type EvaluationExecution } from "../src/grading/execution";
 import { evaluatorIdentity } from "../src/grading/evaluator";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";

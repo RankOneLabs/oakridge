@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { jsonlExporter } from "../src/export/jsonl";
 import { membershipDigest, type ExportManifest, type ExportRecord, type RedactionPolicy } from "../src/export/manifest";
 import { prepareRows, type ExportRows } from "../src/storage/export-store";

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { ArtifactRevisionId, CanonicalDigest, EvidenceSetId, GradeObservationId, ItemOccurrenceId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import { makeManifest, type ExportManifest, type ExportMembership, type ExportRecord,

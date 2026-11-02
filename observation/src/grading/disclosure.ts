@@ -1,7 +1,7 @@
 import type { EvidenceSet } from "./evidence";
 import type { Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 
 export const DISCLOSURE_POLICY_VERSION = "observation-outbound/v1";
 export interface DisclosureRecord { readonly provider: string; readonly policy_version: string;

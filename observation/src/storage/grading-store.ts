@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import type { QuestionDefinition } from "../grading/question";

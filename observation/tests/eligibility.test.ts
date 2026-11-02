@@ -7,7 +7,7 @@ import { recordEligibility, readEligibility } from "../src/storage/eligibility-s
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { exclusionCounts, makePopulationManifest, type SelectedOccurrence } from "../src/langfuse/population-manifest";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";

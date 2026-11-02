@@ -1,5 +1,5 @@
 import { sql, type Selectable } from "kysely";
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { JsonValue } from "../domain/primitives";
 import { oakridgeDevelopmentCatalogue } from "../projection/catalogue/oakridge-development";
 import { selectRevision, type ExtractorDefinition, type LinkReference, type SelectedItem, type RelationType } from "../projection/extractor";

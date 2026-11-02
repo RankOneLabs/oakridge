@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { purgeRun } from "../src/purge/purge";
 import { deletedRunId, handleOperatorEvent } from "../src/purge/trigger";
 import { withTenant, type Database } from "../src/storage/database";

@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../domain/primitives";
-import { canonicalJson } from "../../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { QuestionDefinition } from "../question";
 
 export type PilotQuestionId = "analysis.finding_relevance" | "plan.criterion_traceability" | "brief.source_fidelity"

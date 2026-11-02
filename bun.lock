@@ -5,6 +5,14 @@
     "": {
       "name": "oakridge",
     },
+    "canonical-json": {
+      "name": "canonical-json",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "^1.3.13",
+        "typescript": "^5.7.2",
+      },
+    },
     "kbbl": {
       "name": "kbbl",
       "version": "0.0.0",
@@ -45,6 +53,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@dbos-inc/dbos-sdk": "4.25.14",
+        "canonical-json": "workspace:*",
         "hono": "^4.6.14",
         "kysely": "~0.29.6",
         "pg": "^8.23.0",
@@ -62,6 +71,7 @@
       "name": "observation",
       "version": "0.0.0",
       "dependencies": {
+        "canonical-json": "workspace:*",
         "hono": "^4.6.14",
         "kysely": "~0.29.6",
         "pg": "^8.23.0",
@@ -77,6 +87,7 @@
       "name": "workflow-config",
       "version": "0.0.0",
       "dependencies": {
+        "canonical-json": "workspace:*",
         "yaml": "^2.9.0",
       },
       "devDependencies": {
@@ -441,6 +452,8 @@
     "callsites": ["callsites@3.1.0", "", {}, "sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ=="],
 
     "caniuse-lite": ["caniuse-lite@1.0.30001791", "", {}, "sha512-yk0l/YSrOnFZk3UROpDLQD9+kC1l4meK/wed583AXrzoarMGJcbRi2Q4RaUYbKxYAsZ8sWmaSa/DsLmdBeI1vQ=="],
+
+    "canonical-json": ["canonical-json@workspace:canonical-json"],
 
     "ccount": ["ccount@2.0.1", "", {}, "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg=="],
 

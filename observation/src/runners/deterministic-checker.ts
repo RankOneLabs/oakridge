@@ -1,4 +1,4 @@
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 

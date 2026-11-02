@@ -7,7 +7,7 @@ import { readEventUnitStage, readPinnedDefinition } from "../storage/read-store"
 import { mapCollaborationThread, mapHistoricalDecision } from "./observation-mapping";
 import type { ObservationOptions } from "./observation";
 import type { SourceEventOutcome } from "./observation-wire";
-import { canonicalJson } from "./observation-schema-version";
+import { canonicalJson } from "canonical-json";
 
 export type BackfillPosition =
   | { readonly source: "review_decision"; readonly created_at: string; readonly id: string }
@@ -72,7 +72,10 @@ export async function runObservationBackfill(db: Kysely<DB>, options: Observatio
     let position = request.position ?? checkpoint.position;
     let counts = checkpoint.counts;
     let rows_processed = 0;
-    const replay = request.position !== null && canonicalJson(position) !== canonicalJson(checkpoint.position);
+    const current = canonicalJson(position);
+    const previous = canonicalJson(checkpoint.position);
+    if (!current.ok || !previous.ok) throw new Error("observation_backfill: invalid checkpoint position");
+    const replay = request.position !== null && current.value !== previous.value;
     if (replay) counts = EMPTY_BACKFILL_COUNTS;
     while (rows_processed < request.max_rows && position.source !== "done") {
       if (position.source === "review_decision") {

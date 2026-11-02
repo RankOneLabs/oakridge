@@ -44,7 +44,7 @@ for (const packageName of ["oakridge-dbos", "kbbl"]) {
 }
 
 test("running grading service imports only its declared local infrastructure packages", () => {
-  const allowed = new Set(["hono", "kysely", "pg", "zod"]);
+  const allowed = new Set(["canonical-json", "hono", "kysely", "pg", "zod"]);
   const external = reachable(graph, serviceEntry).flatMap((node) => node.packages)
     .filter((name) => !name.startsWith("node:") && !name.startsWith("bun:"));
   expect(external.filter((name) => !allowed.has(name))).toEqual([]);

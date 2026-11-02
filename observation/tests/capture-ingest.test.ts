@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { createApp } from "../src/http/app";
 import { decodeCapture } from "../src/ingest/capture";
 import { openDatabase, withTenant } from "../src/storage/database";

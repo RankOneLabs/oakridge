@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { err, ok, type Result } from "../domain/primitives";
-import type { CanonicalizationError } from "../domain/errors";
-import type { CanonicalDigest } from "../domain/identity";
+export type Result<Value, ErrorValue> =
+  | { readonly ok: true; readonly value: Value }
+  | { readonly ok: false; readonly error: ErrorValue };
+export interface CanonicalizationError { readonly operation: "canonical_json"; readonly entity_id: string; readonly detail: string }
+export type CanonicalDigest = `canonical-json/v1:${string}` & { readonly __brand: "CanonicalDigest" };
+const ok = <Value>(value: Value): Result<Value, never> => ({ ok: true, value });
+const err = <ErrorValue>(error: ErrorValue): Result<never, ErrorValue> => ({ ok: false, error });
 
 /** Canonical JSON v1 uses a plain decimal with at most 15 significant digits. */
 function expandDecimal(value: string): string {

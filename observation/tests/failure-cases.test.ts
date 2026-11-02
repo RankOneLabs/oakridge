@@ -2,7 +2,7 @@ import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "bun:test";
 import { Client } from "pg";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { createApp } from "../src/http/app";
 import { openDatabase, withTenant, type Database } from "../src/storage/database";

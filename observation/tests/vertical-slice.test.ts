@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { resolve } from "node:path";
 import { expect, test } from "bun:test";
 import { Client } from "pg";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import type { ExportManifest, ExportRecord } from "../src/export/manifest";
 import { membershipDigest } from "../src/export/manifest";

@@ -2,7 +2,7 @@ import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { ItemOccurrenceId, QuestionId, EvidenceSetId } from "../src/domain/identity";
 import type { QuestionDefinition } from "../src/grading/question";
 import type { EvidenceSet } from "../src/grading/evidence";

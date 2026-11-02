@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import type { CanonicalizationError } from "../domain/errors";
 

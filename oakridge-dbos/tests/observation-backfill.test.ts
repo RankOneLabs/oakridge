@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import { createApp } from "../../observation/src/http/app";
-import { canonicalDigest } from "../../observation/src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { openDatabase as openObservationDatabase, withTenant } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { projectRevision } from "../../observation/src/storage/projection-store";

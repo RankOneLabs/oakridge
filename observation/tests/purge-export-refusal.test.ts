@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { purgeRun } from "../src/purge/purge";
 import { withTenant } from "../src/storage/database";
 import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";

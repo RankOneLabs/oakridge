@@ -3,7 +3,7 @@ import { createApp } from "../src/http/app";
 import { listGrades, registerGradingContext } from "../src/storage/grading-store";
 import { runGrade } from "../src/storage/grading-store";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { withTenant } from "../src/storage/database";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 

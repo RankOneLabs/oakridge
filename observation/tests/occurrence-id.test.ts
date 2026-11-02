@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { occurrenceId } from "../src/projection/occurrence-id";
 
 const first = { producer: "oakridge", namespace: "local", revision_id: "r1", extractor_id: "plan.criteria",

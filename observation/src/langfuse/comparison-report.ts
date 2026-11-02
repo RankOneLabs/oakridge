@@ -1,4 +1,4 @@
-import { canonicalDigest, canonicalJson } from "../canonical/canonical-json";
+import { canonicalDigest, canonicalJson } from "canonical-json";
 import type { CanonicalDigest, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { EvaluationExecution } from "../grading/execution";
