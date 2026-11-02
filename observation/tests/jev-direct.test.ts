@@ -75,9 +75,9 @@ test("all four pilot input recipes retain their pinned bytes", () => {
   }
 });
 
-test("five provider failures retain distinct categories", async () => {
+test("provider failures retain categories before and after a request", async () => {
   const cases = [
-    { category: "invalid_choice", api_key: "key", transport: async () => response(provider({ ...answer, choice: "unknown" })) },
+    { category: "invalid_response", api_key: "key", transport: async () => response(provider({ ...answer, choice: "unknown" })) },
     { category: "invalid_response", api_key: "key", transport: async () => response({ answers: {} }) },
     { category: "rate_limit", api_key: "key", transport: async () => response({}, 429) },
     { category: "timeout", api_key: "key", transport: async (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -93,6 +93,14 @@ test("five provider failures retain distinct categories", async () => {
   const transport = await createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1",
     transport: async () => { throw new Error("refused"); } }).run(context);
   expect(transport).toMatchObject({ ok: false, error: { category: "transport" } });
+});
+
+test("an out-of-vocabulary provider choice retains its reported charge", async () => {
+  const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1",
+    transport: async () => response({ ...provider({ ...answer, choice: "unknown" }), cost: 0.4, id: "invalid-choice-request" }) });
+  const result = await runner.run(context);
+  expect(result).toMatchObject({ ok: false, error: { category: "invalid_response", cost: 0.4,
+    external_execution_id: "invalid-choice-request" } });
 });
 
 test("provider modules do not read environment at import", async () => {

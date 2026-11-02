@@ -7,6 +7,7 @@ const names = [
   "0010_question_text_and_evaluator_instructions.sql", "0011_evaluation_eligibility.sql",
   "0012_grading_job.sql", "0013_human_collection_mode.sql", "0014_annotation_evaluator_v2.sql",
   "0015_definition_identity.sql", "0016_source_event_issue.sql", "0017_source_repair_position.sql",
+  "0018_grading_attempt_accounting.sql",
 ] as const;
 
 export const migrations: readonly MigrationEntry[] = names.map((name) => ({ name, file: new URL(name, import.meta.url) }));
