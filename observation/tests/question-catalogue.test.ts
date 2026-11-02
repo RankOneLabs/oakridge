@@ -41,4 +41,3 @@ integration("all three pilot definitions satisfy the stored question constraints
     && row.abstain_semantics.length > 0 && row.unclear_semantics.length > 0 && row.interpretation_caveats.length > 0
     && (row.response_kind !== "choice" || (Array.isArray(row.allowed_values) && row.allowed_values.length > 0)))).toBe(true);
 }));
-

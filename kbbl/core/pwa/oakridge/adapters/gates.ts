@@ -77,4 +77,3 @@ export function sentReviewFeedback(unit: OperatorUnitView): SentReviewFeedback[]
         decision: decision.decision, feedback: feedbackOf(decision.payload), sent_at: decision.created_at };
     });
 }
-
