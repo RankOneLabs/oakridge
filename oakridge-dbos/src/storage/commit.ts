@@ -368,9 +368,15 @@ type Stepped =
   | { readonly kind: "rejected"; readonly reason: string }
   /** The event was refused because advancing the run past it stopped at `unit`. */
   | { readonly kind: "stalled"; readonly unit: string; readonly reason: string };
-/** The program was compiled from exact committed inputs on this core before stepping. */
+/** Recompile exact committed inputs once if Rust has evicted the program before stepping. */
 async function stepPinned(core: CoreClient, input: StepInput): Promise<Result<Stepped, CommitFault>> {
-  const response = await core.request("step", { workflow_digest: input.definition.checked_program.digest, snapshot: input.snapshot, incoming: input.incoming });
+  const step = (workflow_digest: string) => core.request("step", { workflow_digest, snapshot: input.snapshot, incoming: input.incoming });
+  let response = await step(input.definition.checked_program.digest);
+  if (!response.ok && response.error.kind === "domain" && response.error.detail.kind === "unknown_bundle") {
+    const resolved = await compileDefinition(core, input.definition.definition_id);
+    if (!resolved.ok) return { ok: false, error: fault(input.run_id, `${resolved.error.operation} ${resolved.error.entity_id}: ${resolved.error.detail}`) };
+    response = await step(resolved.value.checked_program.digest);
+  }
   if (!response.ok) {
     if (response.error.kind === "domain" && response.error.detail.kind === "rejected_event")
       return { ok: true, value: { kind: "rejected", reason: response.error.detail.detail } };

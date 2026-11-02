@@ -88,6 +88,28 @@ test("an agent instruction pins its prompt digest from the definition", async ()
     : null).toEqual({ path: "review-loop/write.md", digest: createHash("sha256").update(pinned.value.prompts["review-loop/write.md"]!).digest("hex") });
 });
 
+test("an older run advances after later compilations evict its core program", async () => {
+  const run_id = await launched();
+  const definition = resolveDefinition(definition_id);
+  if (!definition.ok) throw new Error(JSON.stringify(definition.error));
+  for (let index = 0; index < 32; index += 1) {
+    const compiled = await compileWorkflow(authority.core, {
+      workflow: { ...definition.value.source, workflow: `cache_churn_${index}` },
+      prompts: definition.value.prompts, operations: definition.value.operations,
+    });
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+  }
+  const action = await writerAction(run_id);
+  const submit = submitter(authority);
+  const started = await submit({ run_id, writer: executor(action),
+    event: { kind: "worker_started", action, kbbl_session_id: "after-eviction" } });
+  const published = await submit({ run_id, writer: executor(action),
+    event: { kind: "revision_published", unit: unitOf(run_id, "document"), artifact: "draft",
+      body: { title: "Recovered", body: "The older run still advances." }, by: action } });
+  expect([started, published].map((result) => result.ok ? result.value.kind : result.error))
+    .toEqual(["committed", "committed"]);
+});
+
 test("a revise instruction carries the requested revision and the decision payload", async () => {
   const run_id = await launched();
   const submit = submitter(authority);

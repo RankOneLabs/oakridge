@@ -93,7 +93,11 @@ export class CoreClient {
       if (!response || response.version !== CORE_PROTOCOL_VERSION) return transport("malformed_request", "core returned an invalid response");
       switch (response.result.status) {
         case "ok": return { ok: true, value: response.result.value };
-        case "domain_error": return { ok: false, error: { kind: "domain", detail: response.result.value } };
+        case "domain_error":
+          // Rust bounds its program cache independently of these compile results.
+          // A miss must make the next compilation reach the WASM instance again.
+          if (response.result.value.kind === "unknown_bundle") compilation_cache.delete(this);
+          return { ok: false, error: { kind: "domain", detail: response.result.value } };
         case "compile_errors": return { ok: false, error: { kind: "compile", detail: response.result.value } };
         case "transport_error": return { ok: false, error: { kind: "transport", detail: response.result.value } };
       }
