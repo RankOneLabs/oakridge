@@ -1,17 +1,14 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { err, ok, type Result } from "../domain/primitives";
 import { openDatabase, type Database } from "./database";
 import { migrations, type MigrationEntry } from "./migrations/manifest";
-import { createScratchDatabase } from "../../scripts/scratch-database";
 
 const SCHEMA = "observation";
 const LOCK = "observation:baseline";
 const MINIMUM_SERVER_VERSION = 150000;
 interface AppliedMigration { readonly name: string; readonly digest: string; readonly applied_at: Date }
 interface MigrationSource { readonly entry: MigrationEntry; readonly source: string; readonly digest: string }
-interface CatalogSnapshot { readonly tables: readonly string[]; readonly columns: readonly string[]; readonly constraints: readonly string[]; readonly indexes: readonly string[] }
-interface ExportProtection { readonly kind: "trigger" | "function"; readonly name: string; readonly definition: string }
 interface MigrationPrefixError { readonly operation: "validate_migration_prefix"; readonly entity_id: string; readonly detail: string }
 
 async function sources(entries: readonly MigrationEntry[]): Promise<MigrationSource[]> {
@@ -100,110 +97,11 @@ export async function migrateEmptyDatabase(db: Database, entries: readonly Migra
   }
 }
 
-async function catalog(db: Database): Promise<CatalogSnapshot> {
-  const tables = await sql<{ item: string }>`SELECT table_name AS item FROM information_schema.tables WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE' AND table_name <> 'schema_migration' ORDER BY table_name`.execute(db);
-  const columns = await sql<{ item: string }>`SELECT concat_ws('|', table_name, column_name, ordinal_position, data_type, udt_name, is_nullable, column_default, generation_expression) AS item
-    FROM information_schema.columns WHERE table_schema = ${SCHEMA} AND table_name <> 'schema_migration' ORDER BY table_name, ordinal_position`.execute(db);
-  const constraints = await sql<{ item: string }>`SELECT c.relname || '|' || con.conname || '|' || pg_get_constraintdef(con.oid) AS item
-    FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = ${SCHEMA} AND c.relname <> 'schema_migration' ORDER BY c.relname, con.conname`.execute(db);
-  const indexes = await sql<{ item: string }>`SELECT tablename || '|' || indexname || '|' || indexdef AS item FROM pg_indexes
-    WHERE schemaname = ${SCHEMA} AND tablename <> 'schema_migration' ORDER BY tablename, indexname`.execute(db);
-  return { tables: tables.rows.map((row) => row.item), columns: columns.rows.map((row) => row.item),
-    constraints: constraints.rows.map((row) => row.item), indexes: indexes.rows.map((row) => row.item) };
-}
-
-export function catalogDifferences(expected: CatalogSnapshot, actual: CatalogSnapshot): string[] {
-  const differences: string[] = [];
-  for (const category of ["tables", "columns", "constraints", "indexes"] as const) {
-    const want = new Set(expected[category]);
-    const have = new Set(actual[category]);
-    for (const item of want) if (!have.has(item)) differences.push(`${category}: missing or changed ${item}`);
-    for (const item of have) if (!want.has(item)) differences.push(`${category}: extra or changed ${item}`);
-  }
-  return differences;
-}
-
-/** Check export guards the four-category schema diff cannot see. Adoption replaces 0006's guard body afterwards. */
-async function exportProtections(db: Database): Promise<ExportProtection[]> {
-  const result = await sql<ExportProtection>`WITH export_triggers AS (
-    SELECT t.oid AS trigger_oid, t.tgfoid AS function_oid, t.tgname AS trigger_name,
-      t.tgenabled AS enabled, c.relname AS table_name
-    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = ${SCHEMA} AND NOT t.tgisinternal
-      AND (left(t.tgname, 7) = 'export_' OR c.relname IN ('export_manifest', 'export_membership'))
-  )
-  SELECT 'trigger' AS kind, table_name || '.' || trigger_name AS name,
-    enabled::text || '|' || pg_get_triggerdef(trigger_oid) AS definition FROM export_triggers
-  UNION ALL
-  SELECT 'function' AS kind,
-    n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS name,
-    pg_get_functiondef(p.oid) AS definition
-  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE p.oid IN (SELECT function_oid FROM export_triggers)
-    AND NOT (n.nspname = ${SCHEMA} AND p.proname = 'require_new_export_manifest')
-  ORDER BY kind, name`.execute(db);
-  return [...result.rows];
-}
-
-function exportProtectionDifferences(expected: readonly ExportProtection[], actual: readonly ExportProtection[]): string[] {
-  const expectedByName = new Map(expected.map((item) => [`${item.kind}:${item.name}`, item]));
-  const actualByName = new Map(actual.map((item) => [`${item.kind}:${item.name}`, item]));
-  const differences: string[] = [];
-  for (const [key, want] of expectedByName) {
-    const have = actualByName.get(key);
-    if (!have) differences.push(`export ${want.kind} missing ${want.name}`);
-    else if (want.definition !== have.definition)
-      differences.push(`export ${want.kind} changed ${want.name}: expected ${createHash("sha256").update(want.definition).digest("hex")}, actual ${createHash("sha256").update(have.definition).digest("hex")}`);
-  }
-  for (const [key, have] of actualByName) if (!expectedByName.has(key)) differences.push(`export ${have.kind} extra ${have.name}`);
-  return differences;
-}
-
-/** Validate an existing fully migrated install against a scratch build, then record its history. */
-export async function adoptExistingDatabase(db: Database, serverUrl: string): Promise<string[]> {
-  await assertVersion(db);
-  const chain = await sources(migrations);
-  const baseline = chain[0]!;
-  if (!(await assertBaseline(db, baseline))) throw new Error(`${SCHEMA} baseline is absent`);
-  if (await hasLedger(db)) throw new Error(`${SCHEMA} ledger already exists`);
-  const scratch = await createScratchDatabase(serverUrl, `observation_adopt_${randomBytes(6).toString("hex")}`);
-  let differences: string[];
-  try {
-    const built = openDatabase(scratch.url);
-    try {
-      await migrateEmptyDatabase(built);
-      differences = [
-        ...catalogDifferences(await catalog(built), await catalog(db)),
-        ...exportProtectionDifferences(await exportProtections(built), await exportProtections(db)),
-      ];
-    }
-    finally { await built.destroy(); }
-  } finally { await scratch.drop(); }
-  if (differences.length) throw new Error(`${SCHEMA} adoption schema difference:\n${differences.join("\n")}`);
-  await db.transaction().execute(async (trx) => {
-    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${LOCK}, 0))`.execute(trx);
-    if (await hasLedger(trx)) throw new Error(`${SCHEMA} ledger already exists`);
-    await assertBaseline(trx, baseline);
-    await sql`CREATE TABLE observation.schema_migration (
-      ordinal integer PRIMARY KEY, name text NOT NULL UNIQUE, digest text NOT NULL,
-      applied_at timestamptz NOT NULL DEFAULT clock_timestamp())`.execute(trx);
-    const guard = chain.find((migration) => migration.entry.name === "0006_export_guard.sql");
-    if (!guard) throw new Error("observation export guard migration missing");
-    await sql.raw(guard.source).execute(trx);
-    for (const [index, migration] of chain.entries())
-      await sql`INSERT INTO observation.schema_migration (ordinal, name, digest) VALUES (${index + 1}, ${migration.entry.name}, ${migration.digest})`.execute(trx);
-  });
-  return differences;
-}
-
 if (import.meta.main) {
   const url = process.env.OBSERVATION_DATABASE_URL;
   if (!url) throw new Error("OBSERVATION_DATABASE_URL is required");
   const db = openDatabase(url);
   try {
-    if (process.argv.includes("--adopt")) console.log(JSON.stringify({ differences: await adoptExistingDatabase(db, url) }));
-    else await migrateEmptyDatabase(db);
+    await migrateEmptyDatabase(db);
   } finally { await db.destroy(); }
 }

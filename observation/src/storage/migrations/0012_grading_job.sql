@@ -19,9 +19,8 @@ CREATE TABLE observation.grading_job (
   lease_expires_at timestamptz,
   attempts integer NOT NULL DEFAULT 0,
   retry_limit integer NOT NULL,
-  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'disclosure_refused', 'invalid_outcome', 'ineligible', 'budget_exceeded')),
+  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'invalid_outcome', 'ineligible', 'budget_exceeded')),
   estimated_cost double precision NOT NULL DEFAULT 0,
-  disclosure jsonb,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (producer, namespace, job_id),
@@ -42,13 +41,6 @@ ALTER TABLE observation.grading_job FORCE ROW LEVEL SECURITY;
 CREATE POLICY grading_job_tenant ON observation.grading_job
   USING (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true))
   WITH CHECK (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true));
-
--- Eligibility remains append-only when a previously eligible subject is skipped by a cap.
-ALTER TABLE observation.evaluation_eligibility DROP CONSTRAINT evaluation_eligibility_pkey;
-ALTER TABLE observation.evaluation_eligibility
-  ADD COLUMN eligibility_id text NOT NULL DEFAULT gen_random_uuid()::text;
-ALTER TABLE observation.evaluation_eligibility
-  ADD PRIMARY KEY (producer, namespace, eligibility_id);
 
 -- Recovery may repeat a paid request; retain each returned request id and cost
 -- on the one canonical execution, including a response whose lease has expired.

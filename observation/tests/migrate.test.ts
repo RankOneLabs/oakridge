@@ -3,16 +3,10 @@ import { randomBytes, createHash } from "node:crypto";
 import { Client } from "pg";
 import { readdir, unlink } from "node:fs/promises";
 import { sql } from "kysely";
-import { openDatabase, withTenant, type Database as ObservationDatabase } from "../src/storage/database";
-import { migrateEmptyDatabase, adoptExistingDatabase } from "../src/storage/migrate";
+import { openDatabase, withTenant } from "../src/storage/database";
+import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { migrations } from "../src/storage/migrations/manifest";
 import { dropScratchDatabase } from "./database-fixture";
-import { openDatabase as openAuthorityDatabase, type Database as AuthorityDatabase } from "../../oakridge-dbos/src/storage/database";
-import { migrateEmptyDatabase as migrateAuthority } from "../../oakridge-dbos/src/storage/migrate";
-import { cutoverPreflight } from "../../oakridge-dbos/scripts/cutover-preflight";
-import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";
-import { evidence, evaluator, question, tenant } from "./grading-fixture";
-import type { ItemOccurrenceId } from "../src/domain/identity";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -36,68 +30,14 @@ integration("manifest pins all files in historical order", async () => {
     "0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
     "0004_cursor.sql", "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql",
     "0009_grade_label_origin.sql", "0010_question_text_and_evaluator_instructions.sql",
-    "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql",
+    "0012_grading_job.sql", "0013_human_collection_mode.sql",
     "0015_definition_identity.sql", "0016_source_event_issue.sql", "0017_source_repair_position.sql",
-    "0018_grading_attempt_accounting.sql", "0019_question_unclear_choice.sql", "0020_remove_disclosure_gate.sql",
-    "0021_drop_evaluation_eligibility.sql",
+    "0018_grading_attempt_accounting.sql", "0019_question_unclear_choice.sql",
   ]);
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
   expect(migrations.map((entry) => entry.name).sort()).toEqual(files.filter((name) => name.endsWith(".sql")).sort());
   for (const entry of migrations) expect(await Bun.file(entry.file).exists()).toBe(true);
 });
-
-const migrationsBefore = (name: string) => migrations.slice(0, migrations.findIndex((entry) => entry.name === name));
-
-integration("dropping eligibility preserves execution, grade and blind-assignment evidence identities", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await migrateEmptyDatabase(db, migrationsBefore("0021_drop_evaluation_eligibility.sql"));
-    const occurrence_id = `canonical-json/v1:${"1".repeat(64)}` as ItemOccurrenceId;
-    await withTenant(db, tenant, async (trx) => {
-      await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-        artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-        VALUES (${tenant.producer}, ${tenant.namespace}, 'preserved-rev', 'preserved-run', 'unit',
-          'brief', '1', 'bundle', 'digest', '{}'::jsonb, ${occurrence_id}, now())`.execute(trx);
-      await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
-        extractor_id, extractor_version, item_kind, item_selector) VALUES
-        (${tenant.producer}, ${tenant.namespace}, 'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion')`.execute(trx);
-      await sql`INSERT INTO observation.item_occurrence (producer, namespace, occurrence_id, revision_id, run_id,
-        artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector, item_id_or_path, selected_value)
-        VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, 'preserved-rev', 'preserved-run',
-          'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion', 'criterion-1', '{}'::jsonb)`.execute(trx);
-    });
-    const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") });
-    expect(registered.ok).toBe(true);
-    const grade = await recordHumanGrade(db, tenant, { subject_occurrence_id: occurrence_id,
-      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
-      evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "preserved",
-      details: { answer: { state: "answered", kind: "boolean", value: true }, collection_mode: "in_context",
-        model_answers_visible: false, workflow_decisions_visible: false, probabilities: null, confidence: null,
-        normalized_score: null, decision_policy_id: null, decision_policy_version: null, reviewer_id: "reviewer",
-        reviewer_details: null, comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
-    expect(grade.ok).toBe(true);
-    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.blind_assignment (producer, namespace, assignment_id,
-      subject_occurrence_id, evidence_set_id, question_id, question_version)
-      VALUES (${tenant.producer}, ${tenant.namespace}, 'preserved-assignment', ${occurrence_id},
-        ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version})`.execute(trx));
-    const snapshot = async () => withTenant(db, tenant, async (trx) => {
-      const tables = ["evaluation_execution", "grade_observation", "blind_assignment"] as const;
-      return Promise.all(tables.map(async (table) => {
-        const rows = await sql<{ evidence_set_id: string }>`SELECT evidence_set_id FROM ${sql.table(`observation.${table}`)}
-          ORDER BY evidence_set_id`.execute(trx);
-        return { table, count: rows.rows.length, evidence_set_ids: rows.rows.map((row) => row.evidence_set_id) };
-      }));
-    });
-    const before = await snapshot();
-    await migrateEmptyDatabase(db);
-    const after = await snapshot();
-    expect(before).toEqual(after);
-    expect(after).toEqual((["evaluation_execution", "grade_observation", "blind_assignment"] as const).map((table) => ({
-      table, count: 1, evidence_set_ids: [evidence.evidence_set_id] })));
-    const removed = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
-    expect(removed.rows[0]?.name).toBeNull();
-  } finally { await db.destroy(); }
-}));
 
 integration("definition identity migration keeps legacy provenance and permits new IDs alone", async () => scratch(async (url) => {
   const db = openDatabase(url);
@@ -139,31 +79,6 @@ integration("fresh migration ledger records the ordered chain and exact file dig
     await migrateEmptyDatabase(db);
     const count = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM observation.schema_migration`.execute(db);
     expect(count.rows[0]?.count).toBe(migrations.length);
-  } finally { await db.destroy(); }
-}));
-
-integration("old full schema requires explicit adoption and preserves its rows", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    for (const entry of migrations) {
-      if (entry.name === "0006_export_guard.sql") continue;
-      const source = await Bun.file(entry.file).text();
-      await sql.raw(source).execute(db);
-      if (entry === migrations[0]) await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
-    }
-    await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id, artifact_kind,
-      artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-      VALUES ('oakridge', 'adoption', 'rev', 'run', 'unit', 'brief', '1', 'bundle', 'digest', '{}'::jsonb,
-        ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(db);
-    await expect(migrateEmptyDatabase(db)).rejects.toThrow("run storage:adopt");
-    expect(await adoptExistingDatabase(db, url)).toEqual([]);
-    await migrateEmptyDatabase(db);
-    const rows = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM observation.source_revision`.execute(db);
-    expect(rows.rows[0]?.count).toBe(1);
-    const ledger = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM observation.schema_migration`.execute(db);
-    expect(ledger.rows[0]?.count).toBe(migrations.length);
-    const guard = await sql<{ source: string }>`SELECT pg_get_functiondef('observation.require_new_export_manifest()'::regprocedure) AS source`.execute(db);
-    expect(guard.rows[0]?.source).toContain("mod(pg_current_xact_id()");
   } finally { await db.destroy(); }
 }));
 
@@ -216,160 +131,6 @@ integration("changed bytes of a later applied migration refuse startup by name",
     });
   } finally { await db.destroy(); }
 }));
-
-async function historicSchema(db: ReturnType<typeof openDatabase>): Promise<void> {
-  for (const entry of migrations) {
-    if (entry.name === "0006_export_guard.sql") continue;
-    const source = await Bun.file(entry.file).text();
-    await sql.raw(source).execute(db);
-    if (entry === migrations[0]) await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
-  }
-}
-
-integration("adoption names table, column, constraint and index differences", async () => {
-  const changes = [
-    { category: "tables", statement: "CREATE TABLE observation.extra_adoption_table (id integer)" },
-    { category: "columns", statement: "ALTER TABLE observation.schema_baseline ALTER COLUMN digest DROP NOT NULL" },
-    { category: "constraints", statement: "ALTER TABLE observation.schema_baseline DROP CONSTRAINT schema_baseline_digest_check" },
-    { category: "indexes", statement: "CREATE INDEX extra_adoption_index ON observation.source_revision (run_id)" },
-  ];
-  for (const change of changes) await scratch(async (url) => {
-    const db = openDatabase(url);
-    try {
-      await historicSchema(db);
-      await sql.raw(change.statement).execute(db);
-      await expect(adoptExistingDatabase(db, url)).rejects.toThrow(change.category);
-    } finally { await db.destroy(); }
-  });
-});
-
-integration("adoption refuses missing, disabled and changed export protections", async () => {
-  const changes = [
-    { statement: "DROP TRIGGER export_membership_immutable ON observation.export_membership", difference: "export trigger missing export_membership.export_membership_immutable" },
-    { statement: "ALTER TABLE observation.export_membership DISABLE TRIGGER export_membership_immutable", difference: "export trigger changed export_membership.export_membership_immutable" },
-    { statement: "CREATE OR REPLACE FUNCTION observation.reject_export_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$", difference: "export function changed observation.reject_export_mutation()" },
-  ];
-  for (const change of changes) await scratch(async (url) => {
-    const db = openDatabase(url);
-    try {
-      await historicSchema(db);
-      await sql.raw(change.statement).execute(db);
-      await expect(adoptExistingDatabase(db, url)).rejects.toThrow(change.difference);
-      const ledger = await sql<{ name: string | null }>`SELECT to_regclass('observation.schema_migration')::text AS name`.execute(db);
-      expect(ledger.rows[0]?.name).toBeNull();
-    } finally { await db.destroy(); }
-  });
-});
-
-async function databaseFingerprint(url: string, schema: string): Promise<string> {
-  const client = new Client({ connectionString: url });
-  await client.connect();
-  try {
-    const catalog = await client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name`, [schema]);
-    const contents = [];
-    for (const row of catalog.rows as { table_name: string }[]) {
-      const data = await client.query(`SELECT to_jsonb(t) AS row FROM ${schema}.${row.table_name} t`);
-      contents.push([row.table_name, data.rows.map((item) => JSON.stringify(item.row)).sort()]);
-    }
-    const columns = await client.query(`SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = $1 ORDER BY table_name, ordinal_position`, [schema]);
-    const indexes = await client.query(`SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = $1 ORDER BY tablename, indexname`, [schema]);
-    return createHash("sha256").update(JSON.stringify({ contents, columns: columns.rows, indexes: indexes.rows })).digest("hex");
-  } finally { await client.end(); }
-}
-
-async function seedPreflightData(authority: AuthorityDatabase, observation: ObservationDatabase): Promise<void> {
-  await sql`INSERT INTO authority.definition_bundle (id, digest, source, checked_program, prompts)
-    VALUES ('bundle-pinned', 'bundle-digest', '{}'::jsonb, '{"workflow":{}}'::jsonb,
-      '{"missing-prompt":"absent-digest"}'::jsonb)`.execute(authority);
-  // This scratch fixture deliberately includes a dangling reference for the report to find.
-  await sql`ALTER TABLE authority.run DROP CONSTRAINT run_definition_bundle_id_fkey`.execute(authority);
-  await sql`INSERT INTO authority.run (id, definition_bundle_id) VALUES
-    ('run-running', 'bundle-pinned'), ('run-complete', 'bundle-pinned'),
-    ('run-dangling', 'bundle-missing')`.execute(authority);
-  await sql`INSERT INTO authority.unit (id, run_id, declaration, status) VALUES
-    ('root-running', 'run-running', 'root', '{"kind":"running"}'::jsonb),
-    ('root-complete', 'run-complete', 'root', '{"kind":"completed"}'::jsonb)`.execute(authority);
-  await sql`UPDATE authority.run SET root_unit_id = 'root-running' WHERE id = 'run-running'`.execute(authority);
-  await sql`UPDATE authority.run SET root_unit_id = 'root-complete' WHERE id = 'run-complete'`.execute(authority);
-  await sql`INSERT INTO authority.attempt (action_id, seq, run_id, unit_id, worker, mode, cause, status)
-    VALUES ('action-running', 0, 'run-running', 'root-running', 'builder', '{}'::jsonb,
-      '{}'::jsonb, '{"kind":"running"}'::jsonb)`.execute(authority);
-  await sql`INSERT INTO authority.effect_intent (id, run_id, unit_id, action_id, seq, payload, status) VALUES
-    ('intent-pending', 'run-running', 'root-running', 'effect-pending', 0, '{}'::jsonb, 'pending')`.execute(authority);
-  await sql`INSERT INTO authority.effect_intent (id, run_id, unit_id, action_id, seq, payload, status, stop_origin) VALUES
-    ('intent-stopping', 'run-running', 'root-running', 'effect-stopping', 0, '{}'::jsonb,
-      'stop_requested', 'executor')`.execute(authority);
-  await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-    artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body,
-    body_digest, recorded_at) VALUES
-    ('oakridge', 'preflight', 'revision-1', 'run-running', 'root-running', 'build_result', '1',
-      'bundle-pinned', 'bundle-digest', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now()),
-    ('oakridge', 'preflight', 'revision-2', 'run-complete', 'root-complete', 'pr', '1',
-      'bundle-pinned', 'bundle-digest', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(observation);
-}
-
-integration("cutover preflight reports both databases without changing rows or schema", async () => scratch(async (authorityUrl) => scratch(async (observationUrl) => {
-  const authority = openAuthorityDatabase(authorityUrl), observation = openDatabase(observationUrl);
-  try {
-    await migrateAuthority(authority);
-    await migrateEmptyDatabase(observation);
-    await seedPreflightData(authority, observation);
-    const before = [await databaseFingerprint(authorityUrl, "authority"), await databaseFingerprint(observationUrl, "observation")];
-    const report = await cutoverPreflight(authorityUrl, observationUrl);
-    expect(report.run_states).toEqual([
-      { state: "completed", count: 1 }, { state: "not_started", count: 1 }, { state: "running", count: 1 },
-    ]);
-    expect(report.pending_authority_work).toEqual([
-      { kind: "running_attempt", count: 1 }, { kind: "effect_intent:pending", count: 1 },
-      { kind: "effect_intent:stop_requested", count: 1 },
-    ]);
-    expect(report.referenced_definition_ids).toEqual([
-      { id: "bundle-missing", count: 1 }, { id: "bundle-pinned", count: 2 },
-    ]);
-    expect(report.missing_pinned_dependencies).toEqual([
-      { kind: "definition_bundle", id: "bundle-missing" }, { kind: "prompt_content", id: "missing-prompt" },
-    ]);
-    expect(report.observation_reference_counts).toContainEqual({ kind: "source_revision", count: 2 });
-    const after = [await databaseFingerprint(authorityUrl, "authority"), await databaseFingerprint(observationUrl, "observation")];
-    expect(after).toEqual(before);
-  } finally { await authority.destroy(); await observation.destroy(); }
-})));
-
-integration("cutover preflight refuses a row-security-limited observation reader", async () => scratch(async (authorityUrl) => scratch(async (observationUrl) => {
-  const authority = openAuthorityDatabase(authorityUrl), observation = openDatabase(observationUrl);
-  const role = `preflight_reader_${randomBytes(6).toString("hex")}`;
-  const password = randomBytes(16).toString("hex");
-  let hasRole = false;
-  try {
-    await migrateAuthority(authority);
-    await migrateEmptyDatabase(observation);
-    await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-      artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body,
-      body_digest, recorded_at) VALUES ('oakridge', 'preflight', 'revision-1', 'run-1', 'unit-1',
-      'build_result', '1', 'bundle-1', 'digest-1', '{}'::jsonb,
-      ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(observation);
-    await sql.raw(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`).execute(observation);
-    hasRole = true;
-    await sql.raw(`GRANT USAGE ON SCHEMA observation TO ${role}`).execute(observation);
-    await sql.raw(`GRANT SELECT ON observation.source_revision, observation.item_occurrence, observation.grade_observation TO ${role}`).execute(observation);
-    const restrictedUrl = new URL(observationUrl);
-    restrictedUrl.username = role;
-    restrictedUrl.password = password;
-    const restricted = openDatabase(restrictedUrl.href);
-    try {
-      const hidden = await sql<{ count: string }>`SELECT count(*)::text AS count FROM observation.source_revision`.execute(restricted);
-      expect(hidden.rows[0]?.count).toBe("0");
-    } finally { await restricted.destroy(); }
-    await expect(cutoverPreflight(authorityUrl, restrictedUrl.href)).rejects.toThrow("BYPASSRLS");
-  } finally {
-    if (hasRole) {
-      await sql.raw(`DROP OWNED BY ${role}`).execute(observation);
-      await sql.raw(`DROP ROLE ${role}`).execute(observation);
-    }
-    await authority.destroy();
-    await observation.destroy();
-  }
-})));
 
 integration("non-empty database without a baseline is refused", async () => scratch(async (url) => {
   const db = openDatabase(url);
