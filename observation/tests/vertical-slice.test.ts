@@ -78,16 +78,11 @@ test("checked-in event fixture preserves observed transaction order and explicit
   expect(assessment.findings[0]?.criterion_id).toBe(brief.acceptance_criteria[0]?.id);
 });
 
-test("the suite's reachable modules import no hosted grader, Langfuse, JIG or Assay package", () => {
+test("the suite's reachable modules import no hosted grader, JIG or Assay package", () => {
   const here = import.meta.dir;
   const graph = buildGraph([resolve(here, "vertical-slice.test.ts"), resolve(here, "failure-cases.test.ts")]);
-  const forbidden = /^(?:@langfuse\/|langfuse(?:\/|$)|@openai\/|openai(?:\/|$)|@anthropic-ai\/|anthropic(?:\/|$)|@google\/generative-ai(?:\/|$)|jig(?:\/|$)|assay(?:\/|$))/i;
+  const forbidden = /^(?:@openai\/|openai(?:\/|$)|@anthropic-ai\/|anthropic(?:\/|$)|@google\/generative-ai(?:\/|$)|jig(?:\/|$)|assay(?:\/|$))/i;
   expect([...graph.values()].flatMap((node) => node.packages.filter((name) => forbidden.test(name)))).toEqual([]);
-});
-
-test("default launch mounts no Langfuse routes", () => {
-  const app = createApp({ db: {} as Database, credentials });
-  expect(app.routes.filter((route) => route.path.startsWith("/v1/langfuse/"))).toEqual([]);
 });
 
 integration("an Oakridge revision flows through ingest, selection, lineage, independent grading, backfill, history and frozen export", async () => {

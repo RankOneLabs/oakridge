@@ -1,5 +1,5 @@
 import { COVERAGE_QUERY_VERSION, type CoverageProjection, type QuestionCoverage } from "../grading/coverage";
-import { LANGFUSE_PILOT_QUESTIONS } from "../grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../grading/catalogue/oakridge-questions";
 import { withTenant, type Database, type TenantScope } from "./database";
 import { readDerivedEligibility } from "../producers/oakridge/gradeability";
 
@@ -14,7 +14,7 @@ export interface CoverageSelection {
 export async function readCoverage(db: Database, tenant: TenantScope, selection: CoverageSelection): Promise<CoverageProjection> {
   const pins = selection.question_id && selection.question_version
     ? [{ question_id: selection.question_id, question_version: selection.question_version }]
-    : Object.values(LANGFUSE_PILOT_QUESTIONS).map(({ definition }) => ({
+    : Object.values(OAKRIDGE_QUESTIONS).map(({ definition }) => ({
       question_id: definition.question_id, question_version: definition.question_version }));
   const questions: QuestionCoverage[] = [];
   for (const pin of pins) {

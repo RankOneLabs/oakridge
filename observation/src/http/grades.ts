@@ -78,7 +78,7 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
       return errorResponse(c, 403, "reviewer_mismatch", "reviewer id differs from grade credential");
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.details.collection_mode === "blind" &&
-      !blindSubmissionIsValid(parsed.data.details, identity.evaluator_definition_id))
+      !blindSubmissionIsValid(parsed.data.details))
       return errorResponse(c, 400, "invalid_blind_grade", "blind submission requires a hidden assignment");
     if (identity.evaluator_definition_id === "oakridge-operator-human")
       return errorResponse(c, 400, "reserved_evaluator", "evaluator is reserved for its authenticated import path");

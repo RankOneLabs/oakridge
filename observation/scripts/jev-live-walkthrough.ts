@@ -19,7 +19,7 @@ import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest } from "../src/grading/evaluator";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
 import { readJob } from "../src/storage/grading-job-store";
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     await ingestCapturedPass(app, events);
     const subject = await gradeSubject(db, events.run_id, options.question_id);
 
-    const pilot = LANGFUSE_PILOT_QUESTIONS[options.question_id];
+    const pilot = OAKRIDGE_QUESTIONS[options.question_id];
     const question = pilot.definition;
     const evidence = subject.evidence;
     const values = question.allowed_values?.filter((value): value is string => typeof value === "string") ?? [];

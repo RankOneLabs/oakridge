@@ -50,7 +50,7 @@ const coverage: QuestionDefinition = {
 };
 
 /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
-export const LANGFUSE_PILOT_QUESTIONS_V1: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
+export const OAKRIDGE_QUESTIONS_V1: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
   "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?"),
   "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?"),
   "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?"),
@@ -66,9 +66,9 @@ function currentChoice(question: PilotQuestion): PilotQuestion {
   question.text);
 }
 
-export const LANGFUSE_PILOT_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
-  "analysis.finding_relevance": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["analysis.finding_relevance"]),
-  "plan.criterion_traceability": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["plan.criterion_traceability"]),
-  "brief.source_fidelity": currentChoice(LANGFUSE_PILOT_QUESTIONS_V1["brief.source_fidelity"]),
-  "assessment.coverage": LANGFUSE_PILOT_QUESTIONS_V1["assessment.coverage"],
+export const OAKRIDGE_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
+  "analysis.finding_relevance": currentChoice(OAKRIDGE_QUESTIONS_V1["analysis.finding_relevance"]),
+  "plan.criterion_traceability": currentChoice(OAKRIDGE_QUESTIONS_V1["plan.criterion_traceability"]),
+  "brief.source_fidelity": currentChoice(OAKRIDGE_QUESTIONS_V1["brief.source_fidelity"]),
+  "assessment.coverage": OAKRIDGE_QUESTIONS_V1["assessment.coverage"],
 };

@@ -9,7 +9,7 @@ For credentials, startup, retention, upgrades and recovery, see
 `fixtures/oakridge/run-slice/` corpus drives the cross-layer slice and failure
 cases. Run `bun test observation/tests` with a local PostgreSQL server named by
 `OAKRIDGE_TEST_DATABASE_URL`; the tests create and remove isolated databases.
-They do not contact Langfuse, a model provider or Assay.
+They do not contact a model provider or Assay.
 
 ## Canonical JSON v1
 

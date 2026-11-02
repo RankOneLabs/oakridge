@@ -7,7 +7,7 @@ import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
 import type { EligibilityDecision, ExclusionReason } from "../../grading/eligibility";
 import type { PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
-import { LANGFUSE_PILOT_QUESTIONS } from "../../grading/catalogue/langfuse-pilot";
+import { OAKRIDGE_QUESTIONS } from "../../grading/catalogue/oakridge-questions";
 
 export interface PilotPackage {
   readonly question_id: PilotQuestionId;
@@ -135,7 +135,7 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageEligibility[] = [];
-  const needs_repository = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
+  const needs_repository = OAKRIDGE_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
   for (const [index, brief] of briefs.entries()) {
