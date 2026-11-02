@@ -12,7 +12,7 @@ const humanCollectionPath = resolve(import.meta.dir, "../src/storage/migrations/
 const questionTextPath = resolve(import.meta.dir, "../src/storage/migrations/0010_question_text_and_evaluator_instructions.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 28) throw new Error(`expected twenty-eight observation tables, found ${tables.length}`);
+if (tables.length !== 29) throw new Error(`expected twenty-nine observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',

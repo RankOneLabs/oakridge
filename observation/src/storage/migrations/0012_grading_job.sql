@@ -54,3 +54,35 @@ ALTER TABLE observation.evaluation_eligibility
 -- on the one canonical execution, including a response whose lease has expired.
 ALTER TABLE observation.evaluation_execution
   ADD COLUMN provider_attempts jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE TABLE observation.grading_provider_attempt (
+  producer text NOT NULL,
+  namespace text NOT NULL,
+  job_id text NOT NULL,
+  attempt integer NOT NULL CHECK (attempt > 0),
+  run_id text NOT NULL,
+  stage_id text NOT NULL,
+  request_sent boolean NOT NULL DEFAULT false,
+  outcome text CHECK (outcome IS NULL OR outcome IN ('completed', 'failed')),
+  charged_cost double precision NOT NULL DEFAULT 0 CHECK (charged_cost >= 0),
+  admitted_estimate double precision NOT NULL CHECK (admitted_estimate >= 0),
+  cost_overage double precision NOT NULL DEFAULT 0 CHECK (cost_overage >= 0),
+  provider_request_id text,
+  failure_category text,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (producer, namespace, job_id, attempt),
+  FOREIGN KEY (producer, namespace, job_id)
+    REFERENCES observation.grading_job(producer, namespace, job_id),
+  CHECK (request_sent OR charged_cost = 0)
+);
+CREATE INDEX grading_provider_attempt_spend
+  ON observation.grading_provider_attempt (producer, namespace, run_id, stage_id)
+  INCLUDE (job_id, attempt, charged_cost);
+ALTER TABLE observation.grading_provider_attempt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE observation.grading_provider_attempt FORCE ROW LEVEL SECURITY;
+CREATE POLICY grading_provider_attempt_tenant ON observation.grading_provider_attempt
+  USING (producer = current_setting('observation.producer', true)
+    AND namespace = current_setting('observation.namespace', true))
+  WITH CHECK (producer = current_setting('observation.producer', true)
+    AND namespace = current_setting('observation.namespace', true));

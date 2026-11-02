@@ -42,13 +42,17 @@ integration("purge removes six layers and commits their audit counts", async () 
   await scratchGrading(async (db, occurrence_id) => {
     await seedHumanGrade(db, occurrence_id);
     expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
-    await enqueueJob(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    const job = await enqueueJob(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
       evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
       question_version: question.question_version, evaluator_definition_id: "model", config_digest: "config-1",
-      attempt_label: "purged" }, runner_name: "stub_model" }, gradingLimits());
+      attempt_label: "purged" }, runner_name: "llm_judge", estimated_cost: 0.1 }, gradingLimits());
     const issue_id = canonicalDigest(["purge issue"]);
     if (!issue_id.ok) throw new Error(issue_id.error.detail);
     await withTenant(db, tenant, async (trx) => {
+      await trx.insertInto("observation.grading_provider_attempt").values({ ...tenant,
+        job_id: job.job_id, attempt: 1, run_id: job.run_id, stage_id: job.stage_id,
+        request_sent: true, outcome: null, charged_cost: 0.1, admitted_estimate: 0.1,
+        cost_overage: 0, provider_request_id: null, failure_category: null }).execute();
       await sql`INSERT INTO observation.extraction_issue (producer, namespace, issue_id, revision_id,
         extractor_id, extractor_version, item_selector, kind, detail, is_retriable)
         VALUES (${tenant.producer}, ${tenant.namespace}, ${issue_id.value}, 'rev-1',
@@ -63,7 +67,7 @@ integration("purge removes six layers and commits their audit counts", async () 
       item_relations_removed: 1, extraction_issues_removed: 1, evaluation_executions_removed: 1,
       grade_observations_removed: 1, trigger_event_id: "delete-event", operator_override: false });
     expect(await Promise.all(["source_revision", "item_occurrence", "item_relation", "extraction_issue",
-      "evaluation_execution", "grade_observation", "grading_job"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0]);
+      "evaluation_execution", "grade_observation", "grading_job", "grading_provider_attempt"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
     expect(await count(db, "purge_event")).toBe(1);
   });
 });
