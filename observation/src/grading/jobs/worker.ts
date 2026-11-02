@@ -4,15 +4,9 @@ import type { JsonValue } from "../../domain/primitives";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { EvaluationIdentity } from "../execution";
-import type { RunnerResult } from "../runner";
+import { runnerEntry, type RunnerResult } from "../runner";
 import { checkDisclosure } from "../disclosure";
 import type { GradeRunner } from "../../ports/grade-runner";
-import { deterministicChecker } from "../../runners/deterministic-checker";
-import { coverageChecker } from "../../runners/coverage-checker";
-import { stubModelRunner } from "../../runners/stub-model";
-import { createJevDirectRunner } from "../../runners/jev-direct";
-import { createFastinoGlideRunner, FASTINO_SYSTEM_ONE_BASE_URL } from "../../runners/fastino-glide";
-import { createLlmJudgeRunner } from "../../runners/llm-judge";
 import { err } from "../../domain/primitives";
 import { runGrade, startDelegatedExecution } from "../../storage/grading-store";
 import { claimJob, type GradingJob } from "../../storage/grading-job-store";
@@ -36,19 +30,8 @@ export interface ProviderAttempt {
   readonly external_processing_policy?: string;
 }
 
-const localRunners: Readonly<Record<string, GradeRunner>> = { deterministic: deterministicChecker,
-  coverage: coverageChecker, stub_model: stubModelRunner };
 function runnerFor(name: string, limits: GradingLimits, env: NodeJS.ProcessEnv): GradeRunner | undefined {
-  if (name === "jev_direct") return createJevDirectRunner({
-    base_url: env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1", api_key: env.TYPESAFE_API_KEY,
-    deadline_ms: limits.provider_deadline_ms });
-  if (name === "fastino_glide") return createFastinoGlideRunner({
-    base_url: env.FASTINO_BASE_URL ?? FASTINO_SYSTEM_ONE_BASE_URL, api_key: env.FASTINO_API_KEY,
-    deadline_ms: limits.provider_deadline_ms });
-  if (name === "llm_judge") return createLlmJudgeRunner({ api_key: env.OBSERVATION_LLM_JUDGE_API_KEY,
-    base_url: env.OBSERVATION_LLM_JUDGE_BASE_URL ?? "https://api.openai.com/v1",
-    deadline_ms: limits.provider_deadline_ms });
-  return localRunners[name];
+  return runnerEntry(name)?.factory(limits.provider_deadline_ms, env);
 }
 function identity(job: GradingJob): EvaluationIdentity {
   return { subject_occurrence_id: job.subject_occurrence_id as EvaluationIdentity["subject_occurrence_id"],
@@ -73,7 +56,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
     execution_id = started.value.execution_id;
   }
   const guarded: GradeRunner = { kind: base.kind, async run(context) {
-    if (["jev_direct", "fastino_glide", "llm_judge"].includes(job.runner_name)) {
+    if (runnerEntry(job.runner_name)?.network) {
       const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
       if (!disclosure.ok) return err(disclosure.error);
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")

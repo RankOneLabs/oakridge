@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import { runGradeDigest, type EvaluationIdentity } from "../grading/execution";
+import { runnerEntry } from "../grading/runner";
 import { budgetExceeded, type GradingLimits } from "../grading/jobs/budget";
 import { jsonText, withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationGradingJob } from "./db-types";
@@ -9,7 +10,7 @@ export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
   readonly reviewed_commit?: string; readonly estimated_cost?: number }
 export async function enqueueJob(db: Database, tenant: TenantScope, input: EnqueueInput, limits: GradingLimits): Promise<GradingJob> {
-  if (["jev_direct", "fastino_glide", "llm_judge"].includes(input.runner_name)
+  if (runnerEntry(input.runner_name)?.network
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
   const digest = runGradeDigest(input.identity, input.reviewed_commit);

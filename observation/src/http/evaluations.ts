@@ -2,9 +2,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { EvaluationIdentity } from "../grading/execution";
 import type { GradingContext } from "../grading/runner";
-import { deterministicChecker } from "../runners/deterministic-checker";
-import { coverageChecker } from "../runners/coverage-checker";
-import { stubModelRunner } from "../runners/stub-model";
+import { runnerEntry, runnerNames } from "../grading/runner";
 import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
@@ -74,22 +72,20 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
       reviewed_commit: z.string().min(1).optional(),
-      runner: z.enum(["deterministic", "coverage", "stub_model", "jev_direct", "fastino_glide", "llm_judge"]) }).safeParse(body);
+      runner: z.enum(runnerNames) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
-    if (["jev_direct", "fastino_glide", "llm_judge"].includes(parsed.data.runner))
+    if (runnerEntry(parsed.data.runner)?.network)
       return errorResponse(c, 422, "queued_evaluation_required", "submit network grading to POST /v1/evaluation-jobs");
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
-      if (((parsed.data.runner === "deterministic" || parsed.data.runner === "coverage") && context.evaluator.kind !== "code")
-        || (parsed.data.runner === "stub_model" && context.evaluator.kind !== "model"))
+      if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
-    const runner = parsed.data.runner === "deterministic" ? deterministicChecker
-      : parsed.data.runner === "coverage" ? coverageChecker : stubModelRunner;
+    const runner = runnerEntry(parsed.data.runner)!.factory(gradingLimits().provider_deadline_ms, process.env);
     const result = await runGrade(deps.db, credential, { identity, runner, reviewed_commit: parsed.data.reviewed_commit });
     return result.ok ? c.json(result.value, result.value.was_replay ? 200 : 201)
       : errorResponse(c, 422, "evaluation_refused", result.error.detail);
@@ -99,16 +95,14 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
     const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
       reviewed_commit: z.string().min(1).optional(), estimated_cost: z.number().finite().nonnegative().optional(),
-      runner: z.enum(["jev_direct", "fastino_glide", "llm_judge", "deterministic", "coverage", "stub_model"]) })
+      runner: z.enum(runnerNames) })
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return errorResponse(c, 400, "invalid_job", parsed.error.message);
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
-      const runner = parsed.data.runner;
-      if (((runner === "deterministic" || runner === "coverage") && context.evaluator.kind !== "code")
-        || (runner !== "deterministic" && runner !== "coverage" && context.evaluator.kind !== "model"))
+      if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
       const registered = await registerGradingContext(deps.db, credential, context);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
