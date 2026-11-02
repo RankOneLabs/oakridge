@@ -83,6 +83,13 @@ test("an enum expression becomes the PWA's enum shape", () => {
     .find((schema) => schema.key === "enum(fast, safe)")?.shape }).toEqual({ key: "enum(fast, safe)", shape: { kind: "enum", variants: ["fast", "safe"] } });
 });
 
+test("a plain uuid projects without throwing and keeps its own schema key", () => {
+  const node = typeNode({ kind: "uuid", generated: false });
+  expect(node).toEqual({ kind: "uuid", generated: false });
+  expect(schemaKey(node)).toBe("uuid");
+  expect(schemaKey(typeNode({ kind: "uuid", generated: true }))).toBe("uuid(generated)");
+});
+
 test("a decision's payload: its declared type, its text fields, and feedback for request_changes", () => {
   const decisions = workflow.stages.planning!.reviews!.chief!.decisions;
   expect(Object.values(decisions).map((decision) => schemaKey(selectDecisionPayloadType(decision))))
