@@ -17,7 +17,7 @@ import { runPackages } from "../src/producers/oakridge/evidence-packages";
 async function captured(kind: string, revision_id: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const selected = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
-  return { revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
+  return { revision_id, unit_id: kind, collection_key: "cohort-a", artifact_kind: kind, recorded_at: new Date(at),
     items: selected.items.map(({ item }, index) => ({ ...item, occurrence_id: `${revision_id}-${index}` as ItemOccurrenceId,
       revision_id })) };
 }

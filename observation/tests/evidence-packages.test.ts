@@ -19,7 +19,7 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const revision_id = `${kind}-first`;
   const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
-  return { revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
+  return { revision_id, unit_id: kind, collection_key: "cohort-a", artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
 
@@ -42,9 +42,9 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   const first = manifest.packages.find((item) => item.question_id === "plan.criterion_traceability" && item.revision_id === plan.revision_id);
   expect(first?.evidence.references.map((ref) => ref.ref.split(":")[0])).toEqual(["plan_criterion", "plan_decision"]);
   expect(first?.evidence.references.every((ref) => ref.digest?.startsWith("canonical-json/v1:")
-    && ref.kind === "internal" && ref.content === null && ref.deep_link?.startsWith("oakridge://revision/"))).toBe(true);
+    && ref.kind === "internal" && ref.content !== null && ref.deep_link?.startsWith("oakridge://revision/"))).toBe(true);
   const briefPackage = manifest.packages.find((item) => item.question_id === "brief.source_fidelity");
-  const planSource = plan.items.find((item) => item.item_kind === "criterion" && item.producer_local_id === briefPackage?.subject.producer_local_id);
+  const planSource = laterPlan.items.find((item) => item.item_kind === "criterion" && item.producer_local_id === briefPackage?.subject.producer_local_id);
   const firstDigest = canonicalDigest(planSource?.selected_value);
   expect(briefPackage?.evidence.references[0]?.digest).toBe(firstDigest.ok ? firstDigest.value : null);
   expect(manifest.selection_policy).toBe("live_all_revisions");
@@ -80,7 +80,7 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
   const assessmentA = await captured("assessment", "2026-10-23T17:40:00Z");
   // Brief B belongs to a second cohort: its own unit, its own criterion ids, captured between
   // brief A and A's assessment. Nothing of A's is assessed by B and vice versa.
-  const briefB: CapturedRevision = { revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
+  const briefB: CapturedRevision = { revision_id: "brief-b", unit_id: "briefs/other", collection_key: "cohort-b", artifact_kind: "brief",
     recorded_at: new Date("2026-10-23T17:32:00Z"),
     items: briefA.items.map((item, index) => ({ ...item, revision_id: "brief-b",
       occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
@@ -109,6 +109,25 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
     && row.decision.payload.kind === "unevidenced")).toBe(true);
   expect(result.value.packages.filter((pack) => pack.question_id === "assessment.coverage"
     && bOccurrences.has(pack.subject.occurrence_id))).toEqual([]);
+});
+
+test("a findings-free assessment belongs only to its collection", async () => {
+  const briefA = await captured("brief", "2026-10-23T17:29:56Z");
+  const briefB: CapturedRevision = { ...briefA, revision_id: "brief-b", unit_id: "briefs/b",
+    collection_key: "cohort-b", recorded_at: new Date("2026-10-23T17:32:00Z"),
+    items: briefA.items.map((item, index) => ({ ...item, revision_id: "brief-b",
+      occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
+      producer_local_id: item.producer_local_id === null ? null : `${item.producer_local_id}-b` })) };
+  const assessmentA = { ...await captured("assessment", "2026-10-23T17:40:00Z"), items: [] };
+  const result = runPackages([briefA, briefB, assessmentA]);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const a = new Set(briefA.items.map((item) => item.occurrence_id));
+  const b = new Set(briefB.items.map((item) => item.occurrence_id));
+  expect(result.value.eligibility.filter((row) => row.question_id === "assessment.coverage" && a.has(row.occurrence_id))
+    .every((row) => row.decision.tag === "eligible")).toBe(true);
+  expect(result.value.eligibility.filter((row) => row.question_id === "assessment.coverage" && b.has(row.occurrence_id))
+    .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
