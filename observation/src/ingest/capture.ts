@@ -11,6 +11,7 @@ export interface CaptureSource {
   readonly unit_id: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
+  readonly collection_key?: string | null;
   readonly definition_bundle: { readonly id: string; readonly digest: string };
   readonly predecessor_id: string | null;
   readonly subject_id: string | null;
@@ -49,6 +50,8 @@ export function decodeCapture(input: unknown, request_key: string | null): Resul
   if (!nonempty(key)) return failure("request_key", "a non-empty request key is required");
   if (!object(input.source)) return failure("source", "source is required");
   const source = input.source;
+  if (!(source.collection_key === undefined || source.collection_key === null || typeof source.collection_key === "string"))
+    return failure("source.collection_key", "collection_key must be a string or null");
   for (const field of ["producer", "namespace", "revision_id", "run_id", "unit_id", "artifact_kind", "artifact_schema_version"] as const)
     if (!nonempty(source[field])) return failure(`source.${field}`, `${field} is required`);
   const revision_id = source.revision_id;

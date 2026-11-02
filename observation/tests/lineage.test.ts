@@ -4,7 +4,7 @@ import { Client } from "pg";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { createApp } from "../src/http/app";
-import { openDatabase, withTenant, type Database } from "../src/storage/database";
+import { jsonText, openDatabase, withTenant, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { listRunItems, projectRevision, readLineage, recordHumanRelation } from "../src/storage/projection-store";
 import { dropScratchDatabase } from "./database-fixture";
@@ -38,7 +38,7 @@ async function insertRevision(db: Database, revision_id: string, artifact_kind: 
   if (!digest.ok) throw new Error(digest.error.detail);
   await withTenant(db, tenant, (trx) => trx.insertInto("observation.source_revision").values({ ...tenant,
     revision_id, run_id, unit_id, artifact_kind, artifact_schema_version: "development-v1",
-    definition_bundle_id: "development", definition_bundle_digest: "bundle-sha256:test", body,
+    definition_bundle_id: "development", definition_bundle_digest: "bundle-sha256:test", body: jsonText(body),
     body_digest: digest.value, predecessor_id, subject_id,
     recorded_at: new Date(`2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`) }).execute().then(() => undefined));
 }

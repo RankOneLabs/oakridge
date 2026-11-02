@@ -25,20 +25,27 @@ const SQL_TEMPLATE = /\bsql\s*(<[^`]*>)?\s*`|\bsql\.(raw|ref|lit|id|join|val|tab
 const DRIVER_QUERY = /\.query\s*(<[^(]*>)?\s*\(\s*[`'"]\s*(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|DROP|ALTER|BEGIN)\b/i;
 const QUERY_BUILDING = new RegExp(`\\b(selectFrom|insertInto|updateTable|deleteFrom)\\s*\\(|${SQL_TEMPLATE.source}|${DRIVER_QUERY.source}`, "i");
 const isRawSql = (line: string): boolean => SQL_TEMPLATE.test(line) || DRIVER_QUERY.test(line);
-/** The read store may use raw SQL only for the stream boundary's snapshot functions. */
+/** Snapshot expressions and the one guarded stream reader are the read store's SQL boundary. */
 const STREAM_BOUNDARY = /pg_current_snapshot|pg_snapshot_xmin|pg_visible_in_snapshot|::xid8/;
 
 export function queryOutsideStorage(files: readonly SourceFile[]): readonly string[] {
   return files.filter((file) => !file.path.startsWith("storage/") && QUERY_BUILDING.test(file.text)).map((file) => file.path);
 }
 export function rawSqlViolations(files: readonly SourceFile[]): readonly string[] {
-  return files.flatMap((file) => file.text.split("\n").flatMap((line, index) => {
-    if (!isRawSql(line)) return [];
-    if (file.path === "storage/migrate.ts") return [];
-    if (file.path === "storage/database.ts" && /ANY\(/.test(line)) return [];
-    if (file.path === "storage/read-store.ts" && STREAM_BOUNDARY.test(line)) return [];
-    return [`${file.path}:${index + 1}`];
-  }));
+  return files.flatMap((file) => {
+    const lines = file.text.split("\n");
+    const streamStart = file.path === "storage/read-store.ts"
+      ? lines.findIndex((line) => line.includes('export async function readCommittedEventsAfter(db: Reader, table: "authority.event" | "authority.operator_event"')) : -1;
+    const streamEnd = streamStart < 0 ? -1 : lines.findIndex((line, index) => index > streamStart && line.startsWith("/** The stage pinned"));
+    return lines.flatMap((line, index) => {
+      if (!isRawSql(line)) return [];
+      if (file.path === "storage/migrate.ts") return [];
+      if (file.path === "storage/database.ts" && /ANY\(/.test(line)) return [];
+      if (file.path === "storage/read-store.ts" && (STREAM_BOUNDARY.test(line)
+        || streamStart >= 0 && streamEnd > streamStart && index >= streamStart && index < streamEnd)) return [];
+      return [`${file.path}:${index + 1}`];
+    });
+  });
 }
 
 const WORKFLOW_STATE = ["run", "unit", "unit_dependency", "attempt", "artifact_revision", "review_decision", "event", "wanted_log",

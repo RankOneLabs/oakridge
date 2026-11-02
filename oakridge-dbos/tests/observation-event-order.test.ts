@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { sql } from "kysely";
 import { jsonText, openDatabase } from "../src/storage/database";
 import { readCommittedEventsAfter } from "../src/storage/read-store";
 import { launch, openAuthority, pinSample, scratchDatabase, type Authority } from "./authority-fixture";
@@ -58,6 +59,20 @@ test("events are read in numeric commit order across a digit boundary", async ()
   await authority.db.insertInto("authority.event").values([boundary, nines]).execute();
   const rows = await readCommittedEventsAfter(authority.db, "authority.event", { after: { commit_txid: "98", id: "" }, limit: 2 });
   expect(rows.map((row) => row.commit_txid)).toEqual(["99", "100"]);
+});
+
+test("reader preserves numeric order across the long text-inverting boundary", async () => {
+  const { bundle_id } = await pinSample(authority);
+  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "long digits" } });
+  const horizon = await sql<{ xmin: string }>`SELECT pg_snapshot_xmin(pg_current_snapshot())::text AS xmin`.execute(authority.db);
+  const [lower, upper] = BigInt(horizon.rows[0]!.xmin) > 1000005n ? [100001, 1000005]
+    : BigInt(horizon.rows[0]!.xmin) > 10005n ? [1001, 10005] : [11, 105];
+  const event = (commit_txid: number) => ({ id: crypto.randomUUID(), run_id, unit_id: null, commit_txid,
+    payload: jsonText({ kind: "cancel_requested" as const }), writer: jsonText({ kind: "operator" as const, subject: "test" }) });
+  await authority.db.insertInto("authority.event").values([event(upper), event(lower)]).execute();
+  const rows = await readCommittedEventsAfter(authority.db, "authority.event",
+    { after: { commit_txid: String(lower - 1), id: "" }, limit: 2 });
+  expect(rows.map((row) => row.commit_txid)).toEqual([String(lower), String(upper)]);
 });
 
 test("a replay reports blocked, not finished, while an open transaction hides committed events", async () => {

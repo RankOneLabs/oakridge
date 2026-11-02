@@ -1,3 +1,4 @@
+import { jsonText } from "../storage/database";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { err, ok, type Result } from "../domain/primitives";
@@ -109,6 +110,8 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       await sql`DELETE FROM observation.source_human_grade
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
+      await sql`DELETE FROM observation.source_event_issue
+        WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       await sql`DELETE FROM observation.source_event_outcome
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       const counts: PurgeCounts = {
@@ -123,7 +126,7 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
       const record: PurgeRecord = { ...counts, purge_id: randomUUID(), run_id, trigger_event_id,
         trigger_run_key, operator_override, frozen_manifest_ids };
       await trx.insertInto("observation.purge_event").values({ producer: tenant.producer, namespace: tenant.namespace, ...record,
-        frozen_manifest_ids: sql`${JSON.stringify(frozen_manifest_ids)}::jsonb` }).execute();
+        frozen_manifest_ids: jsonText(frozen_manifest_ids) }).execute();
       return ok(record);
     });
   } catch (cause) { return failure(request, "storage_failure", String(cause)); }

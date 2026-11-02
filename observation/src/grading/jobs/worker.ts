@@ -1,3 +1,6 @@
+import { jsonText } from "../../storage/database";
+import type { JsonText } from "../../storage/json-column-types";
+import type { JsonValue } from "../../domain/primitives";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { EvaluationIdentity } from "../execution";
@@ -74,7 +77,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
       const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
       if (!disclosure.ok) return err(disclosure.error);
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
-        .set({ disclosure: sql`${JSON.stringify(disclosure.value)}::jsonb` })
+        .set({ disclosure: sql`${jsonText(disclosure.value)}::jsonb` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", job.job_id).where("state", "=", "claimed")
         .where("lease_owner", "=", owner).execute());
@@ -90,7 +93,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
       status: "dispatched", ...policy, request_id: null, cost: job.estimated_cost,
       estimated_cost: job.estimated_cost };
     if (execution_id) await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
-      .set({ provider_attempts: sql`provider_attempts || ${JSON.stringify([dispatched])}::jsonb` })
+      .set({ provider_attempts: sql<JsonText<JsonValue>>`provider_attempts || ${jsonText([dispatched])}::jsonb` })
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("execution_id", "=", execution_id).execute());
     let response: RunnerResult;
@@ -112,13 +115,13 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
       // Settle in place: the dispatched row for this job and attempt becomes the real outcome,
       // so one call is charged once whether or not it reached the provider.
       await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluation_execution")
-        .set({ provider_attempts: sql`(
+        .set({ provider_attempts: sql<JsonText<JsonValue>>`(
           SELECT COALESCE(jsonb_agg(entry ORDER BY ordinality), '[]'::jsonb)
           FROM jsonb_array_elements(provider_attempts) WITH ORDINALITY AS t(entry, ordinality)
           WHERE NOT (entry->>'job_id' = ${job.job_id}
             AND (entry->>'attempt')::int = ${job.attempts}
             AND entry->>'status' = 'dispatched')
-        ) || ${JSON.stringify([attempt])}::jsonb` })
+        ) || ${jsonText([attempt])}::jsonb` })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("execution_id", "=", execution_id).execute());
     }

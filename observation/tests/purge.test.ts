@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { sql } from "kysely";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 import { purgeRun } from "../src/purge/purge";
+import { repairSourceEvent } from "../src/storage/capture-store";
 import { deletedRunId, handleOperatorEvent } from "../src/purge/trigger";
-import { withTenant, type Database } from "../src/storage/database";
+import { jsonText, withTenant, type Database } from "../src/storage/database";
 import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";
 import { claimBlindAssignment, createBlindAssignment } from "../src/storage/blind-assignment-store";
 import { enqueueJob } from "../src/storage/grading-job-store";
@@ -49,6 +50,11 @@ integration("purge removes six layers and commits their audit counts", async () 
     const issue_id = canonicalDigest(["purge issue"]);
     if (!issue_id.ok) throw new Error(issue_id.error.detail);
     await withTenant(db, tenant, async (trx) => {
+      await trx.insertInto("observation.source_event_issue").values({ ...tenant,
+        issue_id: "source-issue", event_id: "source-event", run_id: "run-1", event_kind: "operator_decided",
+        target_revision_id: "missing", cause: "missing_grade_target",
+        original_outcome: jsonText({ feedback: "private feedback" }), resolution_state: "unresolved",
+        resolution_detail: null, resolved_at: null }).execute();
       await sql`INSERT INTO observation.extraction_issue (producer, namespace, issue_id, revision_id,
         extractor_id, extractor_version, item_selector, kind, detail, is_retriable)
         VALUES (${tenant.producer}, ${tenant.namespace}, ${issue_id.value}, 'rev-1',
@@ -63,7 +69,7 @@ integration("purge removes six layers and commits their audit counts", async () 
       item_relations_removed: 1, extraction_issues_removed: 1, evaluation_executions_removed: 1,
       grade_observations_removed: 1, trigger_event_id: "delete-event", operator_override: false });
     expect(await Promise.all(["source_revision", "item_occurrence", "item_relation", "extraction_issue",
-      "evaluation_execution", "grade_observation", "grading_job"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0]);
+      "evaluation_execution", "grade_observation", "grading_job", "source_event_issue"].map((table) => count(db, table)))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
     expect(await count(db, "purge_event")).toBe(1);
   });
 });
@@ -127,5 +133,23 @@ integration("ordinary invalidation and failed audit leave captured rows intact",
     expect(failed.ok).toBe(false);
     expect([await count(db, "source_revision"), await count(db, "item_occurrence"), await count(db, "purge_event")])
       .toEqual([1, 1, 0]);
+  });
+});
+
+integration("repair waits for a concurrent purge and cannot restore deleted run content", async () => {
+  await scratchGrading(async (db) => {
+    let entered!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const purging = purgeRun(db, request, { beforeAudit: async () => { entered(); await gate; } });
+    await ready;
+    const repairing = repairSourceEvent(db, tenant, { format: "observation.source-event/v1",
+      definition_bundle: null, artifact_schema_version: null, kind: "run_input", event_kind: "launched",
+      run_id: "run-1", event_id: "repair-after-purge", input: {}, input_schema_version: "fixture" }, "1");
+    release();
+    expect((await purging).ok).toBe(true);
+    expect(await repairing).toBe("purged");
+    expect(await count(db, "source_event_outcome")).toBe(0);
   });
 });

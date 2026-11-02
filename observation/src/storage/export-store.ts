@@ -6,7 +6,7 @@ import type { JsonValue } from "../domain/primitives";
 import { makeManifest, type ExportManifest, type ExportMembership, type ExportRecord,
   type RedactionPolicy } from "../export/manifest";
 import { redactRecord } from "../export/redaction";
-import { withTenant, type Database, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationSourceRevision, ObservationGradeObservation,
   ObservationEvidenceSet, ObservationEvaluationExecution, ObservationEvaluatorDefinition,
   ObservationQuestionDefinition } from "./db-types";
@@ -22,7 +22,6 @@ export interface ExportRows {
   readonly evaluators: readonly Selectable<ObservationEvaluatorDefinition>[];
   readonly questions: readonly Selectable<ObservationQuestionDefinition>[];
 }
-const json = (value: unknown) => sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
 
 function requiredDigest(value: unknown): CanonicalDigest {
   const digest = canonicalDigest(value);
@@ -129,15 +128,15 @@ export function freezeExport(db: Database, tenant: TenantScope, manifest: Export
   return withTenant(db, tenant, async (trx) => {
     await trx.insertInto("observation.export_manifest").values({ producer: tenant.producer, namespace: tenant.namespace,
       manifest_id: manifest.manifest_id, frozen_at: new Date(manifest.frozen_at), membership_digest: manifest.membership_digest,
-      format_version: manifest.format_version, redaction_policy: json(manifest.redaction_policy),
-      file_hashes: json(manifest.file_hashes) }).execute();
+      format_version: manifest.format_version, redaction_policy: jsonText(manifest.redaction_policy as unknown as JsonValue),
+      file_hashes: jsonText(manifest.file_hashes as unknown as JsonValue) }).execute();
     if (manifest.membership.length) await trx.insertInto("observation.export_membership").values(manifest.membership.map((member) => ({
       producer: tenant.producer, namespace: tenant.namespace, manifest_id: manifest.manifest_id,
       candidate_id: member.candidate_id, occurrence_id: member.occurrence_id, revision_id: member.revision_id,
       revision_digest: member.revision_digest, evidence_set_id: member.evidence_set_id,
       evidence_set_digest: member.evidence_set_digest, observation_id: member.observation_id,
       disposition: member.disposition, reason: member.reason,
-      redaction_reasons: json(member.redaction_reasons),
+      redaction_reasons: jsonText(member.redaction_reasons as unknown as JsonValue),
     }))).execute();
   });
 }
