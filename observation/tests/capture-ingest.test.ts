@@ -74,6 +74,35 @@ integration("three identical deliveries keep one revision and receipt, and read 
   } finally { await db.destroy(); }
 }));
 
+integration("live source feedback retains all JSON value kinds", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const app = createApp({ db, credentials });
+    const feedbackValues = ["Fix this", [], ["Fix this"], 0, null, { note: "Fix this" }];
+    let previous = { commit_txid: "0", id: "" };
+    for (const [index, feedback] of feedbackValues.entries()) {
+      const event_id = `feedback-${index}`;
+      const cursor = { commit_txid: String(index + 1), id: event_id };
+      const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
+        headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
+        body: JSON.stringify({ previous, cursor, outcome: {
+          format: "observation.source-event/v1", definition_bundle: null, artifact_schema_version: null,
+          kind: "human_grade", event_kind: "operator_decided", run_id: "run-live", event_id,
+          decision_id: event_id, evaluator: { kind: "human" }, unit: "run-live/cohort/a",
+          review: "assessment_review", decision: "request_build_changes", target: "pending-capture",
+          feedback, effect: "request_changes", decided_at: "2026-11-02T12:00:00Z",
+        } }) });
+      if (response.status !== 200) throw new Error(await response.text());
+      previous = cursor;
+    }
+    const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_human_grade")
+      .select("feedback").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .orderBy("event_id").execute());
+    expect(stored.map((row) => row.feedback)).toEqual(feedbackValues);
+  } finally { await db.destroy(); }
+}));
+
 test("capture validates the identity components and submitted canonical digest", () => {
   const mismatched = decodeCapture(envelope({ value: 1 }, "oakridge:other:rev-1"), "key-1");
   expect(mismatched.ok).toBe(false);

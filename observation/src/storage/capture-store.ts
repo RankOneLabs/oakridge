@@ -3,7 +3,7 @@ import type { JsonValue } from "../domain/primitives";
 import type { CaptureDelivery } from "../ingest/capture";
 import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEventOutcome } from "../ingest/cursor";
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
-import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
 import { projectRevisionInTransaction } from "./projection-store";
 import { storeHumanGradeInTransaction } from "./backfill-store";
@@ -72,21 +72,20 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
     const response: ConflictResponse = { error: { code: "revision_identity_conflict", revision_id: source.revision_id,
       stored_digest: existing.body_digest, incoming_digest: body_digest } };
     await trx.insertInto("observation.ingest_receipt").values({ producer, namespace, request_key: delivery.request_key,
-      revision_id, outcome: "revision_identity_conflict", response: response as unknown as JsonValue,
+      revision_id, outcome: "revision_identity_conflict", response: jsonText(response as unknown as JsonValue),
       stored_digest: existing.body_digest, incoming_digest: body_digest }).execute();
     return { status: 409, body: response };
   }
   const row = await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
     run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
     artifact_schema_version: source.artifact_schema_version, definition_bundle_id: source.definition_bundle.id,
-    // Serialized explicitly: pg sends a JS string as-is, so a scalar body (a markdown spec) would reach jsonb unquoted.
-    definition_bundle_digest: source.definition_bundle.digest, body: sql<JsonValue>`${JSON.stringify(body)}::jsonb`,
+    definition_bundle_digest: source.definition_bundle.digest, body: jsonText(body),
     body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) })
     .returningAll().executeTakeFirstOrThrow();
   await hooks.afterMirror?.();
   const response: CaptureResponse = { source_revision: sourceRead(row) };
   await trx.insertInto("observation.ingest_receipt").values({ producer, namespace, request_key: delivery.request_key,
-    revision_id, outcome: "captured", response: response as unknown as JsonValue,
+    revision_id, outcome: "captured", response: jsonText(response as unknown as JsonValue),
     stored_digest: body_digest, incoming_digest: body_digest }).execute();
   return { status: 201, body: response };
 }
@@ -146,14 +145,14 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
     }
     await trx.insertInto("observation.source_event_outcome").values({ producer: tenant.producer, namespace: tenant.namespace,
       event_id: outcome.event_id, run_id: outcome.run_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
-      event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: outcome as unknown as JsonValue })
+      event_kind: outcome.event_kind, outcome_kind: outcome.kind, detail: jsonText(outcome as unknown as JsonValue) })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     if (outcome.kind === "human_grade") {
       await storeHumanGradeInTransaction(trx, tenant, outcome);
       await trx.insertInto("observation.source_human_grade").values({ producer: tenant.producer, namespace: tenant.namespace,
         event_id: outcome.event_id, run_id: outcome.run_id, unit_id: outcome.unit, review: outcome.review,
         decision: outcome.decision, target_revision_id: outcome.target, evaluator_kind: "human",
-        feedback: outcome.feedback as JsonValue | null })
+        feedback: jsonText(outcome.feedback as JsonValue) })
         .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     }
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}

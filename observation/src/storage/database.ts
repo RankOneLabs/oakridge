@@ -1,9 +1,14 @@
-import { Kysely, PostgresDialect, sql, type Transaction } from "kysely";
+import { Kysely, PostgresDialect, sql, type RawBuilder, type Transaction } from "kysely";
 import pg from "pg";
 import type { DB } from "./db-types";
+import type { JsonValue } from "../domain/primitives";
 
 export type Database = Kysely<DB>;
 export type DatabaseTransaction = Transaction<DB>;
+/** Encode JSON explicitly so pg cannot interpret arrays or strings as SQL values. */
+export function jsonText(value: JsonValue): RawBuilder<JsonValue> {
+  return sql<JsonValue>`${JSON.stringify(value)}::jsonb`;
+}
 export function openDatabase(database_url: string): Database {
   return new Kysely<DB>({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database_url }) }) });
 }
