@@ -22,10 +22,12 @@ export interface GradeabilityInput {
   readonly selection_policy: RevisionSelection["policy"];
 }
 export interface GradeabilityResult {
-  readonly decision: EligibilityDecision;
+  /** Null means this question has no Oakridge capture recipe; registered generic grading remains available. */
+  readonly decision: EligibilityDecision | null;
   readonly evidence: EvidenceSet | null;
 }
-export interface GradeabilityError { readonly operation: "gradeability"; readonly entity_id: string; readonly detail: string }
+export interface GradeabilityError { readonly operation: "gradeability"; readonly entity_id: string; readonly detail: string;
+  readonly code?: "unknown_question_pin" }
 
 async function packagesForRun(db: Database, tenant: TenantScope, run_id: string,
   policy: RevisionSelection["policy"]): Promise<Result<RunPackages, GradeabilityError>> {
@@ -40,7 +42,7 @@ async function packagesForRun(db: Database, tenant: TenantScope, run_id: string,
 export async function deriveGradeability(db: Database, tenant: TenantScope, input: GradeabilityInput)
   : Promise<Result<GradeabilityResult, GradeabilityError>> {
   if (!isPilotQuestionPin(input.question_id, input.question_version))
-    return err({ operation: "gradeability", entity_id: input.question_id, detail: "unknown pilot question pin" });
+    return ok({ decision: null, evidence: null });
   const built = await packagesForRun(db, tenant, input.run_id, input.selection_policy);
   if (!built.ok) return built;
   const row = built.value.eligibility.find((candidate) => candidate.question_id === input.question_id
@@ -72,7 +74,8 @@ export async function readDerivedEligibility(db: Database, tenant: TenantScope,
   policy: RevisionSelection["policy"] = "live_all_revisions", run_id?: string)
   : Promise<Result<readonly EligibilityRow[], GradeabilityError>> {
   if (!isPilotQuestionPin(question_id, question_version))
-    return err({ operation: "gradeability", entity_id: question_id, detail: "unknown pilot question pin" });
+    return err({ operation: "gradeability", entity_id: question_id, detail: "unknown pilot question pin",
+      code: "unknown_question_pin" });
   const run_ids = run_id ? [run_id] : await withTenant(db, tenant, async (trx) => {
     const rows = await trx.selectFrom("observation.source_revision").distinct().select("run_id")
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).execute();

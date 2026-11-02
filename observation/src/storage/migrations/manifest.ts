@@ -10,6 +10,7 @@ const names = [
   "0018_grading_attempt_accounting.sql",
   "0019_question_unclear_choice.sql",
   "0020_remove_disclosure_gate.sql",
+  "0021_drop_evaluation_eligibility.sql",
 ] as const;
 
 export const migrations: readonly MigrationEntry[] = names.map((name) => ({ name, file: new URL(name, import.meta.url) }));

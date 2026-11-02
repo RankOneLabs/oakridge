@@ -138,9 +138,6 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   const needs_repository = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
-  const capturedCriterionKeys = new Set(briefs.flatMap((revision) => revision.items
-    .filter((item) => item.item_kind === "criterion")
-    .map((item) => `${item.item_scope}\u0000${item.producer_local_id}`)));
   for (const [index, brief] of briefs.entries()) {
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
@@ -156,7 +153,8 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
       const dangling = assessments.flatMap((assessment) => assessment.items.flatMap((item) => item.links
         .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
           && link.target_item_kind === "criterion"
-          && !capturedCriterionKeys.has(`${link.target_scope}\u0000${link.target_local_id}`))
+          && link.target_local_id === criterion.producer_local_id
+          && link.target_scope !== criterion.item_scope)
         .map((link) => link.evidence_ref)));
       if (dangling.length > 0) {
         exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,

@@ -4,8 +4,6 @@ import { occurrenceId } from "../src/projection/occurrence-id";
 import { withTenant } from "../src/storage/database";
 import { enqueueJob, claimJob } from "../src/storage/grading-job-store";
 import { gradingLimits } from "../src/grading/jobs/budget";
-import { readEligibility, recordEligibility } from "../src/storage/eligibility-store";
-import { readCoverage } from "../src/storage/coverage-store";
 import { createBlindAssignment } from "../src/storage/blind-assignment-store";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { workOneJob } from "../src/grading/jobs/worker";
@@ -188,7 +186,7 @@ integration("indexed attempt aggregation counts a large run without execution JS
   expect(admissionQueries.some((query) => query.includes("provider_attempts"))).toBe(false);
 }));
 for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurrency"] as const) {
-  integration(`${cap} refuses paid work or defers at zero without changing eligibility`, async () => scratchGrading(async (db, occurrence_id) => {
+  integration(`${cap} refuses paid work or defers at zero`, async () => scratchGrading(async (db, occurrence_id) => {
     expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("model") })).ok).toBe(true);
     const limits = { ...gradingLimits(), run_spend: 10, stage_spend: 10, run_concurrency: 2, stage_concurrency: 2,
       [cap]: 0 };
@@ -196,14 +194,6 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
       question_id: question.question_id, question_version: question.question_version,
       evaluator_definition_id: "model", config_digest: "config-1", attempt_label: cap };
     const job = await enqueueJob(db, tenant, { identity, runner_name: "llm_judge", estimated_cost: 0.2 }, limits);
-    expect((await recordEligibility(db, tenant, { ...tenant, subject_occurrence_id: occurrence_id,
-      question_id: question.question_id, question_version: question.question_version,
-      tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } })).ok).toBe(true);
-    const selection = { run_id: job.run_id, revision_id: null, question_id: question.question_id,
-      question_version: question.question_version };
-    const beforeCoverage = (await readCoverage(db, tenant, selection)).questions[0];
-    expect(beforeCoverage?.eligible).toBe(1);
-    expect(beforeCoverage?.excluded).toBe(0);
     const assignmentIdentity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
       question_id: question.question_id, question_version: question.question_version };
     if (cap.endsWith("spend")) {
@@ -217,10 +207,6 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
     if (cap.endsWith("spend")) {
       expect(claimed.kind).toBe("refused");
       expect(claimed.kind === "refused" && claimed.job.state).toBe("skipped_budget");
-      const afterCoverage = (await readCoverage(db, tenant, selection)).questions[0];
-      expect(afterCoverage?.eligible).toBe(beforeCoverage?.eligible);
-      expect(afterCoverage?.excluded).toBe(beforeCoverage?.excluded);
-      expect(afterCoverage?.exclusion_reasons).toEqual(beforeCoverage?.exclusion_reasons);
       const afterAssignment = await createBlindAssignment(db, tenant, assignmentIdentity);
       expect(afterAssignment.ok).toBe(true);
       const local = await enqueueJob(db, tenant, { identity: { ...identity, attempt_label: `${cap}-local` },
@@ -234,9 +220,6 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
       expect(stored.state).toBe("queued");
     }
     expect((await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution").selectAll().execute()))).toHaveLength(0);
-    const rows = await readEligibility(db, tenant, question.question_id, question.question_version);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.tag).toBe("eligible");
   }));
 }
 

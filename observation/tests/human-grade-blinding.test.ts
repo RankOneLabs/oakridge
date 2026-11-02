@@ -5,7 +5,6 @@ import { storeHumanGradeInTransaction } from "../src/storage/backfill-store";
 import { claimBlindAssignment, createBlindAssignment } from "../src/storage/blind-assignment-store";
 import { withTenant } from "../src/storage/database";
 import { listGrades, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
-import { readCoverage } from "../src/storage/coverage-store";
 import { question, evidence, evaluator, scratchGrading, tenant } from "./grading-fixture";
 import { canonicalDigest } from "../src/canonical/canonical-json";
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
@@ -71,10 +70,6 @@ integration("blind assignment hides model results and refuses duplicate or expir
       answer: { state: "answered", kind: "boolean", value: true } } }) } });
   expect(scored.ok && scored.value.observation).toBeTruthy();
   expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0]?.observation.collection_mode).toBe("unknown");
-  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-    (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-    VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
-      'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
   const app = createApp({ db, credentials: { ingest: [], read: [],
     grade: [{ ...tenant, token: "blind", reviewer_id: "reviewer-a" },
       { ...tenant, token: "recovery", reviewer_id: "reviewer-b" }] } });
@@ -128,10 +123,6 @@ integration("blind assignment hides model results and refuses duplicate or expir
 
 integration("overlapping blind submissions replay the saved grade", async () => scratchGrading(async (db, occurrence_id) => {
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
-  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-    (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-    VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
-      'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version };
   const assignment = await createBlindAssignment(db, tenant, identity);
@@ -165,10 +156,6 @@ integration("overlapping blind submissions replay the saved grade", async () => 
 
 integration("readback distinguishes blind, in-context, correction and historical operator grades", async () => scratchGrading(async (db, occurrence_id) => {
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
-  await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-    (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-    VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
-      'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
   const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }],
     grade: [{ ...tenant, token: "blind", reviewer_id: "reviewer-a" }] } });
   const headers = { authorization: "Bearer blind", "content-type": "application/json" };
@@ -223,10 +210,6 @@ integration("readback distinguishes blind, in-context, correction and historical
     .toMatchObject({ collection_mode: "in_context", supersedes_observation_id: inContextId });
   expect(items.find((item) => item.observation.label_origin === "oakridge_operator_unblinded")?.observation)
     .toMatchObject({ collection_mode: "unknown", reviewer_id: "oakridge-operator" });
-  const coverage = await readCoverage(db, tenant, { run_id: "run-1", revision_id: "rev-1",
-    question_id: question.question_id, question_version: question.question_version });
-  expect(coverage.questions[0]).toMatchObject({ eligible: 1, graded: 1,
-    graded_by_collection_mode: { blind: 1, in_context: 1, unknown: 0 } });
   await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.grade_observation SET comments = 'changed'
     WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND observation_id = ${observation_id}`.execute(trx)))
     .rejects.toThrow("grade_observation is append-only");

@@ -82,10 +82,6 @@ integration("purge removes six layers and commits their audit counts", async () 
 integration("purge removes a submitted blind assignment with its grade", async () => {
   await scratchGrading(async (db, occurrence_id) => {
     expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
-    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
-        'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
     const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
       question_id: question.question_id, question_version: question.question_version };
     const assignment = await createBlindAssignment(db, tenant, identity);
@@ -114,10 +110,6 @@ integration("purge removes a submitted blind assignment with its grade", async (
 integration("purge removes an unsubmitted blind assignment", async () => {
   await scratchGrading(async (db, occurrence_id) => {
     expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
-    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
-      (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
-      VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
-        'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
     const assignment = await createBlindAssignment(db, tenant, { subject_occurrence_id: occurrence_id,
       evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
       question_version: question.question_version });

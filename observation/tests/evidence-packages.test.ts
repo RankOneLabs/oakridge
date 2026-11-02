@@ -5,13 +5,12 @@ import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import type { CapturedRevision } from "../src/grading/evidence-packages/capture";
 import { capturedReference } from "../src/grading/evidence-packages/references";
+import { projectPilotEvidence } from "../src/grading/evidence-packages/pilot-recipe";
 import type { EvidenceKind } from "../src/grading/evidence";
 import { runPackages } from "../src/producers/oakridge/evidence-packages";
-import { persistOakridgeEligibility } from "../src/producers/oakridge/eligibility";
-import { readEligibility } from "../src/storage/eligibility-store";
 import { listGrades, registerGradingContext } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
-import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
+import { tenant, evaluator, scratchGrading } from "./grading-fixture";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
 import { selectRevision } from "../src/projection/extractor";
 import { buildGraph } from "./dependency-graph";
@@ -32,6 +31,11 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
   return { revision_id, unit_id: kind, collection_key: "cohort-a", artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
+
+test("a question version is pinned per recipe, including the boolean question", () => {
+  const question = LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition;
+  expect(projectPilotEvidence({ ...question, question_version: "v2" }, []).ok).toBe(false);
+});
 
 test("run-slice produces a dry-run manifest without Langfuse dependencies", async () => {
   await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json();
@@ -63,10 +67,10 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect(missingLink.ok && missingLink.value.exclusions.every((excluded) => excluded.reason.kind !== "dangling_citation")).toBe(true);
   expect(missingLink.ok && missingLink.value.exclusions.some((excluded) => excluded.reason.kind === "unlinked")).toBe(true);
   const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
-  expect(coverage).toEqual([]);
+  expect(coverage).toHaveLength(2);
+  expect(coverage.map((pack) => pack.evidence.references.length)).toEqual([2, 1]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
-    .every((row) => row.decision.tag === "invalid_reference"
-      && row.decision.payload.kind === "dangling_citation")).toBe(true);
+    .every((row) => row.decision.tag === "eligible")).toBe(true);
   const withoutAssessment = runPackages([plan, brief]);
   expect(withoutAssessment.ok && withoutAssessment.value.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
@@ -74,7 +78,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
     recorded_at: new Date("2026-10-23T17:45:00Z"), items: assessment.items.map((item, index) => ({ ...item,
       revision_id: "assessment-later", occurrence_id: `assessment-later-${index}` as ItemOccurrenceId })) };
   const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment]);
-  expect(repeatedCoverage.ok && repeatedCoverage.value.packages.filter((pack) => pack.question_id === "assessment.coverage").length).toBe(0);
+  expect(repeatedCoverage.ok && repeatedCoverage.value.packages.filter((pack) => pack.question_id === "assessment.coverage").length).toBe(4);
   expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
     && row.decision.tag === "missing_evidence")).toBe(true);
@@ -98,14 +102,13 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
   expect(result.ok).toBe(true);
   if (!result.ok) return;
 
-  // A's assessment is owned by A, where its dangling citation is reported.
+  // A's assessment is owned by A; the unrelated dangling link does not poison A's criteria.
   const aOccurrences = new Set(briefA.items.filter((item) => item.item_kind === "criterion")
     .map((item) => item.occurrence_id));
   const aCoverage = result.value.eligibility.filter((row) => row.question_id === "assessment.coverage"
     && aOccurrences.has(row.occurrence_id));
   expect(aCoverage.length).toBeGreaterThan(0);
-  expect(aCoverage.every((row) => row.decision.tag === "invalid_reference"
-    && row.decision.payload.kind === "dangling_citation")).toBe(true);
+  expect(aCoverage.every((row) => row.decision.tag === "eligible")).toBe(true);
 
   // B's criteria are unevidenced: A's assessment assesses none of them, so it supplies no
   // empty coverage package for B.
@@ -137,6 +140,22 @@ test("a findings-free assessment belongs only to its collection", async () => {
     .every((row) => row.decision.tag === "eligible")).toBe(true);
   expect(result.value.eligibility.filter((row) => row.question_id === "assessment.coverage" && b.has(row.occurrence_id))
     .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
+});
+
+test("a broken assesses scope excludes only the named criterion", async () => {
+  const brief = await captured("brief", "2026-10-23T17:29:56Z");
+  const assessment = await captured("assessment", "2026-10-23T17:40:00Z");
+  const broken = { ...assessment, items: assessment.items.map((item) => ({ ...item,
+    links: item.links.map((link) => link.type === "assesses" && link.target_local_id === "criterion-lineage"
+      ? { ...link, target_scope: "wrong-scope" } : link) })) };
+  const result = runPackages([brief, broken]);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const rows = result.value.eligibility.filter((row) => row.question_id === "assessment.coverage");
+  expect(rows.find((row) => row.occurrence_id === brief.items.find((item) => item.producer_local_id === "criterion-lineage")?.occurrence_id)
+    ?.decision.tag).toBe("invalid_reference");
+  expect(rows.find((row) => row.occurrence_id === brief.items.find((item) => item.producer_local_id === "criterion-export")?.occurrence_id)
+    ?.decision.tag).toBe("eligible");
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
@@ -252,9 +271,35 @@ integration("ingested revisions change derived HTTP gradeability from missing to
           answer: { state: "answered", kind: "choice", value: "faithful" }, collection_mode: "in_context",
           model_answers_visible: false, workflow_decisions_visible: false } }) });
     expect(humanGrade.status).toBe(201);
+    let historicalAnnotationId: string | null = null;
+    for (const evaluator_definition_id of ["langfuse-annotation-human", "langfuse-annotation-human/v2"]) {
+      const annotation = { ...evaluator("human"), evaluator_definition_id, runtime_revision: evaluator_definition_id };
+      expect((await registerGradingContext(db, tenant, { question, evidence: derived.value.evidence,
+        evaluator: annotation })).ok).toBe(true);
+      const submitted = await app.request("/v1/grades", { method: "POST",
+        headers: { authorization: "Bearer grade", "content-type": "application/json" },
+        body: JSON.stringify({ identity: { ...identity, evaluator_definition_id,
+          attempt_label: evaluator_definition_id }, details: {
+          answer: { state: "answered", kind: "choice", value: "faithful" }, collection_mode: "blind",
+          blind_assignment_id: null, model_answers_visible: false, workflow_decisions_visible: false } }) });
+      expect(submitted.status).toBe(201);
+      if (evaluator_definition_id === "langfuse-annotation-human") {
+        historicalAnnotationId = (await submitted.json()).observation.observation_id as string;
+        const before = await listGrades(db, tenant, row.subject_occurrence_id, { limit: 20, offset: 0 });
+        expect(before?.items.find((item) => item.observation.observation_id === historicalAnnotationId)
+          ?.observation.label_origin).toBe("langfuse_annotation_blinded");
+      }
+    }
     const coverageSelection = { run_id: "gradeability-run", revision_id: null,
       question_id: question.question_id, question_version: question.question_version };
     expect((await readCoverage(db, tenant, coverageSelection)).questions[0]?.graded).toBe(1);
+    expect((await readCoverage(db, tenant, coverageSelection)).questions[0]?.graded_by_collection_mode.blind).toBe(1);
+    const annotationHistory = await listGrades(db, tenant, row.subject_occurrence_id, { limit: 20, offset: 0 });
+    expect(annotationHistory?.items.filter((item) => item.observation.evaluator_definition_id.startsWith("langfuse-annotation-human"))
+      .map((item) => item.observation.label_origin)).toEqual([
+        "langfuse_annotation_blinded", "langfuse_annotation_blinded"]);
+    expect(annotationHistory?.items.find((item) => item.observation.observation_id === historicalAnnotationId)
+      ?.observation.label_origin).toBe("langfuse_annotation_blinded");
     await deliver("plan", 2);
     const currentCoverage = await readCoverage(db, tenant, coverageSelection);
     expect(currentCoverage.questions[0]?.graded).toBe(0);
@@ -265,22 +310,3 @@ integration("ingested revisions change derived HTTP gradeability from missing to
     const crossTenant = await app.request(path, { headers: { authorization: "Bearer other" } });
     expect(crossTenant.status).toBe(403);
   }));
-integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
-  const analysis = "analysis.finding_relevance" as const;
-  const assessment = "assessment.coverage" as const;
-  for (const question_id of [analysis, assessment]) {
-    const pinned = { ...question, question_id: question_id as QuestionId, question_version: "v1",
-      requires_repository_snapshot: question_id === assessment };
-    expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
-  }
-  const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [
-    { question_id: analysis, occurrence_id, decision: { tag: "missing_evidence" as const,
-      payload: { kind: "missing_source" as const, detail: "no excerpt source" } } },
-    { question_id: assessment, occurrence_id, decision: { tag: "blocked_dependency" as const,
-      payload: { dependency: "ArtifactSource.collect", detail: "no implementor" } } },
-  ] };
-  const saved = await persistOakridgeEligibility(db, tenant, manifest);
-  expect(saved).toEqual({ ok: true, value: 2 });
-  expect((await readEligibility(db, tenant, analysis, "v1"))[0]?.tag).toBe("missing_evidence");
-  expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ dependency: "ArtifactSource.collect", detail: "no implementor" });
-}));

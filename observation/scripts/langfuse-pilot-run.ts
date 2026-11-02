@@ -1,7 +1,7 @@
 /** Run a deliberately selected, revisioned pilot population. No credentials enter the output file. */
 import { randomUUID } from "node:crypto";
 import { canonicalJson } from "../src/canonical/canonical-json";
-import { evaluationDigest, type EvaluationIdentity, type EvaluationExecution } from "../src/grading/execution";
+import { runGradeDigest, type EvaluationIdentity, type EvaluationExecution } from "../src/grading/execution";
 import { evaluatorIdentity } from "../src/grading/evaluator";
 import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
 import type { PilotQuestionId } from "../src/langfuse/evidence-recipe";
@@ -86,7 +86,7 @@ async function read(input: PilotHttpRequest): Promise<PilotHttpResponse> {
   return { status: response.status, value: await response.json() };
 }
 interface QueuedAttemptOutcome { readonly operations: readonly PilotOperation[];
-  readonly execution_id: string | null }
+  readonly execution_id: string | null; readonly idempotency_digest: string | null }
 
 /** Enqueue one network attempt, wait for its job to leave the running states, then resolve the
  * execution it recorded. A job that ends skipped_budget or terminal without an execution yields
@@ -102,7 +102,7 @@ async function queuedAttempt(input: { readonly base_url: string; readonly grade_
     body: { identity: attempt.identity, context: attempt.context, runner: attempt.runner,
       estimated_cost: attempt.estimated_cost, reviewed_commit: attempt.reviewed_commit } });
   operations.push(operation("enqueue", entity_id, enqueued));
-  if (enqueued.status >= 300) return { operations, execution_id: null };
+  if (enqueued.status >= 300) return { operations, execution_id: null, idempotency_digest: null };
   const job = enqueued.value as EvaluationJobResponse;
   let state = job.state;
   for (let poll = 0; poll < JOB_POLL_ATTEMPTS && state !== "terminal" && state !== "skipped_budget"; poll++) {
@@ -110,25 +110,25 @@ async function queuedAttempt(input: { readonly base_url: string; readonly grade_
     const polled = await read({ base_url, token: read_token, path: `/v1/evaluation-jobs/${encodeURIComponent(job.job_id)}` });
     if (polled.status !== 200) {
       operations.push(operation("await_job", entity_id, polled));
-      return { operations, execution_id: null };
+      return { operations, execution_id: null, idempotency_digest: job.idempotency_digest };
     }
     state = (polled.value as EvaluationJobResponse).state;
   }
   if (state !== "terminal" && state !== "skipped_budget") {
     operations.push({ operation: "await_job", entity_id, status: 504,
       detail: `job did not settle within ${(JOB_POLL_ATTEMPTS * JOB_POLL_INTERVAL_MS) / 1000}s` });
-    return { operations, execution_id: null };
+    return { operations, execution_id: null, idempotency_digest: job.idempotency_digest };
   }
   if (state === "skipped_budget") {
     operations.push({ operation: "await_job", entity_id, status: 200, detail: "skipped_budget" });
-    return { operations, execution_id: null };
+    return { operations, execution_id: null, idempotency_digest: job.idempotency_digest };
   }
   const settled = await read({ base_url, token: read_token,
     path: `/v1/evaluations/by-digest/${encodeURIComponent(job.idempotency_digest)}` });
   operations.push(operation("await_job", entity_id, settled));
-  if (settled.status !== 200) return { operations, execution_id: null };
+  if (settled.status !== 200) return { operations, execution_id: null, idempotency_digest: job.idempotency_digest };
   const execution = (settled.value as PilotEvaluationWriteResponse).execution;
-  return { operations, execution_id: execution?.execution_id ?? null };
+  return { operations, execution_id: execution?.execution_id ?? null, idempotency_digest: job.idempotency_digest };
 }
 
 async function readAllGrades(input: PilotGradesReadRequest): Promise<GradePage["items"]> {
@@ -182,6 +182,8 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
     member.disposition === "included" && member.occurrence_id === example.occurrence_id))
     throw new Error(`example is outside frozen population: ${example.occurrence_id}`);
   const operations: PilotOperation[] = [];
+  const returnedDigests = new Map<PilotAttempt, string>();
+  const executedAttempts = new Set<PilotAttempt>();
   for (const member of population.value.membership) {
     const item = await read({ base_url, token: read_token,
       path: `/v1/items/${encodeURIComponent(member.occurrence_id)}` });
@@ -210,6 +212,7 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
     if (isNetworkRunner(attempt.runner)) {
       const queued = await queuedAttempt({ base_url, grade_token, read_token, attempt });
       operations.push(...queued.operations);
+      if (queued.idempotency_digest) returnedDigests.set(attempt, queued.idempotency_digest);
       execution_id = queued.execution_id;
     } else {
       const evaluated = await request({ base_url, token: grade_token, path: "/v1/evaluations", body: attempt });
@@ -218,6 +221,7 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
       execution_id = (evaluated.value as PilotEvaluationWriteResponse).execution?.execution_id ?? null;
     }
     if (!execution_id) continue;
+    executedAttempts.add(attempt);
     const projected = await request({ base_url, token: grade_token, path: "/v1/langfuse/projections", body: {
       execution_id, question_text: attempt.question_text,
       projection_version: population.value.projection_version } });
@@ -248,19 +252,30 @@ export async function runPilot(plan: PilotRunPlan, environment: NodeJS.ProcessEn
   }
   const measurements: ComparisonMeasurement[] = [];
   for (const attempt of plan.attempts) {
-    const digest = evaluationDigest(attempt.identity);
+    if (!executedAttempts.has(attempt)) {
+      operations.push({ operation: "measurement", entity_id: attempt.identity.subject_occurrence_id,
+        status: 409, detail: "attempt was refused or recorded no execution" });
+      continue;
+    }
+    const digest = runGradeDigest(attempt.identity, attempt.reviewed_commit);
     if (!digest.ok) throw new Error(digest.error.detail);
+    const lookupDigest = returnedDigests.get(attempt) ?? digest.value;
     const member = population.value.membership.find((candidate) => candidate.occurrence_id === attempt.identity.subject_occurrence_id
       && candidate.question_id === attempt.identity.question_id && candidate.question_version === attempt.identity.question_version)!;
     const version = evaluatorIdentity(attempt.context.evaluator);
     if (!version.ok) throw new Error(version.error.detail);
     const executionResponse = await read({ base_url, token: read_token,
-      path: `/v1/evaluations/by-digest/${encodeURIComponent(digest.value)}` });
+      path: `/v1/evaluations/by-digest/${encodeURIComponent(lookupDigest)}` });
     const snapshot = executionResponse.status === 200
       ? executionResponse.value as PilotEvaluationReadResponse
       : { execution: null, observation: null };
     if (executionResponse.status !== 200 && executionResponse.status !== 404)
       throw new Error(`evaluation read failed: ${executionResponse.status}`);
+    if (!snapshot.execution) {
+      operations.push({ operation: "measurement", entity_id: attempt.identity.subject_occurrence_id,
+        status: 409, detail: "no execution recorded for this attempt" });
+      continue;
+    }
     const grades = (await readAllGrades({ base_url, token: read_token, occurrence_id: member.occurrence_id }))
       .map((item) => item.observation);
     const human = [...grades].reverse().find((grade) => grade.question_id === member.question_id

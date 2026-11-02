@@ -52,6 +52,13 @@ export const PILOT_EVIDENCE_RECIPES: Readonly<Record<PilotQuestionId, PilotEvide
     output: [{ role: "assessment_finding", min_count: 0, max_count: 100 }], projected_fields: ["ref", "digest", "deep_link"] },
 };
 
+const PINNED_QUESTION_VERSIONS: Readonly<Record<PilotQuestionId, readonly string[]>> = {
+  "analysis.finding_relevance": ["v1", "v2"],
+  "plan.criterion_traceability": ["v1", "v2"],
+  "brief.source_fidelity": ["v1", "v2"],
+  "assessment.coverage": ["v1"],
+};
+
 export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefinition["input_recipe"] {
   return { recipe_id: recipe.recipe_id, recipe_version: recipe.recipe_version,
     input_roles: recipe.input.map((slot) => slot.role), output_roles: recipe.output.map((slot) => slot.role),
@@ -63,7 +70,7 @@ export function projectPilotEvidence(question: QuestionDefinition, sources: read
   const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
   const expected = recipe ? canonicalJson(pinnedInputRecipe(recipe)) : null;
   const actual = canonicalJson(question.input_recipe);
-  if (!recipe || (question.question_version !== recipe.recipe_version && question.question_version !== "v2") || !expected?.ok || !actual.ok
+  if (!recipe || !PINNED_QUESTION_VERSIONS[recipe.recipe_id].includes(question.question_version) || !expected?.ok || !actual.ok
     || expected.value !== actual.value)
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
   const slots = [...recipe.input, ...recipe.output];

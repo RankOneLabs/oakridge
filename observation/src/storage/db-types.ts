@@ -18,18 +18,6 @@ export interface ObservationBlindAssignment {
   created_at: Generated<Date>;
 }
 
-export interface ObservationEvaluationEligibility {
-  producer: string;
-  namespace: string;
-  subject_occurrence_id: string;
-  question_id: string;
-  question_version: string;
-  tag: string;
-  payload: JsonColumn<JsonValue>;
-  recorded_at: Generated<Date>;
-  eligibility_id: Generated<string>;
-}
-
 export interface ObservationEvaluationExecution {
   producer: string;
   namespace: string;
@@ -474,7 +462,6 @@ export interface ObservationSourceRevision {
 
 export interface DB {
   "observation.blind_assignment": ObservationBlindAssignment;
-  "observation.evaluation_eligibility": ObservationEvaluationEligibility;
   "observation.evaluation_execution": ObservationEvaluationExecution;
   "observation.evaluator_definition": ObservationEvaluatorDefinition;
   "observation.evidence_set": ObservationEvidenceSet;

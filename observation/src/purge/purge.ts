@@ -75,11 +75,6 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
         WHERE a.producer = ${tenant.producer} AND a.namespace = ${tenant.namespace}
           AND i.producer = a.producer AND i.namespace = a.namespace
           AND i.occurrence_id = a.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
-      await sql`DELETE FROM observation.evaluation_eligibility e
-        USING observation.item_occurrence i
-        WHERE e.producer = ${tenant.producer} AND e.namespace = ${tenant.namespace}
-          AND i.producer = e.producer AND i.namespace = e.namespace
-          AND i.occurrence_id = e.subject_occurrence_id AND i.run_id = ${run_id}`.execute(trx);
       const executions = await sql`DELETE FROM observation.evaluation_execution x
         USING observation.item_occurrence i
         WHERE x.producer = ${tenant.producer} AND x.namespace = ${tenant.namespace}

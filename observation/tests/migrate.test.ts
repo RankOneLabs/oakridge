@@ -10,6 +10,9 @@ import { dropScratchDatabase } from "./database-fixture";
 import { openDatabase as openAuthorityDatabase, type Database as AuthorityDatabase } from "../../oakridge-dbos/src/storage/database";
 import { migrateEmptyDatabase as migrateAuthority } from "../../oakridge-dbos/src/storage/migrate";
 import { cutoverPreflight } from "../../oakridge-dbos/scripts/cutover-preflight";
+import { recordHumanGrade, registerGradingContext } from "../src/storage/grading-store";
+import { evidence, evaluator, question, tenant } from "./grading-fixture";
+import type { ItemOccurrenceId } from "../src/domain/identity";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
@@ -36,11 +39,63 @@ integration("manifest pins all files in historical order", async () => {
     "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql",
     "0014_annotation_evaluator_v2.sql", "0015_definition_identity.sql", "0016_source_event_issue.sql", "0017_source_repair_position.sql",
     "0018_grading_attempt_accounting.sql", "0019_question_unclear_choice.sql", "0020_remove_disclosure_gate.sql",
+    "0021_drop_evaluation_eligibility.sql",
   ]);
   const files = await readdir(new URL("../src/storage/migrations/", import.meta.url));
   expect(migrations.map((entry) => entry.name).sort()).toEqual(files.filter((name) => name.endsWith(".sql")).sort());
   for (const entry of migrations) expect(await Bun.file(entry.file).exists()).toBe(true);
 });
+
+integration("dropping eligibility preserves execution, grade and blind-assignment evidence identities", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db, migrations.slice(0, -1));
+    const occurrence_id = `canonical-json/v1:${"1".repeat(64)}` as ItemOccurrenceId;
+    await withTenant(db, tenant, async (trx) => {
+      await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
+        artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
+        VALUES (${tenant.producer}, ${tenant.namespace}, 'preserved-rev', 'preserved-run', 'unit',
+          'brief', '1', 'bundle', 'digest', '{}'::jsonb, ${occurrence_id}, now())`.execute(trx);
+      await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
+        extractor_id, extractor_version, item_kind, item_selector) VALUES
+        (${tenant.producer}, ${tenant.namespace}, 'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion')`.execute(trx);
+      await sql`INSERT INTO observation.item_occurrence (producer, namespace, occurrence_id, revision_id, run_id,
+        artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector, item_id_or_path, selected_value)
+        VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, 'preserved-rev', 'preserved-run',
+          'brief', '1', 'fixture', '1', 'cohort_criterion', '/criterion', 'criterion-1', '{}'::jsonb)`.execute(trx);
+    });
+    const registered = await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") });
+    expect(registered.ok).toBe(true);
+    const grade = await recordHumanGrade(db, tenant, { subject_occurrence_id: occurrence_id,
+      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "preserved",
+      details: { answer: { state: "answered", kind: "boolean", value: true }, collection_mode: "in_context",
+        model_answers_visible: false, workflow_decisions_visible: false, probabilities: null, confidence: null,
+        normalized_score: null, decision_policy_id: null, decision_policy_version: null, reviewer_id: "reviewer",
+        reviewer_details: null, comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
+    expect(grade.ok).toBe(true);
+    await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.blind_assignment (producer, namespace, assignment_id,
+      subject_occurrence_id, evidence_set_id, question_id, question_version)
+      VALUES (${tenant.producer}, ${tenant.namespace}, 'preserved-assignment', ${occurrence_id},
+        ${evidence.evidence_set_id}, ${question.question_id}, ${question.question_version})`.execute(trx));
+    const snapshot = async () => withTenant(db, tenant, async (trx) => {
+      const tables = ["evaluation_execution", "grade_observation", "blind_assignment"] as const;
+      return Promise.all(tables.map(async (table) => {
+        const rows = await sql<{ evidence_set_id: string }>`SELECT evidence_set_id FROM ${sql.table(`observation.${table}`)}
+          ORDER BY evidence_set_id`.execute(trx);
+        return { table, count: rows.rows.length, evidence_set_ids: rows.rows.map((row) => row.evidence_set_id) };
+      }));
+    });
+    const before = await snapshot();
+    await migrateEmptyDatabase(db);
+    const after = await snapshot();
+    expect(before).toEqual(after);
+    expect(after).toEqual((["evaluation_execution", "grade_observation", "blind_assignment"] as const).map((table) => ({
+      table, count: 1, evidence_set_ids: [evidence.evidence_set_id] })));
+    const removed = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
+    expect(removed.rows[0]?.name).toBeNull();
+  } finally { await db.destroy(); }
+}));
 
 integration("definition identity migration keeps legacy provenance and permits new IDs alone", async () => scratch(async (url) => {
   const db = openDatabase(url);
