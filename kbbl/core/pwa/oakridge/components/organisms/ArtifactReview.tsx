@@ -13,7 +13,7 @@ import { useArtifactBody } from "../../hooks/useArtifactBody";
 import { settleEdit } from "../../lib/edit-outcome";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../molecules/ReviewItemsChecklist";
-import type { ArtifactRevision } from "../../types";
+import type { ArtifactRevision } from "../../artifact-types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
@@ -206,7 +206,7 @@ export function ArtifactReview({ artifactId }: ArtifactReviewProps) {
             <Viewer
               body={revision.body}
               descriptor={artifact.review}
-              source={{ run_id: artifact.run_id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
+              source={{ run_id: artifact.run_id, revision_id: revision.id, label: artifact.label ?? null, producing_stage: artifact.producing_stage,
                 as_of: revision.created_at,
                 original_spec: artifact.original_spec ?? null }}
               edit={caps?.atom_editable ? {

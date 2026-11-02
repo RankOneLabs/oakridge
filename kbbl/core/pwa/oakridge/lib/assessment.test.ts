@@ -88,6 +88,11 @@ describe("parseAssessment", () => {
   test("rejects a verdict outside the contract", () => {
     expect(parseAssessment({ ...body, verdict: "maybe" }).ok).toBe(false);
   });
+
+  test("rejects string actions instead of converting an old assessment", () => {
+    const parsed = parseAssessment({ ...body, recommended_next_actions: ["Old action"] });
+    expect(parsed.ok ? null : parsed.error.field).toBe("recommended_next_actions");
+  });
 });
 
 describe("selectCriterionReport", () => {

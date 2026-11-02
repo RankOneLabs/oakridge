@@ -6,7 +6,7 @@ import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import type { CohortArtifactLookup } from "../../lib/cohort-artifact";
 import { selectStatusTone } from "../../lib/status-tone";
-import type { AssessmentVerdict } from "../../types";
+import type { AssessmentVerdict } from "../../artifact-types";
 import { ArtifactSection, artifactLabelClass } from "./ArtifactSection";
 import { CohortArtifactNote } from "./CohortArtifactNote";
 import { CRITERION_STATUS_LABEL, CriterionCheckItem } from "./CriterionCheckItem";
@@ -70,7 +70,7 @@ export function AssessmentViewer({ assessment, brief, result, cohortLabel, isInt
       {handoff ?? (assessment.recommended_next_actions.length > 0 && (
         <ArtifactSection title={`Recommended next actions (${assessment.recommended_next_actions.length})`} testId="or-assessment-next-actions">
           <ol className="m-0 flex list-decimal flex-col gap-1.5 rounded-md border-l-4 border-[var(--accent-blue)] bg-[var(--accent-muted)] py-2 pl-8 pr-3 text-sm text-[var(--text-primary)]">
-            {assessment.recommended_next_actions.map((action, index) => <li key={`${index}-${action}`}>{action}</li>)}
+            {assessment.recommended_next_actions.map((action) => <li key={action.id}>{action.text}</li>)}
           </ol>
         </ArtifactSection>
       ))}

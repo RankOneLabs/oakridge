@@ -11,7 +11,7 @@
 // transforms know which attempt is newest, and a caller that re-sorts the list
 // before passing it here will get the wrong current attempt.
 
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 import type { AppState } from "../../state/store";
 import type { Sid } from "../../lib/ids";
 

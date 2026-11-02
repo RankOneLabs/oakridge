@@ -164,7 +164,11 @@
       "verdict": "enum(pass, pass_with_notes, fail)",
       "findings": "list(assessment_finding)",
       "test_evidence": "optional(test_evidence)",
-      "recommended_next_actions": "list(text)"
+      "recommended_next_actions": "list(next_action)"
+    },
+    "next_action": {
+      "id": "uuid(generated)",
+      "text": "text"
     },
     "assessment_finding": {
       "criterion_id": "optional(ident)",
@@ -609,7 +613,10 @@
           "schema": "pr_body"
         },
         "assessment": {
-          "schema": "assessment_body"
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          }
         },
         "pr_state": {
           "schema": "pr_status"
@@ -748,7 +755,10 @@
       },
       "artifacts": {
         "assessment": {
-          "schema": "assessment_body"
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          }
         },
         "pr": {
           "schema": "pr_body"

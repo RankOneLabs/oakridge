@@ -103,7 +103,8 @@ schemas:
     verdict: enum(pass, pass_with_notes, fail)
     findings: list(assessment_finding)
     test_evidence: optional(test_evidence)
-    recommended_next_actions: list(text)
+    recommended_next_actions: list(next_action)
+  next_action: { id: "uuid(generated)", text: text }
   assessment_finding:
     criterion_id: optional(ident)
     criterion: optional(text)
@@ -330,7 +331,7 @@ stages:
     artifacts:
       build_result: { schema: build_body }
       pr: { schema: pr_body }
-      assessment: { schema: assessment_body }
+      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
       pr_state: { schema: pr_status }
       observed_state: { schema: pr_status }
     workers:
@@ -398,7 +399,7 @@ stages:
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
       final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
-      assessment: { schema: assessment_body }
+      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
       manual_merge_target: { schema: pr_body }

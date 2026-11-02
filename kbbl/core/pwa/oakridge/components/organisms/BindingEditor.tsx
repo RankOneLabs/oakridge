@@ -1,4 +1,4 @@
-import type { SlotBinding, SlotBindingSource } from "../../types";
+import type { SlotBinding, SlotBindingSource } from "../../workflow-authoring-types";
 import { BindingLookupFields } from "./BindingLookupFields";
 
 const inputClass =

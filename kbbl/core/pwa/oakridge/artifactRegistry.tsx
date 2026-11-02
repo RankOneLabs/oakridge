@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./types";
+import type { ArtifactReviewDescriptor, ArtifactSource, ParkedGate } from "./artifact-types";
 import type { EditOutcome } from "./lib/edit-outcome";
 import { SpecViewer } from "./components/molecules/SpecViewer";
 import { SpecAnalysisViewer } from "./components/molecules/SpecAnalysisViewer";

@@ -1,5 +1,5 @@
 import { Button } from "../../../components/atoms/Button";
-import type { RunDetail } from "../../types";
+import type { RunDetail } from "../../run-types";
 import type { RunAccentClass } from "../../lib/run-accent";
 import { StatusBadge } from "../atoms/StatusBadge";
 

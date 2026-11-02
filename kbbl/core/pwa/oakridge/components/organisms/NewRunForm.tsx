@@ -14,7 +14,7 @@ import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
 import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
-import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
+import type { FinalMergePolicy, RepositoryInputDraft } from "../../run-types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { SessionModelFields } from "../molecules/SessionModelFields";
 import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,

@@ -1,5 +1,5 @@
 import { selectCohortArtifactId, selectCohortArtifactLookup, type CohortArtifactLookup } from "../lib/cohort-artifact";
-import type { ArtifactSource } from "../types";
+import type { ArtifactSource } from "../artifact-types";
 import { useArtifact } from "./useArtifact";
 import { useRun } from "./useRun";
 

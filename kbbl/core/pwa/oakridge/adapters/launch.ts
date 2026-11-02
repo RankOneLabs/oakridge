@@ -1,5 +1,5 @@
 import type { OperatorDefinitionDetail, OperatorLaunchRequest } from "../operator-contracts";
-import type { CreateRunRequest } from "../types";
+import type { CreateRunRequest } from "../run-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";
 

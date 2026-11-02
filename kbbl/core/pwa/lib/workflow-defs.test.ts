@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkflowDefSummary } from "../oakridge/types";
+import type { WorkflowDefSummary } from "../oakridge/project-types";
 import {
   defaultWorkflowDefinitionId,
   sortWorkflowDefinitions,

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
-import type { WorkflowDefSummary } from "../../types";
+import type { WorkflowDefSummary } from "../../project-types";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { PageHeader } from "../molecules/PageHeader";

@@ -68,6 +68,7 @@ pub struct CheckedStage {
 pub struct CheckedArtifact {
     pub key: SymbolKey,
     pub schema: CheckedType,
+    pub edit_policy: EditPolicy,
     pub validations: Vec<CheckedArtifactValidation>,
 }
 

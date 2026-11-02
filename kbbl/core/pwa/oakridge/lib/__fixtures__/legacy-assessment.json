@@ -2,5 +2,5 @@
   "verdict": "fail",
   "findings": [{ "criterion": "It works.", "status": "not_met", "evidence": "It does not." }],
   "test_evidence": { "passed": 3, "failed": 1 },
-  "recommended_next_actions": ["Fix it."]
+  "recommended_next_actions": [{"id": "00000000-0000-4000-8000-000000000001", "text": "Fix it."}]
 }

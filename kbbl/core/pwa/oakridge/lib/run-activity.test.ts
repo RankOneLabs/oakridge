@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { RunEvent, WorkflowRunId } from "../types";
+import type { RunEvent, WorkflowRunId } from "../run-types";
 import { fetchRunEvents, selectRunActivity } from "./run-activity";
 
 afterEach(() => vi.unstubAllGlobals());

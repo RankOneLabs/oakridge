@@ -1,4 +1,4 @@
-import type { RunEventFrame, RunEventOperation } from "../types";
+import type { RunEventFrame, RunEventOperation } from "../run-types";
 import { runEventKind } from "./core";
 
 const RUN_EVENT_OPERATIONS: ReadonlySet<string> = new Set<RunEventOperation>([
@@ -12,13 +12,13 @@ const isGateRunEventOperation = (operation: string): boolean => operation === "g
 const isPullRequestRunEventOperation = (operation: string): boolean =>
   operation === "pull_request_observed" || operation === "pull_request_merge_confirmed";
 
-const isJsonValue = (value: unknown): value is import("../types").JsonValue => {
+const isJsonValue = (value: unknown): value is import("../run-types").JsonValue => {
   if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return true;
   if (Array.isArray(value)) return value.every(isJsonValue);
   return typeof value === "object" && Object.values(value).every(isJsonValue);
 };
 
-const isJsonObject = (value: unknown): value is { readonly [key: string]: import("../types").JsonValue } =>
+const isJsonObject = (value: unknown): value is { readonly [key: string]: import("../run-types").JsonValue } =>
   typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every(isJsonValue);
 
 /** Parse one server frame without allowing malformed stream data into UI subscribers. */

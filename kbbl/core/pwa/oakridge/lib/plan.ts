@@ -1,5 +1,5 @@
 import type { Result } from "../../lib/result";
-import type { CohortId, RepositoryKey } from "../types";
+import type { CohortId, RepositoryKey } from "../run-types";
 
 /** Cohort item shapes mirror `plan_cohort` in workflow-config/development.yaml. */
 export type PlanTraceId = string & { readonly __brand: "PlanTraceId" };

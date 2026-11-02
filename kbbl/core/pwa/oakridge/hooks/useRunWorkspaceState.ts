@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { RunDetail } from "../types";
+import type { RunDetail } from "../run-types";
 import type { RunSessionsRead } from "../lib/run-sessions";
 import {
   closePane,

@@ -5,5 +5,5 @@
     { "criterion_id": "crit-a", "criterion": "A works reliably", "status": "met", "evidence": [{ "kind": "test", "ref": "alpha.test.ts" }] },
     { "criterion_id": "missing", "criterion": "Missing link", "status": "partial", "evidence": [] }
   ],
-  "recommended_next_actions": []
+  "recommended_next_actions": [{ "id": "aa32c2d6-b93c-42e5-80c8-d4cb1081fab2", "text": "Document the result." }]
 }

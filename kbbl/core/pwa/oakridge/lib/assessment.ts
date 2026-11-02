@@ -1,5 +1,5 @@
 import type { Result } from "../../lib/result";
-import type { AssessmentVerdict, CriterionStatus } from "../types";
+import type { AssessmentVerdict, CriterionStatus } from "../artifact-types";
 import { parseTestEvidence, type TestEvidence } from "./build-result";
 import { planCriterionText, type PlanCriterion, type PlanTraceId } from "./plan";
 
@@ -24,14 +24,17 @@ export interface AssessmentFinding {
   description: string | null;
 }
 
-/** Mirrors `assessment_body` in workflow-config/development.yaml, including legacy revisions. */
+/** Mirrors `assessment_body` in workflow-config/development.yaml, for current revisions. */
 export interface Assessment {
   head_sha: string | null;
   verdict: AssessmentVerdict;
   findings: AssessmentFinding[];
   test_evidence: TestEvidence | null;
-  recommended_next_actions: string[];
+  recommended_next_actions: NextAction[];
 }
+
+/** Stored next_action from the authored assessment schema. Older revisions contain strings. */
+export interface NextAction { readonly id: string; readonly text: string }
 
 export interface AssessmentParseError {
   operation: "parse_assessment";
@@ -43,6 +46,7 @@ type Parsed<T> = Result<T, AssessmentParseError>;
 
 const VERDICTS: readonly AssessmentVerdict[] = ["pass", "pass_with_notes", "fail"];
 const CRITERION_STATUSES: readonly CriterionStatus[] = ["not_met", "partial", "met"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (field: string, detail: string): Parsed<never> => ({ ok: false, error: { operation: "parse_assessment", field, detail } });
 
 function isRecord(value: unknown): value is { [key: string]: unknown } {
@@ -118,8 +122,8 @@ export function parseAssessment(body: unknown): Parsed<Assessment> {
     findings.push(finding.value);
   }
   const actions = body.recommended_next_actions;
-  if (!Array.isArray(actions) || !actions.every((action) => typeof action === "string")) {
-    return fail("recommended_next_actions", "expected an array of strings");
+  if (!Array.isArray(actions) || !actions.every((action) => isRecord(action) && typeof action.id === "string" && UUID.test(action.id) && typeof action.text === "string")) {
+    return fail("recommended_next_actions", "expected {id, text} actions");
   }
   let testEvidence: TestEvidence | null = null;
   if (body.test_evidence !== undefined && body.test_evidence !== null) {

@@ -8,7 +8,7 @@ import { useDeleteRun } from "../../hooks/useDeleteRun";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
 import { useReviewInbox } from "../../hooks/useReviewInbox";
 import { hasOpenPullRequestMergeWait } from "../../lib/run-overview";
-import type { StageDetail } from "../../types";
+import type { StageDetail } from "../../run-types";
 import { RunParkedGateList } from "./ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";

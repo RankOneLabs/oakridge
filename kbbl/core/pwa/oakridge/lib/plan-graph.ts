@@ -1,5 +1,5 @@
 import dagre from "dagre";
-import type { CohortId } from "../types";
+import type { CohortId } from "../run-types";
 import type { PlanCohort } from "./plan";
 
 export const PLAN_GRAPH_NODE = { width: 240, height: 92 } as const;

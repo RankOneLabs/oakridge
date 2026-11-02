@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ParkedGate, ReviewInboxItem, RunDetail, RunSessionAttempt, StageDetail } from "../types";
+import type { ParkedGate, ReviewInboxItem } from "../artifact-types";
+import type { RunDetail, RunSessionAttempt, StageDetail } from "../run-types";
 import {
   RECENT_SLOT_RELEASE_LIMIT,
   hasOpenPullRequestMergeWait,
@@ -78,6 +79,7 @@ const gate = (overrides: Partial<ParkedGate> & Pick<ParkedGate, "id" | "unit_id"
   artifact_revision_id: null,
   worktree: null,
   resume_actions: ["approve", "reject"],
+  offered_decisions: ["approve", "reject"],
   run_state: "active",
   actionable: true,
   ...overrides,

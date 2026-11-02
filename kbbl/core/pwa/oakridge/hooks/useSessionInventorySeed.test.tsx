@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { useStore } from "../../state/store";
 import type { SessionSnapshot } from "../../types";
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 import { selectPurgedRunSessionIds } from "../lib/run-sessions";
 import { useRunSessions } from "./useRunSessions";
 
