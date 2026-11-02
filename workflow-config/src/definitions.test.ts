@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
-import { decodeWorkflowSource } from "../../kbbl/core/pwa/oakridge/workflow-definition-types";
+import { decodeWorkflowSource } from "../../oakridge-dbos/src/core-client/source-types";
 import { bytesIdentity, isIdentity, jsonIdentity, type DefinitionId, type OperationRegistryId, type PromptId } from "./definition-identity";
 import { commitDefinition, referencedPromptPaths, type AuthoredWorkflow, type CommittedDefinition, type DefinitionOrder, type OperationRegistry } from "./definition-objects";
 import { DEFINITION_STORE_ROOT, readLaunchableCatalog, resolveDefinition, resolveLaunchableDefinition, type DefinitionStoreFailure } from "./definition-store";

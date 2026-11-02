@@ -40,6 +40,7 @@ function k2Violations(imports: readonly CoreImport[]): readonly string[] {
     const where = `${relative(root, entry.file)}: ${entry.name} from ${entry.module}`;
     if (entry.module.includes("workflow-core")) return [`${where} (reaches into the core's sources)`];
     if (entry.is_type) return [];
+    if (entry.module.endsWith("core-client/source-types") && ["decodeWorkflowSource", "hasSafeWireNumbers"].includes(entry.name)) return [];
     if (entry.module.endsWith("core-client/client") && CORE_CLIENT_VALUES.has(entry.name)) return [];
     if (entry.module.endsWith("core-client/core-types") && GENERATED_CORE_CONSTANTS.has(entry.name)) return [];
     return [`${where} (a value outside the compile/step API)`];

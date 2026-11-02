@@ -12,6 +12,7 @@ import { CORE_WASM_PATH } from "../core-client/client";
 export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "core-client/client.ts",
   "core-client/core-types.ts",
+  "core-client/source-types.ts",
   "adapters/kbbl.ts",
   "domain/effect-instruction.ts",
   "domain/run-config.ts",
@@ -29,6 +30,7 @@ export const ENGINE_SOURCE_MANIFEST: readonly string[] = [
   "operations/runner.ts",
   "projections/run-event.ts",
   "projections/unit-label.ts",
+  "runtime/definition-store.ts",
   "runtime/git-command-runner.ts",
   "runtime/github-pull-requests.ts",
   "runtime/project-identity.ts",

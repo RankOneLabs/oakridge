@@ -1,4 +1,4 @@
-import type { GatedReviewAccess } from "../pwa/oakridge/workflow-definition-types";
+import type { OperatorGatedReviewAccess as GatedReviewAccess } from "../pwa/oakridge/operator-contracts";
 // Domain model for the ACP session substrate (migration spec §8–§13, §18).
 // Row shapes mirror migration 027_acp_sessions.sql; the start-spec shape
 // mirrors the DBOS-facing HTTP contract (§11.1). Everything here is
