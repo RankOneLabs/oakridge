@@ -213,7 +213,10 @@ pub fn generate() -> String {
     ));
     output.push_str(&format!(
         "export type CoreRequest = {};\n",
-        request_type(&schemas["request"]).replace("readonly \"workflow\": Workflow", "readonly \"workflow\": AuthoredWorkflow")
+        request_type(&schemas["request"]).replace(
+            "readonly \"workflow\": Workflow",
+            "readonly \"workflow\": AuthoredWorkflow"
+        )
     ));
     output.push_str(&format!(
         "export type CoreResponse = {};\n",
