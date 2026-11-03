@@ -71,6 +71,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("job_id", "=", job.job_id).where("state", "=", "claimed")
           .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
+          .where("lease_expires_at", ">", new Date())
           .returning("job_id").executeTakeFirst();
         if (ended && isNetwork) await trx.updateTable("observation.grading_provider_attempt")
           .set({ outcome: "failed", updated_at: new Date() })
@@ -178,7 +179,8 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
           lease_expires_at: null, updated_at: new Date() })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", job.job_id).where("state", "=", "claimed")
-        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts).returning("job_id").executeTakeFirst();
+        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
+        .where("lease_expires_at", ">", new Date()).returning("job_id").executeTakeFirst();
       if (ended) await trx.updateTable("observation.evaluation_execution")
         .set({ status: "failed", ended_at: new Date(), error: result.error.detail })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)

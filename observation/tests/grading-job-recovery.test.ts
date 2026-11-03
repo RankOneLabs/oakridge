@@ -33,6 +33,57 @@ async function outcome(db: Database, job_id: string) {
       .selectAll().where("job_id", "=", job_id).orderBy("attempt").execute(),
   }));
 }
+/** Inject lease expiry at the database boundary, after validation fails but before settlement. */
+function expireLeaseAfterFailure(db: Database, job_id: string): Database {
+  return new Proxy(db, { get(target, property) {
+    if (property === "transaction") return () => {
+      const builder = target.transaction();
+      return { execute: async <T>(work: Parameters<typeof builder.execute<T>>[0]): Promise<T> => {
+        const result = await builder.execute(work);
+        if (typeof result === "object" && result !== null && "ok" in result && result.ok === false)
+          await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
+            .set({ lease_expires_at: new Date(Date.now() - 1) }).where("job_id", "=", job_id).execute());
+        return result;
+      } };
+    };
+    const value = Reflect.get(target, property);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+}
+
+for (const phase of ["delegated start", "evaluation"] as const) {
+  for (const expired of [false, true]) {
+    integration(`${phase} failure ${expired ? "cannot settle an expired lease" : "settles an active lease"}`, async () => scratchGrading(async (db, occurrence_id) => {
+      const { identity, job } = await setup(db, occurrence_id, `${phase}-${expired}`);
+      // An existing delegated execution is resumed before runGrade validates its inputs again.
+      if (phase === "evaluation") expect((await startDelegatedExecution(db, tenant, identity)).ok).toBe(true);
+      await withTenant(db, tenant, (trx) => trx.updateTable("observation.evaluator_definition")
+        .set({ config_digest: "changed" }).where("evaluator_definition_id", "=", "model").execute());
+      let calls = 0;
+      const runner: GradeRunner = { kind: "model", async run(context) { calls++; return good.run(context); } };
+      await workOneJob(expired ? expireLeaseAfterFailure(db, job.job_id) : db,
+        tenant, { ...limits, lease_ms: 60_000 }, "exception-worker", runner);
+      const stored = await outcome(db, job.job_id);
+      expect(calls).toBe(0);
+      expect(stored.grades).toEqual([]);
+      expect(stored.job).toMatchObject({ state: expired ? "claimed" : "terminal", attempts: 1,
+        lease_owner: expired ? "exception-worker" : null,
+        terminal_cause: expired ? null : phase === "delegated start" ? "ineligible" : "runner_failed" });
+      if (expired) expect(stored.job.lease_expires_at!.getTime()).toBeLessThan(Date.now());
+      else expect(stored.job.lease_expires_at).toBeNull();
+      expect(stored.attempts).toMatchObject([
+        { attempt: 1, request_sent: false, outcome: expired ? null : "failed", charged_cost: 0 },
+      ]);
+      if (phase === "delegated start") expect(stored.executions).toEqual([]);
+      else {
+        expect(stored.executions).toHaveLength(1);
+        expect(stored.executions[0]).toMatchObject({ status: expired ? "running" : "failed",
+          ended_at: expired ? null : expect.any(Date) });
+      }
+    }));
+  }
+}
+
 for (const phase of ["before claim", "mid-provider request", "after response before persist", "during restart"] as const) {
   integration(`crash ${phase} reclaims to one canonical grade`, async () => scratchGrading(async (db, occurrence_id) => {
     const { identity, job } = await setup(db, occurrence_id, phase);
