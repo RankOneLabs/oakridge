@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { missingLivePrerequisites, verifyCapturedRun } from "../scripts/jev-live-walkthrough";
 import { createJevDirectRunner, createSystemOneRunner } from "../src/runners/jev-direct";
 import { listGrades, readExecution, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import type { GradingContext } from "../src/grading/runner";
@@ -288,3 +289,16 @@ integration("invalid provider outcomes create failed executions without grade ro
     expect(result.ok && result.value.observation).toBeNull();
   }
 }));
+
+// OAKRIDGE_LIVE_CAPTURE names SourceEventDelivery[] recorded from a newly
+// launched committed-definition run, never the checked-in run-slice fixtures.
+const live_capture = process.env.OAKRIDGE_LIVE_CAPTURE;
+const missing_live = missingLivePrerequisites(live_capture);
+const liveTest = missing_live.length === 0 ? test : test.skip;
+if (missing_live.length) console.warn(`SKIP: direct-provider live verification; missing ${missing_live.join(", ")}`);
+liveTest("a newly captured criterion is graded by TypeSafe and read back through authenticated APIs", async () => {
+  if (!live_capture) throw new Error("OAKRIDGE_LIVE_CAPTURE disappeared");
+  const report = await verifyCapturedRun({ capture_path: live_capture,
+    question_id: "plan.criterion_traceability", estimated_cost: 0.01 });
+  expect(report.execution_id.length).toBeGreaterThan(0);
+}, 120_000);

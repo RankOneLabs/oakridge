@@ -113,6 +113,17 @@ export function readSourceCursor(db: Database, tenant: TenantScope): Promise<Sou
   });
 }
 
+/** Bootstrap a new replay namespace at its recorded starting position; never rewind an existing cursor. */
+export function initializeSourceCursor(db: Database, tenant: TenantScope, cursor: SourceEventCursor): Promise<boolean> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.insertInto("observation.source_event_cursor").values({ producer: tenant.producer, namespace: tenant.namespace,
+      commit_txid: sql<number>`${cursor.commit_txid}::bigint`, event_id: cursor.id })
+      .onConflict((conflict) => conflict.columns(["producer", "namespace"]).doNothing())
+      .returning("event_id").executeTakeFirst();
+    return row !== undefined;
+  });
+}
+
 export interface SourceEventConflict { readonly error: { readonly code: "cursor_conflict"; readonly cursor: SourceEventCursor } }
 export interface SourceEventDeliveryResult { readonly status: 200 | 409; readonly body: SourceEventAck | SourceEventConflict }
 const sameCursor = (left: SourceEventCursor, right: SourceEventCursor): boolean => left.commit_txid === right.commit_txid && left.id === right.id;

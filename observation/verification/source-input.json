@@ -1,0 +1,21 @@
+{
+  "title": "Isolated live completion evidence audit",
+  "spec": "Audit the live-verification work already on pull request https://github.com/RankOneLabs/oakridge/pull/771. This is an isolated verification run of the committed development definition, not new feature implementation. Produce one cohort named slice in repository oakridge. Preserve two run-unique criterion IDs: criterion-lineage for capture provenance and criterion-export for authenticated stored-record readback. Use decision-capture for the decision to preserve the production publisher wire payloads and use authenticated HTTP response bodies. Both criteria must cite decision-capture, and retain the same IDs in the brief and assessment.\nThe builder must inspect and test the existing live-verification changes, publish actual test counts and any gaps, and publish the existing PR #771 as the pr artifact (branch cohort/live-verification/bc33be). The assessor must assess the existing code and publish factual findings linked to these criteria. Do not edit code, create commits, push or create a new PR, merge anything, reset any database or deploy. Existing failures and absent live credentials are findings, not reasons to invent passing evidence. Keep the analysis/spec/tasks/plan/brief concise; there are no ambiguous requirements to resolve. Plan-wide acceptance_criteria may be ordinary text per the declared schema. The purposes are a real newly produced plan/brief/assessment and production capture; no pre-existing observation fixtures may be used as artifact bodies.\nFor criterion-lineage, inspect the live source capture launcher and v2 provenance validation. For criterion-export, inspect tenant-scoped question/evidence API routes and direct provider readback. Actual grading is performed after this source run. A capture need not claim a provider grade already occurred. The separately recorded gated-review server invalid-token acceptance is an open upstream issue, not an authorization to change that server.\nRun only focused audit checks in this verification cohort: the gated-review tools smoke test, workflow-config definitions tests, and observation grading-records/direct-provider tests if those files exist on the checked-out base. If a file is absent, record that fact rather than substituting an unbounded repository suite. Report the checked-out commit and PR head separately. Publish build_result first, then the existing pr artifact. The sole purpose is real source artifact publication and honest evidence; do not expand into feature implementation.\n",
+  "primary_repository_key": "oakridge",
+  "final_merge_policy": "require_merge",
+  "repositories": [
+    {
+      "key": "oakridge",
+      "preparation": {
+        "repository_path": "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/oakridge/7fb7b345-92cd-43ed-ad1f-40eaee8cb4a6",
+        "expected_head": null
+      },
+      "forge": {
+        "owner": "RankOneLabs",
+        "name": "oakridge",
+        "build_base": "epic/land-grading",
+        "final_base": "epic/land-grading"
+      }
+    }
+  ]
+}

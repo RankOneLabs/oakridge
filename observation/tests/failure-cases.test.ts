@@ -1,3 +1,4 @@
+import type { CaptureEnvelope } from "../src/ingest/capture";
 import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "bun:test";
@@ -19,6 +20,8 @@ const tenant = { producer: "oakridge", namespace: "failure-cases" };
 const run_id = "run-failure-fixtures";
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
   grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
+const source = await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json() as { definition_id: string; captures: CaptureEnvelope[] };
+const schemaVersion = (kind: string): string => source.captures.find((capture) => capture.source.artifact_kind === kind)!.source.artifact_schema_version;
 const fixture = async (name: string): Promise<JsonValue> => Bun.file(new URL(`../fixtures/oakridge/run-slice/${name}-revision.json`, import.meta.url)).json() as Promise<JsonValue>;
 interface PlanCriterion { id: string; text: string; task_ids: string[]; decision_ids: string[] }
 interface PlanBody { summary: string; cohorts: { acceptance_criteria: PlanCriterion[] }[] }
@@ -61,8 +64,8 @@ async function ingest(app: App, kind: string, revision: string, body: JsonValue,
   body: JSON.stringify({ format: "observation.artifact-revision/v2", source: { ...tenant,
     revision_id: `${tenant.producer}:${tenant.namespace}:${revision}`, run_id,
     unit_id: kind === "plan" ? `${run_id}/planning` : kind === "brief" ? `${run_id}/briefs/slice` : `${run_id}/implementation/slice`,
-    artifact_kind: kind, artifact_schema_version: "development-v1",
-    definition_id: "development",
+    artifact_kind: kind, artifact_schema_version: schemaVersion(kind),
+    definition_id: source.definition_id,
     predecessor_id: predecessor ? `${tenant.producer}:${tenant.namespace}:${predecessor}` : null, subject_id: null },
     recorded_at: `2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`, body, body_digest: digest(body) }) });
 }
@@ -117,7 +120,9 @@ integration("duplicate ids, reorder, revision update, missing source and conflic
 
   // The missing assessment target is retained as an unresolved producer reference.
   expect((await ingest(app, "brief", "brief-1", await fixture("brief"), 5)).status).toBe(201);
-  expect((await ingest(app, "assessment", "assessment-1", await fixture("assessment"), 6)).status).toBe(201);
+  const assessment = await fixture("assessment") as unknown as { findings: { criterion_id: string | null }[] };
+  assessment.findings[1]!.criterion_id = cases.missing_source_ref;
+  expect((await ingest(app, "assessment", "assessment-1", assessment as unknown as JsonValue, 6)).status).toBe(201);
   const missing = (await listRunItems(db, tenant, run_id, { limit: 100, offset: 0 })).items
     .find((item) => item.revision_id === "assessment-1" && item.item_id_or_path === "/findings/1")!;
   const lineage = await readLineage(db, tenant, missing.occurrence_id, { limit: 100, offset: 0 });
@@ -150,7 +155,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     .find((item) => item.item_kind === "criterion")!;
   const headers = { authorization: "Bearer grade-fixture", "content-type": "application/json" };
   const question = (id: string, expected: string | undefined, requires_repository_snapshot = false) => ({
-    question_id: id, question_version: "1", pinned_expectation: { definition_id: "development", artifact_schema_version: "development-v1" }, target_item_kinds: ["criterion"],
+    question_id: id, question_version: "1", pinned_expectation: { definition_id: source.definition_id, artifact_schema_version: schemaVersion("brief") }, target_item_kinds: ["criterion"],
     input_recipe: expected === undefined ? {} : { expected }, response_kind: "boolean", allowed_values: null,
     missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
     interpretation_caveats: "fixture", requires_repository_snapshot });
