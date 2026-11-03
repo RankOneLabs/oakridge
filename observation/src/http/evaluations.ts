@@ -15,7 +15,8 @@ import { errorResponse } from "./errors";
 export const responseKindSchema = z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]);
 export const contextSchema = z.object({
   question: z.object({ question_id: z.string().min(1), question_version: z.string().min(1),
-    question_text: z.string().optional(), evidence_recipe_provenance: z.object({ recipe_id: z.string(), recipe_version: z.string(), source: z.string() }).optional(),
+    question_text: z.string().optional(),
+    pinned_expectation: z.object({ definition_id: z.string().min(1), artifact_schema_version: z.string().min(1) }),
     target_item_kinds: z.array(z.string().min(1)).min(1), input_recipe: z.record(z.string(), z.unknown()),
     response_kind: responseKindSchema, allowed_values: z.array(z.unknown()).nullable(),
     missing_evidence_policy: z.enum(["fail", "abstain"]), abstain_semantics: z.string(),

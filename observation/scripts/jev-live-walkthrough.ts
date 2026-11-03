@@ -20,7 +20,7 @@ import { Client } from "pg";
 import { canonicalDigest } from "canonical-json";
 import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest } from "../src/grading/evaluator";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
 import { listRunItems } from "../src/storage/projection-store";
@@ -64,6 +64,11 @@ const credentials = {
   read: [{ ...tenant, token: "read-live" }],
   grade: [{ ...tenant, token: "grade-live", reviewer_id: "oakridge-operator" }],
 };
+const fixtureExpectation = { definition_id: "fixture-definition", artifact_schema_version: "development-v1" };
+const questions = oakridgeQuestions({
+  "analysis.finding_relevance": fixtureExpectation, "plan.criterion_traceability": fixtureExpectation,
+  "brief.source_fidelity": fixtureExpectation, "assessment.coverage": fixtureExpectation,
+});
 const fixtureRoot = new URL("../fixtures/oakridge/run-slice/", import.meta.url);
 
 function parseOptions(argv: readonly string[]): Options {
@@ -102,7 +107,7 @@ const revisionRef = (row: RevisionEvent): string => `${row.payload.unit}:${row.p
 async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: EventFixture): Promise<readonly RevisionEvent[]> {
   const headers = { authorization: `Bearer ${credentials.ingest[0]!.token}`, "content-type": "application/json" };
   let cursor = { commit_txid: "0", id: "" };
-  const definition_id = "fixture-definition";
+  const definition_id = fixtureExpectation.definition_id;
   const delivered: RevisionEvent[] = [];
   for (const row of events.rows) {
     const next = { commit_txid: row.commit_txid, id: row.id };
@@ -189,7 +194,7 @@ async function main(): Promise<void> {
     const revisions = await ingestCapturedPass(app, events);
     const subject = await gradeSubject(db, events.run_id, options.question_id, revisions);
 
-    const pilot = OAKRIDGE_QUESTIONS[options.question_id];
+    const pilot = questions[options.question_id];
     const question = pilot.definition;
     const evidence = { evidence_set_id: digestOf(subject.references as unknown as JsonValue),
       references: subject.references, is_incomplete: false, incompleteness_reason: null };

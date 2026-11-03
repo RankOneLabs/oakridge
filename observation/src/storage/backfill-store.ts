@@ -31,7 +31,7 @@ export type HumanGradeStorage = { readonly kind: "graded" } | { readonly kind: "
 /** Live operator decisions enter the normalized L2 grade store. */
 export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, tenant: TenantScope,
   outcome: Extract<SourceEventOutcome, { kind: "human_grade" }>): Promise<HumanGradeStorage> {
-  const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "run_id"])
+  const revision = await trx.selectFrom("observation.source_revision").select(["revision_id", "run_id", "definition_id", "artifact_schema_version"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("revision_id", "=", outcome.target).executeTakeFirst();
   if (!revision) {
@@ -61,6 +61,7 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
     const observation_id = digest(["oakridge-review-observation", decision_key, item.occurrence_id]);
     const idempotency_digest = digest(["oakridge-review", decision_key, item.occurrence_id]);
     await trx.insertInto("observation.question_definition").values({ ...scope(tenant), question_id, question_version,
+      expected_definition_id: revision.definition_id, expected_artifact_schema_version: revision.artifact_schema_version,
       target_item_kinds: json([item.item_kind]), input_recipe: json({ source: "oakridge.review_decision" }),
       response_kind: "structured", allowed_values: null, missing_evidence_policy: "abstain",
       abstain_semantics: "missing source revision", unclear_semantics: "ambiguous review",

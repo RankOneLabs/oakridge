@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { instructionDigest } from "../src/grading/evaluator";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { registerGradingContext, runGrade } from "../src/storage/grading-store";

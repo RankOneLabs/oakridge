@@ -1,3 +1,6 @@
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const questions = oakridgeQuestions(pilotExpectations);
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
@@ -35,7 +38,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
       .map((item) => ({ ...item, item_kind: "finding" })) };
   const laterPlan: CapturedRevision = { ...plan, revision_id: "plan-later", recorded_at: new Date("2026-10-23T18:00:00Z"),
     items: plan.items.map((item) => ({ ...item, revision_id: "plan-later", selected_value: { changed: true } })) };
-  const result = runPackages([analysis, plan, brief, assessment, laterPlan]);
+  const result = runPackages([analysis, plan, brief, assessment, laterPlan], questions);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   const manifest = result.value;
@@ -49,7 +52,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect(briefPackage?.evidence.references[0]?.digest).toBe(firstDigest.ok ? firstDigest.value : null);
   expect(manifest.selection_policy).toBe("live_all_revisions");
   const missingLink = runPackages([plan, { ...brief, items: brief.items.map((item) => item.item_kind === "criterion"
-    ? { ...item, links: [] } : item) }]);
+    ? { ...item, links: [] } : item) }], questions);
   expect(missingLink.ok && missingLink.value.exclusions.every((excluded) => excluded.reason.kind !== "dangling_citation")).toBe(true);
   expect(missingLink.ok && missingLink.value.exclusions.some((excluded) => excluded.reason.kind === "unlinked")).toBe(true);
   const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
@@ -59,13 +62,13 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   ]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "eligible")).toBe(true);
-  const withoutAssessment = runPackages([plan, brief]);
+  const withoutAssessment = runPackages([plan, brief], questions);
   expect(withoutAssessment.ok && withoutAssessment.value.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
   const laterAssessment: CapturedRevision = { ...assessment, revision_id: "assessment-later",
     recorded_at: new Date("2026-10-23T17:45:00Z"), items: assessment.items.map((item, index) => ({ ...item,
       revision_id: "assessment-later", occurrence_id: `assessment-later-${index}` as ItemOccurrenceId })) };
-  const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment]);
+  const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment], questions);
   expect(repeatedCoverage.ok && repeatedCoverage.value.packages.filter((pack) => pack.question_id === "assessment.coverage").length).toBe(4);
   expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
@@ -86,7 +89,7 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
       occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
       producer_local_id: item.producer_local_id === null ? null : `${item.producer_local_id}-b` })) };
 
-  const result = runPackages([plan, briefA, briefB, assessmentA]);
+  const result = runPackages([plan, briefA, briefB, assessmentA], questions);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
 

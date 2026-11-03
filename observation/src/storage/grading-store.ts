@@ -37,6 +37,8 @@ function asJson(value: unknown): JsonValue { return value as JsonValue; }
 /** Definitions are immutable within their natural keys. */
 export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
   const { question, evidence, evaluator } = context;
+  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
+    return failure("register_context", question.question_id, "question requires pinned expectation");
   if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
     return failure("register_context", question.question_id, "choice question requires allowed values");
   const digest = evaluatorIdentity(evaluator);
@@ -53,13 +55,14 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
         .where("question_version", "=", question.question_version).executeTakeFirst();
       if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
-        q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot],
+        q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot,
+        q.expected_definition_id, q.expected_artifact_schema_version],
         [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
-          question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot]))
+          question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot,
+          question.pinned_expectation.definition_id, question.pinned_expectation.artifact_schema_version]))
         return failure("register_context", question.question_id, "question definition identity conflict");
-      if (q && ((q.question_text !== null && q.question_text !== question.question_text)
-        || (q.evidence_recipe_provenance !== null && !same(q.evidence_recipe_provenance, question.evidence_recipe_provenance))))
-        return failure("register_context", question.question_id, "question text or recipe provenance conflict");
+      if (q && q.question_text !== null && q.question_text !== question.question_text)
+        return failure("register_context", question.question_id, "question text conflict");
       if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
         question_id: question.question_id, question_version: question.question_version,
         target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
@@ -68,7 +71,8 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
         requires_repository_snapshot: question.requires_repository_snapshot,
         question_text: question.question_text ?? null,
-        evidence_recipe_provenance: question.evidence_recipe_provenance ? jsonText(asJson(question.evidence_recipe_provenance)) : null }).execute();
+        expected_definition_id: question.pinned_expectation.definition_id,
+        expected_artifact_schema_version: question.pinned_expectation.artifact_schema_version }).execute();
       const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
       if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],
@@ -111,7 +115,8 @@ export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantS
     .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", identity.evaluator_definition_id).executeTakeFirst();
   if (!d) return failure("evaluate", identity.evaluator_definition_id, "evaluator definition does not exist in namespace");
   if (identity.config_digest !== d.config_digest) return failure("evaluate", identity.evaluator_definition_id, "config digest differs from evaluator definition");
-  return ok({ question: { ...q, question_id: q.question_id as QuestionDefinition["question_id"],
+  return ok({ question: { ...q, pinned_expectation: { definition_id: q.expected_definition_id,
+    artifact_schema_version: q.expected_artifact_schema_version }, question_id: q.question_id as QuestionDefinition["question_id"],
     target_item_kinds: q.target_item_kinds as string[], input_recipe: q.input_recipe as QuestionDefinition["input_recipe"],
     response_kind: q.response_kind as QuestionDefinition["response_kind"], allowed_values: q.allowed_values as QuestionDefinition["allowed_values"],
     missing_evidence_policy: q.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] },

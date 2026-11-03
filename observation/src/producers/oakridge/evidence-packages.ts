@@ -7,7 +7,7 @@ import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
 import type { EligibilityDecision, ExclusionReason } from "../../grading/eligibility";
 import type { PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
-import { OAKRIDGE_QUESTIONS } from "../../grading/catalogue/oakridge-questions";
+import type { PilotQuestions } from "../../grading/catalogue/oakridge-questions";
 
 export interface PilotPackage {
   readonly question_id: PilotQuestionId;
@@ -145,11 +145,11 @@ function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevi
 }
 
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
-function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+function assessmentPackages(revisions: readonly CapturedRevision[], questions: PilotQuestions): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageEligibility[] = [];
-  const needs_repository = OAKRIDGE_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
+  const needs_repository = questions["assessment.coverage"].definition.requires_repository_snapshot;
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
   for (const [index, brief] of briefs.entries()) {
@@ -195,14 +195,14 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility });
 }
 
-export function runPackages(revisions: readonly CapturedRevision[], policy: RevisionSelection["policy"] = "live_all_revisions")
+export function runPackages(revisions: readonly CapturedRevision[], questions: PilotQuestions, policy: RevisionSelection["policy"] = "live_all_revisions")
   : Result<RunPackages, RunPackageError> {
   const selected = selectCapturedRevisions(revisions, policy);
   const plan = planPackages(selected.revisions);
   if (!plan.ok) return plan;
   const brief = briefPackages(selected.revisions);
   if (!brief.ok) return brief;
-  const assessment = assessmentPackages(selected.revisions);
+  const assessment = assessmentPackages(selected.revisions, questions);
   if (!assessment.ok) return assessment;
   const packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
   const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];

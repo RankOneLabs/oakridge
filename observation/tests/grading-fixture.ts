@@ -12,7 +12,15 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 export const tenant = { producer: "oakridge", namespace: "grading-test" };
+export const pinnedExpectation = { definition_id: "definition-1", artifact_schema_version: "1" };
+export const pilotExpectations = {
+  "analysis.finding_relevance": pinnedExpectation,
+  "plan.criterion_traceability": pinnedExpectation,
+  "brief.source_fidelity": pinnedExpectation,
+  "assessment.coverage": pinnedExpectation,
+};
 export const question: QuestionDefinition = {
+  pinned_expectation: pinnedExpectation,
   question_id: "relevance" as QuestionId, question_version: "1", target_item_kinds: ["cohort_criterion"],
   input_recipe: { source: "selected_value" }, response_kind: "boolean", allowed_values: null,
   missing_evidence_policy: "fail", abstain_semantics: "not enough evidence", unclear_semantics: "ambiguous",

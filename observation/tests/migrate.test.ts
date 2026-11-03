@@ -81,14 +81,17 @@ SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.rel
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
 ORDER BY kind,table_name,name`);
 
-integration("the single baseline preserves the historical catalog except for capture provenance", async () => scratch(async (url) => {
+integration("the single baseline preserves the historical catalog except for capture provenance and required question pins", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     await migrateEmptyDatabase(db);
     const catalog = await observationCatalogQuery.execute(db);
     const retiredColumns = ["definition", "bundle"].join("_");
-    const expected = historicalCatalog.filter((entry) => !(entry.kind === "column" && entry.table_name === "source_revision"
-      && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name)));
+    const expected = historicalCatalog.filter((entry) => !(entry.kind === "column" && (
+      (entry.table_name === "source_revision" && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name))
+      || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance"))));
+    for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
+      expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
     expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });
     expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
   } finally { await db.destroy(); }

@@ -4,7 +4,9 @@ import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakrid
 import { selectRevision } from "../src/projection/extractor";
 import { checkAssessmentCoverage, coverageInput } from "../src/runners/coverage-checker";
 import { createApp } from "../src/http/app";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 test("a brief criterion with no covering assessment finding is a coverage miss", async () => {

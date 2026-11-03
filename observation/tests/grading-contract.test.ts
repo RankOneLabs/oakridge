@@ -42,15 +42,16 @@ integration("registration rejects a choice question without allowed values", asy
   expect(rows).toHaveLength(0);
 }));
 
-integration("question text and recipe provenance are pinned on new definitions", async () => scratchGrading(async (db) => {
+integration("question text and provenance expectation are pinned on new definitions", async () => scratchGrading(async (db) => {
   const pinned = { ...question, question_text: "Is the fixture relevant?",
-    evidence_recipe_provenance: { recipe_id: "fixture", recipe_version: "v1", source: "fixture" } };
+    pinned_expectation: { definition_id: "definition-1", artifact_schema_version: "1" } };
   expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   const row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition")
-    .select(["question_text", "evidence_recipe_provenance"])
+    .select(["question_text", "expected_definition_id", "expected_artifact_schema_version"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("question_id", "=", question.question_id).executeTakeFirstOrThrow());
-  expect(row).toEqual({ question_text: pinned.question_text, evidence_recipe_provenance: pinned.evidence_recipe_provenance });
+  expect(row).toEqual({ question_text: pinned.question_text, expected_definition_id: pinned.pinned_expectation.definition_id,
+    expected_artifact_schema_version: pinned.pinned_expectation.artifact_schema_version });
   expect((await registerGradingContext(db, tenant, { question: { ...pinned, question_text: "Changed" },
     evidence, evaluator: evaluator("code") })).ok).toBe(false);
 }));

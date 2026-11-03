@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { PILOT_EVIDENCE_RECIPES, projectPilotEvidence, type EvidenceSource } from "../src/grading/evidence-packages/pilot-recipe";
+import { contextSchema } from "../src/http/evaluations";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
@@ -23,7 +26,7 @@ test("each pilot question projects only its declared digest and deep-link refere
 });
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
-integration("all three pilot definitions satisfy the stored question constraints", async () => scratchGrading(async (db) => {
+integration("all four pilot definitions satisfy the stored question constraints", async () => scratchGrading(async (db) => {
   for (const entry of Object.values(OAKRIDGE_QUESTIONS)) {
     const registered = await registerGradingContext(db, tenant, { question: entry.definition, evidence, evaluator: evaluator("human") });
     expect(registered.ok).toBe(true);
@@ -41,3 +44,31 @@ integration("all three pilot definitions satisfy the stored question constraints
     && row.abstain_semantics.length > 0 && row.unclear_semantics.length > 0 && row.interpretation_caveats.length > 0
     && (row.response_kind !== "choice" || (Array.isArray(row.allowed_values) && row.allowed_values.length > 0)))).toBe(true);
 }));
+
+test("four pilot questions retain their caller-supplied definition and target schema pins", () => {
+  const expectations = {
+    ...pilotExpectations,
+    "analysis.finding_relevance": { definition_id: "release-analysis", artifact_schema_version: "analysis-schema" },
+    "plan.criterion_traceability": { definition_id: "release-plan", artifact_schema_version: "plan-schema" },
+    "brief.source_fidelity": { definition_id: "release-brief", artifact_schema_version: "brief-schema" },
+    "assessment.coverage": { definition_id: "release-brief", artifact_schema_version: "brief-schema" },
+  };
+  const catalogue = oakridgeQuestions(expectations);
+  expect(Object.values(catalogue).map(({ definition }) => ({ question_id: String(definition.question_id),
+    version: definition.question_version, kinds: definition.target_item_kinds, pin: definition.pinned_expectation })))
+    .toEqual(Object.entries(expectations).map(([question_id, pin]) => ({ question_id, version: "v1",
+      kinds: [question_id === "analysis.finding_relevance" ? "finding" : "criterion"], pin })));
+});
+
+integration("a question without a pinned expectation is a contract error with no registration", async () => scratchGrading(async (db) => {
+  const { pinned_expectation: _, ...unpinned } = OAKRIDGE_QUESTIONS["plan.criterion_traceability"].definition;
+  // @ts-expect-error A question without an expectation cannot satisfy the registration contract.
+  const result = await registerGradingContext(db, tenant, { question: unpinned, evidence, evaluator: evaluator("code") });
+  expect(result).toMatchObject({ ok: false, error: { detail: "question requires pinned expectation" } });
+  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition").selectAll().execute())).toEqual([]);
+}));
+
+test("the HTTP question contract requires its expectation", () => {
+  const { pinned_expectation: _, ...unpinned } = OAKRIDGE_QUESTIONS["plan.criterion_traceability"].definition;
+  expect(contextSchema.safeParse({ question: unpinned, evidence, evaluator: evaluator("code") }).success).toBe(false);
+});

@@ -150,7 +150,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     .find((item) => item.item_kind === "criterion")!;
   const headers = { authorization: "Bearer grade-fixture", "content-type": "application/json" };
   const question = (id: string, expected: string | undefined, requires_repository_snapshot = false) => ({
-    question_id: id, question_version: "1", target_item_kinds: ["criterion"],
+    question_id: id, question_version: "1", pinned_expectation: { definition_id: "development", artifact_schema_version: "development-v1" }, target_item_kinds: ["criterion"],
     input_recipe: expected === undefined ? {} : { expected }, response_kind: "boolean", allowed_values: null,
     missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
     interpretation_caveats: "fixture", requires_repository_snapshot });
