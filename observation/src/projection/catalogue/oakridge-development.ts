@@ -2,9 +2,15 @@ import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type ExtractorDefinition,
   type LinkReference, type SelectedItem } from "../extractor";
 
-/** Criterion identity is flat and run-unique: a criterion outlives the cohort it was
- * planned in, so a renameable cohort id must not form part of its identity. */
+/** Legacy context-free criteria remain readable; live capture records cohort ownership. */
 export const CRITERION_SCOPE = "criterion";
+export function cohortCriterionScope(cohort_id: string): string { return `cohort/${cohort_id}/criterion`; }
+export interface ProjectionCaptureContext { readonly unit_id: string }
+function assessmentCriterionScope(context?: ProjectionCaptureContext): string {
+  const parts = context?.unit_id.split("/") ?? [];
+  const index = parts.lastIndexOf("implementation");
+  return index >= 0 && parts[index + 1] ? cohortCriterionScope(parts[index + 1]) : CRITERION_SCOPE;
+}
 
 /** These fields mirror workflow-config/development.yaml's development artifact schemas. */
 export interface Finding { readonly id: string; readonly description: string; readonly severity: string }
@@ -91,7 +97,7 @@ function definition(artifact_kind: string, schema_version: string, extractor_id:
 }
 
 /** Register selections against the captured revision's pinned schema version. */
-export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion: string): readonly ExtractorDefinition[] {
+export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion: string, context?: ProjectionCaptureContext): readonly ExtractorDefinition[] {
   const definitions: ExtractorDefinition[] = [
     definition("analysis", schemaVersion, "analysis.findings", "finding", "/findings/*",
       topList("findings", (value, path) => { const id = requiredId(value, path); return id.ok
@@ -130,7 +136,7 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (!tasks.ok) return tasks;
         const decisions = idsLink(value, "decision_ids", path, "plan", "decision", `cohort/${cohortId}/decision`, "derived_from");
         return decisions.ok ? ok(idItem("criterion", "/cohorts/*/acceptance_criteria/*", path,
-          CRITERION_SCOPE, id.value, value, [...tasks.value, ...decisions.value])) : decisions;
+          cohortCriterionScope(cohortId), id.value, value, [...tasks.value, ...decisions.value])) : decisions;
       })),
     definition("plan", schemaVersion, "plan.acceptance_criteria", "plan_wide_criterion", "/acceptance_criteria/*",
       topList("acceptance_criteria", (value, path) => typeof value === "string"
@@ -152,10 +158,10 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
           `cohort/${cohortId}/rejected_approach`, id.value, value, links.value)) : links;
       })),
     definition("brief", schemaVersion, "brief.criteria", "criterion", "/acceptance_criteria/*",
-      briefList("acceptance_criteria", (value, path) => { const id = requiredId(value, path);
-        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, CRITERION_SCOPE,
+      briefList("acceptance_criteria", (value, path, cohortId) => { const id = requiredId(value, path);
+        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, cohortCriterionScope(cohortId),
           id.value, value, [{ type: "derived_from", target_artifact_kind: "plan", target_item_kind: "criterion",
-          target_scope: CRITERION_SCOPE, target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
+          target_scope: cohortCriterionScope(cohortId), target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
       })),
     definition("assessment", schemaVersion, "assessment.findings", "assessment_finding", "/findings/*",
       topList("findings", (value, path) => { const object = objectAt(value, path);
@@ -164,7 +170,7 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (criterionId !== undefined && criterionId !== null && typeof criterionId !== "string")
           return err({ operation: "select_items", entity_id: `${path}/criterion_id`, detail: "invalid criterion id" });
         const links: LinkReference[] = typeof criterionId === "string" ? [{ type: "assesses", target_artifact_kind: "brief",
-          target_item_kind: "criterion", target_scope: CRITERION_SCOPE, target_local_id: criterionId,
+          target_item_kind: "criterion", target_scope: assessmentCriterionScope(context), target_local_id: criterionId,
           evidence_ref: `${path}/criterion_id` }] : [];
         return ok(pathItem("assessment_finding", "/findings/*", path, value, links));
       })),

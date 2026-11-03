@@ -139,7 +139,7 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("revision_id", "=", revision_id).executeTakeFirst();
     if (!revision) return null;
-    const definitions = oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version);
+    const definitions = oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version, { unit_id: revision.unit_id });
     const pass = selectRevision(revision.body, revision.revision_id, definitions);
     for (const definition of definitions) await saveDefinition(trx, tenant, definition);
     for (const issue of pass.issues) await saveIssue(trx, tenant, issue);

@@ -9,6 +9,7 @@ import { withTenant, type Database, type TenantScope } from "./database";
 import { persistOakridgeEligibility } from "../producers/oakridge/eligibility";
 import { registerQuestion } from "./grading-store";
 import { questionFromRow, checkGradingProvenance } from "./eligibility-store";
+import { CaptureArtifactSource } from "./capture-artifact-source";
 import { loadRunCapture } from "./run-capture-store";
 
 export interface CapturedEvidenceSelection {
@@ -38,7 +39,18 @@ export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, 
     .find((item) => item.occurrence_id === selection.subject_occurrence_id);
   if (!subject) return fail("subject occurrence is absent from captured run");
   const question = selection.question;
-  const manifest = runPackages(capture.value, { [question.question_id]: { definition: question, text: question.question_text ?? "" } });
+  const sources = new Map<ItemOccurrenceId, EvidenceSet>();
+  if (question.requires_repository_snapshot) {
+    try {
+      const source = new CaptureArtifactSource(db, tenant, run_id);
+      for (const item of capture.value.flatMap((revision) => revision.items)) {
+        const artifact = await source.read(item.occurrence_id);
+        if (artifact) sources.set(item.occurrence_id, await source.collect(artifact));
+      }
+    } catch (cause) { return fail(String(cause)); }
+  }
+  const manifest = runPackages(capture.value, { [question.question_id]: { definition: question, text: question.question_text ?? "" } },
+    "live_all_revisions", sources);
   if (!manifest.ok) return fail(manifest.error.detail);
   const decision = manifest.value.eligibility.find((item) => item.question_id === question.question_id
     && item.occurrence_id === subject.occurrence_id)?.decision;

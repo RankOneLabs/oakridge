@@ -1,12 +1,13 @@
-import { err, ok, type Result } from "../../domain/primitives";
+import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import type { ItemOccurrenceId } from "../../domain/identity";
 import type { EvidenceSet } from "../../grading/evidence";
 import { collectReferences, capturedReference, packagedEvidenceSet, type EvidencePackageError } from "../../grading/evidence-packages/references";
 import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
-import { provenanceEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
+import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
 import { hasPinnedPilotRecipe, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import { coverageInput } from "../../runners/coverage-checker";
 import type { PilotQuestion, PilotQuestionSelection } from "../../grading/catalogue/oakridge-questions";
 
 export interface PilotPackage {
@@ -45,11 +46,11 @@ function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevi
 }
 
 /** Capture addresses and digests with classification from the source field's declared sensitivity. */
-function reference(role: string, artifact_kind: string, item: CapturedItem) {
+function reference(role: string, artifact_kind: string, item: CapturedItem, content: JsonValue | null = null) {
   const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
   if (!kind.ok) return err({ operation: "evidence_packages" as const, entity_id: item.occurrence_id,
     detail: kind.error.detail });
-  return capturedReference(role, item, kind.value);
+  return capturedReference(role, item, kind.value, content);
 }
 
 function planPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
@@ -143,8 +144,8 @@ function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevi
 
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
 interface AssessmentSources { readonly revisions: readonly CapturedRevision[]; readonly subjects: readonly CapturedRevision[];
-  readonly requires_repository_snapshot: boolean }
-function assessmentPackages({ revisions, subjects, requires_repository_snapshot }: AssessmentSources): Result<RunPackages, RunPackageError> {
+}
+function assessmentPackages({ revisions, subjects }: AssessmentSources): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageEligibility[] = [];
@@ -163,12 +164,6 @@ function assessmentPackages({ revisions, subjects, requires_repository_snapshot 
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
     for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
-      if (requires_repository_snapshot) {
-        eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
-          decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",
-            detail: "no repository-content implementor of ArtifactSource.collect exists" } } });
-        continue;
-      }
       if (assessments.length === 0) {
         exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
           reason: { kind: "unevidenced" } });
@@ -179,7 +174,10 @@ function assessmentPackages({ revisions, subjects, requires_repository_snapshot 
           && item.links.some((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
             && link.target_item_kind === "criterion" && link.target_scope === criterion.item_scope
             && link.target_local_id === criterion.producer_local_id));
-        const references = collectReferences([reference("brief_criterion", brief.artifact_kind, criterion),
+        const links = coverageInput(criterion, findings);
+        if (!links.ok) return err({ operation: "evidence_packages", entity_id: criterion.occurrence_id, detail: links.error.detail });
+        const references = collectReferences([reference("brief_criterion", brief.artifact_kind, criterion,
+          links.value as unknown as JsonValue),
           ...findings.map((finding) => reference("assessment_finding", assessment.artifact_kind, finding))]);
         if (!references.ok) return references;
         const evidence = packagedEvidenceSet("assessment.coverage", references.value, null);
@@ -220,7 +218,8 @@ function selectSubjects(revisions: readonly CapturedRevision[], question: PilotQ
   };
 }
 
-export function runPackages(revisions: readonly CapturedRevision[], questions: PilotQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions")
+export function runPackages(revisions: readonly CapturedRevision[], questions: PilotQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions",
+  repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet> = new Map())
   : Result<RunPackages, RunPackageError> {
   for (const [question_id, question] of Object.entries(questions)) {
     if (question_id !== question.definition.question_id || !hasPinnedPilotRecipe(question.definition))
@@ -235,10 +234,9 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: P
   if (!plan.ok) return plan;
   const brief = briefPackages(selected.revisions, brief_subjects.revisions);
   if (!brief.ok) return brief;
-  const assessment = assessmentPackages({ revisions: selected.revisions, subjects: coverage_subjects.revisions,
-    requires_repository_snapshot: questions["assessment.coverage"]?.definition.requires_repository_snapshot ?? false });
+  const assessment = assessmentPackages({ revisions: selected.revisions, subjects: coverage_subjects.revisions });
   if (!assessment.ok) return assessment;
-  const packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
+  let packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
   const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
   const eligibility: PackageEligibility[] = [
     ...[analysis_subjects, plan_subjects, brief_subjects, coverage_subjects].flatMap((selection) => selection.eligibility),
@@ -257,5 +255,26 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: P
     })),
     ...assessment.value.eligibility,
   ];
+  const source_items = selected.revisions.flatMap((revision) => revision.items);
+  const enriched: PilotPackage[] = [];
+  for (const pack of packages) {
+    const question = questions[pack.question_id]?.definition;
+    if (!question?.requires_repository_snapshot) { enriched.push(pack); continue; }
+    const sources = source_items.filter((item) => pack.evidence.references.some((ref) =>
+      ref.deep_link === `oakridge://revision/${encodeURIComponent(item.revision_id)}#${item.path}`))
+      .flatMap((item) => repository_sources.get(item.occurrence_id)?.references ?? []);
+    const evidence = packagedEvidenceSet(pack.question_id,
+      [...pack.evidence.references, ...sources] as import("../../grading/evidence").EvidenceReference[],
+      pack.evidence.incompleteness_reason);
+    if (!evidence.ok) return evidence;
+    const source_revision = selected.revisions.find((revision) => revision.revision_id === pack.revision_id);
+    const decision = repositorySnapshotEligibility(evidence.value,
+      Number(question.input_recipe.minimum_repository_content ?? 1), source_revision?.reviewed_commit ?? "");
+    const index = eligibility.findIndex((item) => item.question_id === pack.question_id
+      && item.occurrence_id === pack.subject.occurrence_id);
+    if (index >= 0) eligibility[index] = { question_id: pack.question_id, occurrence_id: pack.subject.occurrence_id, decision };
+    if (decision.tag === "eligible") enriched.push({ ...pack, evidence: evidence.value });
+  }
+  packages = enriched;
   return ok({ selection_policy: policy, packages, exclusions, eligibility });
 }

@@ -2,7 +2,6 @@ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
 import type { LinkReference, SelectedItem } from "../projection/extractor";
-import { CRITERION_SCOPE } from "../projection/catalogue/oakridge-development";
 
 /** The small link view mirrors brief.criteria and assessment.findings selections. */
 export interface CoverageCriterion {
@@ -14,7 +13,7 @@ export interface CoverageFinding {
   readonly item_kind: "assessment_finding";
   readonly links: readonly CoverageLink[];
 }
-export type CoverageLink = Pick<LinkReference, "type" | "target_artifact_kind" | "target_item_kind" | "target_local_id">;
+export type CoverageLink = Pick<LinkReference, "type" | "target_artifact_kind" | "target_item_kind" | "target_scope" | "target_local_id">;
 export interface CoverageInput {
   readonly brief_criterion: CoverageCriterion;
   readonly assessment_findings: readonly CoverageFinding[];
@@ -22,10 +21,10 @@ export interface CoverageInput {
 
 export function coverageInput(briefCriterion: SelectedItem, assessmentFindings: readonly SelectedItem[])
   : Result<CoverageInput, GradingError> {
-  if (briefCriterion.item_kind !== "criterion" || briefCriterion.item_scope !== CRITERION_SCOPE
+  if (briefCriterion.item_kind !== "criterion" || !briefCriterion.item_scope
     || !briefCriterion.producer_local_id)
     return err({ operation: "coverage_input", entity_id: briefCriterion.item_id_or_path,
-      detail: "subject must be a run-scoped brief criterion" });
+      detail: "subject must have a scoped brief criterion identity" });
   if (assessmentFindings.some((finding) => finding.item_kind !== "assessment_finding"))
     return err({ operation: "coverage_input", entity_id: briefCriterion.item_id_or_path,
       detail: "all covering candidates must be assessment findings" });
@@ -33,13 +32,13 @@ export function coverageInput(briefCriterion: SelectedItem, assessmentFindings: 
     producer_local_id: briefCriterion.producer_local_id },
     assessment_findings: assessmentFindings.map((finding) => ({ item_kind: "assessment_finding", links: finding.links.map((link) => ({
       type: link.type, target_artifact_kind: link.target_artifact_kind, target_item_kind: link.target_item_kind,
-      target_local_id: link.target_local_id })) })) });
+      target_scope: link.target_scope, target_local_id: link.target_local_id })) })) });
 }
 
 /** Missing criterion_id creates no assesses link; it never creates a miss by itself. */
 export function checkAssessmentCoverage(input: CoverageInput): Result<EvaluationOutcome, GradingError> {
   const criterion = input.brief_criterion;
-  if (criterion.item_kind !== "criterion" || criterion.item_scope !== CRITERION_SCOPE || !criterion.producer_local_id)
+  if (criterion.item_kind !== "criterion" || !criterion.item_scope || !criterion.producer_local_id)
     return err({ operation: "assessment_coverage", entity_id: criterion.producer_local_id,
       detail: "invalid brief criterion identity" });
   if (input.assessment_findings.some((finding) => finding.item_kind !== "assessment_finding"))
@@ -47,7 +46,7 @@ export function checkAssessmentCoverage(input: CoverageInput): Result<Evaluation
       detail: "invalid assessment finding" });
   const covering = input.assessment_findings.filter((finding) => finding.links.some((link) =>
     link.type === "assesses" && link.target_artifact_kind === "brief"
-    && link.target_item_kind === "criterion" && link.target_local_id === criterion.producer_local_id));
+    && link.target_item_kind === "criterion" && link.target_scope === criterion.item_scope && link.target_local_id === criterion.producer_local_id));
   return ok({ answer: { state: "answered", kind: "boolean", value: covering.length > 0 },
     rationale: `${covering.length} assessment findings explicitly assess brief criterion ${criterion.producer_local_id}` });
 }
@@ -70,9 +69,9 @@ export function decodeCoverageInput(value: JsonValue): Result<CoverageInput, Gra
     const links: CoverageLink[] = [];
     for (const link of candidate.links) {
       if (!isObject(link) || typeof link.type !== "string" || typeof link.target_artifact_kind !== "string"
-        || typeof link.target_item_kind !== "string" || typeof link.target_local_id !== "string") return invalid();
+        || typeof link.target_item_kind !== "string" || typeof link.target_scope !== "string" || typeof link.target_local_id !== "string") return invalid();
       links.push({ type: link.type as LinkReference["type"], target_artifact_kind: link.target_artifact_kind,
-        target_item_kind: link.target_item_kind, target_local_id: link.target_local_id });
+        target_item_kind: link.target_item_kind, target_scope: link.target_scope, target_local_id: link.target_local_id });
     }
     findings.push({ item_kind: "assessment_finding", links });
   }

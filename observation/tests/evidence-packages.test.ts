@@ -21,7 +21,7 @@ import { buildGraph } from "./dependency-graph";
 async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const revision_id = `${kind}-first`;
-  const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
+  const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1", { unit_id: "implementation/slice" }));
   return { ...pilotExpectations["plan.criterion_traceability"], revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
@@ -135,7 +135,7 @@ for (const has_findings of [true, false]) {
 }
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
+integration("typed missing evidence decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
   const analysis = "analysis.finding_relevance" as const;
   const assessment = "assessment.coverage" as const;
   for (const question_id of [analysis, assessment]) {
@@ -146,13 +146,13 @@ integration("typed missing evidence and dependency decisions persist", async () 
   const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [
     { question_id: analysis, occurrence_id, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "no excerpt source" } } },
-    { question_id: assessment, occurrence_id, decision: { tag: "blocked_dependency" as const,
-      payload: { dependency: "ArtifactSource.collect", detail: "no implementor" } } },
+    { question_id: assessment, occurrence_id, decision: { tag: "missing_evidence" as const,
+      payload: { kind: "missing_source" as const, detail: "too few repository content references" } } },
   ] };
   const saved = await persistOakridgeEligibility(db, tenant, manifest);
   expect(saved).toEqual({ ok: true, value: 2 });
   expect((await readEligibility(db, tenant, analysis, "v1"))[0]?.tag).toBe("missing_evidence");
-  expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ dependency: "ArtifactSource.collect", detail: "no implementor" });
+  expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ kind: "missing_source", detail: "too few repository content references" });
 }));
 
 test("unsupported captured provenance stops before subject or evidence interpretation", async () => {
@@ -177,3 +177,54 @@ test("captured derivation requires the question's pinned pilot recipe", async ()
     definition: { ...entry.definition, input_recipe: {} } } });
   expect(result).toMatchObject({ ok: false, error: { detail: "question has no pinned pilot evidence recipe" } });
 });
+
+integration("repository questions follow explicit addresses into captured content, never a checkout", async () => scratchGrading(async (db) => {
+  const { captureProjectedFixture } = await import("./grading-fixture");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const { CaptureArtifactSource } = await import("../src/storage/capture-artifact-source");
+  for (const scenario of ["complete", "absent", "wrong-run", "missing-commit", "truncated"] as const) {
+    const run_id = `repository-${scenario}`;
+    const source_revision = `source-${scenario}`;
+    if (scenario !== "absent") await captureProjectedFixture(db, { run_id: scenario === "wrong-run" ? "other-run" : run_id,
+      revision_id: source_revision, artifact_kind: "repository_content", body: {
+        ...(scenario === "missing-commit" ? {} : { head_sha: "reviewed-commit" }),
+        ...(scenario === "truncated" ? { is_truncated: true } : {}),
+        content: "export const captured = true;",
+      } });
+    const items = await captureProjectedFixture(db, { run_id, revision_id: `brief-${scenario}`, artifact_kind: "brief", body: {
+      cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "criterion", text: "Works" }],
+    } });
+    const findings = await captureProjectedFixture(db, { run_id, revision_id: `assessment-${scenario}`, artifact_kind: "assessment",
+      body: { head_sha: "reviewed-commit", findings: [{ criterion_id: "criterion", evidence: [
+        { kind: "file", ref: `oakridge://revision/${source_revision}#/content` },
+      ] }] }, recorded_at: "2026-11-01T01:00:00Z" });
+    const subject = items.find((item) => item.item_kind === "criterion")!;
+    const question = { ...questions["assessment.coverage"].definition, requires_repository_snapshot: true };
+    const result = await deriveCapturedEvidence(db, tenant, run_id, {
+      subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, question,
+    });
+    if (!result.ok) throw new Error(result.error.detail);
+    if (scenario === "complete") {
+      expect(result.value.decision.tag).toBe("eligible");
+      expect(result.value.revision_id).toBe("assessment-complete");
+      const repository = result.value.evidence?.references.find((ref) => ref.kind === "repository_content");
+      const digest = canonicalDigest("export const captured = true;");
+      expect(repository).toMatchObject({ content: "export const captured = true;", digest: digest.ok ? digest.value : null,
+        reviewed_commit: "reviewed-commit", deep_link: "oakridge://revision/source-complete#/content" });
+      const source = new CaptureArtifactSource(db, tenant, run_id);
+      const finding = findings.find((item) => item.item_kind === "assessment_finding")!;
+      expect(await source.read(finding.occurrence_id as ItemOccurrenceId)).toMatchObject({ occurrence_id: finding.occurrence_id });
+      expect(await new CaptureArtifactSource(db, tenant, "other-run").read(finding.occurrence_id as ItemOccurrenceId)).toBeNull();
+      await captureProjectedFixture(db, { run_id, revision_id: "new-repository-content", artifact_kind: "repository_content",
+        body: { head_sha: "other-commit", content: "changed" }, predecessor_id: source_revision,
+        recorded_at: "2026-11-01T02:00:00Z" });
+      expect(await deriveCapturedEvidence(db, tenant, run_id, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, question }))
+        .toEqual(result);
+    } else {
+      expect(result.value.decision).toMatchObject({ tag: "missing_evidence", payload: { kind: "missing_source",
+        detail: scenario === "missing-commit" ? "repository reference has no matching reviewed commit"
+          : scenario === "truncated" ? "repository excerpt lacks canonical digest or incompleteness reason"
+            : "too few repository content references" } });
+    }
+  }
+}));

@@ -20,7 +20,7 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
       const revisions = await trx.selectFrom("observation.source_revision")
         .select(["revision_id", "unit_id", "artifact_kind", "artifact_schema_version", "definition_id", "body", "recorded_at", "predecessor_id"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("run_id", "=", run_id).execute();
+        .where("run_id", "=", run_id).orderBy("recorded_at").orderBy("revision_id").execute();
       if (revisions.length === 0) return err({ operation: "run_capture", entity_id: run_id, detail: "no captured revisions for run" });
       const occurrences = await trx.selectFrom("observation.item_occurrence")
         .select(["occurrence_id", "revision_id", "extractor_id", "item_selector", "item_id_or_path"])
@@ -37,7 +37,7 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
         row.item_id_or_path), row.occurrence_id as ItemOccurrenceId]));
       return ok(revisions.map((revision): CapturedRevision => {
         const pass = selectRevision(revision.body as JsonValue, revision.revision_id,
-          oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version));
+          oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version, { unit_id: revision.unit_id }));
         const items = pass.items.flatMap(({ definition, item }): CapturedItem[] => {
           const occurrence_id = ids.get(occurrenceKey(revision.revision_id, definition.extractor_id,
             item.item_selector, item.item_id_or_path));
@@ -45,7 +45,8 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
             links: item.links.filter((link) => !link.if_present
               || linked.has(`${occurrence_id}\u0000${link.type}\u0000${link.evidence_ref}`)) }] : [];
         });
-        return { revision_id: revision.revision_id, unit_id: revision.unit_id, artifact_kind: revision.artifact_kind,
+        const body = revision.body as { readonly head_sha?: JsonValue } | null;
+        return { ...(body && typeof body.head_sha === "string" ? { reviewed_commit: body.head_sha } : {}), revision_id: revision.revision_id, unit_id: revision.unit_id, artifact_kind: revision.artifact_kind,
           definition_id: revision.definition_id, artifact_schema_version: revision.artifact_schema_version,
           recorded_at: revision.recorded_at, predecessor_id: revision.predecessor_id, items };
       }));

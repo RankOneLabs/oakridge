@@ -30,7 +30,7 @@ test("an assessment finding without criterion_id adds no miss or inferred link",
     { description: "integration finding", evidence: [] },
     { criterion_id: criterion.producer_local_id, description: "criterion finding", evidence: [] },
   ] };
-  const findings = selectRevision(assessment, "assessment-revision", oakridgeDevelopmentCatalogue("assessment", "development-v1"))
+  const findings = selectRevision(assessment, "assessment-revision", oakridgeDevelopmentCatalogue("assessment", "development-v1", { unit_id: "implementation/alpha" }))
     .items.map(({ item }) => item);
   expect(findings[0]?.links).toEqual([]);
   const input = coverageInput(criterion, findings);

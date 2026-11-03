@@ -13,10 +13,9 @@ test("the pinned plan catalogue addresses cohort ids and plan-wide paths honestl
   const pass = selectRevision(await fixture("plan"), "plan-1", definitions);
   expect(pass.issues).toEqual([]);
   const criterion = pass.items.find(({ item }) => item.item_kind === "criterion")?.item;
-  expect(criterion?.item_scope).toBe("criterion");
+  expect(criterion?.item_scope).toBe("cohort/alpha/criterion");
   expect(criterion?.producer_local_id).toBe("crit-a");
-  // A criterion outlives the cohort it was planned in, so its scope carries no cohort id.
-  // A decision does not, and stays cohort-scoped.
+  // Criteria and decisions retain cohort ownership even when local ids repeat.
   const decision = pass.items.find(({ item }) => item.item_kind === "decision")?.item;
   expect(decision?.item_scope).toBe("cohort/alpha/decision");
   const planWide = pass.items.find(({ item }) => item.item_kind === "plan_wide_criterion")?.item;

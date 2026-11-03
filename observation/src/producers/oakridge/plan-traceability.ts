@@ -1,6 +1,5 @@
 import { err, ok, type Result } from "../../domain/primitives";
 import type { LinkReference, SelectedItem } from "../../projection/extractor";
-import { CRITERION_SCOPE } from "../../projection/catalogue/oakridge-development";
 import type { ExclusionReason } from "../../grading/eligibility";
 
 /** Items a plan criterion may cite. Decisions share the criterion's own plan revision, so they are
@@ -32,9 +31,9 @@ function resolve<T extends SelectedItem>(links: readonly LinkReference[], item_k
 /** Decide, before any grader runs, whether a plan criterion's own citations can be traced. */
 export function planCriterionEligibility<T extends SelectedItem>(criterion: SelectedItem, sources: TraceabilitySources<T>)
   : Result<TraceabilityEligibility<T>, TraceabilityError> {
-  if (criterion.item_kind !== "criterion" || criterion.item_scope !== CRITERION_SCOPE || !criterion.producer_local_id)
+  if (criterion.item_kind !== "criterion" || !criterion.item_scope || !criterion.producer_local_id)
     return err({ operation: "plan_traceability", entity_id: criterion.item_id_or_path,
-      detail: "subject must be a run-scoped plan criterion" });
+      detail: "subject must have a scoped plan criterion identity" });
   const task_links = citations(criterion, "tasks", "task");
   const decision_links = citations(criterion, "plan", "decision");
   if (task_links.length === 0 && decision_links.length === 0) return ok({ kind: "uncited" });

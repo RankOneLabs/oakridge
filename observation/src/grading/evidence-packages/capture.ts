@@ -13,6 +13,7 @@ export interface CapturedRevision extends RecordedProvenance {
   readonly recorded_at: Date;
   readonly predecessor_id?: string | null;
   readonly items: readonly CapturedItem[];
+  readonly reviewed_commit?: string;
 }
 
 /** Explicit historical backfill policy. Live selection retains all captured revisions. */
