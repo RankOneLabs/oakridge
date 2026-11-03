@@ -8,7 +8,7 @@ import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityD
 import { pinnedPilotRecipe, recipeSlots, unsatisfiedSlots, type EvidenceBuild, type EvidenceSlot,
   type PilotEvidenceRecipe, type SlotSource, type SubjectBinding } from "../../grading/evidence-packages/pilot-recipe";
 import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
-import { hasCapturedEvidenceRecipe } from "../../grading/evidence-packages/recipe";
+import { hasCapturedEvidenceRecipe, pinnedRepositoryMinimum } from "../../grading/evidence-packages/recipe";
 import { coverageInput } from "../../runners/coverage-checker";
 import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
 import type { QuestionDefinition } from "../../grading/question";
@@ -100,6 +100,8 @@ function linkedSourcePackages({ revisions, subjects, question, recipe }: Builder
         }
         if (slot.source.from === "unscheduled") continue;
         const relation = slot.source;
+        // The pin schema refuses an inward relation for this build, so every relation here is
+        // declared by the subject's own links and resolved against a backward-looking pool.
         const links = declaredLinks(subject, relation);
         declared += links.length;
         const pool = slotPool(revisions, host, relation);
@@ -330,7 +332,12 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   const shortfallOf = new Map(underEvidenced.map((pack) => [String(pack.evidence.evidence_set_id), pack]));
   const unsatisfiedDecision = (pack: PilotPackage): EligibilityDecision => ({ tag: "missing_evidence",
     payload: { kind: "missing_source", detail: `pinned recipe is unsatisfied for ${slotShortfall(pack).join(", ")}` } });
-  let packages = [...satisfied];
+  // A subject whose pinned decision is a slot shortfall has no admissible package. The window
+  // builder emits one package per source revision, so without this an earlier satisfied package
+  // survives and the repository pass below overwrites the shortfall decision from it.
+  const shortSubjects = new Set(underEvidenced.map((pack) => `${pack.question_id} ${pack.subject.occurrence_id}`));
+  const admissible = satisfied.filter((pack) => !shortSubjects.has(`${pack.question_id} ${pack.subject.occurrence_id}`));
+  let packages = [...admissible];
   const exclusions = batches.flatMap((batch) => batch.exclusions);
   // A builder that names its own eligible evidence set — the assessment window picks the latest
   // in the window — must not keep that decision when the package it names failed the slot check.
@@ -343,7 +350,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   const undecided = (pack: PilotPackage) => !decided.has(`${pack.question_id} ${pack.subject.occurrence_id}`);
   const eligibility: PackageDecision[] = [
     ...fromBuilders,
-    ...satisfied.filter(undecided).map((pack): PackageDecision => ({ question_id: pack.question_id,
+    ...admissible.filter(undecided).map((pack): PackageDecision => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
     ...underEvidenced.filter(undecided).map((pack): PackageDecision => ({ question_id: pack.question_id,
@@ -377,8 +384,10 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
       pack.evidence.incompleteness_reason);
     if (!evidence.ok) return evidence;
     const source_revision = selected.revisions.find((revision) => revision.revision_id === pack.revision_id);
-    const decision = repositorySnapshotEligibility(evidence.value,
-      Number(question.input_recipe.minimum_repository_content ?? 1), source_revision?.reviewed_commit ?? "");
+    const minimum = pinnedRepositoryMinimum(question);
+    if (!minimum.ok) return minimum;
+    const decision = repositorySnapshotEligibility(evidence.value, minimum.value,
+      source_revision?.reviewed_commit ?? "");
     const index = eligibility.findIndex((item) => item.question_id === pack.question_id
       && item.occurrence_id === pack.subject.occurrence_id);
     if (index >= 0) eligibility[index] = { question_id: pack.question_id, occurrence_id: pack.subject.occurrence_id, decision };

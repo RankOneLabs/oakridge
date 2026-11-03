@@ -111,7 +111,15 @@ const buildSchema = z.discriminatedUnion("kind", [
  * never needs a table keyed by question id. A question is supported because of what it pins. */
 const pinnedRecipeSchema = z.object({ recipe_version: z.literal("v1"), build: buildSchema,
   subject: z.object({ artifact_kind: z.string().min(1), item_kind: z.string().min(1) }),
-  input: z.array(slotSchema), output: z.array(slotSchema) });
+  input: z.array(slotSchema), output: z.array(slotSchema) })
+  // `linked_sources` resolves each relation against the newest source revision captured at or
+  // before the subject, because a subject cites what existed when it was written. An inward
+  // relation points the other way in time — the items that reference a subject are captured
+  // after it — so it needs a forward window and belongs to `assessment_window`. Refusing the
+  // combination here keeps a pin from naming a walk no builder performs.
+  .refine((recipe) => recipe.build.kind !== "linked_sources"
+    || ![...recipe.input, ...recipe.output].some((slot) => slot.source.from === "linked" && slot.source.direction === "in"),
+    { message: "linked_sources cannot walk an inward relation" });
 
 export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefinition["input_recipe"] {
   const slot = (entry: EvidenceSlot) => ({ role: entry.role, source: { ...entry.source },

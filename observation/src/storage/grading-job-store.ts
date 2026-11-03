@@ -8,6 +8,7 @@ import { withTenant, type Database, type TenantScope } from "./database";
 import { checkGradingProvenance } from "./eligibility-store";
 import type { ObservationGradingJob } from "./db-types";
 import { registerGradingContext, validateIdentity } from "./grading-store";
+import { pinnedRepositoryMinimum } from "../grading/evidence-packages/recipe";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
@@ -44,8 +45,9 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
     if (evidence.is_incomplete && question.missing_evidence_policy === "fail")
       throw new Error(evidence.incompleteness_reason ?? "evidence set is incomplete");
     if (question.requires_repository_snapshot) {
-      const snapshot = repositorySnapshotEligibility(evidence,
-        Number(question.input_recipe.minimum_repository_content ?? 1), input.reviewed_commit ?? "");
+      const minimum = pinnedRepositoryMinimum(question);
+      if (!minimum.ok) throw new Error(minimum.error.detail);
+      const snapshot = repositorySnapshotEligibility(evidence, minimum.value, input.reviewed_commit ?? "");
       if (snapshot.tag !== "eligible") throw new Error("repository evidence is not eligible for grading");
     }
     const item = await trx.selectFrom("observation.item_occurrence as i")
