@@ -1,4 +1,4 @@
-import type { ArtifactRevision } from "../../types";
+import type { ArtifactRevision } from "../../artifact-types";
 import { formatRelative } from "../../../lib/time";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";

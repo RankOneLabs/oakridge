@@ -3,7 +3,7 @@ import type { ArtifactRevisionEnvelope, EvidenceSetEnvelope, ExecutionEnvelope, 
 
 type Formats = ObservationEnvelope["format"];
 type ExpectedFormats =
-  | "observation.artifact-revision/v1" | "observation.item/v1" | "observation.relation/v1"
+  | "observation.artifact-revision/v2" | "observation.item/v1" | "observation.relation/v1"
   | "observation.evidence-set/v1" | "observation.question/v1" | "observation.execution/v1" | "observation.grade/v1";
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const allFormatsArePinned: Equal<Formats, ExpectedFormats> = true;

@@ -1,0 +1,6 @@
+{
+  "branch": "cohort/live-verification/bc33be",
+  "pr_url": "https://github.com/RankOneLabs/oakridge/pull/771",
+  "review_status": "ready",
+  "summary": "Adds isolated production source-run capture, authenticated question/evidence HTTP readback, a real TypeSafe criterion grade and regenerated run-slice fixtures. Actual MCP role tools are recorded, but credential enforcement remains blocked because invalid bearers receive HTTP 200."
+}

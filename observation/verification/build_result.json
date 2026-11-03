@@ -1,0 +1,67 @@
+{
+  "summary": "Implemented isolated real source-run automation, authenticated immutable-record readback and verified fixture regeneration; review fixes preserve nonzero starting cursors, page eligibility and grade listings, skip ineligible criteria and avoid MCP probes when credentials are absent. Run run-5ca31bc6c2414610 produced the graded plan criterion; TypeSafe execution 9bdc9b8d-9c7b-4065-b663-7b35a56adae6 returned traceable with probabilities 0.92/0.04/0.04 and confidence 0.88, and one completed provider attempt is retained locally with its HTTP-read records. All requested suites passed (2,013 passed, zero failed, five reported skips), repository typecheck and definition-store --check passed, and no real database was reset or stack deployed. Live role-credential proof remains blocked by the external MCP server, and revised task artifacts await a current publication credential after the original secret was refused.",
+  "repository_key": "oakridge",
+  "changed_files": [
+    "kbbl/core/acp/gated-review-tools.smoke.test.ts",
+    "kbbl/core/acp/gated-review-tools.test.ts",
+    "kbbl/package.json",
+    "oakridge-dbos/scripts/live-source-agent.ts",
+    "oakridge-dbos/scripts/live-source-git.ts",
+    "oakridge-dbos/scripts/live-source-run.ts",
+    "oakridge-dbos/tests/source-run.smoke.test.ts",
+    "observation/fixtures/oakridge/run-slice/PROVENANCE.md",
+    "observation/fixtures/oakridge/run-slice/assessment-revision.json",
+    "observation/fixtures/oakridge/run-slice/brief-revision.json",
+    "observation/fixtures/oakridge/run-slice/events.json",
+    "observation/fixtures/oakridge/run-slice/operator-decisions.json",
+    "observation/fixtures/oakridge/run-slice/plan-revision.json",
+    "observation/scripts/jev-live-walkthrough.ts",
+    "observation/scripts/live-grade-subject.ts",
+    "observation/scripts/regenerate-live-fixtures.ts",
+    "observation/src/http/app.ts",
+    "observation/src/http/grading-records.ts",
+    "observation/src/storage/capture-store.ts",
+    "observation/src/storage/grading-record-store.ts",
+    "observation/tests/evidence-packages.test.ts",
+    "observation/tests/failure-cases.test.ts",
+    "observation/tests/grading-records.test.ts",
+    "observation/tests/jev-direct.test.ts",
+    "observation/tests/live-fixture-provenance.test.ts",
+    "observation/tests/live-walkthrough.test.ts",
+    "observation/tests/vertical-slice.test.ts",
+    "observation/verification/.gitignore",
+    "observation/verification/README.md",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/authority-rows.json",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/capture.json",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/complete.json",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/grade.json",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/inspect.json",
+    "observation/verification/a670bcfbaa3045bc8d4415ac29222b73/run.json",
+    "observation/verification/build_result.json",
+    "observation/verification/gated-review.json",
+    "observation/verification/latest.json",
+    "observation/verification/pr.json",
+    "observation/verification/source-input.json",
+    "workflow-config/src/definitions.test.ts"
+  ],
+  "tests": {
+    "passed": 2013,
+    "failed": 0,
+    "summary": "2,013 passed; 5 environment-gated skips; repository typecheck and committed definition-store --check passed. A real ACP source run and a real TypeSafe direct grade also completed separately from the default test gates. Review regressions: 7 walkthrough tests and 3 offline MCP prerequisite tests passed; the updated walkthrough reread the same real execution with exactly one provider attempt.",
+    "output": "workflow-config: 54 pass, 0 fail.\nkbbl backend: 412 pass, 2 skip, 0 fail.\nkbbl PWA: 782 passed across 91 files.\nkbbl browser: 3 pass, 0 fail.\noakridge-dbos unit: 259 pass, 2 skip, 0 fail.\noakridge-dbos integration: 218 pass, 0 fail.\nobservation: 285 pass, 1 skip, 0 fail; Ran 286 tests across 43 files.\nSKIP: gated-review live tools/list; missing GATED_REVIEW_BUILDER_TOKEN, GATED_REVIEW_ASSESSOR_TOKEN.\nSKIP: default source-run gate lacks OAKRIDGE_LIVE_RUN_INPUT; default grading gate lacks environment key/capture opt-ins. Both source capture and direct grade were run explicitly using real prerequisites.\nTypecheck: exit 0. Definition-store generator --check: exit 0. git diff --check: clean."
+  },
+  "known_issues": [
+    {
+      "severity": "blocking",
+      "description": "The reachable gated-review server has no credential issuer or bearer validator in its checked-out implementation. Live initialization and tools/list with a deliberately invalid bearer returned HTTP 200 for both builder and assessor, rather than the required 401/403. Actual tool names and statuses are committed in observation/verification/gated-review.json; no credentials were fabricated and the gated check was not weakened. Its operator must add credential issuance/validation."
+    },
+    {
+      "severity": "blocking",
+      "description": "The original task publication secret was refused with HTTP 401 (publication secret refused). Parent runtime readback shows the builder attempt already succeeded. The pr update was not recorded, so build_result was not submitted out of order; current credentials are required to republish these prepared artifacts."
+    },
+    {
+      "severity": "info",
+      "description": "PR #771 is open and non-draft; the review fixes are on the cohort branch. Its original description predates the follow-up; gated-review exposes no PR-body edit tool. Current implementation and evidence are documented in observation/verification/README.md."
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { useStore } from "../../state/store";
 import type { Sid } from "../../lib/ids";
 import type { SessionSnapshot } from "../../types";
-import type { RunDetail } from "../types";
+import type { RunDetail } from "../run-types";
 import { selectPurgedRunSessionIds, type RunSessionsRead } from "./run-sessions";
 import { resolveWorkspaceState } from "./run-workspace-restore";
 import type { RunWorkspaceState } from "./run-workspace";

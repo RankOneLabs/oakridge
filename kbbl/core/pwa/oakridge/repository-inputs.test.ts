@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "./repository-inputs";
-import type { ProjectId } from "./types";
+import type { ProjectId } from "./project-types";
 
 const projectId = "project-1" as ProjectId;
 

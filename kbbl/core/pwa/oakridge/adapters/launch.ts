@@ -1,5 +1,5 @@
 import type { OperatorDefinitionDetail, OperatorLaunchRequest } from "../operator-contracts";
-import type { CreateRunRequest } from "../types";
+import type { CreateRunRequest } from "../run-types";
 import { selectAgentSessionTargets } from "../lib/agent-session-targets";
 import { fail, ok, type AdapterResult } from "./core";
 
@@ -44,6 +44,6 @@ export function developmentLaunch(body: CreateRunRequest, definition: OperatorDe
   const input: DevelopmentInput = { title: body.epic_profile.title, spec: body.context.brief_notes, repositories,
     primary_repository_key: repositories[0].key,
     final_merge_policy: body.epic_profile.final_merge_policy === "guarded" ? "require_merge" : "allow_close_without_merge" };
-  return ok({ request_id: requestId, digest: definition.digest, project_id: body.project_id, input,
+  return ok({ request_id: requestId, definition_id: definition.definition_id, project_id: body.project_id, input,
     config: { sessions: body.context.session_settings } });
 }

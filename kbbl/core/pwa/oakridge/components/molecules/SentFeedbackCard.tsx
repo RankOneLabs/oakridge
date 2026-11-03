@@ -1,6 +1,6 @@
 import { formatExactTime, formatRelative } from "../../../lib/time";
 import { selectSentFeedbackTitle } from "../../lib/sent-review-feedback";
-import type { SentReviewFeedback } from "../../types";
+import type { SentReviewFeedback } from "../../artifact-types";
 
 /** Feedback the operator already sent, kept on screen until the agent answers it with a new revision. */
 export function SentFeedbackCard({ feedback }: { feedback: SentReviewFeedback }) {

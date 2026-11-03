@@ -3,5 +3,5 @@ import type { EvaluatorKind } from "../grading/evaluator";
 
 export interface GradeRunner {
   readonly kind: EvaluatorKind;
-  run(context: GradingContext): Promise<RunnerResult>;
+  run(context: GradingContext, onRequest?: () => Promise<boolean>): Promise<RunnerResult>;
 }

@@ -3,7 +3,7 @@ import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { GateDecisionActions } from "./GateDecisionActions";
 import { selectRepositoryAttentionContext, selectUnitAttentionLabel } from "../../lib/run-attention";
 import { useConfirmCohortMerged } from "../../hooks/useConfirmCohortMerged";
-import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../types";
+import type { CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../../artifact-types";
 
 function itemToGate(item: ReviewInboxItem): ParkedGate | null {
   if (item.kind !== "artifact_gate" && item.kind !== "merge_confirmation") return null;
@@ -20,6 +20,8 @@ function itemToGate(item: ReviewInboxItem): ParkedGate | null {
     artifact_revision_id: item.artifact_revision_id,
     worktree: null,
     resume_actions: item.resume_actions,
+    // The inbox projection carries displayed actions only; it cannot establish the full offer.
+    offered_decisions: [],
     pr_url: item.pr_url,
     // The inbox only queues gates whose run is still active (`get_review_inbox`
     // filters on `actionable`); stranded gates are rendered on the run instead.

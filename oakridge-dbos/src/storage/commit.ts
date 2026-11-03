@@ -1,18 +1,17 @@
 import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/client";
-import { compileWorkflow, selectWanted, type CompiledAgainst, type WantedForUnit } from "../core-client/client";
-import { VALIDATION_REVIEW, type BlockedReason, type CodeOperation, type CompiledWorkflow, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type UnitStatus, type Writer, type Workflow } from "../core-client/core-types";
+import { compileDefinition, selectWanted, type WantedForUnit } from "../core-client/client";
+import { VALIDATION_REVIEW, type BlockedReason, type Event, type Incoming, type ParsedWorkflow, type StepSnapshot, type StepResult, type Type, type UnitStatus, type Writer } from "../core-client/core-types";
 import { selectEffectInstruction, type RunWorkerAction } from "../domain/effect-instruction";
 import type { RunConfig } from "../domain/run-config";
 import { isTerminalStatus } from "../domain/unit-status";
 import { renderTemplate } from "../domain/prompt-template";
-import type { ActionId, DefinitionBundleId, IngressId, ProjectId, RunId, TracedError, UnitId, Result } from "../domain/primitives";
+import type { ActionId, DefinitionId, IngressId, ProjectId, RunId, TracedError, UnitId, Result } from "../domain/primitives";
 import type { CommitFaultNotice } from "../projections/operator-event";
 import { selectRunEventFields, type RunEvent, type RunEventFields } from "../projections/run-event";
 import { selectUnitTree } from "../projections/unit-label";
 import { anyOf, jsonText, type Database, type DatabaseTransaction } from "./database";
 import type { CommitReceipt, ReviewPrompt, ReviewPrompts, StallRecord, WantedWorkers } from "./json-column-types";
-import { readPromptTexts } from "./registry-store";
 import { START_OWED_STATUSES } from "./executor-store";
 import { readStepSnapshot } from "./snapshot-store";
 
@@ -23,7 +22,7 @@ export interface CommitRequest {
   readonly event: Event;
   readonly writer: Writer;
   /** Required with `launched`: the run is created pinned to this definition. */
-  readonly launch?: { readonly definition_bundle_id: DefinitionBundleId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
+  readonly launch?: { readonly definition_id: DefinitionId; readonly project_id: ProjectId | null; readonly config: RunConfig | null };
   /**
    * Only with `worker_started`: the sha256 hex of the publication secret minted
    * for the attempt's session. Commit stores it on the attempt, and publish
@@ -57,6 +56,67 @@ const fault = (run_id: string, detail: string, unit_id: string | null = null): C
   ({ error: { operation: "commit_event", entity_id: run_id, detail }, unit_id });
 const violation = (run_id: string, detail: string): Result<never, CommitViolation> =>
   ({ ok: false, error: { operation: "select_commit_plan", entity_id: run_id, detail } });
+
+type GeneratedValue = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: string };
+const generatedFailure = (detail: string): GeneratedValue => ({ ok: false, error: detail });
+const objectFields = (value: unknown): { readonly [key: string]: unknown } | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as { readonly [key: string]: unknown } : null;
+function resolvedType(type: Type, aliases: ParsedWorkflow["schemas"]): Type {
+  let current = type;
+  const visited = new Set<string>();
+  while (current.kind === "named" && !visited.has(current.schema)) {
+    visited.add(current.schema);
+    const next = aliases?.[current.schema];
+    if (!next) break;
+    current = next;
+  }
+  return current;
+}
+function collectGeneratedIds(type: Type, value: unknown, aliases: ParsedWorkflow["schemas"], ids: Set<string>): void {
+  const resolved = resolvedType(type, aliases);
+  if (resolved.kind === "uuid" && resolved.generated && typeof value === "string") ids.add(value);
+  if (resolved.kind === "optional" && value !== null) collectGeneratedIds(resolved.value, value, aliases, ids);
+  if (resolved.kind === "list" && Array.isArray(value)) for (const item of value) collectGeneratedIds(resolved.item, item, aliases, ids);
+  if (resolved.kind === "record") {
+    const fields = objectFields(value);
+    if (fields) for (const [key, fieldType] of Object.entries(resolved.fields)) collectGeneratedIds(fieldType, fields[key], aliases, ids);
+  }
+}
+/** Fill generated fields recursively. A supplied ID is only valid on an operator edit of its predecessor. */
+function enrichGenerated(type: Type, value: unknown, aliases: ParsedWorkflow["schemas"], allowed: ReadonlySet<string>, seen: Set<string> | null = null): GeneratedValue {
+  const resolved = resolvedType(type, aliases);
+  if (resolved.kind === "uuid" && resolved.generated) {
+    const id = value === undefined ? crypto.randomUUID() : value;
+    if (typeof id !== "string" || (value !== undefined && !allowed.has(id))) return generatedFailure("generated identity does not belong to the predecessor");
+    if (seen?.has(id)) return generatedFailure("duplicate generated identity in one list");
+    seen?.add(id);
+    return { ok: true, value: id };
+  }
+  if (resolved.kind === "optional" && (value === undefined || value === null)) return { ok: true, value };
+  if (resolved.kind === "optional") return enrichGenerated(resolved.value, value, aliases, allowed, seen);
+  if (resolved.kind === "list" && Array.isArray(value)) {
+    const listSeen = new Set<string>();
+    const items: unknown[] = [];
+    for (const item of value) {
+      const next = enrichGenerated(resolved.item, item, aliases, allowed, listSeen);
+      if (!next.ok) return next;
+      items.push(next.value);
+    }
+    return { ok: true, value: items };
+  }
+  if (resolved.kind === "record") {
+    const fields = objectFields(value);
+    if (!fields) return { ok: true, value };
+    const output: { [key: string]: unknown } = { ...fields };
+    for (const [key, fieldType] of Object.entries(resolved.fields)) {
+      const next = enrichGenerated(fieldType, fields[key], aliases, allowed, seen);
+      if (!next.ok) return next;
+      if (next.value !== undefined) output[key] = next.value;
+    }
+    return { ok: true, value: output };
+  }
+  return { ok: true, value };
+}
 
 /** Canonical JSON: object keys sorted, so a replay matches regardless of key order. */
 function canonical(value: unknown): string {
@@ -188,7 +248,7 @@ async function commitInTransaction(trx: DatabaseTransaction, core: CoreClient, r
   if (request.event.kind !== "launched") return { created: false, outcome: await commitToRun(trx, core, request) };
   const launch = request.launch;
   if (!launch) return { created: false, outcome: { ok: true, value: { kind: "missing", detail: "a launch names its pinned definition" } } };
-  const created = await trx.insertInto("authority.run").values({ id: request.run_id, definition_bundle_id: launch.definition_bundle_id,
+  const created = await trx.insertInto("authority.run").values({ id: request.run_id, definition_id: launch.definition_id,
     project_id: launch.project_id, config: launch.config === null ? null : jsonText(launch.config) })
     .onConflict((conflict) => conflict.column("id").doNothing()).returning("id").executeTakeFirst();
   return { created: created !== undefined, outcome: await commitToRun(trx, core, request) };
@@ -222,10 +282,10 @@ async function storeLaunchRefusal(db: Database, request: CommitRequest, launch: 
 
 async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: CommitRequest): Promise<Result<CommitOutcome, CommitFault>> {
   const { run_id } = request;
-  const run = await trx.selectFrom("authority.run").select(["id", "definition_bundle_id", "config"])
+  const run = await trx.selectFrom("authority.run").select(["id", "definition_id", "config"])
     .where("id", "=", run_id).forUpdate().executeTakeFirst();
   if (!run) return { ok: true, value: { kind: "missing", detail: "run not found" } };
-  if (request.launch && run.definition_bundle_id !== request.launch.definition_bundle_id)
+  if (request.launch && run.definition_id !== request.launch.definition_id)
     return { ok: true, value: { kind: "conflict", detail: "run is pinned to a different definition" } };
   const digest = requestDigest(request);
   const receipt = await readReceipt(trx, request);
@@ -238,13 +298,28 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
     return { ok: true, value: { kind: "rejected", reason } };
   };
   if (!unit_id.ok) return reject(unit_id.reason, null);
-  const definition = await trx.selectFrom("authority.definition_bundle").select(["digest", "source", "checked_program", "prompts"])
-    .where("id", "=", run.definition_bundle_id).executeTakeFirst();
-  if (!definition) return { ok: false, error: fault(run_id, `pinned definition ${run.definition_bundle_id} is missing`) };
+  const resolved = await compileDefinition(core, run.definition_id as DefinitionId);
+  if (!resolved.ok) return { ok: false, error: fault(run_id, `${resolved.error.operation} ${resolved.error.entity_id}: ${resolved.error.detail}`) };
+  const definition = resolved.value;
   const snapshot = await readStepSnapshot(trx, run_id, unit_id.value);
   if (!snapshot) return reject(`unit ${unit_id.value} is not part of run ${run_id}`, null);
-  const incoming: Incoming = { event: request.event, writer: request.writer, ingress_id: request.ingress_id };
-  const stepped = await stepPinned(trx, core, { run_id, definition, snapshot, incoming });
+  let effectiveRequest = request;
+  if (request.event.kind === "revision_published") {
+    const event = request.event;
+    const unit = snapshot.units.find((candidate) => candidate.id === event.unit);
+    const workflow = definition.checked_program.workflow;
+    const schema = unit?.kind.kind === "stage" ? workflow.stages[unit.kind.stage]?.artifacts[event.artifact]?.schema : undefined;
+    if (schema) {
+      const allowed = new Set<string>();
+      const previous = snapshot.revisions.find((revision) => revision.id === event.predecessor && revision.unit === event.unit && revision.artifact === event.artifact);
+      if (request.writer.kind === "operator" && previous) collectGeneratedIds(schema, previous.body, workflow.schemas, allowed);
+      const enriched = enrichGenerated(schema, event.body, workflow.schemas, allowed);
+      if (!enriched.ok) return reject(enriched.error, unit_id.value);
+      effectiveRequest = { ...request, event: { ...event, body: enriched.value } };
+    }
+  }
+  const incoming: Incoming = { event: effectiveRequest.event, writer: request.writer, ingress_id: request.ingress_id };
+  const stepped = await stepPinned(core, { run_id, definition, snapshot, incoming });
   if (!stepped.ok) return stepped;
   if (stepped.value.kind === "rejected") return reject(stepped.value.reason, unit_id.value);
   if (stepped.value.kind === "stalled") {
@@ -257,7 +332,7 @@ async function commitToRun(trx: DatabaseTransaction, core: CoreClient, request: 
       payload: jsonText({ kind: "invalidate", data: { target: "run", run_id } }) }).execute();
     return { ok: true, value: { kind: "rejected", reason } };
   }
-  const existing = await readCommitExisting(trx, { request, digest, unit_id: unit_id.value, source: definition.source,
+  const existing = await readCommitExisting(trx, { request: effectiveRequest, digest, unit_id: unit_id.value, source: definition.source,
     parsed_workflow: definition.checked_program.workflow,
     prompts: definition.prompts, config: run.config, step: stepped.value.step });
   const planned = selectCommitPlan(snapshot, stepped.value.step, existing);
@@ -284,7 +359,7 @@ async function affectedUnit(trx: DatabaseTransaction, run_id: string, event: Eve
 
 interface StepInput {
   readonly run_id: string;
-  readonly definition: { readonly digest: string; readonly source: Workflow; readonly checked_program: CompiledWorkflow; readonly prompts: { readonly [path: string]: string } };
+  readonly definition: import("../core-client/client").CompiledDefinition;
   readonly snapshot: StepSnapshot;
   readonly incoming: Incoming;
 }
@@ -293,34 +368,14 @@ type Stepped =
   | { readonly kind: "rejected"; readonly reason: string }
   /** The event was refused because advancing the run past it stopped at `unit`. */
   | { readonly kind: "stalled"; readonly unit: string; readonly reason: string };
-/** The operations a definition was pinned under; definitions pinned before they were recorded have none. */
-const pinnedOperations = (compiled: CompiledWorkflow): readonly CodeOperation[] | undefined =>
-  (compiled as Partial<Pick<CompiledAgainst, "operations">>).operations;
-
-/**
- * Step against the pinned program, compiling it from its pinned source,
- * prompts and operations when the core has not cached it. The pinned
- * operations, not today's registry, so a changed operation contract never
- * strands a run that is already pinned.
- */
-async function stepPinned(trx: DatabaseTransaction, core: CoreClient, input: StepInput): Promise<Result<Stepped, CommitFault>> {
-  // The core caches programs by its own digest of the source; the definition's
-  // digest also covers its prompts, so it is not the core's key.
-  const core_digest = input.definition.checked_program.digest;
-  const step = () => core.request("step", { workflow_digest: core_digest, snapshot: input.snapshot, incoming: input.incoming });
-  let response = await step();
+/** Recompile exact committed inputs once if Rust has evicted the program before stepping. */
+async function stepPinned(core: CoreClient, input: StepInput): Promise<Result<Stepped, CommitFault>> {
+  const step = (workflow_digest: string) => core.request("step", { workflow_digest, snapshot: input.snapshot, incoming: input.incoming });
+  let response = await step(input.definition.checked_program.digest);
   if (!response.ok && response.error.kind === "domain" && response.error.detail.kind === "unknown_bundle") {
-    const texts = await readPromptTexts(trx, Object.values(input.definition.prompts));
-    const prompts = Object.fromEntries(Object.entries(input.definition.prompts).flatMap(([path, digest]) => {
-      const text = texts.get(digest);
-      return text === undefined ? [] : [[path, text]];
-    }));
-    const compiled = await compileWorkflow(core, { workflow: input.definition.source, prompts,
-      operations: pinnedOperations(input.definition.checked_program) });
-    if (!compiled.ok) return { ok: false, error: fault(input.run_id, `pinned definition no longer compiles: ${compiled.error.detail}`) };
-    if (compiled.value.digest !== core_digest) return { ok: false, error: fault(input.run_id,
-      `pinned definition compiles to ${compiled.value.digest}, not ${core_digest}`) };
-    response = await step();
+    const resolved = await compileDefinition(core, input.definition.definition_id);
+    if (!resolved.ok) return { ok: false, error: fault(input.run_id, `${resolved.error.operation} ${resolved.error.entity_id}: ${resolved.error.detail}`) };
+    response = await step(resolved.value.checked_program.digest);
   }
   if (!response.ok) {
     if (response.error.kind === "domain" && response.error.detail.kind === "rejected_event")
@@ -422,6 +477,7 @@ async function writeDelta(trx: DatabaseTransaction, run_id: string, plan: DeltaP
       .where("action_id", "=", attempt.action_id).where("seq", "=", attempt.seq).execute();
   for (const revision of plan.created_revisions)
     await trx.insertInto("authority.artifact_revision").values({ id: revision.id, run_id, unit_id: revision.unit, artifact: revision.artifact, seq: revision.seq,
+      decision_cursor: revision.decision_cursor ?? 0,
       body: jsonText(revision.body), by_id: revision.by, predecessor_id: revision.predecessor ?? null, subject: revision.subject ?? null }).execute();
   for (const decision of plan.created_decisions) {
     const is_validation = decision.kind === "validation";
@@ -440,7 +496,7 @@ interface CommitReadInput {
   readonly request: CommitRequest;
   readonly digest: string;
   readonly unit_id: string | null;
-  readonly source: Workflow;
+  readonly source: import("../core-client/source-types").WorkflowDefinitionDescriptor;
   readonly parsed_workflow?: import("../core-client/core-types").ParsedWorkflow;
   readonly prompts: { readonly [path: string]: string };
   readonly config: RunConfig | null;
@@ -454,22 +510,15 @@ export interface CommitExisting extends Omit<CommitReadInput, "step"> {
   readonly logged_wanted: ReadonlyMap<string, WantedWorkers>;
   readonly event_id: string;
 }
-function reviewPromptPath(source: Workflow, parsed: ParsedWorkflow | undefined, stage: string | null, review: string): string | null {
-  if (stage === null) return null;
-  return parsed?.stages[stage]?.reviews?.[review]?.prompt
-    ?? source.stages[stage]?.reviews?.[review]?.prompt ?? null;
+interface ReviewPromptLocation { readonly workflow: ParsedWorkflow | undefined; readonly stage: string | null; readonly review: string }
+function reviewPromptPath(location: ReviewPromptLocation): string | null {
+  return location.stage === null ? null : location.workflow?.stages[location.stage]?.reviews?.[location.review]?.prompt ?? null;
 }
 async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInput): Promise<CommitExisting> {
-  const { request, step, source, parsed_workflow, prompts } = input;
+  const { request, step, source, prompts } = input;
   const unit_ids = step.snapshot.units.map((unit) => unit.id);
   const wanted = selectWanted(step);
-  const paths = step.reviews.flatMap((review) => {
-    const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
-    const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = reviewPromptPath(source, parsed_workflow, stage, review.review);
-    return path ? [path] : [];
-  });
-  const [intent_rows, review_rows, logged_rows, prompt_texts] = await Promise.all([
+  const [intent_rows, review_rows, logged_rows] = await Promise.all([
     unit_ids.length ? trx.selectFrom("authority.effect_intent").select("action_id").where("run_id", "=", request.run_id)
       .where("unit_id", "=", anyOf(unit_ids)).execute() : Promise.resolve([]),
     unit_ids.length ? trx.selectFrom("authority.unit").select(["id", "review_prompts", "blocked_reason"]).where("run_id", "=", request.run_id)
@@ -479,11 +528,10 @@ async function readCommitExisting(trx: DatabaseTransaction, input: CommitReadInp
       .distinctOn("wanted.unit_id").select(["wanted.unit_id", "wanted.actions"]).where("wanted.run_id", "=", request.run_id)
       .where("wanted.unit_id", "=", anyOf(wanted.map((item) => item.unit_id)))
       .orderBy("wanted.unit_id").orderBy("event.created_at", "desc").orderBy("event.id", "desc").execute() : Promise.resolve([]),
-    readPromptTexts(trx, paths.flatMap((path) => prompts[path] ?? [])),
   ]);
   return { request, digest: input.digest, unit_id: input.unit_id, source,
     parsed_workflow: input.parsed_workflow, prompts, config: input.config,
-    intent_actions: intent_rows.map((row) => row.action_id), review_rows, prompt_texts,
+    intent_actions: intent_rows.map((row) => row.action_id), review_rows, prompt_texts: new Map(Object.entries(prompts)),
     logged_wanted: new Map(logged_rows.map((row) => [row.unit_id, row.actions])), event_id: crypto.randomUUID() };
 }
 
@@ -532,7 +580,7 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
     const unit = step.snapshot.units.find((candidate) => candidate.id === worker.unit);
     if (unit?.kind.kind !== "stage") return violation(run_id, `wanted worker ${worker.unit}/${worker.worker} is not on a stage`);
     const instruction = selectEffectInstruction({ run_id, workflow: source, parsed_workflow: existing.parsed_workflow,
-      prompts, stage: unit.kind.stage, config,
+      prompts: Object.fromEntries(Object.entries(prompts).map(([path, text]) => [path, createHash("sha256").update(text).digest("hex")])), stage: unit.kind.stage, config,
       action, seq: attempt_seq, resolved });
     if (!instruction.ok) return violation(run_id, instruction.error.detail);
     intents.push({ unit_id: worker.unit, action_id: action_id as ActionId, seq: attempt_seq, instruction: instruction.value });
@@ -544,9 +592,8 @@ export function selectCommitPlan(before: StepSnapshot, step: StepResult, existin
   for (const review of step.reviews) {
     const kind = step.snapshot.units.find((unit) => unit.id === review.unit)?.kind;
     const stage = kind?.kind === "stage" ? kind.stage : null;
-    const path = reviewPromptPath(source, existing.parsed_workflow, stage, review.review);
-    const digest = path ? prompts[path] : undefined;
-    const text = digest === undefined ? undefined : existing.prompt_texts.get(digest);
+    const path = reviewPromptPath({ workflow: existing.parsed_workflow, stage, review: review.review });
+    const text = path === null ? undefined : existing.prompt_texts.get(path);
     if (text === undefined) return violation(run_id, `review ${review.review} on ${review.unit} has no pinned prompt text`);
     const inputs = typeof review.inputs === "object" && review.inputs !== null ? review.inputs as { readonly [key: string]: unknown } : {};
     const unit = rendered.get(review.unit) ?? {};

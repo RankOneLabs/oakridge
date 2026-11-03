@@ -44,7 +44,7 @@ for (const packageName of ["oakridge-dbos", "kbbl"]) {
 }
 
 test("running grading service imports only its declared local infrastructure packages", () => {
-  const allowed = new Set(["hono", "kysely", "pg", "zod"]);
+  const allowed = new Set(["canonical-json", "hono", "kysely", "pg", "zod"]);
   const external = reachable(graph, serviceEntry).flatMap((node) => node.packages)
     .filter((name) => !name.startsWith("node:") && !name.startsWith("bun:"));
   expect(external.filter((name) => !allowed.has(name))).toEqual([]);
@@ -55,7 +55,7 @@ test("running grading service imports only its declared local infrastructure pac
 });
 
 test("grading ports do not depend on storage modules", () => {
-  for (const name of ["grade-runner", "evaluation-backend", "artifact-source", "experiment-exporter"]) {
+  for (const name of ["grade-runner", "artifact-source", "experiment-exporter"]) {
     const entry = resolve(import.meta.dir, `../src/ports/${name}.ts`);
     const portGraph = buildGraph([entry]);
     expect(reachable(portGraph, entry).some((node) => node.path.includes("/storage/"))).toBe(false);

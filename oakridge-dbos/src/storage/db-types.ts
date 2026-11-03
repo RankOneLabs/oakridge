@@ -1,7 +1,7 @@
 // Generated from src/storage/migrations/0001_core.sql. Run bun oakridge-dbos/scripts/generate-storage-records.ts.
 // jsonb column types come from each column's @type comment, resolved in json-column-types.ts.
 
-import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CompiledWorkflow, CoreEvent, DefinitionBundleSource, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, PinnedPrompts, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
+import type { AttemptStatus, BlockedReason, Cause, CollaborationMessageBody, CollaborationThreadContext, CommitReceipt, CoreEvent, EffectInstruction, ForgeRepository, JsonColumn, Mode, NullableJsonColumn, OperatorEventPayload, ReviewItemBody, ReviewPrompts, RunConfig, RuntimeValue, UnitStatus, WantedWorkers, Writer } from "./json-column-types";
 import type { ColumnType } from "kysely";
 
 export type AuthorityDecisionEffect = "approve" | "request_changes";
@@ -24,6 +24,7 @@ export interface AuthorityArtifactRevision {
   body: JsonColumn<RuntimeValue>;
   by_id: string | null;
   created_at: Generated<Timestamp>;
+  decision_cursor: Generated<number>;
   id: string;
   predecessor_id: string | null;
   run_id: string;
@@ -77,25 +78,6 @@ export interface AuthorityCollaborationThread {
   id: string;
   run_id: string;
   unit_id: string;
-}
-
-export interface AuthorityDefinitionBundle {
-  archived_at: Timestamp | null;
-  /**
-   * @type {CompiledWorkflow}
-   */
-  checked_program: JsonColumn<CompiledWorkflow>;
-  created_at: Generated<Timestamp>;
-  digest: string;
-  id: string;
-  /**
-   * @type {PinnedPrompts}
-   */
-  prompts: Generated<JsonColumn<PinnedPrompts>>;
-  /**
-   * @type {DefinitionBundleSource}
-   */
-  source: JsonColumn<DefinitionBundleSource>;
 }
 
 export interface AuthorityEffectIntent {
@@ -170,11 +152,6 @@ export interface AuthorityProject {
   repo_dir: string;
 }
 
-export interface AuthorityPromptContent {
-  content: string;
-  content_digest: string;
-}
-
 export interface AuthorityReviewDecision {
   created_at: Generated<Timestamp>;
   decision: string;
@@ -212,7 +189,7 @@ export interface AuthorityRun {
    */
   config: NullableJsonColumn<RunConfig>;
   created_at: Generated<Timestamp>;
-  definition_bundle_id: string;
+  definition_id: string;
   id: string;
   /**
    * @type {RuntimeValue}
@@ -270,13 +247,11 @@ export interface DB {
   "authority.attempt": AuthorityAttempt;
   "authority.collaboration_message": AuthorityCollaborationMessage;
   "authority.collaboration_thread": AuthorityCollaborationThread;
-  "authority.definition_bundle": AuthorityDefinitionBundle;
   "authority.effect_intent": AuthorityEffectIntent;
   "authority.event": AuthorityEvent;
   "authority.ingress_receipt": AuthorityIngressReceipt;
   "authority.operator_event": AuthorityOperatorEvent;
   "authority.project": AuthorityProject;
-  "authority.prompt_content": AuthorityPromptContent;
   "authority.review_decision": AuthorityReviewDecision;
   "authority.review_item": AuthorityReviewItem;
   "authority.run": AuthorityRun;

@@ -13,8 +13,8 @@ export interface RevisionFields extends RevisionAddress {
   readonly digest: CanonicalDigest;
 }
 export type ArtifactRevisionEnvelope =
-  | { readonly format: "observation.artifact-revision/v1"; readonly kind: "structured"; readonly payload: RevisionFields & { readonly body: JsonValue } }
-  | { readonly format: "observation.artifact-revision/v1"; readonly kind: "text"; readonly payload: RevisionFields & { readonly body: string } };
+  | { readonly format: "observation.artifact-revision/v2"; readonly kind: "structured"; readonly payload: RevisionFields & { readonly body: JsonValue } }
+  | { readonly format: "observation.artifact-revision/v2"; readonly kind: "text"; readonly payload: RevisionFields & { readonly body: string } };
 
 export interface OccurrenceFields { readonly occurrence_id: ItemOccurrenceId; readonly address: RevisionAddress; readonly digest: CanonicalDigest }
 export type ItemOccurrenceEnvelope =

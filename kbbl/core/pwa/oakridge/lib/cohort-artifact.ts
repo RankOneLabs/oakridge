@@ -1,4 +1,5 @@
-import type { ArtifactDetail, ArtifactRevision, RunDetail } from "../types";
+import type { ArtifactDetail, ArtifactRevision } from "../artifact-types";
+import type { RunDetail } from "../run-types";
 
 /** Whether a sibling artifact for the same cohort could be read, and why not when it could not. */
 export type CohortArtifactLookup<T> =

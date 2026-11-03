@@ -5,7 +5,7 @@ import type { BuildBrief } from "../../lib/build-brief";
 import { readBuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
 import linkedBrief from "../../lib/__fixtures__/id-linked-brief.json";
-import type { CohortId, RepositoryKey } from "../../types";
+import type { CohortId, RepositoryKey } from "../../run-types";
 import { BuildResultViewer } from "./BuildResultViewer";
 
 const result: BuildResult = {

@@ -1,3 +1,4 @@
+import { sampleDefinition } from "./committed-fixture";
 /**
  * Ingress (rescue spec R2, part 1 §7.1) against a migrated database: every
  * route resolves its writer from the credential and never from the body (K4),
@@ -12,7 +13,7 @@ import { createHttpApp } from "../src/http/app";
 import { browserWritePolicy } from "../src/http/browser-write-policy";
 import { launchRunId } from "../src/storage/commit";
 import { reportWorker, type WorkerReport } from "../src/workflows/executor-ingress";
-import { actionOf, openAuthority, pinSample, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, openAuthority, unitOf, type Authority } from "./authority-fixture";
 
 const CONTROL_TOKEN = "ingress-test-token";
 const OPERATOR_SUBJECT = `credential:${createHash("sha256").update(CONTROL_TOKEN).digest("hex").slice(0, 24)}`;
@@ -20,10 +21,10 @@ const FORGED: Writer = { kind: "engine" };
 
 let authority: Authority;
 let app: Hono;
-let digest: string;
+let definition_id: string;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ digest } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
   app = createHttpApp({ db: authority.db, core: authority.core, wake: () => undefined, application_version: "test",
     access: { kind: "token_required", token: CONTROL_TOKEN }, write_policy: browserWritePolicy([]) });
 });
@@ -42,7 +43,7 @@ const sha256 = (text: string): string => createHash("sha256").update(text).diges
 
 async function launched(): Promise<RunId> {
   const request_id = crypto.randomUUID();
-  const response = await send("POST", "/api/runs", { request_id, digest, input: { topic: "Oakridge" } });
+  const response = await send("POST", "/api/runs", { request_id, definition_id, input: { topic: "Oakridge" } });
   if (response.status !== 201) throw new Error(`launch failed: ${response.status} ${await response.text()}`);
   return launchRunId(request_id);
 }
@@ -65,7 +66,7 @@ const draft = (overrides: Record<string, unknown> = {}) => ({ request_id: crypto
 
 test("K4: launch takes its writer from the control token, not the body", async () => {
   const request_id = crypto.randomUUID();
-  await send("POST", "/api/runs", { request_id, digest, input: { topic: "Oakridge" }, writer: FORGED });
+  await send("POST", "/api/runs", { request_id, definition_id, input: { topic: "Oakridge" }, writer: FORGED });
   expect((await events(launchRunId(request_id))).map((event) => event.writer)).toEqual([{ kind: "operator", subject: OPERATOR_SUBJECT }]);
 });
 
@@ -103,7 +104,7 @@ test("a decision addressed to a group unit is rejected without recording a commi
   const faults = await authority.db.selectFrom("authority.operator_event").select("payload").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 
@@ -114,7 +115,7 @@ test("a retry addressed to a group unit is rejected without recording a commit f
   const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 
@@ -124,7 +125,7 @@ test("an operator revision addressed to a group unit is rejected without recordi
   const faults = await authority.db.selectFrom("authority.operator_event").select("id").where("run_id", "=", run_id)
     .where((eb) => eb(eb.ref("payload", "->>").key("kind"), "=", "commit_fault")).execute();
   expect({ status: response.status, body: await response.json(), faults: faults.length }).toEqual({
-    status: 409, body: { kind: "rejected", reason: "unit is a group" }, faults: 0,
+    status: 409, body: { error: "unit is a group", code: "conflict" }, faults: 0,
   });
 });
 
@@ -239,6 +240,6 @@ test("a decision on a stale revision is refused by step and records no event", a
 });
 
 test("an operator route refuses a request without the control token", async () => {
-  const response = await send("POST", "/api/runs", { request_id: crypto.randomUUID(), digest, input: { topic: "Oakridge" } }, null);
+  const response = await send("POST", "/api/runs", { request_id: crypto.randomUUID(), definition_id, input: { topic: "Oakridge" } }, null);
   expect(response.status).toBe(401);
 });

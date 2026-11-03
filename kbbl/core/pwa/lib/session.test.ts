@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunDetail, RunSummary } from "../oakridge/types";
+import type { RunDetail, RunSummary } from "../oakridge/run-types";
 import { selectSessionRunTitle, selectSessionStageName } from "./session";
 
 const runSummary: RunSummary = {

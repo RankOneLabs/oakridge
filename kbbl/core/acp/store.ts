@@ -24,6 +24,7 @@ import type {
   TerminalSessionSummaryDraft,
   TurnKey,
 } from "./types";
+import { parseGatedReviewAccess } from "./types";
 
 // Stable canonicalization of a start spec: sort object keys recursively, then sha256 the JSON. Same spec must hash identically
 // regardless of property order in the HTTP body.
@@ -158,13 +159,23 @@ interface RawAcpSessionRow {
   run_id: string | null;
   unit_id: string | null;
   worker: string | null;
+  gated_review_json: string | null;
+}
+
+/** Invalid persisted grants fail closed. */
+function decodeStoredGatedReview(raw: string | null): AcpSessionWorkflowIdentity["gated_review"] {
+  if (raw === null) return null;
+  try {
+    return parseGatedReviewAccess(JSON.parse(raw));
+  } catch { return null; }
 }
 
 /** Absence is the nullable: yields `null` unless all three columns are non-null. */
 function toAcpSessionRow(raw: RawAcpSessionRow): AcpSessionRow {
-  const { run_id, unit_id, worker, ...rest } = raw;
+  const { run_id, unit_id, worker, gated_review_json, ...rest } = raw;
+  const gated_review = decodeStoredGatedReview(gated_review_json);
   const workflow: AcpSessionWorkflowIdentity | null =
-    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker } : null;
+    run_id !== null && unit_id !== null && worker !== null ? { run_id, unit_id, worker, ...(gated_review ? { gated_review } : {}) } : null;
   return { ...rest, workflow } as AcpSessionRow;
 }
 
@@ -219,12 +230,13 @@ export class AcpSessionStore {
   ): void {
     this.db
       .prepare(
-        `UPDATE acp_sessions SET run_id = ?, unit_id = ?, worker = ?, updated_at = ? WHERE sid = ?`,
+        `UPDATE acp_sessions SET run_id = ?, unit_id = ?, worker = ?, gated_review_json = ?, updated_at = ? WHERE sid = ?`,
       )
       .run(
         workflow.run_id,
         workflow.unit_id,
         workflow.worker,
+        workflow.gated_review ? JSON.stringify(workflow.gated_review) : null,
         nowIso(),
         sid,
       );
@@ -254,14 +266,15 @@ export class AcpSessionStore {
           string | null,
           string | null,
           string | null,
+          string | null,
         ]
       >(
         `INSERT INTO acp_sessions (
            sid, resumable_key, start_spec_hash, agent_profile, name,
            artifact_id, project_workdir, worktree_path, requested_model,
            requested_effort, requested_mode, status, last_activity_at,
-           created_at, updated_at, run_id, unit_id, worker
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)
+           created_at, updated_at, run_id, unit_id, worker, gated_review_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -282,6 +295,7 @@ export class AcpSessionStore {
         input.workflow?.run_id ?? null,
         input.workflow?.unit_id ?? null,
         input.workflow?.worker ?? null,
+        input.workflow?.gated_review ? JSON.stringify(input.workflow.gated_review) : null,
       )!;
     this.notifySessionsChanged();
     return toAcpSessionRow(row);

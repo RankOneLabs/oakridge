@@ -404,7 +404,7 @@ pub fn compile_workflow_with_limits_and_projection_detailed(
     let parsed = passes::parse(source)?;
     let resolved = passes::resolve(parsed)?;
     let checked = passes::check(resolved, operations, prompts, limits)?;
-    passes::lower(checked)
+    passes::lower(checked, operations, prompts)
 }
 pub fn compile_workflow(
     source: &Workflow,

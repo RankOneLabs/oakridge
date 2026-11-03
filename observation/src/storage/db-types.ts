@@ -16,8 +16,7 @@ export interface ObservationSourceRevision {
   unit_id: string;
   artifact_kind: string;
   artifact_schema_version: string;
-  definition_bundle_id: string;
-  definition_bundle_digest: string;
+  definition_id: string;
   body: JsonValue;
   body_digest: string;
   recorded_at: Date;
@@ -124,7 +123,8 @@ export interface ObservationQuestionDefinition {
   interpretation_caveats: string;
   requires_repository_snapshot: boolean;
   question_text: string | null;
-  evidence_recipe_provenance: JsonValue | null;
+  expected_definition_id: string;
+  expected_artifact_schema_version: string;
 }
 
 export interface ObservationEvidenceSet {
@@ -206,8 +206,8 @@ export interface ObservationGradeObservation {
   quality_flags: Generated<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
-  label_origin: Generated<string>;
-  collection_mode: string | null;
+  origin: string;
+  collection_mode: string;
   blind_assignment_id: string | null;
   model_answers_visible: boolean | null;
   workflow_decisions_visible: boolean | null;
@@ -320,50 +320,6 @@ export interface ObservationSourceCollaborationComment {
   recorded_at: Date;
 }
 
-export interface ObservationLangfuseMapping {
-  producer: string;
-  namespace: string;
-  mapping_key: string;
-  occurrence_id: string;
-  evidence_set_id: string;
-  evidence_set_digest: string;
-  question_id: string;
-  question_version: string;
-  projection_version: string;
-  execution_id: string;
-  attempt_id: string;
-  trace_id: string | null;
-  observation_id: string | null;
-  score_id: string | null;
-  queue_item_id: string | null;
-  sync_state: string;
-  created_at: Generated<Date>;
-  updated_at: Generated<Date>;
-}
-
-export interface ObservationLangfuseSyncTransition {
-  producer: string;
-  namespace: string;
-  transition_id: Generated<string>;
-  mapping_key: string;
-  from_state: string | null;
-  to_state: string;
-  recorded_at: Generated<Date>;
-}
-
-export interface ObservationLangfuseInboundQuarantine {
-  producer: string;
-  namespace: string;
-  quarantine_id: Generated<string>;
-  mapping_key: string | null;
-  score_id: string | null;
-  observation_id: string | null;
-  sync_state: string;
-  raw_payload: JsonValue;
-  reason: string;
-  recorded_at: Generated<Date>;
-}
-
 export interface ObservationEvaluationEligibility {
   producer: string;
   namespace: string;
@@ -399,7 +355,24 @@ export interface ObservationGradingJob {
   retry_limit: number;
   terminal_cause: string | null;
   estimated_cost: Generated<number>;
-  disclosure: JsonValue | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ObservationGradingProviderAttempt {
+  producer: string;
+  namespace: string;
+  job_id: string;
+  attempt: number;
+  run_id: string;
+  stage_id: string;
+  request_sent: Generated<boolean>;
+  outcome: string | null;
+  charged_cost: Generated<number>;
+  admitted_estimate: number;
+  cost_overage: Generated<number>;
+  provider_request_id: string | null;
+  failure_category: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -442,10 +415,8 @@ export interface DB {
   "observation.source_operator_cursor": ObservationSourceOperatorCursor;
   "observation.source_backfill_position": ObservationSourceBackfillPosition;
   "observation.source_collaboration_comment": ObservationSourceCollaborationComment;
-  "observation.langfuse_mapping": ObservationLangfuseMapping;
-  "observation.langfuse_sync_transition": ObservationLangfuseSyncTransition;
-  "observation.langfuse_inbound_quarantine": ObservationLangfuseInboundQuarantine;
   "observation.evaluation_eligibility": ObservationEvaluationEligibility;
   "observation.grading_job": ObservationGradingJob;
+  "observation.grading_provider_attempt": ObservationGradingProviderAttempt;
   "observation.blind_assignment": ObservationBlindAssignment;
 }

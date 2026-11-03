@@ -1,6 +1,7 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 
-import type { Project, RepositoryInputDraft } from "../../types";
+import type { RepositoryInputDraft } from "../../run-types";
+import type { Project } from "../../project-types";
 import { Button } from "../../../components/atoms/Button";
 
 interface RepositoryLaunchFieldsProps {

@@ -48,7 +48,7 @@ type Write = "insertInto" | "updateTable" | "deleteFrom";
 const SANCTIONED: { readonly [path: string]: { readonly [table: string]: readonly Write[] } } = {
   "storage/commit.ts": Object.fromEntries(WORKFLOW_STATE.map((table) => [table, ["insertInto", "updateTable"]])),
   "storage/executor-store.ts": { effect_intent: ["updateTable"] },
-  "storage/registry-store.ts": { operator_event: ["insertInto"], run: ["updateTable"] },
+  "storage/operator-store.ts": { operator_event: ["insertInto"], run: ["updateTable"] },
   "storage/run-deletion.ts": { ...Object.fromEntries(WORKFLOW_STATE.map((table) => [table, ["deleteFrom"]])),
     run: ["deleteFrom", "updateTable"], operator_event: ["insertInto"] },
 };
@@ -84,6 +84,6 @@ test("each check fails on an injected violation", () => {
     query: queryOutsideStorage(injected("http/app.ts", 'db.selectFrom("authority.run")')),
     raw: rawSqlViolations(injected("storage/read-store.ts", "await sql`SELECT 1`.execute(db);")),
     driver: rawSqlViolations(injected("storage/commit.ts", "await client.query('SELECT 1');")),
-    write: workflowStateWrites(injected("storage/registry-store.ts", 'trx.insertInto("authority.event")')),
-  }).toEqual({ query: ["http/app.ts"], raw: ["storage/read-store.ts:1"], driver: ["storage/commit.ts:1"], write: ["storage/registry-store.ts: insertInto event"] });
+    write: workflowStateWrites(injected("storage/operator-store.ts", 'trx.insertInto("authority.event")')),
+  }).toEqual({ query: ["http/app.ts"], raw: ["storage/read-store.ts:1"], driver: ["storage/commit.ts:1"], write: ["storage/operator-store.ts: insertInto event"] });
 });

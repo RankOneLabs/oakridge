@@ -1,4 +1,5 @@
-import type { CohortLifecycleSummary, RepositoryKey, ReviewInboxItem } from "../types";
+import type { CohortLifecycleSummary, ReviewInboxItem } from "../artifact-types";
+import type { RepositoryKey } from "../run-types";
 
 /** Actionable review work grouped by the run that owns it. */
 export function selectRunAttentionCounts(

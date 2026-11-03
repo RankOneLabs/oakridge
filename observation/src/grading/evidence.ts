@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { CanonicalDigest, EvidenceSetId } from "../domain/identity";
 import { err, type JsonValue, type Result } from "../domain/primitives";
 
@@ -15,7 +15,7 @@ export interface EvidenceReference {
   readonly is_unreadable?: boolean;
   readonly incompleteness_reason?: string;
 }
-/** Pre-migration rows can lack classification and are denied by disclosure. */
+/** Stored references may predate capture-time classification. */
 export type StoredEvidenceReference = Omit<EvidenceReference, "kind"> & { readonly kind?: EvidenceKind };
 export interface EvidenceSet {
   readonly evidence_set_id: EvidenceSetId;

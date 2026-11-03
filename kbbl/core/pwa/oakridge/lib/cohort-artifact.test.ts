@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { ArtifactDetail, RunDetail } from "../types";
+import type { ArtifactDetail } from "../artifact-types";
+import type { RunDetail } from "../run-types";
 import { readBuildBrief, type BuildBrief } from "./build-brief";
 import { selectCohortArtifactId, selectCohortArtifactLookup, type CohortArtifactLookup, type CohortArtifactSources } from "./cohort-artifact";
 

@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -67,12 +68,10 @@ const api = async (method: string, path: string, body?: unknown): Promise<Respon
   fetch(`${base_url}${path}`, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 const segment = encodeURIComponent;
 async function launch(workflow: Workflow, input: unknown, script: AgentScript): Promise<string> {
-  const pinned = await api("POST", "/api/definitions", workflow);
-  if (!pinned.ok) throw new Error(`pin refused: ${pinned.status} ${await pinned.text()}`);
-  const { digest } = await pinned.json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: workflow });
   const request_id = crypto.randomUUID();
   scripts.set(launchRunId(request_id), script);
-  const launched = await api("POST", "/api/runs", { request_id, digest, input });
+  const launched = await api("POST", "/api/runs", { request_id, definition_id, input });
   if (launched.status !== 201) throw new Error(`launch refused: ${await launched.text()}`);
   return (await launched.json() as { readonly run_id: string }).run_id;
 }

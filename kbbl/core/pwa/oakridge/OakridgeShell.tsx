@@ -5,13 +5,12 @@ import { ArtifactWorkspaceRedirectView } from "./views/ArtifactWorkspaceRedirect
 import { NewRunView } from "./views/NewRunView";
 import { CreateProjectView } from "./views/CreateProjectView";
 import { WorkflowDefListView } from "./views/WorkflowDefListView";
-import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
 import { SessionWorkspaceRedirectView } from "./views/SessionWorkspaceRedirectView";
 import { formatRunWorkspaceHash, type OakridgeSubRoute } from "../lib/hash";
 import type { ArtifactId } from "../lib/ids";
-import type { WorkflowDefSummary } from "./types";
+import type { WorkflowDefSummary } from "./project-types";
 interface OakridgeShellInnerProps {
   route: OakridgeSubRoute;
   runAttentionCounts: ReadonlyMap<string, number>;
@@ -52,8 +51,6 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
   const navigateToDefs = () => onNavigate("oakridge/defs");
   const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
-  const navigateToDefNew = () => onNavigate("oakridge/def-new");
-  const navigateToDefEdit = (id: string) => onNavigate(`oakridge/def-edit/${encodeURIComponent(id)}`);
 
   let content: React.ReactNode;
   switch (route.sub) {
@@ -113,9 +110,7 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
     case "defs":
       content = (
         <WorkflowDefListView
-          onNew={navigateToDefNew}
           onSelect={(def: WorkflowDefSummary) => navigateToDef(def.id)}
-          onClone={(def: WorkflowDefSummary) => navigateToDefEdit(def.id)}
         />
       );
       break;
@@ -124,30 +119,10 @@ function OakridgeShellInner({ route, runAttentionCounts, onNavigate }: OakridgeS
         <WorkflowDefDetailView
           definitionId={route.id}
           onBack={navigateToDefs}
-          onClone={() => navigateToDefEdit(route.id)}
         />
       );
       break;
-    case "def-new":
-      content = (
-        <WorkflowDefEditorView
-          key="new"
-          cloneFromId={null}
-          onBack={navigateToDefs}
-          onCreated={navigateToDefs}
-        />
-      );
-      break;
-    case "def-edit":
-      content = (
-        <WorkflowDefEditorView
-          key={route.id}
-          cloneFromId={route.id}
-          onBack={navigateToDefs}
-          onCreated={navigateToDefs}
-        />
-      );
-      break;
+
   }
 
   return (

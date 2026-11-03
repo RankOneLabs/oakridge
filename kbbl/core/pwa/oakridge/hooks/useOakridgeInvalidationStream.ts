@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { invalidateCachedRunUnits, refreshReviewInboxRun } from "../client";
 import { replaceDevelopmentInboxRun } from "../adapters/inbox";
 import type { OperatorStreamInvalidation } from "../operator-contracts";
-import type { ArtifactDetail, ReviewInbox } from "../types";
+import type { ArtifactDetail, ReviewInbox } from "../artifact-types";
 import { subscribeOakridgeStream } from "./useOakridgeRunEventStream";
 
 export function useOakridgeInvalidationStream(isEnabled: boolean): void {

@@ -1,11 +1,11 @@
-import type { WorkflowDefSummary } from "../oakridge/types";
+import type { WorkflowDefSummary } from "../oakridge/project-types";
 
 export function sortWorkflowDefinitions(
   definitions: readonly WorkflowDefSummary[],
 ): WorkflowDefSummary[] {
   return [...definitions].sort((left, right) => {
     if (left.name !== right.name) return left.name.localeCompare(right.name);
-    return right.version - left.version;
+    return left.id.localeCompare(right.id);
   });
 }
 

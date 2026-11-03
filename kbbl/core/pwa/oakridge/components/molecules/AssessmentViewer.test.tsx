@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Assessment } from "../../lib/assessment";
 import type { BuildBrief } from "../../lib/build-brief";
 import type { BuildResult } from "../../lib/build-result";
-import type { CohortId, RepositoryKey } from "../../types";
+import type { CohortId, RepositoryKey } from "../../run-types";
 import { parseAssessment } from "../../lib/assessment";
 import { readBuildBrief } from "../../lib/build-brief";
 import linkedAssessment from "../../lib/__fixtures__/id-linked-assessment.json";
@@ -44,7 +44,7 @@ const assessment: Assessment = {
     { criterion_id: null, criterion: "Every fixture exists.", status: "not_met", evidence: { kind: "legacy", text: "B, E, F and G are missing." }, description: null },
   ],
   test_evidence: { passed: 1274, failed: 0, output: null, summary: "Independently re-run.", cargo_test_output: null },
-  recommended_next_actions: ["Supply the missing fixtures."],
+  recommended_next_actions: [{ id: "00000000-0000-4000-8000-000000000001", text: "Supply the missing fixtures." }],
 };
 
 const renderViewer = () => render(

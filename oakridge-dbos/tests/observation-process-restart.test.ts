@@ -1,10 +1,11 @@
+import { sampleDefinition } from "./committed-fixture";
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { createApp } from "../../observation/src/http/app";
 import { openDatabase as openObservationDatabase, withTenant } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { jsonText } from "../src/storage/database";
-import { launch, openAuthority, pinSample, scratchDatabase, submitter } from "./authority-fixture";
+import { launch, openAuthority, scratchDatabase, submitter } from "./authority-fixture";
 
 test("an oakridge-dbos process restart resumes from the service-held cursor", async () => {
   const authority = await openAuthority();
@@ -16,8 +17,8 @@ test("an oakridge-dbos process restart resumes from the service-held cursor", as
     await migrateObservation(observation);
     const app = createApp({ db: observation, credentials: { ingest: [{ ...tenant, token: "ingest" }], read: [{ ...tenant, token: "read" }] } });
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) });
-    const { bundle_id } = await pinSample(authority);
-    const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "restart" } });
+    const { definition_id } = await sampleDefinition();
+    const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "restart" } });
     await submitter(authority)({ run_id, event: { kind: "cancel_requested" } });
     const start = () => Bun.spawn([process.execPath, "oakridge-dbos/src/main.ts"], {
       cwd: resolve(import.meta.dir, "../.."), stdout: "ignore", stderr: "ignore",

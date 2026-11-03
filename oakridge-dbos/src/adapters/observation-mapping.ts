@@ -3,7 +3,7 @@ import type { CommittedEventRow, PinnedDefinitionRead } from "../storage/read-st
 import { artifactSchemaVersion, bodyDigest, declarationDigest } from "./observation-schema-version";
 import type { JsonValue, SourceEventOutcome } from "./observation-wire";
 import type { Selectable } from "kysely";
-import type { AuthorityCollaborationMessage, AuthorityCollaborationThread, AuthorityReviewDecision } from "../storage/db-types";
+import type { AuthorityCollaborationMessage, AuthorityCollaborationThread } from "../storage/db-types";
 
 export const MAPPED_EVENTS = ["revision_published", "operator_decided", "launched"] as const satisfies readonly Event["kind"][];
 export const DELIBERATELY_UNMAPPED_EVENTS = ["worker_started", "worker_ended", "retry_requested", "cancel_requested"] as const satisfies readonly Event["kind"][];
@@ -20,8 +20,7 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   const { row, definition } = input;
   const event = row.payload;
   const identity = { run_id: row.run_id ?? "", event_id: row.id };
-  const provenance = { format: "observation.source-event/v1", definition_bundle: definition
-    ? { id: definition.bundle_id, digest: definition.digest } : null, artifact_schema_version: null } as const;
+  const provenance = { format: "observation.source-event/v1", definition_id: definition?.definition_id ?? null, artifact_schema_version: null } as const;
   const unmapped = (reason: string): SourceEventOutcome => ({ ...provenance, kind: "unmapped", event_kind: event.kind, ...identity, reason });
   switch (event.kind) {
     case "revision_published": {
@@ -33,10 +32,10 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
       const revision_id = `${event.unit}:${event.artifact}:${input.revision_sequence}`;
       const prefix = `oakridge:${input.namespace}:`;
       return { ...provenance, artifact_schema_version: version, kind: "artifact_revision", event_kind: event.kind, ...identity,
-        revision: { format: "observation.artifact-revision/v1", source: {
+        revision: { format: "observation.artifact-revision/v2", source: {
           producer: "oakridge", namespace: input.namespace, revision_id: `${prefix}${revision_id}`,
           run_id: identity.run_id, unit_id: event.unit, artifact_kind: event.artifact, artifact_schema_version: version,
-          definition_bundle: { id: definition.bundle_id, digest: definition.digest },
+          definition_id: definition.definition_id,
           predecessor_id: event.predecessor ? `${prefix}${event.predecessor}` : null,
           subject_id: event.subject ? `${prefix}${event.subject}` : null, by_id: event.by ?? null },
           recorded_at: row.created_at.toISOString(), body: event.body as JsonValue, body_digest: bodyDigest(event.body as JsonValue) } };
@@ -58,23 +57,10 @@ export function mapObservationEvent(input: MappingInput): SourceEventOutcome {
   }
 }
 
-/** Historical rows enter the same event mapper as live decisions. */
-export function mapHistoricalDecision(input: Omit<MappingInput, "row" | "revision_sequence"> & {
-  readonly decision: Selectable<AuthorityReviewDecision>; readonly event_id: string }): SourceEventOutcome {
-  const { decision } = input;
-  return mapObservationEvent({ ...input, revision_sequence: null,
-    decision_effect: decision.effect, decision_created_at: decision.created_at, decision_id: decision.id,
-    row: { id: input.event_id, run_id: decision.run_id, unit_id: decision.unit_id,
-      payload: { kind: "operator_decided", unit: decision.unit_id, review: decision.review,
-        decision: decision.decision, target: decision.target_revision_id, payload: decision.payload },
-      created_at: decision.created_at, commit_txid: "0", was_visible_at_subscription: false } });
-}
-
 export function mapCollaborationThread(input: { readonly thread: Selectable<AuthorityCollaborationThread>;
-  readonly messages: readonly Selectable<AuthorityCollaborationMessage>[]; readonly definition: PinnedDefinitionRead | null }): SourceEventOutcome {
+  readonly messages: readonly Selectable<AuthorityCollaborationMessage>[]; readonly definition: PinnedDefinitionRead | null }): Extract<SourceEventOutcome, { kind: "collaboration_thread" }> {
   const { thread, messages, definition } = input;
-  return { format: "observation.source-event/v1", definition_bundle: definition
-    ? { id: definition.bundle_id, digest: definition.digest } : null, artifact_schema_version: null,
+  return { format: "observation.source-event/v1", definition_id: definition?.definition_id ?? null, artifact_schema_version: null,
     kind: "collaboration_thread", event_kind: "collaboration_thread", run_id: thread.run_id,
     event_id: thread.id, unit: thread.unit_id, revision_id: thread.artifact_revision_id,
     context: thread.context, messages: messages.map((message) => ({ id: message.id, body: message.body,

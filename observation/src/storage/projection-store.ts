@@ -1,12 +1,12 @@
 import { sql, type Selectable } from "kysely";
-import { canonicalJson } from "../canonical/canonical-json";
+import { canonicalJson } from "canonical-json";
 import type { JsonValue } from "../domain/primitives";
 import { oakridgeDevelopmentCatalogue } from "../projection/catalogue/oakridge-development";
 import { selectRevision, type ExtractorDefinition, type LinkReference, type SelectedItem, type RelationType } from "../projection/extractor";
 import { extractionIssue, issueId, type ExtractionIssue } from "../projection/issues";
 import { humanRelation, producerRelation, relationId, revisionAnchorId, subjectRelation, type RelationProposal } from "../projection/relations";
 import { occurrenceId } from "../projection/occurrence-id";
-import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
+import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationItemOccurrence, ObservationItemRelation, ObservationSourceRevision } from "./db-types";
 
 export interface ProjectionSummary { readonly occurrences: number; readonly issues: number; readonly relations: number }
@@ -52,7 +52,7 @@ async function saveOccurrence(trx: DatabaseTransaction, tenant: TenantScope, rev
     extractor_id: definition.extractor_id, extractor_version: definition.extractor_version,
     item_kind: item.item_kind, item_selector: item.item_selector, item_id_or_path: item.item_id_or_path,
     item_scope: item.item_scope, producer_local_id: item.producer_local_id,
-    selected_value: sql<JsonValue>`${JSON.stringify(item.selected_value)}::jsonb`, logical_item_id,
+    selected_value: jsonText(item.selected_value), logical_item_id,
     json_pointer: item.path };
   await trx.insertInto("observation.item_occurrence").values(row)
     .onConflict((conflict) => conflict.columns(["producer", "namespace", "occurrence_id"]).doNothing()).execute();
@@ -139,7 +139,11 @@ export async function projectRevisionInTransaction(trx: DatabaseTransaction, ten
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("revision_id", "=", revision_id).executeTakeFirst();
     if (!revision) return null;
-    const definitions = oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version);
+    const extractor_versions = await trx.selectFrom("observation.item_occurrence").select(["extractor_id", "extractor_version"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("revision_id", "=", revision_id).distinct().execute();
+    const definitions = oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version,
+      { unit_id: revision.unit_id, extractor_versions });
     const pass = selectRevision(revision.body, revision.revision_id, definitions);
     for (const definition of definitions) await saveDefinition(trx, tenant, definition);
     for (const issue of pass.issues) await saveIssue(trx, tenant, issue);

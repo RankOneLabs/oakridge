@@ -1,19 +1,20 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { listOwedIntents, settleIntent } from "../src/storage/executor-store";
 import { deleteRun, deletionEligibility } from "../src/storage/run-deletion";
-import { launch, openAuthority, pinSample, submitter, type Authority } from "./authority-fixture";
+import { launch, openAuthority, submitter, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 async function launched(): Promise<RunId> {
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   return run_id;
 }
 

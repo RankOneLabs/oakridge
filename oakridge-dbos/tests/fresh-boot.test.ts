@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createProductionComposition } from "../src/runtime/compose";
@@ -28,15 +29,14 @@ async function booted(body: (context: { readonly app: Composition["app"]; readon
 
 test("an empty database migrates, boots, pins, launches and carries the first worker to the executor", () => booted(async ({ app, db }) => {
   const empty = { definitions: await (await app.request("/api/definitions")).json(), runs: await (await app.request("/api/runs")).json() };
-  const pinned = await app.request("/api/definitions", json(sampleWorkflow("review-loop")));
-  const { digest } = await pinned.json() as { readonly digest: string };
-  const launch = (input: unknown) => app.request("/api/runs", json({ digest, input, request_id: "launch-1" }));
+  const { definition_id } = await commitTestDefinition({ source: sampleWorkflow("review-loop") });
+  const launch = (input: unknown) => app.request("/api/runs", json({ definition_id, input, request_id: "launch-1" }));
   const launched = await launch({ topic: "Oakridge" });
   const created = await launched.json() as { readonly run_id: string; readonly event_id: string };
   const replay = await launch({ topic: "Oakridge" });
   const conflict = await launch({ topic: "Changed" });
   const invalid = await Promise.all([{}, { request_id: "" }, { request_id: 42 }, { request_id: "x".repeat(201) }]
-    .map(async (identity) => (await app.request("/api/runs", json({ digest, input: {}, ...identity }))).status));
+    .map(async (identity) => (await app.request("/api/runs", json({ definition_id, input: {}, ...identity }))).status));
   let inspect: RunInspectView | null = null;
   for (let poll = 0; poll < 100 && !inspect?.attention.length; poll++) {
     await Bun.sleep(100);
@@ -44,21 +44,21 @@ test("an empty database migrates, boots, pins, launches and carries the first wo
   }
   const writers = await db.selectFrom("authority.event").select("writer").where("run_id", "=", created.run_id).orderBy("created_at").execute();
   const runs = await (await app.request("/api/runs")).json() as { readonly items: readonly { readonly run_id: string }[] };
-  expect({ empty, pinned: pinned.status, launched: launched.status, replay: [replay.status, (await replay.json() as { event_id: string }).event_id === created.event_id],
+  expect({ empty, launched: launched.status, replay: [replay.status, (await replay.json() as { event_id: string }).event_id === created.event_id],
     conflict: conflict.status, invalid, runs: runs.items.map((run) => run.run_id),
     attention: inspect?.attention.flatMap((item) => item.kind === "stalled_worker" ? [[item.worker, item.detail]] : []), writers: writers.map((row) => row.writer.kind) })
-    .toEqual({ empty: { definitions: { items: [], next_cursor: null }, runs: { items: [], next_cursor: null } }, pinned: 201, launched: 201,
+    .toEqual({ empty: { definitions: { items: expect.any(Array), next_cursor: null }, runs: { items: [], next_cursor: null } }, launched: 201,
       replay: [200, true], conflict: 409, invalid: [400, 400, 400, 400], runs: [created.run_id],
       attention: [["writer", "agent workers need KBBL_BASE_URL and OAKRIDGE_PUBLICATION_KEY"]], writers: ["operator", "executor"] });
 }), 30_000);
 
 test("a run whose wake failed to start its workflow is carried by the next sweep", () => booted(async ({ app, db }) => {
-  const { digest } = await (await app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string };
+  const { definition_id } = await commitTestDefinition({ source: sampleWorkflow("review-loop") });
   const start = spyOn(DBOS, "startWorkflow").mockImplementationOnce(() => { throw new Error("system database unavailable"); });
   let stranded: string | null;
   let run_id: string;
   try {
-    run_id = (await (await app.request("/api/runs", json({ digest, input: { topic: "Oakridge" }, request_id: "launch-1" }))).json() as { readonly run_id: string }).run_id;
+    run_id = (await (await app.request("/api/runs", json({ definition_id, input: { topic: "Oakridge" }, request_id: "launch-1" }))).json() as { readonly run_id: string }).run_id;
     for (let poll = 0; poll < 50 && start.mock.calls.length === 0; poll++) await Bun.sleep(20);
     stranded = (await DBOS.getWorkflowStatus(runWorkflowId(run_id, 0)))?.status ?? null;
   } finally { start.mockRestore(); }

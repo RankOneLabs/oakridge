@@ -1,3 +1,4 @@
+import type { FeedbackEntry } from "../core-client/core-types";
 import type { AttemptStatus, Mode, TypeExpression } from "../core-client/core-types";
 import type { CreatedArtifact, EffectInstruction } from "../domain/effect-instruction";
 import { renderTemplate, renderValue } from "../domain/prompt-template";
@@ -66,7 +67,7 @@ export function renderModePrompt(instruction: EffectInstruction, prompt_text: st
 /** The fields a `prompts.handoff` template may read beside the declared inputs; the compiler checks the same list. */
 export interface HandoffFields {
   readonly artifacts: { readonly [artifact: string]: { readonly revision: string; readonly body: unknown } | null };
-  readonly feedback: unknown;
+  readonly feedback: readonly FeedbackEntry[];
   readonly previous_attempt: PreviousAttempt | null;
 }
 export function selectHandoffFields(instruction: EffectInstruction, context: SessionTaskContext): HandoffFields {

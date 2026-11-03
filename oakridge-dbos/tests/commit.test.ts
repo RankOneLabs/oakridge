@@ -1,27 +1,29 @@
+import { createHash } from "node:crypto";
+import { sampleDefinition, commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { sql } from "kysely";
 import { compileWorkflow, CoreClient } from "../src/core-client/client";
 import { OPERATION_REGISTRY } from "../src/operations/registry";
-import { pinDefinition } from "../src/storage/registry-store";
+import { resolveDefinition } from "../src/runtime/definition-store";
 import { decodeEffectInstruction } from "../src/domain/effect-instruction";
 import type { Workflow } from "../src/core-client/core-types";
-import type { DefinitionBundleId, ProjectId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, ProjectId, RunId } from "../src/domain/primitives";
 import { commitEvent, requestDigest } from "../src/storage/commit";
 import { selectOperatorFrame } from "../src/projections/operator-event";
 import { listRuns } from "../src/storage/read-store";
-import { actionOf, executor, launch, OPERATOR, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, OPERATOR, openAuthority, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); }, 30_000);
 
 const writerAction = (run_id: RunId): Promise<string> => actionOf(authority, run_id, "writer");
 async function launched(request_id = crypto.randomUUID()): Promise<RunId> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id, input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error(`launch failed: ${JSON.stringify(result)}`);
   return run_id;
 }
@@ -68,7 +70,7 @@ test("a launch commits the run, its units, the event with its writer, the receip
 
 test("a launch's worker settings reach that worker's agent instruction", async () => {
   const settings = { harness: "codex", model: "gpt-6-sol", effort: "high" };
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
     config: { sessions: { document: { writer: settings } } } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const [intent] = await intents(run_id);
@@ -79,10 +81,33 @@ test("a launch's worker settings reach that worker's agent instruction", async (
 test("an agent instruction pins its prompt digest from the definition", async () => {
   const run_id = await launched();
   const [intent] = await intents(run_id);
-  const pinned = await authority.db.selectFrom("authority.definition_bundle").select("prompts").where("id", "=", bundle_id).executeTakeFirstOrThrow();
+  const pinned = resolveDefinition(definition_id);
+  if (!pinned.ok) throw new Error(JSON.stringify(pinned.error));
   const instruction = decodeEffectInstruction(intent?.payload);
   expect(instruction.ok && instruction.value.worker.kind === "agent" ? instruction.value.worker.prompt
-    : null).toEqual({ path: "review-loop/write.md", digest: pinned.prompts["review-loop/write.md"]! });
+    : null).toEqual({ path: "review-loop/write.md", digest: createHash("sha256").update(pinned.value.prompts["review-loop/write.md"]!).digest("hex") });
+});
+
+test("an older run advances after later compilations evict its core program", async () => {
+  const run_id = await launched();
+  const definition = resolveDefinition(definition_id);
+  if (!definition.ok) throw new Error(JSON.stringify(definition.error));
+  for (let index = 0; index < 32; index += 1) {
+    const compiled = await compileWorkflow(authority.core, {
+      workflow: { ...definition.value.source, workflow: `cache_churn_${index}` },
+      prompts: definition.value.prompts, operations: definition.value.operations,
+    });
+    if (!compiled.ok) throw new Error(compiled.error.detail);
+  }
+  const action = await writerAction(run_id);
+  const submit = submitter(authority);
+  const started = await submit({ run_id, writer: executor(action),
+    event: { kind: "worker_started", action, kbbl_session_id: "after-eviction" } });
+  const published = await submit({ run_id, writer: executor(action),
+    event: { kind: "revision_published", unit: unitOf(run_id, "document"), artifact: "draft",
+      body: { title: "Recovered", body: "The older run still advances." }, by: action } });
+  expect([started, published].map((result) => result.ok ? result.value.kind : result.error))
+    .toEqual(["committed", "committed"]);
 });
 
 test("a revise instruction carries the requested revision and the decision payload", async () => {
@@ -98,22 +123,86 @@ test("a revise instruction carries the requested revision and the decision paylo
   const revise = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload))
     .find((decoded) => decoded.ok && decoded.value.action.mode.kind === "revise");
   expect(revise?.ok ? { previous: revise.value.engine_inputs.previous?.id, feedback: revise.value.engine_inputs.feedback } : null)
-    .toEqual({ previous: `${unit}:draft:1`, feedback: { feedback: "shorter" } });
+    .toEqual({ previous: `${unit}:draft:1`, feedback: [{ id: `${unit}:d1`, review: "editor", decision: "request_changes", target: `${unit}:draft:1`, payload: { feedback: "shorter" } }] });
+});
+
+test("a revision after a decision persists its position in the decision history", async () => {
+  const run_id = await launched();
+  const submit = submitter(authority);
+  const unit = unitOf(run_id, "document");
+  const first = await writerAction(run_id);
+  await submit({ run_id, event: { kind: "worker_started", action: first, kbbl_session_id: "sid-first" }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Long" }, by: first }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "worker_ended", action: first, result: { kind: "succeeded" } }, writer: executor(first) });
+  await submit({ run_id, event: { kind: "operator_decided", unit, review: "editor", decision: "request_changes",
+    target: `${unit}:draft:1`, payload: { feedback: "shorter" } } });
+  const revised = await writerAction(run_id);
+  await submit({ run_id, event: { kind: "worker_started", action: revised, kbbl_session_id: "sid-revised" }, writer: executor(revised) });
+  await submit({ run_id, event: { kind: "revision_published", unit, artifact: "draft", body: { title: "T", body: "Short" },
+    by: revised, predecessor: `${unit}:draft:1` }, writer: executor(revised) });
+  const rows = await authority.db.selectFrom("authority.artifact_revision").select(["seq", "decision_cursor"])
+    .where("run_id", "=", run_id).where("artifact", "=", "draft").orderBy("seq").execute();
+  expect(rows.map((row) => [row.seq, row.decision_cursor])).toEqual([[1, 0], [2, 1]]);
 });
 
 test("a replayed ingress id returns its stored result, and reused with other content it conflicts", async () => {
   const request_id = crypto.randomUUID();
   const run_id = await launched(request_id);
-  const replay = await launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } });
-  const changed = await launch(authority, { bundle_id, request_id, input: { topic: "Other" } });
+  const replay = await launch(authority, { definition_id, request_id, input: { topic: "Oakridge" } });
+  const changed = await launch(authority, { definition_id, request_id, input: { topic: "Other" } });
   const event_count = (await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute()).length;
   expect({ replay: replay.result.ok && replay.result.value.kind, changed: changed.result.ok && changed.result.value.kind, event_count })
     .toEqual({ replay: "replayed", changed: "conflict", event_count: 1 });
 });
 
+test("nested generated action IDs are assigned once and an edit keeps predecessor identities", async () => {
+  const source = sampleWorkflow("review-loop");
+  const stage = source.stages.document;
+  if (!stage) throw new Error("document stage absent");
+  const draft = stage.artifacts.draft;
+  if (!draft) throw new Error("draft artifact absent");
+  const workflow: Workflow = { ...source, workflow: "generated_identity_review", stages: { ...source.stages,
+    document: { ...stage, artifacts: { ...stage.artifacts, draft: { ...draft,
+      schema: { title: "text", body: "text", actions: "list({id: uuid(generated), text: text})" },
+      edit_policy: { kind: "frozen_when_accepted" } } } } } };
+  const { definition_id: generated } = await commitTestDefinition({ source: workflow });
+  const { run_id } = await launch(authority, { definition_id: generated, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const unit = unitOf(run_id, "document");
+  const action = await actionOf(authority, run_id, "writer");
+  const submit = submitter(authority);
+  await submit({ run_id, event: { kind: "worker_started", action, kbbl_session_id: "sid-generated" }, writer: executor(action) });
+  const body = { title: "T", body: "Long", actions: [{ text: "A" }, { text: "B" }] };
+  const publish = { kind: "revision_published" as const, unit, artifact: "draft", body, by: action, predecessor: null, subject: null };
+  const ingress_id = crypto.randomUUID();
+  const first = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
+  const replay = await submit({ run_id, event: publish, writer: executor(action), ingress_id });
+  const revisions = await authority.db.selectFrom("authority.artifact_revision").select(["id", "body"])
+    .where("run_id", "=", run_id).where("unit_id", "=", unit).where("artifact", "=", "draft").execute();
+  const stored = revisions[0]?.body as { title: string; body: string; actions: { id: string; text: string }[] } | undefined;
+  expect({ first: first.ok && first.value.kind, replay: replay.ok && replay.value.kind, count: revisions.length,
+    ids: stored?.actions.map((item) => item.id) }).toMatchObject({ first: "committed", replay: "replayed", count: 1,
+    ids: [expect.stringMatching(/^[0-9a-f-]{36}$/), expect.stringMatching(/^[0-9a-f-]{36}$/)] });
+  if (!stored || !revisions[0]) throw new Error("stored revision absent");
+  const firstId = stored.actions[0]?.id;
+  const secondId = stored.actions[1]?.id;
+  if (!firstId || !secondId) throw new Error("stored action IDs absent");
+  const duplicate = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: firstId, text: "A" }, { id: firstId, text: "B" }] } } });
+  const foreign = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: crypto.randomUUID(), text: "A" }] } } });
+  const malformed = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: "bad", text: "A" }] } } });
+  const shorthand = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: ["A"] } } });
+  const edited = await submit({ run_id, event: { ...publish, by: null, predecessor: revisions[0].id,
+    body: { ...stored, actions: [{ id: secondId, text: "B revised" }] } } });
+  expect([duplicate, foreign, malformed, shorthand, edited].map((result) => result.ok && result.value.kind))
+    .toEqual(["rejected", "rejected", "rejected", "rejected", "committed"]);
+});
+
 test("concurrent identical launches create one run and one event", async () => {
   const request_id = crypto.randomUUID();
-  const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } })));
+  const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { definition_id, request_id, input: { topic: "Oakridge" } })));
   const run_id = results[0]!.run_id;
   const events = await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", run_id).execute();
   expect({ kinds: results.map(({ result }) => result.ok ? result.value.kind : "error").sort(), events: events.length })
@@ -122,8 +211,8 @@ test("concurrent identical launches create one run and one event", async () => {
 
 test("a step rejection is stored as a rejected receipt, replays as rejected, and writes no event", async () => {
   const request_id = crypto.randomUUID();
-  const first = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
-  const replay = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
+  const first = await launch(authority, { definition_id, request_id, input: { topic: 5 } });
+  const replay = await launch(authority, { definition_id, request_id, input: { topic: 5 } });
   const receipt = await authority.db.selectFrom("authority.ingress_receipt").select("result").where("run_id", "=", first.run_id).executeTakeFirstOrThrow();
   const events = await authority.db.selectFrom("authority.event").select("id").where("run_id", "=", first.run_id).execute();
   const listed = (await listRuns(authority.db, { after: null, limit: 100, is_archived: false })).items.map((read) => read.run.id);
@@ -134,9 +223,9 @@ test("a step rejection is stored as a rejected receipt, replays as rejected, and
 
 test("a refused launch leaves no run row, and its receipt answers a replay or a changed request", async () => {
   const request_id = crypto.randomUUID();
-  const first = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
-  const replay = await launch(authority, { bundle_id, request_id, input: { topic: 5 } });
-  const changed = await launch(authority, { bundle_id, request_id, input: { topic: "Oakridge" } });
+  const first = await launch(authority, { definition_id, request_id, input: { topic: 5 } });
+  const replay = await launch(authority, { definition_id, request_id, input: { topic: 5 } });
+  const changed = await launch(authority, { definition_id, request_id, input: { topic: "Oakridge" } });
   const runs = await authority.db.selectFrom("authority.run").select("id").where("id", "=", first.run_id).execute();
   const receipts = await authority.db.selectFrom("authority.ingress_receipt").select("result").where("run_id", "=", first.run_id).execute();
   expect({ first: first.result.ok && first.result.value.kind, replay: replay.result.ok && replay.result.value.kind,
@@ -146,7 +235,7 @@ test("a refused launch leaves no run row, and its receipt answers a replay or a 
 
 test("concurrent identical refused launches store one receipt and leave no run row", async () => {
   const request_id = crypto.randomUUID();
-  const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { bundle_id, request_id, input: { topic: 5 } })));
+  const results = await Promise.all(Array.from({ length: 5 }, () => launch(authority, { definition_id, request_id, input: { topic: 5 } })));
   const run_id = results[0]!.run_id;
   const [runs, receipts] = await Promise.all([
     authority.db.selectFrom("authority.run").select("id").where("id", "=", run_id).execute(),
@@ -265,39 +354,30 @@ const BEFORE_BRANCHES_REGISTRY = OPERATION_REGISTRY.map((operation) => operation
   : { ...operation, input_schema: { repository_path: "repo_path", expected_head: "optional(text)" } });
 
 /** Steps a launch on a core that has cached nothing, as one does after a restart. */
-async function launchOnFreshCore(pinned: DefinitionBundleId, input: unknown) {
+async function launchOnFreshCore(pinned: DefinitionId, input: unknown) {
   const started = CoreClient.start();
   if (!started.ok) throw new Error("core WASM did not load");
-  try { return (await launch({ db: authority.db, core: started.value }, { bundle_id: pinned, request_id: crypto.randomUUID(), input })).result; }
+  try { return (await launch({ db: authority.db, core: started.value }, { definition_id: pinned, request_id: crypto.randomUUID(), input })).result; }
   finally { started.value.close(); }
 }
 
 test("a definition pinned under an older operation contract still steps after a restart", async () => {
   const compiled = await compileWorkflow(authority.core, { workflow: BEFORE_BRANCHES, prompts: {}, operations: BEFORE_BRANCHES_REGISTRY });
   if (!compiled.ok) throw new Error(compiled.error.detail);
-  const { bundle } = await pinDefinition(authority.db, { source: BEFORE_BRANCHES, compiled: compiled.value, prompts: {} });
-  const result = await launchOnFreshCore(bundle.id, { repository_path: "/srv/repo", expected_head: null });
-  expect(result.ok && result.value.kind).toBe("committed");
-});
-
-test("a definition pinned before its operations were recorded compiles against the declared registry", async () => {
-  const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "no_recorded_operations" });
-  await authority.db.updateTable("authority.definition_bundle")
-    .set({ checked_program: sql`checked_program - 'operations'` }).where("id", "=", pinned).execute();
-  const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
+  const { definition_id: committed } = await commitTestDefinition({ source: BEFORE_BRANCHES, operations: BEFORE_BRANCHES_REGISTRY });
+  const result = await launchOnFreshCore(committed, { repository_path: "/srv/repo", expected_head: null });
   expect(result.ok && result.value.kind).toBe("committed");
 });
 
 test("a definition pinned with an edited prompt still steps after a restart", async () => {
-  const { bundle_id: pinned } = await pinWorkflow(authority, { ...sampleWorkflow("review-loop"), workflow: "edited_prompt_restart" },
-    { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" });
+  const { definition_id: pinned } = await commitTestDefinition({ source: { ...sampleWorkflow("review-loop"), workflow: "edited_prompt_restart" }, prompt_edit: { path: "review-loop/write.md", content: "Write about {{topic}}, edited.\n" } });
   const result = await launchOnFreshCore(pinned, { topic: "Oakridge" });
   expect(result.ok && result.value.kind).toBe("committed");
 });
 
 test("a code worker compiles against the declared operations and its launch writes a code instruction", async () => {
-  const { bundle_id: fan_out } = await pinSample(authority, "fan-out");
-  const { run_id } = await launch(authority, { bundle_id: fan_out, request_id: crypto.randomUUID(),
+  const { definition_id: fan_out } = await sampleDefinition("fan-out");
+  const { run_id } = await launch(authority, { definition_id: fan_out, request_id: crypto.randomUUID(),
     input: { repository: { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" }, items: [] } });
   const instructions = (await intents(run_id)).map((row) => decodeEffectInstruction(row.payload));
   expect(instructions.map((decoded) => decoded.ok && [decoded.value.worker, decoded.value.inputs]))
@@ -316,8 +396,8 @@ const PERIODIC: Workflow = {
     done_when: "false", outcome: {} } },
 };
 test("a periodic worker keeps one intent across its attempts, which carries the schedule", async () => {
-  const { bundle_id: periodic } = await pinWorkflow(authority, PERIODIC);
-  const { run_id, result } = await launch(authority, { bundle_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" } });
+  const { definition_id: periodic } = await commitTestDefinition({ source: PERIODIC });
+  const { run_id, result } = await launch(authority, { definition_id: periodic, request_id: crypto.randomUUID(), input: { repository_path: "/srv/repo", expected_head: null, base_branch: "epic/sample", integration_branch: "main" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error(JSON.stringify(result));
   const [first] = await intents(run_id);
   if (!first) throw new Error("launch wrote no intent");
@@ -344,7 +424,7 @@ test("a request digest ignores key order and changes with the event or the write
 
 test("a launch's request digest changes with its project or config", () => {
   const request = { event: { kind: "launched", input: { a: 1 } }, writer: OPERATOR } as const;
-  const launch = { definition_bundle_id: bundle_id, project_id: null, config: null };
+  const launch = { definition_id: definition_id, project_id: null, config: null };
   const digest = requestDigest({ ...request, launch });
   expect({ other_project: requestDigest({ ...request, launch: { ...launch, project_id: "project-b" as ProjectId } }) === digest,
     other_config: requestDigest({ ...request, launch: { ...launch, config: { sessions: {} } } }) === digest })
@@ -384,9 +464,9 @@ test("a templated operator review renders its pinned prompt", async () => {
     ...source.stages,
     document: { ...source.stages.document!, reviews: { editor: { template: "editor" } } },
   } } as unknown as Workflow;
-  const pinned = await pinWorkflow(authority, templated);
+  const pinned = await commitTestDefinition({ source: templated });
   const { run_id, result } = await launch(authority, {
-    bundle_id: pinned.bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
+    definition_id: pinned.definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" },
   });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const unit = unitOf(run_id, "document");
@@ -425,8 +505,8 @@ test("a unit that starts after its dependency persists the input it resolved, an
     stages: { first: stage({ topic: "text" }, { topic: "input.topic" }, []),
       second: stage({ topic: "text", draft: "text" }, { topic: "input.topic", draft: "input.draft" },
         [{ check: "draft == input.draft", message: "the draft must repeat the first stage's draft" }]) } } as unknown as Workflow;
-  const { bundle_id: chain } = await pinWorkflow(authority, workflow);
-  const { run_id, result } = await launch(authority, { bundle_id: chain, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { definition_id: chain } = await commitTestDefinition({ source: workflow });
+  const { run_id, result } = await launch(authority, { definition_id: chain, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const submit = submitter(authority);
   const publish = async (key: string) => {

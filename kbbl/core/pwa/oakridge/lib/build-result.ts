@@ -1,5 +1,6 @@
 import type { Result } from "../../lib/result";
-import type { FindingSeverity, RepositoryKey } from "../types";
+import type { FindingSeverity } from "../artifact-types";
+import type { RepositoryKey } from "../run-types";
 
 /**
  * Mirrors `test_evidence` in workflow-config/development.yaml.

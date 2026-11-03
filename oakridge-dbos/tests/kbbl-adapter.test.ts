@@ -38,7 +38,7 @@ function instructionFor(overrides: { readonly action?: RunWorkerAction; readonly
   const action = overrides.action ?? writer;
   const selected = selectEffectInstruction({ run_id, workflow: fresh, stage: "document", config: overrides.config ?? null, action, seq: 0,
     prompts: { "review-loop/write.md": "a".repeat(64), "review-loop/revise.md": "b".repeat(64) },
-    resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, ...overrides.resolved } });
+    resolved: { action_id: `action-${action.mode.kind}`, inputs: { topic: "Oakridge", critique: null }, feedback: [], ...overrides.resolved } });
   if (!selected.ok) throw new Error(selected.error.detail);
   return selected.value;
 }
@@ -288,4 +288,14 @@ test("an agent's start, revise, observation and stops call only routes kbbl regi
   const unregistered = calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)
     .filter((call) => !routes.some((route) => call.startsWith(`${route.method} `) && route.pattern.test(call.slice(call.indexOf(" ") + 1))));
   expect({ calls: calls.length > 6, unregistered }).toEqual({ calls: true, unregistered: [] });
+});
+
+test("the declared grant is carried unchanged into the session start identity", () => {
+  const instruction = instructionFor();
+  const agent = instruction.worker;
+  if (agent.kind !== "agent") throw new Error("writer is an agent");
+  const options = { publish_base_url: "http://oakridge.test", default_workdir: "/srv/agents" };
+  const grants = [{ kind: "restricted", role: "builder" } as const, { kind: "restricted", role: "assessor" } as const, { kind: "unscoped" } as const];
+  expect(grants.map((gated_review) => selectSessionStart({ ...instruction, worker: { ...agent, gated_review } }, options, "s").workflow?.gated_review))
+    .toEqual(grants);
 });

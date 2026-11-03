@@ -11,7 +11,8 @@ import { EventSourceStub } from "./run-pane-fixtures";
 import { invalidateCachedRunUnits } from "../client";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type { ParkedGate, RunDetail, RunSessionAttempt } from "../types";
+import type { ParkedGate } from "../artifact-types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 
 // Pane-host wiring only. kbbl's frontend convention keeps tests on lib/ logic;
 // what lands here is the handful of behaviours no transform can cover — that a
@@ -110,6 +111,7 @@ const GATES: ParkedGate[] = [
     artifact_revision_id: "rev-1",
     worktree: null,
     resume_actions: ["approve", "reject"],
+    offered_decisions: ["approve", "reject"],
     run_state: "active",
     actionable: true,
   },
@@ -425,8 +427,7 @@ describe("a read the workspace cannot complete", () => {
     await waitFor(() => expect(screen.getByTestId("or-run-overview")).toBeTruthy());
     // Validation prunes the stored arrangement and the persist effect rewrites it,
     // which can land a tick after the overview renders: wait for the rewrite.
-    await waitFor(() => expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toBeNull());
-    expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-gone");
+    await waitFor(() => expect(localStorage.getItem(runWorkspaceStorageKey("run-1"))).not.toContain("sid-gone"));
   });
 
   it("keeps a stored session pane, and its storage entry, through a failed sessions read", async () => {

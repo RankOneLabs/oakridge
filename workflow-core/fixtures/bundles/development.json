@@ -164,7 +164,11 @@
       "verdict": "enum(pass, pass_with_notes, fail)",
       "findings": "list(assessment_finding)",
       "test_evidence": "optional(test_evidence)",
-      "recommended_next_actions": "list(text)"
+      "recommended_next_actions": "list(next_action)"
+    },
+    "next_action": {
+      "id": "uuid(generated)",
+      "text": "text"
     },
     "assessment_finding": {
       "criterion_id": "optional(ident)",
@@ -609,7 +613,10 @@
           "schema": "pr_body"
         },
         "assessment": {
-          "schema": "assessment_body"
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          }
         },
         "pr_state": {
           "schema": "pr_status"
@@ -621,6 +628,10 @@
       "workers": {
         "builder": {
           "kind": "agent",
+          "gated_review": {
+            "kind": "restricted",
+            "role": "builder"
+          },
           "prompts": {
             "initial": "development/build.md",
             "revise": "development/build-revise.md"
@@ -638,9 +649,13 @@
         },
         "assessor": {
           "kind": "agent",
+          "gated_review": {
+            "kind": "restricted",
+            "role": "assessor"
+          },
           "prompts": {
             "review": "development/assess.md",
-            "revise": "development/assess.md"
+            "revise": "development/assess-revise.md"
           },
           "inputs": {
             "brief": "brief_value",
@@ -748,7 +763,10 @@
       },
       "artifacts": {
         "assessment": {
-          "schema": "assessment_body"
+          "schema": "assessment_body",
+          "edit_policy": {
+            "kind": "frozen_when_accepted"
+          }
         },
         "pr": {
           "schema": "pr_body"
@@ -766,6 +784,10 @@
       "workers": {
         "integrator": {
           "kind": "agent",
+          "gated_review": {
+            "kind": "restricted",
+            "role": "builder"
+          },
           "prompts": {
             "initial": "development/integrate.md",
             "revise": "development/integrate-revise.md"

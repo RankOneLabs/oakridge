@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import type { RuntimeDescriptor, SessionSnapshot } from "../types";
 import type { PwaSessionWorkflowIdentity } from "../../acp/pwa-wire";
-import type { RunDetail, RunSummary } from "../oakridge/types";
+import type { RunDetail, RunSummary } from "../oakridge/run-types";
 import type { Sid } from "../lib/ids";
 import { useStore } from "../state/store";
 import { SessionListView } from "./SessionListView";

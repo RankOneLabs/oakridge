@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { jsonlExporter } from "../src/export/jsonl";
 import { membershipDigest, type ExportManifest, type ExportRecord, type RedactionPolicy } from "../src/export/manifest";
 import { prepareRows, type ExportRows } from "../src/storage/export-store";
@@ -107,7 +107,7 @@ integration("the assay route freezes files and membership when another grade is 
         question_id: question.question_id, question_version: question.question_version,
         evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "first",
         details: { answer: { state: "answered", kind: "boolean", value: true } as const,
-          collection_mode: "in_context" as const, model_answers_visible: false, workflow_decisions_visible: false,
+          origin: "human_rubric_answer" as const, collection_mode: "in_context" as const, model_answers_visible: false, workflow_decisions_visible: false,
           probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
           decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null, comments: null,
           rationale: null, quality_flags: [], supersedes_observation_id: null } };

@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 
 export type ExtractionIssueKind = "extraction_failed" | "no_matching_items" | "identity_collision" | "unresolved_relation";
 export interface ExtractionIssue {

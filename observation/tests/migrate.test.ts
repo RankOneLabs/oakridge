@@ -1,76 +1,15 @@
 import { expect, test } from "bun:test";
-import { randomBytes, createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
-import { openDatabase, withTenant } from "../src/storage/database";
+import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
+import { readdir } from "node:fs/promises";
+import historicalCatalog from "./fixtures/preconsolidation-catalog.json";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-const integration = serverUrl || process.env.CI === "true" ? test : test.skip;
-
-integration("0010 through 0014 upgrade 0009 without changing pinned v1 question fields, and extend the generated origin to the v2 annotation evaluator", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    const names = ["0001_observation.sql", "0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql",
-      "0004_cursor.sql", "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql",
-      "0008_langfuse_sync.sql", "0009_grade_label_origin.sql"];
-    for (const name of names) {
-      const source = await Bun.file(new URL(`../src/storage/migrations/${name}`, import.meta.url)).text();
-      await sql.raw(source).execute(db);
-      if (name === "0001_observation.sql") await sql`INSERT INTO observation.schema_baseline (digest)
-        VALUES (${createHash("sha256").update(source).digest("hex")})`.execute(db);
-    }
-    const originBefore = await sql<{ definition: string }>`SELECT generation_expression AS definition
-      FROM information_schema.columns WHERE table_schema = 'observation'
-      AND table_name = 'grade_observation' AND column_name = 'label_origin'`.execute(db);
-    for (const question_id of ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"])
-      await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql`INSERT INTO observation.question_definition
-        (producer, namespace, question_id, question_version, target_item_kinds, input_recipe, response_kind,
-         allowed_values, missing_evidence_policy, abstain_semantics, unclear_semantics, interpretation_caveats, requires_repository_snapshot)
-        VALUES ('oakridge', 'pin', ${question_id}, 'v1', '["criterion"]'::jsonb, '{}'::jsonb,
-          'boolean', NULL, 'fail', '', '', '', false)`.execute(trx));
-    const before = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
-      SELECT to_jsonb(q) AS row FROM observation.question_definition q ORDER BY question_id`.execute(trx));
-    await migrateEmptyDatabase(db);
-    const humanCollection = await sql<{ collection_mode: string | null; assignment: string | null; definition: string }>`
-      SELECT (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
-        AND table_name = 'grade_observation' AND column_name = 'collection_mode') AS collection_mode,
-        to_regclass('observation.blind_assignment')::text AS assignment,
-        (SELECT generation_expression FROM information_schema.columns WHERE table_schema = 'observation'
-          AND table_name = 'grade_observation' AND column_name = 'label_origin') AS definition`.execute(db);
-    expect(humanCollection.rows[0]?.collection_mode).toBe("collection_mode");
-    expect(humanCollection.rows[0]?.assignment).toBe("observation.blind_assignment");
-    // 0014 rebuilds the generated origin to recognise 'langfuse-annotation-human/v2' alongside
-    // v1. The two historical classifications are unchanged; only the annotation arm widens.
-    expect(originBefore.rows[0]?.definition).not.toContain("langfuse-annotation-human/v2");
-    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human/v2");
-    expect(humanCollection.rows[0]?.definition).toContain("langfuse-annotation-human'");
-    expect(humanCollection.rows[0]?.definition).toContain("oakridge_operator_unblinded");
-    const eligibility = await sql<{ name: string | null }>`SELECT to_regclass('observation.evaluation_eligibility')::text AS name`.execute(db);
-    expect(eligibility.rows[0]?.name).toBe("observation.evaluation_eligibility");
-    const jobs = await sql<{ name: string | null; lease_owner: string | null; lease_expires_at: string | null; has_state_check: boolean }>`
-      SELECT to_regclass('observation.grading_job')::text AS name,
-        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
-          AND table_name = 'grading_job' AND column_name = 'lease_owner') AS lease_owner,
-        (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
-          AND table_name = 'grading_job' AND column_name = 'lease_expires_at') AS lease_expires_at,
-        EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'observation.grading_job'::regclass
-          AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%queued%claimed%reclaimable%terminal%skipped_budget%') AS has_state_check`.execute(db);
-    expect(jobs.rows[0]).toEqual({ name: "observation.grading_job", lease_owner: "lease_owner",
-      lease_expires_at: "lease_expires_at", has_state_check: true });
-    const after = await withTenant(db, { producer: "oakridge", namespace: "pin" }, (trx) => sql<{ row: unknown }>`
-      SELECT to_jsonb(q) - 'question_text' - 'evidence_recipe_provenance' AS row
-      FROM observation.question_definition q ORDER BY question_id`.execute(trx));
-    expect(after.rows).toEqual(before.rows);
-    const columns = await sql<{ question_text: string | null; eligibility: string | null }>`
-      SELECT (SELECT column_name FROM information_schema.columns WHERE table_schema = 'observation'
-        AND table_name = 'question_definition' AND column_name = 'question_text') AS question_text,
-        to_regclass('observation.evaluation_eligibility')::text AS eligibility`.execute(db);
-    expect(columns.rows[0]).toEqual({ question_text: "question_text", eligibility: "observation.evaluation_eligibility" });
-    await migrateEmptyDatabase(db);
-  } finally { await db.destroy(); }
-}));
+const integration = serverUrl ? test : test.skip;
 
 async function scratch(work: (url: string) => Promise<void>): Promise<void> {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
@@ -86,116 +25,156 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
   } finally { await admin.end(); }
 }
 
-integration("fresh baseline applies and a second apply is a no-op", async () => scratch(async (url) => {
+
+integration("fresh schema has local grading tables and repeats without applying upgrades", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     await migrateEmptyDatabase(db);
-    const first = await sql<{ digest: string }>`SELECT digest FROM observation.schema_baseline`.execute(db);
+    await migrateEmptyDatabase(db);
+    const result = await sql<{ jobs: string | null; attempts: string | null; forbidden: number; baselines: number }>`SELECT
+      to_regclass('observation.grading_job')::text AS jobs,
+      to_regclass('observation.grading_provider_attempt')::text AS attempts,
+      (SELECT count(*)::integer FROM pg_tables WHERE schemaname = 'observation' AND tablename LIKE 'langfuse%') AS forbidden,
+      (SELECT count(*)::integer FROM observation.schema_baseline) AS baselines`.execute(db);
+    expect(result.rows[0]).toEqual({ jobs: "observation.grading_job", attempts: "observation.grading_provider_attempt", forbidden: 0, baselines: 1 });
+  } finally { await db.destroy(); }
+}));
+
+integration("an incompatible schema is refused instead of adopted", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    await sql`UPDATE observation.schema_baseline SET digest = ${"0".repeat(64)}`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("baseline digest mismatch");
+  } finally { await db.destroy(); }
+}));
+
+// Captured from the thirteen-file sequence at 01c8b605, before consolidation.
+// Column ordinals are deliberately absent: moving ADD COLUMN into CREATE TABLE
+// changes ordinals without changing the schema contract.
+interface CatalogEntry { readonly kind: string; readonly table_name: string; readonly name: string; readonly definition: string }
+const compareCatalogEntries = (left: CatalogEntry, right: CatalogEntry): number =>
+  left.kind.localeCompare(right.kind) || left.table_name.localeCompare(right.table_name) || left.name.localeCompare(right.name);
+
+const observationCatalogQuery = sql.raw<CatalogEntry>(`SELECT 'table' AS kind, c.relname AS table_name, c.relname AS name, '' AS definition
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
+UNION ALL
+SELECT 'column', c.relname, a.attname, format_type(a.atttypid,a.atttypmod) || CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE ' NULL' END || ' DEFAULT ' || coalesce(pg_get_expr(d.adbin,d.adrelid),'') || ' GENERATED ' || a.attgenerated::text
+FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE n.nspname='observation' AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped
+UNION ALL
+SELECT 'constraint', c.relname, con.conname, pg_get_constraintdef(con.oid) FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation'
+UNION ALL
+SELECT 'index', t.relname, i.relname, pg_get_indexdef(i.oid) FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='observation'
+UNION ALL
+SELECT 'trigger', c.relname, t.tgname, pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND NOT t.tgisinternal
+UNION ALL
+SELECT 'function', '', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='observation' AND p.prokind='f'
+UNION ALL
+SELECT 'policy', c.relname, p.polname, jsonb_build_object(
+  'command', p.polcmd::text, 'permissive', p.polpermissive,
+  'roles', ARRAY(SELECT CASE WHEN role_id=0 THEN 'public' ELSE pg_get_userbyid(role_id)::text END FROM unnest(p.polroles) AS roles(role_id) ORDER BY 1),
+  'using', pg_get_expr(p.polqual,p.polrelid), 'with_check', pg_get_expr(p.polwithcheck,p.polrelid))::text
+FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation'
+UNION ALL
+SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.relrowsecurity, 'forced', c.relforcerowsecurity)::text
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
+ORDER BY kind,table_name,name`);
+
+integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and derived eligibility caching and explicit grading records", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const catalog = await observationCatalogQuery.execute(db);
+    const retiredColumns = ["definition", "bundle"].join("_");
+    const expected = historicalCatalog.filter((entry) => !((entry.kind === "column" && (
+      (entry.table_name === "source_revision" && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name))
+      || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance")
+      // Retire the outbound refusal record and replace inferred/optional grading facts.
+      || (entry.table_name === "grading_job" && entry.name === "disclosure")
+      || (entry.table_name === "grade_observation" && ["label_origin", "collection_mode"].includes(entry.name))))
+      || (entry.kind === "constraint" && (
+        (entry.table_name === "grading_job" && entry.name === "grading_job_terminal_cause_check")
+        || (entry.table_name === "grade_observation" && entry.name === "grade_collection_consistency")))
+      // Eligibility is derived, so its row is a refreshable cache rather than an append-only decision.
+      || (entry.kind === "trigger" && entry.table_name === "evaluation_eligibility"
+        && entry.name === "evaluation_eligibility_append_only")));
+    for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
+      expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
+    expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });
+    expected.push({ kind: "constraint", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
+      definition: "UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version)" });
+    expected.push({ kind: "index", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
+      definition: "CREATE UNIQUE INDEX evaluation_eligibility_subject_question_key ON observation.evaluation_eligibility USING btree (producer, namespace, subject_occurrence_id, question_id, question_version)" });
+    // 1. Remove the outbound refusal column and its terminal cause.
+    expected.push({ kind: "constraint", table_name: "grading_job", name: "grading_job_terminal_cause_check",
+      definition: "CHECK (((terminal_cause IS NULL) OR (terminal_cause = ANY (ARRAY['retry_exhausted'::text, 'runner_failed'::text, 'invalid_outcome'::text, 'ineligible'::text, 'budget_exceeded'::text]))))" });
+    // 2. Replace the generated label with an explicit, closed origin.
+    expected.push({ kind: "column", table_name: "grade_observation", name: "origin", definition: "text NOT NULL DEFAULT  GENERATED " });
+    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_observation_origin_check",
+      definition: "CHECK ((origin = ANY (ARRAY['human_rubric_answer'::text, 'workflow_approval'::text, 'automated_evaluation'::text])))" });
+    // 3. Require a recorded collection mode.
+    expected.push({ kind: "column", table_name: "grade_observation", name: "collection_mode", definition: "text NOT NULL DEFAULT  GENERATED " });
+    // 4. Enforce collection consistency without a null-mode bypass.
+    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_collection_consistency",
+      definition: "CHECK (((model_answers_visible IS NOT NULL) AND (workflow_decisions_visible IS NOT NULL) AND ((collection_mode <> 'blind'::text) OR ((blind_assignment_id IS NOT NULL) AND (NOT model_answers_visible) AND (NOT workflow_decisions_visible)))))" });
+    expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
+  } finally { await db.destroy(); }
+}));
+
+interface CatalogProtectionChange { readonly description: string; readonly statement: string }
+const protectionChanges: readonly CatalogProtectionChange[] = [
+  { description: "a weakened export guard function", statement: "CREATE OR REPLACE FUNCTION observation.reject_export_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END $$" },
+  { description: "a weakened tenant policy", statement: "ALTER POLICY source_revision_tenant ON observation.source_revision USING (true)" },
+  { description: "disabled row-level security", statement: "ALTER TABLE observation.source_revision DISABLE ROW LEVEL SECURITY" },
+  { description: "unforced row-level security", statement: "ALTER TABLE observation.source_revision NO FORCE ROW LEVEL SECURITY" },
+];
+for (const change of protectionChanges) {
+  integration(`catalog comparison detects ${change.description}`, async () => scratch(async (url) => {
+    const db = openDatabase(url);
+    try {
+      await migrateEmptyDatabase(db);
+      const before = await observationCatalogQuery.execute(db);
+      await sql.raw(change.statement).execute(db);
+      const after = await observationCatalogQuery.execute(db);
+      expect(after.rows.sort(compareCatalogEntries)).not.toEqual(before.rows.sort(compareCatalogEntries));
+    } finally { await db.destroy(); }
+  }));
+}
+
+test("only the consolidated observation SQL baseline is committed", async () => {
+  const names = await readdir(new URL("../src/storage/migrations", import.meta.url));
+  expect(names.filter((name) => name.endsWith(".sql"))).toEqual(["0001_observation.sql"]);
+});
+
+integration("the recorded digest is the SHA-256 of the whole baseline text", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
     const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
-    expect(first.rows[0]?.digest).toBe(createHash("sha256").update(baseline).digest("hex"));
-    await migrateEmptyDatabase(db);
-    const second = await sql<{ count: string }>`SELECT count(*)::text AS count FROM observation.schema_baseline`.execute(db);
-    expect(second.rows[0]?.count).toBe("1");
+    const recorded = await db.selectFrom("observation.schema_baseline").select("digest").execute();
+    expect(recorded).toEqual([{ digest: createHash("sha256").update(baseline).digest("hex") }]);
   } finally { await db.destroy(); }
 }));
 
-integration("populated 0001 through 0007 database upgrades additively to Langfuse storage", async () => scratch(async (url) => {
+integration("a nonempty database is refused before applying any baseline DDL", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
-    const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
-    const digest = createHash("sha256").update(baseline).digest("hex");
-    await sql.raw(baseline).execute(db);
-    await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${digest})`.execute(db);
-    for (const name of ["0002_projection.sql", "0003_revision_links.sql", "0003_grading.sql", "0004_cursor.sql",
-      "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql"]) {
-      const migration = await Bun.file(new URL(`../src/storage/migrations/${name}`, import.meta.url)).text();
-      await sql.raw(migration).execute(db);
-    }
-    await withTenant(db, { producer: "oakridge", namespace: "upgrade" }, (trx) => sql`
-      INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id, artifact_kind,
-        artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-      VALUES ('oakridge', 'upgrade', 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'bundle', 'digest',
-        '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(trx));
-    await migrateEmptyDatabase(db);
-    const state = await sql<{ digest: string; mapping: string | null; revision_count: string }>`
-      SELECT (SELECT digest FROM observation.schema_baseline) AS digest,
-        to_regclass('observation.langfuse_mapping')::text AS mapping,
-        (SELECT count(*)::text FROM observation.source_revision) AS revision_count`.execute(db);
-    expect(state.rows[0]).toEqual({ digest, mapping: "observation.langfuse_mapping", revision_count: "1" });
-    await migrateEmptyDatabase(db);
+    await sql`CREATE TABLE public.stray (id integer)`.execute(db);
+    await expect(migrateEmptyDatabase(db)).rejects.toThrow("observation baseline requires an empty database");
+    const schema = await sql<{ name: string | null }>`SELECT to_regnamespace('observation')::text AS name`.execute(db);
+    expect(schema.rows).toEqual([{ name: null }]);
   } finally { await db.destroy(); }
 }));
 
-integration("an existing L0 plus projection database gains nullable revision links without changing its baseline", async () => scratch(async (url) => {
+integration("PostgreSQL versions below 15 are refused before DDL", async () => scratch(async (url) => {
   const db = openDatabase(url);
+  // Emulate the older server's version response at the database IO boundary.
+  const olderServer = db.withPlugin({ transformQuery: ({ node }) => node,
+    transformResult: async ({ result }) => ({ ...result, rows: [{ server_version_num: "140000" }] }) });
   try {
-    const baseline = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
-    const projection = await Bun.file(new URL("../src/storage/migrations/0002_projection.sql", import.meta.url)).text();
-    await sql.raw(baseline).execute(db);
-    const digest = createHash("sha256").update(baseline).digest("hex");
-    await sql`INSERT INTO observation.schema_baseline (digest) VALUES (${digest})`.execute(db);
-    await sql.raw(projection).execute(db);
-    await migrateEmptyDatabase(db);
-    const columns = await sql<{ column_name: string }>`SELECT column_name FROM information_schema.columns
-      WHERE table_schema = 'observation' AND table_name = 'source_revision'
-      AND column_name IN ('predecessor_id', 'subject_id') ORDER BY column_name`.execute(db);
-    expect(columns.rows.map((row) => row.column_name)).toEqual(["predecessor_id", "subject_id"]);
-    const after = await sql<{ digest: string }>`SELECT digest FROM observation.schema_baseline`.execute(db);
-    expect(after.rows[0]?.digest).toBe(digest);
+    await expect(migrateEmptyDatabase(olderServer)).rejects.toThrow("PostgreSQL 15+ is required for the observation baseline");
+    const schema = await sql<{ name: string | null }>`SELECT to_regnamespace('observation')::text AS name`.execute(db);
+    expect(schema.rows).toEqual([{ name: null }]);
   } finally { await db.destroy(); }
-}));
-
-integration("a changed recorded digest names both values", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await migrateEmptyDatabase(db);
-    const wrong = "0".repeat(64);
-    await sql`UPDATE observation.schema_baseline SET digest = ${wrong}`.execute(db);
-    const current = createHash("sha256").update(await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text()).digest("hex");
-    await expect(migrateEmptyDatabase(db)).rejects.toThrow(`recorded ${wrong}, current ${current}`);
-  } finally { await db.destroy(); }
-}));
-
-integration("non-empty database without a baseline is refused", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await sql`CREATE TABLE unrelated (id text PRIMARY KEY)`.execute(db);
-    await expect(migrateEmptyDatabase(db)).rejects.toThrow("requires an empty database");
-  } finally { await db.destroy(); }
-}));
-
-integration("row security hides another tenant's revision from a least-privilege role", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  const role = `observation_reader_${randomBytes(6).toString("hex")}`;
-  let hasRole = false;
-  try {
-    await migrateEmptyDatabase(db);
-    await sql.raw(`CREATE ROLE ${role} NOLOGIN`).execute(db);
-    hasRole = true;
-    await sql.raw(`GRANT USAGE ON SCHEMA observation TO ${role}`).execute(db);
-    await sql.raw(`GRANT SELECT ON observation.source_revision TO ${role}`).execute(db);
-    await withTenant(db, { producer: "oakridge", namespace: "alpha" }, (trx) => sql`INSERT INTO observation.source_revision
-      (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
-       definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-      VALUES ('oakridge', 'alpha', 'rev-1', 'run-1', 'unit-1', 'build_result', 'schema-1',
-        'bundle-1', 'bundle-digest-1', '{}'::jsonb, ${`canonical-json/v1:${"0".repeat(64)}`}, now())`.execute(trx));
-
-    const countAs = (namespace: string) => db.transaction().execute(async (trx) => {
-      await sql`SELECT set_config('observation.producer', 'oakridge', true), set_config('observation.namespace', ${namespace}, true)`.execute(trx);
-      await sql.raw(`SET LOCAL ROLE ${role}`).execute(trx);
-      const identity = await sql<{ current_user: string; is_superuser: boolean }>`SELECT current_user, rolsuper AS is_superuser
-        FROM pg_roles WHERE rolname = current_user`.execute(trx);
-      expect(identity.rows[0]).toEqual({ current_user: role, is_superuser: false });
-      const rows = await sql<{ count: string }>`SELECT count(*)::text AS count FROM observation.source_revision`.execute(trx);
-      return Number(rows.rows[0]?.count);
-    });
-    expect(await countAs("alpha")).toBe(1);
-    expect(await countAs("beta")).toBe(0);
-  } finally {
-    if (hasRole) {
-      await sql.raw(`DROP OWNED BY ${role}`).execute(db);
-      await sql.raw(`DROP ROLE ${role}`).execute(db);
-    }
-    await db.destroy();
-  }
 }));

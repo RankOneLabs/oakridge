@@ -1,10 +1,8 @@
 import { WorkflowDefList } from "../components/organisms/WorkflowDefList";
-import type { WorkflowDefSummary } from "../types";
+import type { WorkflowDefSummary } from "../project-types";
 
 interface WorkflowDefListViewProps {
-  onNew: () => void;
   onSelect: (definition: WorkflowDefSummary) => void;
-  onClone: (definition: WorkflowDefSummary) => void;
 }
 
 export function WorkflowDefListView(props: WorkflowDefListViewProps) {

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useCreateProject } from "../../hooks/useCreateProject";
 import { useProjects } from "../../hooks/useProjects";
 import { useUpdateProject } from "../../hooks/useUpdateProject";
-import type { ProjectId, ProjectWriteInput } from "../../types";
+import type { ProjectId, ProjectWriteInput } from "../../project-types";
 import { Button } from "../../../components/atoms/Button";
 import { FeedbackMessage } from "../../../components/atoms/FeedbackMessage";
 import { FormField, formControlClass } from "../molecules/FormField";

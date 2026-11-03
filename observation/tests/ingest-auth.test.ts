@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { createApp } from "../src/http/app";
 import { credentialsFromEnv } from "../src/http/ingest-auth";
 import { openDatabase } from "../src/storage/database";
@@ -19,9 +19,9 @@ function delivery(namespace: string, revision: string): object {
   const body = { value: revision };
   const digest = canonicalDigest(body);
   if (!digest.ok) throw new Error(digest.error.detail);
-  return { format: "observation.artifact-revision/v1", source: { producer: "oakridge", namespace,
+  return { format: "observation.artifact-revision/v2", source: { producer: "oakridge", namespace,
     revision_id: `oakridge:${namespace}:${revision}`, run_id: "run-1", unit_id: "unit-1", artifact_kind: "result",
-    artifact_schema_version: "schema-1", definition_bundle: { id: "bundle-1", digest: "bundle-digest-1" } },
+    artifact_schema_version: "schema-1", definition_id: "bundle-1" },
     recorded_at: "2026-10-28T10:00:00Z", body, body_digest: digest.value };
 }
 async function send(app: ReturnType<typeof createApp>, token: string, namespace: string, revision: string): Promise<Response> {
@@ -36,7 +36,7 @@ test("a token is configured for exactly one capability and tenant", () => {
     OBSERVATION_EXPORT_RAW_CREDENTIALS: JSON.stringify(credentials.read) })).toThrow("unique");
 });
 
-integration("ingest credential rejects another tenant and all read or grade routes without disclosure", async () => {
+integration("ingest credential rejects another tenant and all read or grade routes without exposing data", async () => {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
   const name = `observation_auth_${randomBytes(6).toString("hex")}`;
   const admin = new Client({ connectionString: serverUrl });

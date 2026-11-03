@@ -1,5 +1,5 @@
 import type { OperatorEventHistory, OperatorUnitHistory, OperatorUnitView } from "../operator-contracts";
-import type { RunEventFrame, RunEventPayload } from "../types";
+import type { RunEventFrame, RunEventPayload } from "../run-types";
 import { compositeId, fail, ok, type AdapterResult } from "./core";
 
 const record = (value: unknown): value is { readonly [key: string]: unknown } =>

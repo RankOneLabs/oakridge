@@ -28,7 +28,7 @@
 //    store. So the index says whether it knows the run's sessions at all, and
 //    an unknown session half leaves session panes standing.
 
-import type { RunDetail } from "../types";
+import type { RunDetail } from "../run-types";
 import { attemptsOf, type RunSessionsRead } from "./run-sessions";
 import {
   DEFAULT_RUN_WORKSPACE_STATE,

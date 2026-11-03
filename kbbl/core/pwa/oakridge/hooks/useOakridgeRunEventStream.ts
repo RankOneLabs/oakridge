@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { LiveSubscription } from "../../lib/live-stream";
 
 import { parseOakridgeRunEventFrame } from "../client";
-import type { RunEventFrame } from "../types";
+import type { RunEventFrame } from "../run-types";
 
 type StreamEventName = "invalidate" | "run_event";
 type StreamListener = (event: MessageEvent<string>) => void;

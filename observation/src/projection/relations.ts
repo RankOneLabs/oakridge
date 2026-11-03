@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { LinkReference, RelationType } from "./extractor";
 
 export type Assertion = "producer_explicit" | "human" | "inferred";

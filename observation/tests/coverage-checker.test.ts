@@ -4,7 +4,9 @@ import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakrid
 import { selectRevision } from "../src/projection/extractor";
 import { checkAssessmentCoverage, coverageInput } from "../src/runners/coverage-checker";
 import { createApp } from "../src/http/app";
-import { LANGFUSE_PILOT_QUESTIONS } from "../src/grading/catalogue/langfuse-pilot";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
 test("a brief criterion with no covering assessment finding is a coverage miss", async () => {
@@ -28,7 +30,7 @@ test("an assessment finding without criterion_id adds no miss or inferred link",
     { description: "integration finding", evidence: [] },
     { criterion_id: criterion.producer_local_id, description: "criterion finding", evidence: [] },
   ] };
-  const findings = selectRevision(assessment, "assessment-revision", oakridgeDevelopmentCatalogue("assessment", "development-v1"))
+  const findings = selectRevision(assessment, "assessment-revision", oakridgeDevelopmentCatalogue("assessment", "development-v1", { unit_id: "implementation/alpha" }))
     .items.map(({ item }) => item);
   expect(findings[0]?.links).toEqual([]);
   const input = coverageInput(criterion, findings);
@@ -40,7 +42,7 @@ test("an assessment finding without criterion_id adds no miss or inferred link",
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 integration("the service runs the deterministic coverage checker over local link evidence", async () => scratchGrading(async (db, occurrence_id) => {
-  const question = { ...LANGFUSE_PILOT_QUESTIONS["assessment.coverage"].definition,
+  const question = { ...OAKRIDGE_QUESTIONS["assessment.coverage"].definition,
     target_item_kinds: ["cohort_criterion"] };
   const links = { brief_criterion: { item_kind: "criterion", item_scope: "criterion",
     producer_local_id: "crit-a" }, assessment_findings: [{ item_kind: "assessment_finding", links: [] }] };
@@ -55,4 +57,24 @@ integration("the service runs the deterministic coverage checker over local link
     context, runner: "coverage" }) });
   expect(response.status).toBe(201);
   expect((await response.json()).observation.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
+}));
+
+integration("queued coverage consumes the link view produced from captured evidence", async () => scratchGrading(async (db) => {
+  const { capturedCoverage } = await import("./grading-fixture");
+  const { workOneJob } = await import("../src/grading/jobs/worker");
+  const { gradingLimits } = await import("../src/grading/jobs/budget");
+  const { withTenant } = await import("../src/storage/database");
+  const { occurrence_id, question, evidence } = await capturedCoverage(db);
+  const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: "grade" }] } });
+  const response = await app.request("/v1/evaluation-jobs", { method: "POST",
+    headers: { authorization: "Bearer grade", "content-type": "application/json" },
+    body: JSON.stringify({ identity: { subject_occurrence_id: occurrence_id, question_id: question.question_id,
+      question_version: question.question_version, evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "captured" },
+      context: { question, evaluator: evaluator("code") }, runner: "coverage" }) });
+  expect(response.status).toBe(201);
+  await workOneJob(db, tenant, gradingLimits(), "coverage-worker");
+  const observation = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
+    .selectAll().where("subject_occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow());
+  expect(observation.evidence_set_id).toBe(evidence.evidence_set_id);
+  expect(observation.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
 }));

@@ -13,6 +13,7 @@
     "generate:records": "bun scripts/generate-storage-records.ts"
   },
   "dependencies": {
+    "canonical-json": "workspace:*",
     "@dbos-inc/dbos-sdk": "4.25.14",
     "hono": "^4.6.14",
     "kysely": "~0.29.6",

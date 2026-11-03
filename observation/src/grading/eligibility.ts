@@ -1,4 +1,5 @@
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
+import type { PinnedExpectation } from "./question";
 import type { EvidenceSet } from "./evidence";
 
 /** Reasons shared by eligibility storage and population coverage. */
@@ -55,4 +56,21 @@ export function repositorySnapshotEligibility(evidence: EvidenceSet, minimum_cou
     ((reference.is_truncated || reference.is_unreadable) && !reference.incompleteness_reason)))
     return { tag: "missing_evidence", payload: { kind: "missing_source", detail: "repository excerpt lacks canonical digest or incompleteness reason" } };
   return { tag: "eligible", payload: { evidence_set_id: evidence.evidence_set_id } };
+}
+
+/** Values recorded by capture, with absence represented explicitly for unsupported captures. */
+export interface RecordedProvenance {
+  readonly definition_id: string | null;
+  readonly artifact_schema_version: string | null;
+}
+export type ProvenanceDecision = { readonly tag: "eligible" }
+  | Extract<EligibilityDecision, { tag: "inapplicable" }>;
+
+/** Equality with the question pin is the sole proof of supported provenance. */
+export function provenanceEligibility(expected: PinnedExpectation, recorded: RecordedProvenance): ProvenanceDecision {
+  const disagreements = (["definition_id", "artifact_schema_version"] as const)
+    .filter((key) => recorded[key] === null || recorded[key] !== expected[key])
+    .map((key) => `${key}: recorded=${JSON.stringify(recorded[key])}, pinned=${JSON.stringify(expected[key])}`);
+  return disagreements.length === 0 ? { tag: "eligible" }
+    : { tag: "inapplicable", payload: { reason: `Unsupported provenance: ${disagreements.join("; ")}` } };
 }

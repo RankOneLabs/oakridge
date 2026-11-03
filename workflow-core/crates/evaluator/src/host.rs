@@ -245,3 +245,102 @@ pub unsafe extern "C" fn core_process(pointer: *const u8, len: usize) -> *const 
 pub extern "C" fn core_response_len() -> usize {
     STATE.with_borrow(|state| state.response.len())
 }
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use workflow_model::{CodeOperation, Incoming, StepSnapshot, Workflow};
+
+    fn source() -> Workflow {
+        serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap()
+    }
+    fn prompts() -> BTreeMap<String, String> {
+        [
+            (
+                "review-loop/write.md",
+                include_str!("../../../../workflow-config/prompts/review-loop/write.md"),
+            ),
+            (
+                "review-loop/revise.md",
+                include_str!("../../../../workflow-config/prompts/review-loop/revise.md"),
+            ),
+            (
+                "review-loop/critique.md",
+                include_str!("../../../../workflow-config/prompts/review-loop/critique.md"),
+            ),
+            (
+                "review-loop/editor.md",
+                include_str!("../../../../workflow-config/prompts/review-loop/editor.md"),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
+    }
+    fn launch(program: &CheckedWorkflow) {
+        let snapshot: StepSnapshot = serde_json::from_value(serde_json::json!({
+            "run": { "id": "run", "root": "run" }, "units": [], "attempts": [],
+            "revisions": [], "decisions": [], "retry_events": []
+        }))
+        .unwrap();
+        let incoming: Incoming = serde_json::from_value(serde_json::json!({
+            "event": { "kind": "launched", "input": { "topic": "identity" } },
+            "writer": { "kind": "engine" }, "ingress_id": "launch"
+        }))
+        .unwrap();
+        assert!(
+            crate::step_with_limits(program, &snapshot, &incoming, &ResourceLimits::default())
+                .is_ok()
+        );
+    }
+    #[test]
+    fn cache_and_recovery_keep_prompt_and_registry_variants_separate_in_both_orders() {
+        let source = source();
+        let original_prompts = prompts();
+        let mut edited_prompts = original_prompts.clone();
+        edited_prompts.insert("review-loop/write.md".into(), "Changed {{topic}}\n".into());
+        let registry: Vec<CodeOperation> = serde_json::from_value(serde_json::json!([{
+            "key": "unused", "input_schema": "text", "output_schema": "text"
+        }]))
+        .unwrap();
+        for (first, second) in [
+            ((&original_prompts, &[][..]), (&edited_prompts, &[][..])),
+            (
+                (&original_prompts, &[][..]),
+                (&original_prompts, registry.as_slice()),
+            ),
+        ] {
+            let programs = [first, second].map(|(prompts, operations)| {
+                workflow_compiler::compile_workflow(&source, operations, prompts).unwrap()
+            });
+            assert_ne!(programs[0].digest, programs[1].digest);
+            for reverse in [false, true] {
+                let mut state = CoreState::new();
+                let order = if reverse { [1, 0] } else { [0, 1] };
+                for index in order {
+                    state.insert(programs[index].clone());
+                }
+                assert_eq!(state.programs.len(), 2);
+                for program in &programs {
+                    let cached = state
+                        .find(&program.digest)
+                        .expect("definition remains cached");
+                    assert_eq!(cached.digest, program.digest);
+                    launch(cached);
+                }
+                let mut restarted = CoreState::new();
+                for index in order {
+                    let (prompts, operations) = [first, second][index];
+                    let rebuilt =
+                        workflow_compiler::compile_workflow(&source, operations, prompts).unwrap();
+                    assert_eq!(rebuilt.digest, programs[index].digest);
+                    restarted.insert(rebuilt);
+                }
+                for program in &programs {
+                    launch(restarted.find(&program.digest).unwrap());
+                }
+            }
+        }
+    }
+}

@@ -166,6 +166,25 @@ fn worker_templates_and_decision_sets_expand_typed_overrides() {
 }
 
 #[test]
+fn a_worker_grant_override_replaces_the_tagged_variant() {
+    let mut value = fixture(&[]);
+    let mut template = value["stages"]["cohort"]["workers"]["builder"].take();
+    template["gated_review"] = json!({"kind":"restricted","role":"builder"});
+    value["workers"] = json!({"builder_template": template});
+    value["stages"]["cohort"]["workers"]["builder"] = json!({"template":"builder_template",
+        "overrides":{"gated_review":{"kind":"unscoped"}}});
+    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let worker = &source.stages["cohort"].workers["builder"];
+    assert!(matches!(
+        worker,
+        Worker::Agent {
+            gated_review: Some(GatedReviewAccess::Unscoped),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn lookup_is_optional_and_default_handles_the_missing_case() {
     let check = "/stages/plan/artifacts/plan/validate/0/check";
     let value = fixture(&[

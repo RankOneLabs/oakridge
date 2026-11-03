@@ -10,6 +10,7 @@ export interface Schema { readonly key: string; readonly shape: SchemaShape }
 /** A record field with `optional(T)` admits absence or null. */
 export interface SchemaField { readonly key: string; readonly schema: string }
 export type SchemaShape =
+  | { readonly kind: "uuid"; readonly generated: true }
   | { readonly kind: "boolean" }
   | { readonly kind: "integer"; readonly min: number; readonly max: number }
   | { readonly kind: "string"; readonly min_length: number; readonly max_length: number }
@@ -20,6 +21,7 @@ export type SchemaShape =
 
 /** One parsed type expression; an alias stays a reference to its named schema. */
 export type TypeNode =
+  | { readonly kind: "uuid"; readonly generated: true }
   | { readonly kind: "primitive"; readonly name: PrimitiveName }
   | { readonly kind: "alias"; readonly name: string }
   | { readonly kind: "list"; readonly item: TypeNode }
@@ -35,6 +37,10 @@ const WIRE_MAX = Number.MAX_SAFE_INTEGER;
 /** Project the model's parsed type into the operator schema graph. */
 export function typeNode(type: Type): TypeNode {
   switch (type.kind) {
+    case "uuid": {
+      if (!type.generated) throw new Error("only generated UUIDs are supported");
+      return { kind: "uuid", generated: true };
+    }
     case "text": case "ident": case "repo_path": case "integer": case "boolean":
       return { kind: "primitive", name: type.kind };
     case "enum": return { kind: "enum", variants: type.variants };
@@ -50,6 +56,7 @@ export function typeNode(type: Type): TypeNode {
 /** A node's schema key: an alias keeps its name, anything else is its canonical text. */
 export function schemaKey(node: TypeNode): string {
   switch (node.kind) {
+    case "uuid": return "uuid(generated)";
     case "primitive": case "alias": return node.name;
     case "list": return `list(${schemaKey(node.item)})`;
     case "optional": return `optional(${schemaKey(node.item)})`;
@@ -71,6 +78,7 @@ function primitiveShape(name: PrimitiveName): SchemaShape {
 /** Every schema a node needs, its own first; an alias contributes only its name (its body is emitted once, under that name). */
 function nodeSchemas(node: TypeNode): readonly Schema[] {
   switch (node.kind) {
+    case "uuid": return [{ key: schemaKey(node), shape: { kind: "uuid", generated: true } }];
     case "alias": return [];
     case "primitive": return [{ key: node.name, shape: primitiveShape(node.name) }];
     case "enum": return [{ key: schemaKey(node), shape: { kind: "enum", variants: node.variants } }];

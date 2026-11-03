@@ -103,7 +103,8 @@ schemas:
     verdict: enum(pass, pass_with_notes, fail)
     findings: list(assessment_finding)
     test_evidence: optional(test_evidence)
-    recommended_next_actions: list(text)
+    recommended_next_actions: list(next_action)
+  next_action: { id: "uuid(generated)", text: text }
   assessment_finding:
     criterion_id: optional(ident)
     criterion: optional(text)
@@ -330,19 +331,21 @@ stages:
     artifacts:
       build_result: { schema: build_body }
       pr: { schema: pr_body }
-      assessment: { schema: assessment_body }
+      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
       pr_state: { schema: pr_status }
       observed_state: { schema: pr_status }
     workers:
       builder:
         kind: agent
+        gated_review: { kind: restricted, role: builder }
         prompts: { initial: development/build.md, revise: development/build-revise.md }
         inputs: { brief: brief_value, repository: input.repository, build_base: input.repository.forge.build_base }
         workspace: repository(input.workspace)
         creates: [build_result, pr]
       assessor:
         kind: agent
-        prompts: { review: development/assess.md, revise: development/assess.md }
+        gated_review: { kind: restricted, role: assessor }
+        prompts: { review: development/assess.md, revise: development/assess-revise.md }
         inputs: { brief: brief_value, pr: latest(pr) }
         workspace: repository(input.workspace)
         reviews: build_result
@@ -398,7 +401,7 @@ stages:
       closed_pr: input.final_merge_policy == "require_merge" and pr_state_current and latest(pr_state).state == "closed_unmerged"
       final_state: pr_state_current and (latest(pr_state).state == "merged" or (input.final_merge_policy == "allow_close_without_merge" and latest(pr_state).state == "closed_unmerged"))
     artifacts:
-      assessment: { schema: assessment_body }
+      assessment: { schema: assessment_body, edit_policy: { kind: frozen_when_accepted } }
       pr: { schema: pr_body }
       pr_state: { schema: pr_status }
       manual_merge_target: { schema: pr_body }
@@ -406,6 +409,7 @@ stages:
     workers:
       integrator:
         kind: agent
+        gated_review: { kind: restricted, role: builder }
         prompts: { initial: development/integrate.md, revise: development/integrate-revise.md }
         inputs: { repository: input.repository, cohorts: input.cohorts }
         workspace: repository(input.workspace)

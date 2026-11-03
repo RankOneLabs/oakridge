@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChipTone } from "../../components/atoms/Chip";
-import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus, RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../types";
+import type { AssessmentVerdict, ArtifactRevisionStatus, CriterionStatus, FindingSeverity, PrReviewStatus, RequirementStatus } from "../artifact-types";
+import type { RunDisplayStatus, RunStatus, StageStatus, StageUnitStatus } from "../run-types";
 import { selectStatusTone, type StatusToneSource } from "./status-tone";
 
 const run = {

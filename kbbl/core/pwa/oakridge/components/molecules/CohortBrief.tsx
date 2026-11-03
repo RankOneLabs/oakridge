@@ -1,4 +1,4 @@
-import type { StageUnit } from "../../types";
+import type { StageUnit } from "../../run-types";
 import { selectCohortBrief } from "../../lib/stage-unit-params";
 import { isBuildBriefIdLinked, type BuildBrief } from "../../lib/build-brief";
 import { planCriterionText, type PlanCriterion } from "../../lib/plan";

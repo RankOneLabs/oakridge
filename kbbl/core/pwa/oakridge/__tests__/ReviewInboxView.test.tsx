@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewInboxView } from "../views/ReviewInboxView";
 import { parseRepositoryKey } from "../repository-inputs";
-import type { ReviewInbox } from "../types";
-import type { CohortLifecycle } from "../types";
+import type { ReviewInbox } from "../artifact-types";
+import type { CohortLifecycle } from "../artifact-types";
 import sample from "../__fixtures__/v2-adapter-sample.json";
 import type { OperatorUnitView } from "../operator-contracts";
 import { compositeId } from "../adapters/core";

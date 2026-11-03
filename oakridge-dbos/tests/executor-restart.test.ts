@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,11 +68,11 @@ test("I4: a run survives a killed server, with no session started twice", async 
     await git(repo, "init", "-q", "-b", "main");
     await git(repo, "-c", "user.email=e2e@oakridge.test", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base");
     await addLocalOrigin(repo, "git@github.com:oakridge-e2e/restart.git", ["epic/restart"]);
+    const { definition_id } = await commitTestDefinition({ source: sampleWorkflow("fan-out") });
     server = await startServer();
     const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const { digest } = await (await fetch(`${base_url()}/api/definitions`, json(sampleWorkflow("fan-out")))).json() as { readonly digest: string };
     const items = ["a", "b", "c", "d"].map((key) => ({ key, text: key, after: [] }));
-    const launched = await fetch(`${base_url()}/api/runs`, json({ request_id: crypto.randomUUID(), digest,
+    const launched = await fetch(`${base_url()}/api/runs`, json({ request_id: crypto.randomUUID(), definition_id,
       input: { repository: { repository_path: repo, expected_head: null, base_branch: "epic/restart", integration_branch: "main" }, items } }));
     const { run_id } = await launched.json() as { readonly run_id: string };
     await eventually("two item sessions working", async () => started.size === 2, 60_000);

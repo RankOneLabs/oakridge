@@ -85,6 +85,7 @@ jobs:
       - run: bun workflow-config/src/generate.ts --check
       - run: bunx tsc --noEmit -p workflow-config/src/tsconfig.json
       - run: bun test workflow-config/src
+      - run: bun test canonical-json/tests
 
   workspace-typecheck:
     name: workspace typecheck (TypeScript)
@@ -99,6 +100,7 @@ jobs:
       # committed lock.
       - run: bun install --frozen-lockfile
       - run: bunx tsc --noEmit -p oakridge-dbos/tsconfig.json
+      - run: bunx tsc --noEmit -p canonical-json/tsconfig.json
       - run: bun kbbl/scripts/generate-operator-contracts.ts --check
       - run: bunx tsc --noEmit -p kbbl/tsconfig.json
       - run: bunx tsc --noEmit -p observation/tsconfig.json

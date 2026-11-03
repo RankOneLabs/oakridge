@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ReviewInboxItem } from "../types";
+import type { ReviewInboxItem } from "../artifact-types";
 import { selectAttentionContext, selectRepositoryAttentionContext, selectReviewCohortKey, selectRunAttentionCounts, selectUnitAttentionLabel } from "./run-attention";
 
 function inboxItem(

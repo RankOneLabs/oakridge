@@ -1,3 +1,4 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { Event, WorkerResult } from "../src/core-client/core-types";
 import type { RunId, UnitId } from "../src/domain/primitives";
@@ -5,7 +6,7 @@ import { selectRunInboxItems, type InboxItem } from "../src/projections/inbox";
 import { selectOperatorFrame, type OperatorEventRow } from "../src/projections/operator-event";
 import { readLatestRevisionId, readRun } from "../src/storage/read-store";
 import { reportWorker } from "../src/workflows/executor-ingress";
-import { actionOf, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, launch, openAuthority, submitter, unitOf, type Authority } from "./authority-fixture";
 
 /**
  * Review and collection semantics through commit and Postgres (validation
@@ -30,8 +31,8 @@ async function report(run_id: RunId, action_id: string, input: Parameters<typeof
 }
 /** Fan-out launched over `items`, and its `git` worker's workspace reported: what starts the collection group. */
 async function fanOutPrepared(items: unknown): Promise<{ readonly run_id: RunId; readonly refusal: string | null }> {
-  const { bundle_id } = await pinSample(authority, "fan-out");
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { repository: REPOSITORY, items } });
+  const { definition_id } = await sampleDefinition("fan-out");
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { repository: REPOSITORY, items } });
   const git = await actionOf(authority, run_id, "git");
   await report(run_id, git, { kind: "started", session_id: null, publication_secret_hash: null });
   const refusal = await report(run_id, git, { kind: "published", unit: unitOf(run_id, "prepare"), artifact: "workspace", body: WORKSPACE, predecessor: null });
@@ -60,8 +61,8 @@ test("a collection over an empty list completes its group, and the run with it",
 
 /** Review-loop launched, its writer started and its draft published, still running. */
 async function drafting(): Promise<{ readonly run_id: RunId; readonly unit: string; readonly writer: string }> {
-  const { bundle_id } = await pinSample(authority, "review-loop");
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { definition_id } = await sampleDefinition("review-loop");
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   const unit = unitOf(run_id, "document");
   const writer = await actionOf(authority, run_id, "writer");
   await report(run_id, writer, { kind: "started", session_id: null, publication_secret_hash: null });
@@ -140,8 +141,8 @@ test("a stall stands until an event commits on the refused event's unit, and a c
 
 /** Review-loop launched with its document unit's stage renamed out of the definition: any event that advances it faults. */
 async function inconsistent(): Promise<{ readonly run_id: RunId; readonly unit: string; readonly writer: string }> {
-  const { bundle_id } = await pinSample(authority, "review-loop");
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { definition_id } = await sampleDefinition("review-loop");
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   const unit = unitOf(run_id, "document");
   await authority.db.updateTable("authority.unit").set({ stage: "absent" }).where("run_id", "=", run_id).where("id", "=", unit).execute();
   return { run_id, unit, writer: await actionOf(authority, run_id, "writer") };
@@ -181,8 +182,8 @@ test("a commit fault on a worker report names its unit", async () => {
 });
 
 test("a fault the core found advancing another unit shows on that unit", async () => {
-  const { bundle_id } = await pinSample(authority, "fan-out");
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { repository: REPOSITORY, items: [] } });
+  const { definition_id } = await sampleDefinition("fan-out");
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { repository: REPOSITORY, items: [] } });
   const work = unitOf(run_id, "work");
   await authority.db.updateTable("authority.unit").set({ stage: "absent" }).where("run_id", "=", run_id).where("id", "=", work).execute();
   const git = await actionOf(authority, run_id, "git");

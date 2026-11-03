@@ -1,4 +1,5 @@
-import type { Project, RepositoryInput, RepositoryInputDraft, RepositoryKey } from "./types";
+import type { Project } from "./project-types";
+import type { RepositoryInput, RepositoryInputDraft, RepositoryKey } from "./run-types";
 
 export function repositoryDraftFromProject(
   project: Project,

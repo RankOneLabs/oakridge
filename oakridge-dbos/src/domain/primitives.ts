@@ -11,7 +11,7 @@ export type DecisionId = Brand<string, "DecisionId">;
 export type IntentId = Brand<string, "IntentId">;
 export type EffectIntentId = IntentId;
 export type IngressId = Brand<string, "IngressId">;
-export type DefinitionBundleId = Brand<string, "DefinitionBundleId">;
+export type { DefinitionId } from "../runtime/definition-store";
 export type OperatorEventId = Brand<string, "OperatorEventId">;
 export type CollaborationThreadId = Brand<string, "CollaborationThreadId">;
 export type CollaborationMessageId = Brand<string, "CollaborationMessageId">;

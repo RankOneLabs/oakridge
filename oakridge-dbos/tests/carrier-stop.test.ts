@@ -1,3 +1,4 @@
+import { commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { sql } from "kysely";
@@ -82,7 +83,7 @@ const CODE_JOB: Workflow = {
 let scratch: Awaited<ReturnType<typeof scratchDatabase>>;
 let db: Database;
 let composition: Awaited<ReturnType<typeof createProductionComposition>>;
-let digest: string;
+let definition_id: string;
 let code_digest: string;
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 beforeAll(async () => {
@@ -94,8 +95,8 @@ beforeAll(async () => {
     // and a deadline every rolled-over carrier must keep.
     timing: { retry_initial_seconds: 0.05, retry_cap_seconds: 0.2, observe_interval_seconds: 0.05, max_observe_unavailable_attempts: 2, wake_timeout_seconds: 0.5,
       carrier_max_iterations: 1, execution_deadline_ms: 600_000 } });
-  ({ digest } = await (await composition.app.request("/api/definitions", json(sampleWorkflow("review-loop")))).json() as { readonly digest: string });
-  ({ digest: code_digest } = await (await composition.app.request("/api/definitions", json(CODE_JOB))).json() as { readonly digest: string });
+  ({ definition_id } = await commitTestDefinition({ source: sampleWorkflow("review-loop") }));
+  ({ definition_id: code_digest } = await commitTestDefinition({ source: CODE_JOB }));
 }, 30_000);
 afterAll(async () => {
   await composition.close();
@@ -105,11 +106,11 @@ afterAll(async () => {
 
 async function launchScripted(script: Script, request_id: string = crypto.randomUUID()): Promise<string> {
   scripts.set(launchRunId(request_id), script);
-  const launched = await composition.app.request("/api/runs", json({ digest, input: { topic: "Oakridge" }, request_id }));
+  const launched = await composition.app.request("/api/runs", json({ definition_id, input: { topic: "Oakridge" }, request_id }));
   return (await launched.json() as { readonly run_id: string }).run_id;
 }
 async function launchCode(): Promise<string> {
-  const launched = await composition.app.request("/api/runs", json({ digest: code_digest, input: { topic: "Oakridge" }, request_id: crypto.randomUUID() }));
+  const launched = await composition.app.request("/api/runs", json({ definition_id: code_digest, input: { topic: "Oakridge" }, request_id: crypto.randomUUID() }));
   return (await launched.json() as { readonly run_id: string }).run_id;
 }
 const intentsOf = (run_id: string) => db.selectFrom("authority.effect_intent").select(["id", "status", "stop_origin"]).where("run_id", "=", run_id).execute();

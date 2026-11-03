@@ -1,4 +1,4 @@
-import type { StageUnit } from "../types";
+import type { StageUnit } from "../run-types";
 import { isBuildBrief, type BuildBrief } from "./build-brief";
 
 /**

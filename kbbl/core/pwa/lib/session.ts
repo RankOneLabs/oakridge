@@ -1,6 +1,6 @@
 import type { SessionSnapshot, SessionStatus } from "../types";
 import { compareSessionsByActivity } from "../../acp/pwa-session-order";
-import type { RunDetail, RunSummary } from "../oakridge/types";
+import type { RunDetail, RunSummary } from "../oakridge/run-types";
 
 const SLUG_ADJ = [
   "amber","azure","brave","bright","calm","clever","cobalt","cozy","crimson",

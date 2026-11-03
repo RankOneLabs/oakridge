@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/atoms/Button";
 import { Chip } from "../../../components/atoms/Chip";
 import { isPlanCohortIdLinked, planCriterionText, planDecisionText, type PlanCohort } from "../../lib/plan";
-import type { CohortId } from "../../types";
+import type { CohortId } from "../../run-types";
 import { artifactLabelClass } from "./ArtifactSection";
 import { ExpandableText } from "./ExpandableText";
 

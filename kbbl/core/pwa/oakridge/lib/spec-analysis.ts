@@ -1,4 +1,4 @@
-import type { FindingSeverity, RequirementStatus } from "../types";
+import type { FindingSeverity, RequirementStatus } from "../artifact-types";
 
 /** Mirrors `spec_finding` in workflow-config/development.yaml. */
 export interface SpecFinding {

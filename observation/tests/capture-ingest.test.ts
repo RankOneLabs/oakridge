@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
-import { canonicalDigest } from "../src/canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import { createApp } from "../src/http/app";
 import { decodeCapture } from "../src/ingest/capture";
+import type { SourceEventDelivery } from "../src/ingest/cursor";
+import type { PinnedExpectation } from "../src/grading/question";
 import { openDatabase, withTenant } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { startObservation } from "../src/main";
@@ -32,9 +34,9 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
 function envelope(body: unknown, revision_id = "oakridge:local-dev:rev-123"): Record<string, unknown> {
   const hashed = canonicalDigest(body);
   if (!hashed.ok) throw new Error(hashed.error.detail);
-  return { format: "observation.artifact-revision/v1", source: { producer: "oakridge", namespace: "local-dev",
+  return { format: "observation.artifact-revision/v2", source: { producer: "oakridge", namespace: "local-dev",
     revision_id, run_id: "run-1", unit_id: "unit-1", artifact_kind: "build_result", artifact_schema_version: "schema-sha256:abc",
-    definition_bundle: { id: "bundle-1", digest: "bundle-sha256:def" } }, recorded_at: "2026-10-28T10:00:00.000Z",
+    definition_id: "definition-1" }, recorded_at: "2026-10-28T10:00:00.000Z",
     body, body_digest: hashed.value };
 }
 async function post(app: ReturnType<typeof createApp>, input: unknown, key = "delivery-1"): Promise<Response> {
@@ -68,9 +70,95 @@ integration("three identical deliveries keep one revision and receipt, and read 
     const revision = await read.json();
     expect(revision).toMatchObject({ id: "oakridge:local-dev:rev-123", producer: "oakridge", namespace: "local-dev",
       run_id: "run-1", unit_id: "unit-1", artifact_kind: "build_result", artifact_schema_version: "schema-sha256:abc",
-      definition_bundle_id: "bundle-1", definition_bundle_digest: "bundle-sha256:def", body: { z: 1, a: ["x"] } });
+      definition_id: "definition-1", body: { z: 1, a: ["x"] } });
     const rehashed = canonicalDigest(revision.body);
     expect(rehashed.ok && rehashed.value).toBe(revision.body_digest);
+  } finally { await db.destroy(); }
+}));
+
+integration("live operator grades keep question pins equal to each run's captured provenance", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const app = createApp({ db, credentials });
+    const base = decodeCapture(envelope({ cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+      acceptance_criteria: [{ id: "criterion", text: "Works" }] }), "base");
+    if (!base.ok) throw new Error(base.error.detail);
+    const expectations: readonly PinnedExpectation[] = [
+      { definition_id: "definition-a", artifact_schema_version: "schema-a" },
+      { definition_id: "definition-a", artifact_schema_version: "schema-a" },
+      { definition_id: "definition-b", artifact_schema_version: "schema-a" },
+      { definition_id: "definition-a", artifact_schema_version: "schema-b" },
+    ];
+    let previous = { commit_txid: "0", id: "" };
+    for (const [index, pinned_expectation] of expectations.entries()) {
+      const run_id = `run-pins-${index}`;
+      const revision_id = `revision-pins-${index}`;
+      const captured = { ...base.value.envelope, source: { ...base.value.envelope.source, ...pinned_expectation,
+        revision_id: `${tenant.producer}:${tenant.namespace}:${revision_id}`, run_id, artifact_kind: "brief" } };
+      expect((await post(app, captured, revision_id)).status).toBe(201);
+      const event_id = `decision-pins-${index}`;
+      const cursor = { commit_txid: String(index + 1), id: event_id };
+      const delivery: SourceEventDelivery = { previous, cursor, outcome: {
+        format: "observation.source-event/v1", ...pinned_expectation, kind: "human_grade", event_kind: "operator_decided",
+        run_id, event_id, decision_id: event_id, evaluator: { kind: "human" }, unit: captured.source.unit_id,
+        review: "assessment_review", decision: "accept", target: revision_id, feedback: {}, effect: "approve",
+        decided_at: "2026-11-02T12:00:00Z" } };
+      const request = { method: "POST", headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
+        body: JSON.stringify(delivery) };
+      const response = await app.request("/v1/sources/oakridge/events", request);
+      if (response.status !== 200) throw new Error(await response.text());
+      previous = cursor;
+    }
+    const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution as e")
+      .innerJoin("observation.item_occurrence as i", "i.occurrence_id", "e.subject_occurrence_id")
+      .innerJoin("observation.source_revision as r", "r.revision_id", "i.revision_id")
+      .innerJoin("observation.question_definition as q", (join) => join.onRef("q.producer", "=", "e.producer")
+        .onRef("q.namespace", "=", "e.namespace").onRef("q.question_id", "=", "e.question_id")
+        .onRef("q.question_version", "=", "e.question_version"))
+      .innerJoin("observation.grade_observation as g", "g.execution_id", "e.execution_id")
+      .select(["e.question_id", "e.question_version", "q.expected_definition_id", "q.expected_artifact_schema_version",
+        "r.definition_id", "r.artifact_schema_version", "g.origin"])
+      .where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace).orderBy("r.run_id").execute());
+    expect(rows.map((row) => ({ definition_id: row.expected_definition_id,
+      artifact_schema_version: row.expected_artifact_schema_version }))).toEqual([...expectations]);
+    expect(rows.map((row) => ({ definition_id: row.definition_id,
+      artifact_schema_version: row.artifact_schema_version }))).toEqual([...expectations]);
+    expect(rows[0]?.question_id).toBe(rows[1]?.question_id);
+    expect(new Set(rows.map((row) => row.question_id)).size).toBe(3);
+    expect(rows.map((row) => [row.question_version, row.origin]))
+      .toEqual(expectations.map(() => ["1", "workflow_approval"]));
+    const questions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition").select("question_id").execute());
+    expect(questions).toHaveLength(3);
+  } finally { await db.destroy(); }
+}));
+
+integration("live source feedback retains all JSON value kinds", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const app = createApp({ db, credentials });
+    const feedbackValues = ["Fix this", [], ["Fix this"], 0, null, { note: "Fix this" }];
+    let previous = { commit_txid: "0", id: "" };
+    for (const [index, feedback] of feedbackValues.entries()) {
+      const event_id = `feedback-${index}`;
+      const cursor = { commit_txid: String(index + 1), id: event_id };
+      const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
+        headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
+        body: JSON.stringify({ previous, cursor, outcome: {
+          format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+          kind: "human_grade", event_kind: "operator_decided", run_id: "run-live", event_id,
+          decision_id: event_id, evaluator: { kind: "human" }, unit: "run-live/cohort/a",
+          review: "assessment_review", decision: "request_build_changes", target: "pending-capture",
+          feedback, effect: "request_changes", decided_at: "2026-11-02T12:00:00Z",
+        } }) });
+      if (response.status !== 200) throw new Error(await response.text());
+      previous = cursor;
+    }
+    const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_human_grade")
+      .select("feedback").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .orderBy("event_id").execute());
+    expect(stored.map((row) => row.feedback)).toEqual(feedbackValues);
   } finally { await db.destroy(); }
 }));
 
@@ -166,7 +254,7 @@ integration("a string body, such as a markdown spec, is stored as a JSON string"
       headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
       body: JSON.stringify({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" },
         outcome: { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published",
-          run_id: "run-1", event_id: "event-1", definition_bundle: { id: "bundle-1", digest: "bundle-sha256:def" },
+          run_id: "run-1", event_id: "event-1", definition_id: "definition-1",
           artifact_schema_version: "schema-sha256:abc", revision: live } }) });
     expect(delivered.status).toBe(200);
   } finally { await db.destroy(); }
@@ -197,3 +285,26 @@ integration("service boots and serves ingest using only its own database and con
     expect(response.status).toBe(201);
   } finally { await service.stop(); }
 }));
+
+test("capture v2 accepts the explicit definition and artifact schema provenance", () => {
+  expect(decodeCapture(envelope({ value: 1 }), "v2")).toMatchObject({ ok: true,
+    value: { envelope: { format: "observation.artifact-revision/v2",
+      source: { definition_id: "definition-1", artifact_schema_version: "schema-sha256:abc" } } } });
+});
+
+test("the previous capture version is rejected with the named format failure", () => {
+  const input = { ...envelope({ value: 1 }), format: "observation.artifact-revision/" + "v1" };
+  expect(decodeCapture(input, "previous")).toEqual({ ok: false,
+    error: { operation: "decode_capture", entity_id: "envelope", detail: "invalid capture format" } });
+});
+
+for (const field of ["definition_id", "artifact_schema_version"] as const) {
+  for (const value of [undefined, ""]) {
+    test(`capture rejects ${value === undefined ? "absent" : "empty"} ${field} without inferring provenance`, () => {
+      const input = envelope({ value: 1 });
+      const invalid = { ...input, source: { ...input.source as object, [field]: value } };
+      expect(decodeCapture(invalid, "invalid")).toEqual({ ok: false,
+        error: { operation: "decode_capture", entity_id: `source.${field}`, detail: `${field} is required` } });
+    });
+  }
+}

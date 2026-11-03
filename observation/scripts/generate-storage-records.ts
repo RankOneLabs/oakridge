@@ -2,17 +2,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const migrationPaths = ["0001_observation.sql", "0002_projection.sql", "0003_grading.sql", "0004_cursor.sql",
-  "0005_export.sql", "0006_export_guard.sql", "0007_purge.sql", "0008_langfuse_sync.sql",
-  "0011_evaluation_eligibility.sql", "0012_grading_job.sql", "0013_human_collection_mode.sql"]
-  .map((name) => resolve(import.meta.dir, "../src/storage/migrations", name));
-const revisionLinksPath = resolve(import.meta.dir, "../src/storage/migrations/0003_revision_links.sql");
-const gradeLabelOriginPath = resolve(import.meta.dir, "../src/storage/migrations/0009_grade_label_origin.sql");
-const humanCollectionPath = resolve(import.meta.dir, "../src/storage/migrations/0013_human_collection_mode.sql");
-const questionTextPath = resolve(import.meta.dir, "../src/storage/migrations/0010_question_text_and_evaluator_instructions.sql");
+const baselinePath = resolve(import.meta.dir, "../src/storage/migrations/0001_observation.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
-const tables = migrationPaths.flatMap((path) => [...readFileSync(path, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)]);
-if (tables.length !== 28) throw new Error(`expected twenty-eight observation tables, found ${tables.length}`);
+const tables = [...readFileSync(baselinePath, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)];
+if (tables.length !== 26) throw new Error(`expected twenty-six observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',
@@ -30,36 +23,10 @@ for (const [, tableName, definition] of tables) {
     if (!column) continue;
     const [, name, sqlType, modifiers] = column;
     const type = sqlType === "text" ? "string" : sqlType === "jsonb" ? "JsonValue" : sqlType === "timestamptz" ? "Date" : sqlType === "boolean" ? "boolean" : "number";
-    const nullable = !modifiers?.includes("NOT NULL") && !modifiers?.includes("PRIMARY KEY");
+    const nullable = !modifiers?.includes("NOT NULL") && !modifiers?.includes("PRIMARY KEY") && !modifiers?.includes("GENERATED ALWAYS AS");
     const columnType = `${type}${nullable ? " | null" : ""}`;
-    lines.push(`  ${name}: ${modifiers?.includes("DEFAULT ") ? `Generated<${columnType}>` : columnType};`);
+    lines.push(`  ${name}: ${(modifiers?.includes("DEFAULT ") || modifiers?.includes("GENERATED ALWAYS AS")) ? `Generated<${columnType}>` : columnType};`);
   }
-  if (tableName === "source_revision") {
-    const revisionLinks = readFileSync(revisionLinksPath, "utf8");
-    const columns = [...revisionLinks.matchAll(/^  ADD COLUMN (\w+) (text),?$/gm)];
-    if (columns.map(([, name]) => name).join(",") !== "predecessor_id,subject_id")
-      throw new Error("unexpected source revision link columns");
-    for (const [, name] of columns) lines.push(`  ${name}: string | null;`);
-  }
-  if (tableName === "item_occurrence") lines.push("  json_pointer: string | null;");
-  if (tableName === "question_definition" || tableName === "evaluator_definition") {
-    const textMigration = readFileSync(questionTextPath, "utf8");
-    if (!textMigration.includes("ADD COLUMN question_text text") || !textMigration.includes("ADD COLUMN instruction_text text"))
-      throw new Error("question text and evaluator instruction migration is missing");
-    if (tableName === "question_definition") lines.push("  question_text: string | null;", "  evidence_recipe_provenance: JsonValue | null;");
-    else lines.push("  instruction_text: string | null;");
-  }
-  if (tableName === "grade_observation") {
-    const gradeOrigin = readFileSync(gradeLabelOriginPath, "utf8");
-    if (!/ADD COLUMN label_origin text GENERATED ALWAYS AS/.test(gradeOrigin))
-      throw new Error("grade label origin migration is missing");
-    lines.push("  label_origin: Generated<string>;");
-    const collection = readFileSync(humanCollectionPath, "utf8");
-    for (const [, name, type] of collection.matchAll(/^  ADD COLUMN (\w+) (text|boolean)(?: CHECK[^\n]*)?[,;]?$/gm))
-      lines.push(`  ${name}: ${type === "boolean" ? "boolean" : "string"} | null;`);
-  }
-  if (tableName === "evaluation_eligibility") lines.push("  eligibility_id: Generated<string>;");
-  if (tableName === "evaluation_execution") lines.push("  provider_attempts: Generated<JsonValue>;");
   lines.push("}", "");
 }
 lines.push("export interface DB {", ...names, "}", "");

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
-import { canonicalDigest } from "../canonical/canonical-json";
+import { canonicalDigest } from "canonical-json";
 import type { ArtifactRevisionId, CanonicalDigest, EvidenceSetId, GradeObservationId, ItemOccurrenceId } from "../domain/identity";
 import type { JsonValue } from "../domain/primitives";
 import { makeManifest, type ExportManifest, type ExportMembership, type ExportRecord,
@@ -99,7 +99,7 @@ export function prepareRows(rows: ExportRows, tenant: TenantScope, selection: Ex
           const source_revision = { producer: revision.producer, namespace: revision.namespace,
             revision_id: revision.revision_id, run_id: revision.run_id, unit_id: revision.unit_id,
             artifact_kind: revision.artifact_kind, artifact_schema_version: revision.artifact_schema_version,
-            definition_bundle_id: revision.definition_bundle_id, definition_bundle_digest: revision.definition_bundle_digest,
+            definition_id: revision.definition_id,
             body: revision.body, body_digest: revision.body_digest, recorded_at: revision.recorded_at };
           const record: ExportRecord = { candidate_id, source_revision, occurrence,
             evidence_set: evidence, observation: grade, execution, evaluator, question };

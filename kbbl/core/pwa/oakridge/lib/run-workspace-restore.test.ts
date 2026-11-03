@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type { RunDetail, RunSessionAttempt } from "../types";
+import type { RunDetail, RunSessionAttempt } from "../run-types";
 import type { RunSessionsRead } from "./run-sessions";
 import {
   LIST_PANE,

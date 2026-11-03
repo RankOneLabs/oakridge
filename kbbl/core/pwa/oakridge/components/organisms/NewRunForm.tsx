@@ -14,7 +14,8 @@ import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
 import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
-import type { FinalMergePolicy, Project, RepositoryInputDraft } from "../../types";
+import type { FinalMergePolicy, RepositoryInputDraft } from "../../run-types";
+import type { Project } from "../../project-types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { SessionModelFields } from "../molecules/SessionModelFields";
 import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,
@@ -136,7 +137,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     e.preventDefault();
     setError(null);
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
-    if (!definitionQuery.data || definitionQuery.data.bundle_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
+    if (!definitionQuery.data || definitionQuery.data.definition_id !== workflowDefId) { setError("Wait for the workflow's agent sessions to load."); return; }
     const sessionSettings = selectLaunchSessionSettings(sessionTargets, modelMode === "by_role"
       ? sessionSelectionsFromRoles()
       : Object.fromEntries(sessionTargets.map((target) => [target.key, sessionChoices.selectionFor(target)])));
@@ -205,7 +206,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             )}
             {sortedDefs.map((def) => (
               <option key={def.id} value={def.id}>
-                {def.name} v{def.version}
+                {def.name}
               </option>
             ))}
           </select>

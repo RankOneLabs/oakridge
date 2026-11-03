@@ -7,14 +7,8 @@
 // component re-derives any of it in a render body.
 
 import type { ArtifactId, Sid } from "../../lib/ids";
-import type {
-  ParkedGate,
-  ReviewInboxItem,
-  RunDetail,
-  RunStatus,
-  StageStatus,
-  WorkOrderState,
-} from "../types";
+import type { ParkedGate, ReviewInboxItem } from "../artifact-types";
+import type { RunDetail, RunStatus, StageStatus, WorkOrderState } from "../run-types";
 import {
   attemptsOf,
   selectRunSessionRows,

@@ -68,6 +68,7 @@ pub struct CheckedStage {
 pub struct CheckedArtifact {
     pub key: SymbolKey,
     pub schema: CheckedType,
+    pub edit_policy: EditPolicy,
     pub validations: Vec<CheckedArtifactValidation>,
 }
 
@@ -139,6 +140,7 @@ pub enum CheckedWorker {
         inputs: Vec<CheckedNamedExpression>,
         creates: Vec<SymbolKey>,
         reviews: Option<SymbolKey>,
+        gated_review: Option<GatedReviewAccess>,
         workspace: Option<CheckedStageExpression>,
         when: Option<CheckedStageExpression>,
     },
