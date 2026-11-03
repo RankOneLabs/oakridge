@@ -210,22 +210,25 @@ the imported score uses the human evaluator and the normal answer union.
 The mapping preserves the Langfuse score and queue-item IDs, and reviewer
 details retain the author, score timestamp and creation or revision action.
 Reviewer notes are retained only when `allow_notes` is explicitly true.
-The generic grade route refuses the reserved evaluator IDs used by the
-Langfuse importer and Oakridge operator backfill, so a direct grade request
-cannot claim either observation origin.
+The generic grade route refuses the Oakridge operator backfill's reserved
+evaluator ID. Each caller supplies the grade's origin explicitly in `details`.
 Each changed score timestamp creates a new attempt label and an immutable
 grade whose `supersedes_observation_id` points to the previous annotation.
 
-The generated `grade_observation.label_origin` field recognizes the existing
-`oakridge-review:<review>:<item_kind>` version `1` rows written by
-`backfill-store.ts` with evaluator `oakridge-operator-human` and reviewer
-`oakridge-operator` as `oakridge_operator_unblinded`. It classifies imported
-Langfuse human grades as `langfuse_annotation_blinded`; other grades are
-`other`. This derivation applies to historical rows during migration without
-rewriting their append-only answers. The grades read contract exposes the
-origin, and `GET /v1/langfuse/label-series` reports separate counts for held-out
-Langfuse annotations, Oakridge operator verdicts and collaboration threads.
-Only the positive blinded-origin series is eligible for held-out comparison.
+`grade_observation.origin` is an explicit `NOT NULL` value written at insert,
+restricted to `human_rubric_answer`, `workflow_approval` and
+`automated_evaluation`. `backfill-store.ts` records operator verdicts as
+`workflow_approval` with `collection_mode: "in_context"`. For this pilot, an
+imported rubric answer must record `human_rubric_answer` with
+`collection_mode: "blind"`. Collection mode is also `NOT NULL`, restricted to
+`blind` and `in_context`, and exposed unchanged in grade readback and coverage.
+Origin does not depend on question, evaluator or reviewer identity. The database
+requires a blind grade to reference an existing blind assignment and to record
+both model answers and workflow decisions as hidden. The grades read contract
+exposes these recorded facts. The pilot's label-series report keeps held-out
+Langfuse annotations, Oakridge operator verdicts and collaboration threads
+separate. Only deliberate rubric answers collected blind with a verified queue
+claim are eligible for the held-out annotation comparison.
 Existing operator verdicts and collaboration comments never enter the
 sampling inputs. The original assessor verdict is recorded separately and
 is absent from the reference-only package handed to a blinded judge or
