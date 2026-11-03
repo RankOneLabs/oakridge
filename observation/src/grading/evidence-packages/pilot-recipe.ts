@@ -82,6 +82,24 @@ export function hasPinnedPilotRecipe(question: QuestionDefinition): boolean {
   return pinnedPilotRecipe(question) !== null;
 }
 
+/** Roles whose reference count falls outside the pinned slot's bounds. The role is the prefix
+ * `capturedReference` writes into every ref, so a built package can be checked against the pin
+ * that is supposed to govern it. Empty means the package satisfies its recipe. */
+export function unsatisfiedSlots(recipe: PilotEvidenceRecipe,
+  references: readonly { readonly ref: string }[]): readonly EvidenceRole[] {
+  const counts = new Map<string, number>();
+  for (const { ref } of references) {
+    const separator = ref.indexOf(":");
+    if (separator <= 0) continue;
+    const role = ref.slice(0, separator);
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return [...recipe.input, ...recipe.output].filter((slot) => {
+    const seen = counts.get(slot.role) ?? 0;
+    return seen < slot.min_count || seen > slot.max_count;
+  }).map((slot) => slot.role);
+}
+
 export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
   : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
   const recipe = pinnedPilotRecipe(question);

@@ -3,7 +3,7 @@ import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
 import { hasCapturedEvidenceRecipe } from "../grading/evidence-packages/recipe";
 import { pilotSubjectArtifactKind } from "../producers/oakridge/evidence-packages";
-import { deriveSubjectEvidence } from "./captured-evidence-store";
+import { deriveRunQuestionEvidence, deriveSubjectEvidence, type RunQuestionEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
@@ -149,6 +149,17 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
   const subject_ids = subjects.map((subject) => subject.occurrence_id);
   const stored = await storedEligibility(db, tenant, selection, subject_ids);
   const decisions = new Map(stored.map((row) => [String(row.subject_occurrence_id), row]));
+  // Derive on every read, because a cached exclusion recorded before the subject's evidence was
+  // captured would otherwise never settle. Derive once for the page, not once per subject: the
+  // capture load and package build depend on the run and the pin, never on an individual subject.
+  const derivable = hasCapturedEvidenceRecipe(question)
+    && subjects.some((subject) => provenanceEligibility(question.pinned_expectation, subject).tag !== "inapplicable");
+  let page_derivation: RunQuestionEvidence | undefined;
+  if (derivable) {
+    const derived = await deriveRunQuestionEvidence(db, tenant, selection.run_id, question);
+    if (!derived.ok) throw new Error(derived.error.detail);
+    page_derivation = derived.value;
+  }
   for (const subject of subjects) {
     const decision = provenanceEligibility(question.pinned_expectation, subject);
     if (decision.tag === "inapplicable") {
@@ -157,11 +168,9 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
       const recorded = await recordEligibility(db, tenant, row);
       if (!recorded.ok) throw new Error(recorded.error.detail);
       decisions.set(subject.occurrence_id, row);
-      // Derive on every read. A cached row is not a reason to skip derivation: an exclusion
-      // cached before the subject's evidence was captured would otherwise never settle.
-    } else if (hasCapturedEvidenceRecipe(question)) {
+    } else if (page_derivation) {
       const derived = await deriveSubjectEvidence(db, tenant, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
-        question_id: question.question_id, question_version, question });
+        question_id: question.question_id, question_version, question, derived: page_derivation });
       if (!derived.ok) throw new Error(derived.error.detail);
     }
   }
