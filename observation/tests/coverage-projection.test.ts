@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { sql } from "kysely";
+import type { CoverageProjection } from "../src/grading/coverage";
 import { createApp } from "../src/http/app";
 import { withTenant } from "../src/storage/database";
 import { readCoverage } from "../src/storage/coverage-store";
@@ -69,7 +70,9 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
   const response = await app.request(`/v1/runs/run-1/coverage?question_id=${question.question_id}&question_version=${question.question_version}&revision_id=rev-2`,
     { headers: { authorization: "Bearer read" } });
   expect(response.status).toBe(200);
-  expect((await response.json()).questions[0].graded).toBe(0);
+  const body = await response.json() as CoverageProjection;
+  expect(body.questions[0]!.graded).toBe(0);
+  expect(body).not.toHaveProperty("truncated");
 }));
 
 integration("coverage includes every recorded question and every eligibility outcome", async () => scratchGrading(async (db, occurrence_id) => {
@@ -91,7 +94,7 @@ integration("coverage includes every recorded question and every eligibility out
   }
   const coverage = await readCoverage(db, tenant, { run_id: "run-1", revision_id: null, question_id: null, question_version: null });
   expect(coverage.questions).toHaveLength(51);
-  expect(coverage.truncated).toBe(false);
+  expect(coverage).not.toHaveProperty("truncated");
   for (let index = 0; index < 51; index++) {
     const item = coverage.questions.find((item) => item.question_id === `coverage-question-${index}`)!;
     const decision = decisions[index % decisions.length]!;

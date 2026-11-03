@@ -25,5 +25,4 @@ export interface CoverageProjection {
   readonly selection_revision_id: string | null;
   readonly query_version: typeof COVERAGE_QUERY_VERSION;
   readonly questions: readonly QuestionCoverage[];
-  readonly truncated: boolean;
 }

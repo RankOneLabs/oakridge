@@ -78,5 +78,5 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
       exclusion_reasons, lag_seconds: row.lag_seconds };
   });
   return { run_id: selection.run_id, selection_revision_id: selection.revision_id,
-    query_version: COVERAGE_QUERY_VERSION, questions, truncated: false };
+    query_version: COVERAGE_QUERY_VERSION, questions };
 }
