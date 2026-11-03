@@ -1,36 +1,42 @@
-/** One live direct-Jev grade against TypeSafe, on a captured planning-and-brief pass.
+/** One real TypeSafe grade of a newly captured plan or brief criterion.
  *
- * This is the repeatable form of the walkthrough recorded in
- * `docs/observation-operations.md`. It ingests the checked-in run-slice plan and brief
- * revisions through the Oakridge source-event route, projects their criteria, then grades
- * one pinned pilot question through the durable queue and the real provider runner. The
- * grade is the only network call; everything else is local.
+ * Supply the ordered SourceEventDelivery[] recorded by the production observation
+ * publisher for a new run launched from the committed development definition:
  *
- * It needs an isolated PostgreSQL server in `OAKRIDGE_TEST_DATABASE_URL` and a provider
- * key in `TYPESAFE_API_KEY`. It creates a throwaway database, leaves it in place so the
- * stored execution and observation can be read back, and prints its name.
+ *   bun observation/scripts/jev-live-walkthrough.ts --capture /tmp/new-run.json \
+ *     --question plan.criterion_traceability --estimated-cost 0.01
  *
- *   bun scripts/jev-live-walkthrough.ts [--question brief.source_fidelity] [--estimated-cost 0.01]
- *
- * The queue admits a network grade only against a positive cost estimate, which is what it
- * reserves against the configured spend caps; TypeSafe reports no cost of its own.
+ * OAKRIDGE_TEST_DATABASE_URL and TYPESAFE_API_KEY are prerequisites. Missing
+ * prerequisites report SKIP, without fixture replay or a substitute provider.
+ * This command creates and retains its own empty observation database. It never
+ * connects to the deployed database, resets data, or deploys a stack. The capture
+ * must include the launch and all deliveries through the criterion being graded.
+ * Readback uses authenticated API routes and the authenticated API's frozen
+ * export artifact (question and evidence); no grading record is read with SQL.
+ * Producing the source run/capture is a separate prerequisite, not simulated here.
  */
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
-import { canonicalDigest } from "canonical-json";
-import type { JsonValue } from "../src/domain/primitives";
+import { z } from "zod";
+import { canonicalJson } from "canonical-json";
+import { resolveLaunchableDefinition } from "../../workflow-config/src/definition-store";
+import type { ExportManifest } from "../src/export/manifest";
 import { instructionDigest } from "../src/grading/evaluator";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
-import { listRunItems } from "../src/storage/projection-store";
-import { readJob } from "../src/storage/grading-job-store";
-import { openDatabase, withTenant, type Database } from "../src/storage/database";
+import { decodeSourceEventDelivery, type SourceEventDelivery } from "../src/ingest/cursor";
+import type { GradePage } from "../src/storage/grading-store";
+import type { GradingJob } from "../src/storage/grading-job-store";
+import type { ItemsPage } from "../src/storage/projection-store";
+import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 
 type LiveQuestionId = "plan.criterion_traceability" | "brief.source_fidelity";
-interface Options { readonly question_id: LiveQuestionId; readonly keep_database: boolean;
+export interface LiveOptions { readonly capture_path: string; readonly question_id: LiveQuestionId;
   readonly estimated_cost: number }
+interface CapturedRun { readonly run_id: string; readonly definition_id: string;
+  readonly namespace: string; readonly deliveries: readonly SourceEventDelivery[] }
 
 /** The two pilot questions whose evidence a captured planning-and-brief pass can supply. */
 const SYSTEM_ONE_CRITERIA: Readonly<Record<LiveQuestionId, Readonly<Record<string, string>>>> = {
@@ -56,199 +62,176 @@ const SYSTEM_ONE_INSTRUCTIONS: Readonly<Record<LiveQuestionId, string>> = {
     + "Rewording alone is not changed_meaning.",
 };
 
-const CRITERION_LOCAL_ID = "criterion-lineage";
-const DECISION_LOCAL_ID = "decision-capture";
-const tenant = { producer: "oakridge", namespace: "jev-live-walkthrough" };
-const credentials = {
-  ingest: [{ ...tenant, token: "ingest-live" }],
-  read: [{ ...tenant, token: "read-live" }],
-  grade: [{ ...tenant, token: "grade-live", reviewer_id: "oakridge-operator" }],
-};
-const fixtureExpectation = { definition_id: "fixture-definition", artifact_schema_version: "development-v1" };
-const questions = oakridgeQuestions({
-  "analysis.finding_relevance": fixtureExpectation, "plan.criterion_traceability": fixtureExpectation,
-  "brief.source_fidelity": fixtureExpectation, "assessment.coverage": fixtureExpectation,
+export function missingLivePrerequisites(capture_path: string | undefined): readonly string[] {
+  return [
+    ...(!process.env.OAKRIDGE_TEST_DATABASE_URL ? ["OAKRIDGE_TEST_DATABASE_URL"] : []),
+    ...(!process.env.TYPESAFE_API_KEY ? ["TYPESAFE_API_KEY"] : []),
+    ...(!capture_path ? ["a new production capture (--capture or OAKRIDGE_LIVE_CAPTURE)"] : []),
+  ];
+}
+function requireCondition(condition: unknown, detail: string): asserts condition {
+  if (!condition) throw new Error(detail);
+}
+function sameJson(left: unknown, right: unknown): boolean {
+  const a = canonicalJson(left); const b = canonicalJson(right);
+  return a.ok && b.ok && a.value === b.value;
+}
+
+/** Decode the producer boundary, retaining its v2 envelopes and provenance verbatim. */
+async function readCapturedRun(path: string): Promise<CapturedRun> {
+  const input: unknown = await Bun.file(path).json();
+  requireCondition(Array.isArray(input) && input.length > 0, "capture must be a nonempty SourceEventDelivery[]");
+  const deliveries = input.map((value: unknown) => {
+    const decoded = decodeSourceEventDelivery(value);
+    requireCondition(decoded, "invalid production source-event delivery");
+    return decoded;
+  });
+  const launch = deliveries[0];
+  requireCondition(launch?.outcome.kind === "run_input", "capture must start with this run's launch");
+  requireCondition(launch.previous.commit_txid === "0" && launch.previous.id === "", "capture must start at the initial cursor");
+  const definition = resolveLaunchableDefinition("development");
+  requireCondition(definition.ok, "committed development definition cannot be resolved");
+  const run_id = launch.outcome.run_id;
+  requireCondition(run_id !== "run-38bd8c2fad299e90", "pre-cutover fixture replay is not live verification");
+  requireCondition(deliveries.every(({ outcome }) => outcome.run_id === run_id
+    && outcome.definition_id === definition.value.definition_id), "capture must contain one run of the current committed definition");
+  const revisions = deliveries.flatMap(({ outcome }) => outcome.kind === "artifact_revision" ? [outcome.revision] : []);
+  const namespace = revisions[0]?.source.namespace;
+  requireCondition(namespace, "capture has no artifact revisions");
+  requireCondition(revisions.every((revision) => revision.format === "observation.artifact-revision/v2"
+    && revision.source.producer === "oakridge" && revision.source.namespace === namespace
+    && revision.source.run_id === run_id && revision.source.definition_id === definition.value.definition_id),
+  "capture revisions must retain the run's v2 provenance");
+  return { run_id, definition_id: definition.value.definition_id, namespace, deliveries };
+}
+
+// These fields mirror the actual API-generated export record's storage schema.
+const exportedGrade = z.object({
+  question: z.object({ question_id: z.string(), question_version: z.string(), question_text: z.string(),
+    input_recipe: z.unknown(), expected_definition_id: z.string(), expected_artifact_schema_version: z.string() }),
+  evidence_set: z.object({ evidence_set_id: z.string(), is_incomplete: z.literal(false),
+    evidence_refs: z.array(z.object({ ref: z.string(), content: z.unknown(), digest: z.string() })).min(2) }),
+  evaluator: z.object({ evaluator_definition_id: z.string(), provider: z.literal("typesafe"), instruction_text: z.string() }),
+  execution: z.object({ execution_id: z.string(), status: z.literal("completed"),
+    provider_attempts: z.array(z.object({ status: z.literal("completed"), estimated_cost: z.number().positive(),
+      request_id: z.string().nullable() })).min(1),
+    reproducibility_metadata: z.object({ raw_answer: z.unknown(), provider_model: z.string() }) }),
+  observation: z.object({ execution_id: z.string(), subject_occurrence_id: z.string(), answer_payload: z.unknown(),
+    probabilities: z.record(z.string(), z.number().min(0).max(1)) }),
 });
-const fixtureRoot = new URL("../fixtures/oakridge/run-slice/", import.meta.url);
+export interface LiveReport { readonly database_name: string; readonly run_id: string;
+  readonly execution_id: string; readonly subject_occurrence_id: string; readonly export_path: string }
 
-function parseOptions(argv: readonly string[]): Options {
-  const named = argv.indexOf("--question");
-  const question_id = named === -1 ? "brief.source_fidelity" : argv[named + 1];
-  if (question_id !== "plan.criterion_traceability" && question_id !== "brief.source_fidelity")
-    throw new Error("--question must be plan.criterion_traceability or brief.source_fidelity");
-  const priced = argv.indexOf("--estimated-cost");
-  const estimated_cost = priced === -1 ? 0.01 : Number(argv[priced + 1]);
-  if (!Number.isFinite(estimated_cost) || estimated_cost <= 0)
-    throw new Error("--estimated-cost must be a positive number");
-  return { question_id, keep_database: argv.includes("--keep-database"), estimated_cost };
-}
-
-function digestOf(value: JsonValue): string {
-  const result = canonicalDigest(value);
-  if (!result.ok) throw new Error(result.error.detail);
-  return result.value;
-}
-
-const readFixture = async (file: string): Promise<JsonValue> =>
-  Bun.file(new URL(file, fixtureRoot)).json() as Promise<JsonValue>;
-
-interface RevisionEvent {
-  readonly id: string; readonly commit_txid: string; readonly created_at: string;
-  readonly run_id: string; readonly unit_id: string;
-  readonly payload: { readonly kind: string; readonly unit: string; readonly artifact: string;
-    readonly body: JsonValue; readonly by: string | null; readonly predecessor: string | null;
-    readonly subject: string | null };
-}
-interface EventFixture { readonly run_id: string; readonly rows: readonly RevisionEvent[] }
-
-const revisionRef = (row: RevisionEvent): string => `${row.payload.unit}:${row.payload.artifact}:1`;
-
-/** Deliver the captured revisions in their observed transaction order, as the source route requires. */
-async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: EventFixture): Promise<readonly RevisionEvent[]> {
-  const headers = { authorization: `Bearer ${credentials.ingest[0]!.token}`, "content-type": "application/json" };
-  let cursor = { commit_txid: "0", id: "" };
-  const definition_id = fixtureExpectation.definition_id;
-  const delivered: RevisionEvent[] = [];
-  for (const row of events.rows) {
-    const next = { commit_txid: row.commit_txid, id: row.id };
-    const outcome = row.payload.kind === "launched"
-      ? { format: "observation.source-event/v1", kind: "run_input", event_kind: "launched",
-        run_id: row.run_id, event_id: row.id, definition_id, artifact_schema_version: null,
-        input: (row.payload as unknown as { input: JsonValue }).input, input_schema_version: "development-v1" }
-      : row.payload.kind === "revision_published"
-        ? { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published",
-          run_id: row.run_id, event_id: row.id, definition_id,
-          artifact_schema_version: "development-v1",
-          revision: { format: "observation.artifact-revision/v2",
-            source: { ...tenant, revision_id: `${tenant.producer}:${tenant.namespace}:${revisionRef(row)}`,
-              run_id: row.run_id, unit_id: row.unit_id, artifact_kind: row.payload.artifact,
-              artifact_schema_version: "development-v1", definition_id,
-              predecessor_id: row.payload.predecessor, subject_id: row.payload.subject, by_id: row.payload.by },
-            recorded_at: row.created_at, body: row.payload.body, body_digest: digestOf(row.payload.body) } }
-        : null;
-    // This walkthrough delivers only run inputs and captured revisions.
-    if (!outcome) continue;
-    const response = await app.request("/v1/sources/oakridge/events", { method: "POST", headers,
-      body: JSON.stringify({ previous: cursor, cursor: next, outcome }) });
-    if (response.status !== 200) throw new Error(`ingest refused with HTTP ${response.status}: ${await response.text()}`);
-    cursor = next;
-    if (row.payload.kind === "revision_published") delivered.push(row);
-  }
-  return delivered;
-}
-
-interface GradeSubject {
-  readonly subject_occurrence_id: string;
-  readonly references: readonly { readonly ref: string; readonly kind: "public"; readonly content: JsonValue;
-    readonly digest: string }[];
-}
-
-/** The pinned recipe's input and output roles, filled from the projected criteria of this pass. */
-async function gradeSubject(db: Database, run_id: string, question_id: LiveQuestionId,
-  revisions: readonly RevisionEvent[]): Promise<GradeSubject> {
-  const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
-  const revisionOf = (artifact: string): string => {
-    const row = revisions.find((candidate) => candidate.payload.artifact === artifact);
-    if (!row) throw new Error(`the fixture has no ${artifact} revision`);
-    return revisionRef(row);
-  };
-  const item = (artifact: string, item_kind: string, local_id: string) => {
-    const found = page.items.find((entry) => entry.revision_id === revisionOf(artifact)
-      && entry.item_kind === item_kind && entry.producer_local_id === local_id);
-    if (!found) throw new Error(`the projection has no ${artifact} ${item_kind} ${local_id}`);
-    return found;
-  };
-  const reference = (ref: string, selected: { readonly selected_value: JsonValue }) =>
-    ({ ref, kind: "public" as const, content: selected.selected_value, digest: digestOf(selected.selected_value) });
-  const planCriterion = item("plan", "criterion", CRITERION_LOCAL_ID);
-  if (question_id === "plan.criterion_traceability") {
-    const decision = item("plan", "decision", DECISION_LOCAL_ID);
-    return { subject_occurrence_id: planCriterion.occurrence_id,
-      references: [reference("plan_criterion", planCriterion), reference("plan_decision", decision)] };
-  }
-  const briefCriterion = item("brief", "criterion", CRITERION_LOCAL_ID);
-  return { subject_occurrence_id: briefCriterion.occurrence_id,
-    references: [reference("plan_criterion", planCriterion), reference("brief_criterion", briefCriterion)] };
-}
-
-async function main(): Promise<void> {
-  const options = parseOptions(Bun.argv.slice(2));
-  const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
-  if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
-  if (!process.env.TYPESAFE_API_KEY) throw new Error("TYPESAFE_API_KEY is required for a live grade");
-
-  const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  const name = `observation_jev_live_${stamp}_${randomBytes(4).toString("hex")}`;
-  const admin = new Client({ connectionString: serverUrl });
+/** Ingest a real capture, derive production evidence, call the provider, then read back. */
+export async function verifyCapturedRun(options: LiveOptions): Promise<LiveReport> {
+  const missing = missingLivePrerequisites(options.capture_path);
+  requireCondition(missing.length === 0, `missing live prerequisites: ${missing.join(", ")}`);
+  requireCondition(Number.isFinite(options.estimated_cost) && options.estimated_cost > 0, "estimated cost must be positive");
+  const captured = await readCapturedRun(options.capture_path);
+  const artifact = options.question_id === "plan.criterion_traceability" ? "plan" : "brief";
+  const revision = captured.deliveries.flatMap(({ outcome }) => outcome.kind === "artifact_revision"
+    && outcome.revision.source.artifact_kind === artifact ? [outcome.revision] : []).at(-1);
+  requireCondition(revision, `capture has no ${artifact} revision`);
+  const expectation = { definition_id: captured.definition_id, artifact_schema_version: revision.source.artifact_schema_version };
+  const question = oakridgeQuestions({ "analysis.finding_relevance": expectation, "plan.criterion_traceability": expectation,
+    "brief.source_fidelity": expectation, "assessment.coverage": expectation })[options.question_id].definition;
+  const tenant = { producer: "oakridge", namespace: captured.namespace };
+  const credentials = { ingest: [{ ...tenant, token: crypto.randomUUID() }], read: [{ ...tenant, token: crypto.randomUUID() }],
+    grade: [{ ...tenant, token: crypto.randomUUID(), reviewer_id: "live-verifier" }] };
+  const name = `observation_jev_live_${randomBytes(8).toString("hex")}`;
+  // The URL comes only from the isolated test-server variable. Only this freshly
+  // generated database is migrated; it is retained even when verification fails.
+  const server_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
+  requireCondition(server_url, "OAKRIDGE_TEST_DATABASE_URL disappeared");
+  const admin = new Client({ connectionString: server_url });
   await admin.connect();
-  await admin.query(`CREATE DATABASE ${name}`);
-  const url = new URL(serverUrl);
-  url.pathname = `/${name}`;
+  try { await admin.query(`CREATE DATABASE ${name}`); } finally { await admin.end(); }
+  const url = new URL(server_url); url.pathname = `/${name}`;
   const db = openDatabase(url.href);
-  console.log(`database ${name}, tenant ${tenant.producer}/${tenant.namespace}`);
-
+  console.log(`retained verification database ${name}; run ${captured.run_id}`);
   try {
     await migrateEmptyDatabase(db);
     const app = createApp({ db, credentials });
-    const events = await readFixture("events.json") as unknown as EventFixture;
-    const revisions = await ingestCapturedPass(app, events);
-    const subject = await gradeSubject(db, events.run_id, options.question_id, revisions);
-
-    const pilot = questions[options.question_id];
-    const question = pilot.definition;
-    const evidence = { evidence_set_id: digestOf(subject.references as unknown as JsonValue),
-      references: subject.references, is_incomplete: false, incompleteness_reason: null };
+    const request = async (path: string, token: string, body?: unknown): Promise<Response> => {
+      const response = await app.request(path, { method: body === undefined ? "GET" : "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body) });
+      requireCondition(response.ok, `${path} HTTP ${response.status}: ${response.ok ? "" : await response.text()}`);
+      return response;
+    };
+    const ingest_token = credentials.ingest[0].token;
+    const read_token = credentials.read[0].token;
+    const grade_token = credentials.grade[0].token;
+    for (const delivery of captured.deliveries) await request("/v1/sources/oakridge/events", ingest_token, delivery);
+    const items = await (await request(`/v1/runs/${encodeURIComponent(captured.run_id)}/items?limit=200`, read_token)).json() as ItemsPage;
+    const candidates = items.items.filter((item) => item.item_kind === "criterion" && item.artifact_kind === artifact
+      && revision.source.revision_id.endsWith(`:${item.revision_id}`) && item.producer_local_id !== null);
+    requireCondition(candidates.length > 0, `capture did not project a producer-identified ${artifact} criterion`);
     const instruction_text = JSON.stringify({ system_one: { type: "choice",
-      instructions: SYSTEM_ONE_INSTRUCTIONS[options.question_id],
-      criteria: SYSTEM_ONE_CRITERIA[options.question_id] } });
+      instructions: SYSTEM_ONE_INSTRUCTIONS[options.question_id], criteria: SYSTEM_ONE_CRITERIA[options.question_id] } });
     const evaluator = { evaluator_definition_id: `jev-direct-${options.question_id}`, kind: "model",
       backend_kind: "local", provider: "typesafe", model: "jev-latest", instruction_text,
-      prompt_digest: instructionDigest(instruction_text), config_digest: "jev-live-1", runtime_revision: "1",
+      prompt_digest: instructionDigest(instruction_text), config_digest: "jev-live-2", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: null };
-    const identity = { subject_occurrence_id: subject.subject_occurrence_id,
-      evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
+    const subject = candidates[0];
+    requireCondition(subject, "no grade subject");
+    // No evidence is supplied: queue admission must derive it from this capture.
+    const identity = { subject_occurrence_id: subject.occurrence_id, question_id: question.question_id,
       question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
       config_digest: evaluator.config_digest, attempt_label: "live-1" };
-
-    const enqueued = await app.request("/v1/evaluation-jobs", { method: "POST",
-      headers: { authorization: `Bearer ${credentials.grade[0]!.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ identity, context: { question, evidence, evaluator }, runner: "jev_direct",
-        estimated_cost: options.estimated_cost }) });
-    if (enqueued.status !== 201) throw new Error(`enqueue refused with HTTP ${enqueued.status}: ${await enqueued.text()}`);
-    console.log(`question ${question.question_id}/${question.question_version}, subject ${subject.subject_occurrence_id}`);
-    console.log(`request state refs: ${subject.references.map((entry) => entry.ref).join(", ")}`);
-
-    const claimed = await workOneJob(db, tenant);
-    const job = claimed ? await readJob(db, tenant, claimed.job_id) : null;
-    console.log(`job ${job?.job_id ?? "none"} finished in state ${job?.state ?? "none"}`);
-
-    const execution = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution")
-      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .executeTakeFirst());
-    const observation = execution ? await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
-      .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("execution_id", "=", execution.execution_id).executeTakeFirst()) : undefined;
-
-    console.log(JSON.stringify({
-      execution_id: execution?.execution_id ?? null,
-      execution_status: execution?.status ?? null,
-      execution_error: execution?.error ?? null,
-      provider_attempts: execution?.provider_attempts ?? null,
-      model_usage: execution?.model_usage ?? null,
-      provider_reported_cost: execution?.cost ?? null,
-      provider_request_id: execution?.external_execution_id ?? null,
-      provider_link: execution?.provider_link ?? null,
-      reproducibility_metadata: execution?.reproducibility_metadata ?? null,
-      observation_id: observation?.observation_id ?? null,
-      answer: observation?.answer_payload ?? null,
-      probabilities: observation?.probabilities ?? null,
-      confidence: observation?.confidence ?? null,
-    }, null, 2));
-    if (!options.keep_database) console.log(`\nretained database ${name}; drop it with: DROP DATABASE ${name}`);
-  } finally {
-    await db.destroy();
-    await admin.end();
-  }
+    const enqueued = await (await request("/v1/evaluation-jobs", grade_token,
+      { identity, context: { question, evaluator }, runner: "jev_direct", estimated_cost: options.estimated_cost })).json() as { job_id: string };
+    await workOneJob(db, tenant);
+    const job = await (await request(`/v1/evaluation-jobs/${enqueued.job_id}`, read_token)).json() as GradingJob;
+    requireCondition(job.state === "terminal" && job.terminal_cause === null,
+      `provider job ${job.job_id} ended in ${job.state}/${job.terminal_cause}`);
+    const grades_path = `/v1/items/${encodeURIComponent(subject.occurrence_id)}/grades`;
+    requireCondition((await app.request(grades_path)).status === 403, "unauthenticated grade read must be refused");
+    const grades = await (await request(grades_path, read_token)).json() as GradePage;
+    const grade = grades.items[0];
+    requireCondition(grades.total === 1 && grade, "completed job must yield exactly one readable grade");
+    const execution_response = await request(`/v1/evaluation-executions/${grade.execution.execution_id}`, read_token);
+    const execution: unknown = await execution_response.json();
+    requireCondition(sameJson(execution, grade.execution), "execution readback differs from grade listing");
+    const output = await (await request("/v1/exports/assay", read_token, { selection: {
+      run_id: captured.run_id, occurrence_ids: [subject.occurrence_id] } })).json() as
+      { manifest: ExportManifest; files: { data: string } };
+    const included = output.manifest.membership.filter((member) => member.disposition === "included");
+    requireCondition(included.length === 1 && included[0]?.redaction_reasons.length === 0, "verified grade must export without redaction");
+    const lines = (await Bun.file(output.files.data).text()).trim().split("\n");
+    requireCondition(lines.length === 1, "expected one frozen export record");
+    const record = exportedGrade.parse(JSON.parse(lines[0] ?? ""));
+    requireCondition(record.question.expected_definition_id === captured.definition_id
+      && record.question.expected_artifact_schema_version === expectation.artifact_schema_version
+      && record.question.question_id === options.question_id && record.question.question_text === question.question_text,
+    "stored question differs from its captured provenance or supported question");
+    requireCondition(sameJson(record.question.input_recipe, question.input_recipe)
+      && record.evaluator.evaluator_definition_id === evaluator.evaluator_definition_id
+      && record.evaluator.instruction_text === instruction_text, "stored question recipe or evaluator differs from admission");
+    requireCondition(record.evidence_set.evidence_set_id === job.evidence_set_id
+      && record.evidence_set.evidence_refs.every((ref) => ref.content !== null && ref.digest), "stored evidence is incomplete");
+    requireCondition(record.execution.execution_id === grade.execution.execution_id
+      && record.observation.execution_id === grade.execution.execution_id
+      && record.observation.subject_occurrence_id === subject.occurrence_id, "stored grade identities disagree");
+    requireCondition(record.execution.reproducibility_metadata.raw_answer !== undefined
+      && Object.keys(record.observation.probabilities).length > 0, "provider raw answer or probabilities were not retained");
+    const report = { database_name: name, run_id: captured.run_id, execution_id: grade.execution.execution_id,
+      subject_occurrence_id: subject.occurrence_id, export_path: output.files.data };
+    console.log(JSON.stringify(report, null, 2));
+    return report;
+  } finally { await db.destroy(); }
 }
 
-await main();
+if (import.meta.main) {
+  const args = Bun.argv.slice(2);
+  const argument = (name: string) => { const index = args.indexOf(name); return index < 0 ? undefined : args[index + 1]; };
+  const capture_path = argument("--capture") ?? process.env.OAKRIDGE_LIVE_CAPTURE;
+  const missing = missingLivePrerequisites(capture_path);
+  if (missing.length) console.warn(`SKIP: direct-provider live verification; missing ${missing.join(", ")}`);
+  else {
+    const question_id = argument("--question") ?? "plan.criterion_traceability";
+    requireCondition(question_id === "plan.criterion_traceability" || question_id === "brief.source_fidelity", "unsupported --question");
+    requireCondition(capture_path, "--capture is required");
+    await verifyCapturedRun({ capture_path, question_id, estimated_cost: Number(argument("--estimated-cost") ?? "0.01") });
+  }
+}
