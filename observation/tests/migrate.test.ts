@@ -81,7 +81,7 @@ SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.rel
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
 ORDER BY kind,table_name,name`);
 
-integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and unique eligibility decisions and explicit grading records", async () => scratch(async (url) => {
+integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and derived eligibility caching and explicit grading records", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     await migrateEmptyDatabase(db);
@@ -95,7 +95,10 @@ integration("the single baseline preserves the historical catalog except for cap
       || (entry.table_name === "grade_observation" && ["label_origin", "collection_mode"].includes(entry.name))))
       || (entry.kind === "constraint" && (
         (entry.table_name === "grading_job" && entry.name === "grading_job_terminal_cause_check")
-        || (entry.table_name === "grade_observation" && entry.name === "grade_collection_consistency")))));
+        || (entry.table_name === "grade_observation" && entry.name === "grade_collection_consistency")))
+      // Eligibility is derived, so its row is a refreshable cache rather than an append-only decision.
+      || (entry.kind === "trigger" && entry.table_name === "evaluation_eligibility"
+        && entry.name === "evaluation_eligibility_append_only")));
     for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
       expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
     expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });

@@ -94,7 +94,7 @@ test("a well-formed different 64-hex definition is unsupported", () => {
     tag: "inapplicable", payload: { reason: `Unsupported provenance: definition_id: recorded="${recorded}", pinned="${expected.definition_id}"` } });
 });
 
-integration("supported captures derive distinct exclusions exactly once and reject eligibility mutation", async () => scratchGrading(async (db) => {
+integration("supported captures derive distinct exclusions and refresh a cached exclusion without moving an eligible pin", async () => scratchGrading(async (db) => {
   const plan = await captureProjectedFixture(db, { revision_id: "plan-eligibility", artifact_kind: "plan", body: {
     cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }], acceptance_criteria: [
       { id: "uncited", text: "no source", task_ids: [], decision_ids: [] },
@@ -131,11 +131,23 @@ integration("supported captures derive distinct exclusions exactly once and reje
   expect((await recordEligibility(db, tenant, { ...tenant, subject_occurrence_id: occurrenceOf("uncited") as ItemOccurrenceId,
     question_id: catalogue["plan.criterion_traceability"].definition.question_id, question_version: "v1",
     tag: "eligible", payload: { evidence_set_id: "later-evidence" } })).ok).toBe(true);
-  await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.evaluation_eligibility SET tag = 'eligible'`.execute(trx)))
-    .rejects.toThrow("append-only");
-  await expect(withTenant(db, tenant, (trx) => sql`DELETE FROM observation.evaluation_eligibility`.execute(trx)))
-    .rejects.toThrow("append-only");
-  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility").selectAll().execute())).toEqual(rows);
+  // The row is a cache of a derived value, so it refreshes; an eligible row still never moves,
+  // because an assignment or execution pins the evidence set it names.
+  // A cached exclusion refreshes, so one recorded before its evidence arrived does not outlive
+  // the capture that settles it.
+  const tagOf = (occurrence_id: string) => withTenant(db, tenant, (trx) =>
+    trx.selectFrom("observation.evaluation_eligibility").select(["tag"])
+      .where("subject_occurrence_id", "=", occurrence_id)
+      .where("question_id", "=", "plan.criterion_traceability").executeTakeFirstOrThrow());
+  expect((await recordEligibility(db, tenant, { ...tenant, subject_occurrence_id: occurrenceOf("dangling") as ItemOccurrenceId,
+    question_id: catalogue["plan.criterion_traceability"].definition.question_id, question_version: "v1",
+    tag: "missing_evidence", payload: { kind: "uncited" } })).ok).toBe(true);
+  expect(await tagOf(occurrenceOf("dangling"))).toEqual({ tag: "missing_evidence" });
+  // The eligible row recorded just above never moves: work pins the evidence set it names.
+  expect((await recordEligibility(db, tenant, { ...tenant, subject_occurrence_id: occurrenceOf("uncited") as ItemOccurrenceId,
+    question_id: catalogue["plan.criterion_traceability"].definition.question_id, question_version: "v1",
+    tag: "invalid_reference", payload: { kind: "unlinked" } })).ok).toBe(true);
+  expect(await tagOf(occurrenceOf("uncited"))).toEqual({ tag: "eligible" });
   const capture = await loadRunCapture(db, tenant, "run-1");
   expect(capture.ok && capture.value.every((revision) => revision.definition_id === "definition-1" && revision.artifact_schema_version === "1")).toBe(true);
 }));
@@ -199,4 +211,24 @@ integration("eligibility pages bound derivation and reads by run, revision and q
     expect((await response.json()).error.code).toBe("invalid_pagination");
   }
   expect((await (await get(path.replace("run-1", "unknown-run"))).json())).toMatchObject({ items: [], total: 0 });
+}));
+
+integration("a criterion read before its assessment was captured becomes eligible once it arrives", async () => scratchGrading(async (db) => {
+  const brief = await captureProjectedFixture(db, { revision_id: "brief-late", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+    acceptance_criteria: [{ id: "criterion", text: "Works" }],
+  }, recorded_at: "2026-11-01T01:00:00Z" });
+  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
+  expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  const selection = { run_id: "run-1", question_id: "assessment.coverage", question_version: "v1", limit: 200, offset: 0 };
+  // The read happens first, while no assessment covers the brief yet.
+  const early = await readEligibility(db, tenant, selection);
+  expect(early.items.map((row) => row.tag)).toEqual(["missing_evidence"]);
+  const subject = brief.find((item) => item.item_kind === "criterion")!.occurrence_id;
+  await captureProjectedFixture(db, { revision_id: "assessment-late", artifact_kind: "assessment",
+    body: { head_sha: "reviewed-commit", findings: [{ criterion_id: "criterion", evidence: [] }] },
+    recorded_at: "2026-11-01T02:00:00Z" });
+  // The early read must not have frozen the exclusion.
+  const settled = await readEligibility(db, tenant, selection);
+  expect(settled.items.find((row) => row.subject_occurrence_id === subject)?.tag).toBe("eligible");
 }));

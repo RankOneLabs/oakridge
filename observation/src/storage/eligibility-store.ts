@@ -13,7 +13,10 @@ import { withTenant, type Database, type DatabaseTransaction, type TenantScope }
 
 export interface EligibilityStoreError { readonly operation: "eligibility_store"; readonly entity_id: string; readonly detail: string }
 
-/** A question pin receives one immutable decision for each captured subject occurrence. */
+/** Cache the derived decision for a question pin and captured subject occurrence. The row is a
+ * cache, so a later derivation refreshes it; an exclusion recorded before its evidence arrived
+ * must not outlive the capture that settles it. An `eligible` row is the exception and is never
+ * overwritten, because an assignment or execution pins the evidence set it names. */
 export async function recordEligibility(db: Database, tenant: TenantScope, row: EligibilityRow)
   : Promise<Result<void, EligibilityStoreError>> {
   if (row.producer !== tenant.producer || row.namespace !== tenant.namespace)
@@ -24,7 +27,9 @@ export async function recordEligibility(db: Database, tenant: TenantScope, row: 
       question_id: row.question_id, question_version: row.question_version, tag: row.tag,
       payload: sql<JsonValue>`${JSON.stringify(row.payload)}::jsonb`,
     }).onConflict((conflict) => conflict.columns(["producer", "namespace", "subject_occurrence_id", "question_id", "question_version"])
-      .doNothing()).execute());
+      .doUpdateSet({ tag: row.tag, payload: sql<JsonValue>`${JSON.stringify(row.payload)}::jsonb`,
+        recorded_at: sql<Date>`clock_timestamp()` })
+      .where(sql<boolean>`observation.evaluation_eligibility.tag <> 'eligible'`)).execute());
     return ok(undefined);
   } catch (cause) {
     return err({ operation: "eligibility_store", entity_id: row.subject_occurrence_id, detail: String(cause) });
@@ -152,13 +157,16 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
       const recorded = await recordEligibility(db, tenant, row);
       if (!recorded.ok) throw new Error(recorded.error.detail);
       decisions.set(subject.occurrence_id, row);
-    } else if (!decisions.has(subject.occurrence_id) && hasCapturedEvidenceRecipe(question)) {
+      // Derive on every read. A cached row is not a reason to skip derivation: an exclusion
+      // cached before the subject's evidence was captured would otherwise never settle.
+    } else if (hasCapturedEvidenceRecipe(question)) {
       const derived = await deriveSubjectEvidence(db, tenant, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
         question_id: question.question_id, question_version, question });
       if (!derived.ok) throw new Error(derived.error.detail);
     }
   }
-  // Concurrent reads may have won the insert; return the authoritative first decisions.
+  // Re-read the refreshed cache. An inapplicable provenance decision stays authoritative here
+  // because it is derived from the pin and the capture, not from evidence that can arrive later.
   const rows = await storedEligibility(db, tenant, selection, subject_ids);
   return { ...page, total: population.total, items: rows.map((row) => decisions.get(row.subject_occurrence_id)?.tag === "inapplicable"
     ? decisions.get(row.subject_occurrence_id)! : row) };

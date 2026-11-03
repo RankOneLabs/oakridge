@@ -95,41 +95,47 @@ export async function deriveSubjectEvidence(db: Database, tenant: TenantScope, s
     if (!question) return fail("question definition does not exist in namespace");
     const registered = await registerQuestion(db, tenant, question);
     if (!registered.ok) return fail(registered.error.detail);
-    const frozen = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+    const loadPinned = (decision: Extract<EligibilityDecision, { tag: "eligible" }>) =>
+      withTenant(db, tenant, async (trx) => {
+        const stored = await trx.selectFrom("observation.evidence_set").selectAll()
+          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+          .where("evidence_set_id", "=", decision.payload.evidence_set_id).executeTakeFirst();
+        if (!stored) return fail("eligible decision has no stored evidence");
+        return ok({ question, decision, evidence: { evidence_set_id: stored.evidence_set_id as EvidenceSet["evidence_set_id"],
+          references: stored.evidence_refs as unknown as EvidenceSet["references"], is_incomplete: stored.is_incomplete,
+          incompleteness_reason: stored.incompleteness_reason } });
+      });
+    // An eligible decision is the one outcome that must not move: an assignment or execution
+    // pins the evidence set it names, and a later capture does not repoint it.
+    const pinned = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
       .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
       .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
-      .executeTakeFirst());
-    if (!frozen) {
-      const subject = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
-        .select("run_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("occurrence_id", "=", selection.subject_occurrence_id).executeTakeFirstOrThrow());
-      const derived = await deriveCapturedEvidence(db, tenant, subject.run_id, { ...selection, question });
-      if (!derived.ok) return derived;
-      const value = derived.value;
-      const saved = await persistOakridgeEligibility(db, tenant, { selection_policy: "live_all_revisions",
-        packages: value.evidence ? [{ question_id: question.question_id,
-          subject: value.subject, revision_id: value.revision_id, evidence: value.evidence }] : [], exclusions: [],
-        eligibility: [{ question_id: question.question_id, question_version: question.question_version,
-          occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
-      if (!saved.ok) return fail(saved.error.detail);
-    }
-    // Read the first insert, including a concurrent derivation's winner.
-    return await withTenant(db, tenant, async (trx) => {
-      const row = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("tag", "=", "eligible").executeTakeFirst());
+    if (pinned) return await loadPinned(pinned as Extract<EligibilityDecision, { tag: "eligible" }>);
+    // Everything else is derived on every read. A cached exclusion must never short-circuit
+    // derivation, or a subject read before its evidence was captured stays excluded forever.
+    const subject = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
+      .select("run_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("occurrence_id", "=", selection.subject_occurrence_id).executeTakeFirstOrThrow());
+    const derived = await deriveCapturedEvidence(db, tenant, subject.run_id, { ...selection, question });
+    if (!derived.ok) return derived;
+    const value = derived.value;
+    const saved = await persistOakridgeEligibility(db, tenant, { selection_policy: "live_all_revisions",
+      packages: value.evidence ? [{ question_id: question.question_id,
+        subject: value.subject, revision_id: value.revision_id, evidence: value.evidence }] : [], exclusions: [],
+      eligibility: [{ question_id: question.question_id, question_version: question.question_version,
+        occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
+    if (!saved.ok) return fail(saved.error.detail);
+    // Re-read an eligible outcome so concurrent derivations agree on one pinned evidence set.
+    if (value.decision.tag === "eligible") {
+      const winner = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+        .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
         .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
-        .executeTakeFirstOrThrow();
-      const decision = row as EligibilityDecision;
-      if (decision.tag !== "eligible") return ok({ question, evidence: null, decision });
-      const stored = await trx.selectFrom("observation.evidence_set").selectAll()
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("evidence_set_id", "=", decision.payload.evidence_set_id).executeTakeFirst();
-      if (!stored) return fail("frozen eligible decision has no stored evidence");
-      return ok({ question, decision, evidence: { evidence_set_id: stored.evidence_set_id as EvidenceSet["evidence_set_id"],
-        references: stored.evidence_refs as unknown as EvidenceSet["references"], is_incomplete: stored.is_incomplete,
-        incompleteness_reason: stored.incompleteness_reason } });
-    });
+        .where("tag", "=", "eligible").executeTakeFirstOrThrow());
+      return await loadPinned(winner as Extract<EligibilityDecision, { tag: "eligible" }>);
+    }
+    return ok({ question, evidence: null, decision: value.decision });
   } catch (cause) { return fail(String(cause)); }
 }
