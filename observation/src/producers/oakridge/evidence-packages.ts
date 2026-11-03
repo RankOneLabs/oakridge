@@ -151,12 +151,14 @@ function assessmentPackages({ revisions, subjects, requires_repository_snapshot 
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageEligibility[] = [];
-  const briefs = subjects.slice()
+  const supported_ids = new Set(subjects.map((revision) => revision.revision_id));
+  const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
   for (const [index, brief] of briefs.entries()) {
+    if (!supported_ids.has(brief.revision_id)) continue;
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
-    // supersedes this brief.
+    // supersedes this brief, including a successor whose provenance is unsupported.
     const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id);
     const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
       && assessmentCoversBrief(revision, brief)

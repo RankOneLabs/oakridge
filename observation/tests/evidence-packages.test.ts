@@ -114,6 +114,26 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
     && bOccurrences.has(pack.subject.occurrence_id))).toEqual([]);
 });
 
+for (const has_findings of [true, false]) {
+  test(`an unsupported successor closes coverage's assessment window with ${has_findings ? "stable criterion links" : "no findings"}`, async () => {
+    const brief = await captured("brief", "2026-10-23T17:29:56Z");
+    const successor: CapturedRevision = { ...brief, definition_id: "other-definition", revision_id: "brief-successor",
+      recorded_at: new Date("2026-10-23T17:32:00Z"), items: brief.items.map((item, index) => ({ ...item,
+        revision_id: "brief-successor", occurrence_id: `brief-successor-${index}` as ItemOccurrenceId })) };
+    const captured_assessment = await captured("assessment", "2026-10-23T17:40:00Z");
+    const assessment = { ...captured_assessment, items: has_findings ? captured_assessment.items : [] };
+    const result = runPackages([brief, successor, assessment], { "assessment.coverage": questions["assessment.coverage"] });
+    if (!result.ok) throw new Error(result.error.detail);
+    const supported_ids = new Set(brief.items.filter((item) => item.item_kind === "criterion").map((item) => item.occurrence_id));
+    const unsupported_ids = new Set(successor.items.filter((item) => item.item_kind === "criterion").map((item) => item.occurrence_id));
+    expect(result.value.eligibility.filter((row) => supported_ids.has(row.occurrence_id)).map((row) => row.decision))
+      .toEqual([...supported_ids].map(() => ({ tag: "missing_evidence", payload: { kind: "unevidenced" } })));
+    expect(result.value.eligibility.filter((row) => unsupported_ids.has(row.occurrence_id)).map((row) => row.decision.tag))
+      .toEqual([...unsupported_ids].map(() => "inapplicable"));
+    expect(result.value.packages).toEqual([]);
+  });
+}
+
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
   const analysis = "analysis.finding_relevance" as const;
