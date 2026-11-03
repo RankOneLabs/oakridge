@@ -13,6 +13,7 @@ import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
+import { subjectProvenance, questionFromRow } from "./eligibility-store";
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
 
@@ -108,6 +109,10 @@ export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantS
   if (!q) return failure("evaluate", identity.question_id, "question definition does not exist in namespace");
   if (!Array.isArray(q.target_item_kinds) || !q.target_item_kinds.includes(item.item_kind))
     return failure("evaluate", identity.question_id, "question does not target subject item kind");
+  const provenance = await subjectProvenance(trx, tenant, { ...identity,
+    pinned_expectation: { definition_id: q.expected_definition_id, artifact_schema_version: q.expected_artifact_schema_version } });
+  if (!provenance.ok) return provenance;
+  if (provenance.value.tag === "inapplicable") return failure("evaluate", identity.subject_occurrence_id, provenance.value.payload.reason);
   const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
     .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", identity.evidence_set_id).executeTakeFirst();
   if (!e) return failure("evaluate", identity.evidence_set_id, "evidence set does not exist in namespace");
@@ -115,11 +120,7 @@ export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantS
     .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", identity.evaluator_definition_id).executeTakeFirst();
   if (!d) return failure("evaluate", identity.evaluator_definition_id, "evaluator definition does not exist in namespace");
   if (identity.config_digest !== d.config_digest) return failure("evaluate", identity.evaluator_definition_id, "config digest differs from evaluator definition");
-  return ok({ question: { ...q, pinned_expectation: { definition_id: q.expected_definition_id,
-    artifact_schema_version: q.expected_artifact_schema_version }, question_id: q.question_id as QuestionDefinition["question_id"],
-    target_item_kinds: q.target_item_kinds as string[], input_recipe: q.input_recipe as QuestionDefinition["input_recipe"],
-    response_kind: q.response_kind as QuestionDefinition["response_kind"], allowed_values: q.allowed_values as QuestionDefinition["allowed_values"],
-    missing_evidence_policy: q.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] },
+  return ok({ question: questionFromRow(q),
     evidence: { ...e, evidence_set_id: e.evidence_set_id as EvidenceSet["evidence_set_id"], references: e.evidence_refs as unknown as EvidenceSet["references"] },
     evaluator: { ...d, kind: d.kind as EvaluatorDefinition["kind"], instruction_text: d.instruction_text ?? "" } });
 }

@@ -4,6 +4,7 @@ import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe, type PilotQuestionId } from 
 
 export interface PilotQuestion { readonly definition: QuestionDefinition; readonly text: string }
 export type PilotExpectations = Readonly<Record<PilotQuestionId, PinnedExpectation>>;
+export type PilotQuestionSelection = Readonly<Partial<Record<PilotQuestionId, PilotQuestion>>>;
 export type PilotQuestions = Readonly<Record<PilotQuestionId, PilotQuestion>>;
 function pinnedQuestion(definition: Omit<QuestionDefinition, "pinned_expectation">, text: string,
   pinned_expectation: PinnedExpectation): PilotQuestion {

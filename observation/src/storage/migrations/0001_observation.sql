@@ -700,6 +700,7 @@ CREATE TABLE observation.evaluation_eligibility (
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   eligibility_id text NOT NULL DEFAULT gen_random_uuid()::text,
   PRIMARY KEY (producer, namespace, eligibility_id),
+  CONSTRAINT evaluation_eligibility_subject_question_key UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version),
   FOREIGN KEY (producer, namespace, subject_occurrence_id) REFERENCES observation.item_occurrence(producer, namespace, occurrence_id),
   FOREIGN KEY (producer, namespace, question_id, question_version) REFERENCES observation.question_definition(producer, namespace, question_id, question_version),
   CHECK (jsonb_typeof(payload) = 'object'),

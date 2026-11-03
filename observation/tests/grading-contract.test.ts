@@ -6,7 +6,10 @@ import { sql } from "kysely";
 import { canonicalDigest } from "canonical-json";
 import { withTenant } from "../src/storage/database";
 import { createLlmJudgeRunner } from "../src/runners/llm-judge";
-import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
+import { createBlindAssignment } from "../src/storage/blind-assignment-store";
+import { recordEligibility } from "../src/storage/eligibility-store";
+import type { ItemOccurrenceId } from "../src/domain/identity";
+import { tenant, question, evidence, evaluator, scratchGrading, captureProjectedFixture } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 const gradeToken = "grade-token"; const readToken = "read-token";
@@ -171,4 +174,84 @@ integration("missing and cross-namespace references refuse grades without partia
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .executeTakeFirstOrThrow());
   expect(Number(executionCount.count)).toBe(0);
+}));
+
+for (const path of ["/v1/evaluations", "/v1/evaluation-jobs"]) {
+  integration(`${path} refuses unsupported provenance before registering supplied context`, async () => scratchGrading(async (db, occurrence_id) => {
+    const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: gradeToken }] } });
+    const unsupported = { ...question, pinned_expectation: { ...question.pinned_expectation, definition_id: "different-definition" } };
+    const response = await app.request(path, { method: "POST", headers, body: JSON.stringify({
+      identity: { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+        question_id: question.question_id, question_version: question.question_version,
+        evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "unsupported" },
+      context: { question: unsupported, evidence, evaluator: evaluator("code") }, runner: "deterministic",
+    }) });
+    expect(response.status).toBe(422);
+    expect((await response.json()).error.message).toContain('definition_id: recorded="definition-1", pinned="different-definition"');
+    const rows = await withTenant(db, tenant, async (trx) => ({
+      questions: await trx.selectFrom("observation.question_definition").selectAll().execute(),
+      evidence: await trx.selectFrom("observation.evidence_set").selectAll().execute(),
+      evaluators: await trx.selectFrom("observation.evaluator_definition").selectAll().execute(),
+      executions: await trx.selectFrom("observation.evaluation_execution").selectAll().execute(),
+      jobs: await trx.selectFrom("observation.grading_job").selectAll().execute(),
+    }));
+    expect(rows).toEqual({ questions: [], evidence: [], evaluators: [], executions: [], jobs: [] });
+  }));
+}
+
+integration("the direct grading boundary never invokes the runner for unsupported provenance", async () => scratchGrading(async (db, occurrence_id) => {
+  const unsupported = { ...question, pinned_expectation: { ...question.pinned_expectation, artifact_schema_version: "other-schema" } };
+  expect((await registerGradingContext(db, tenant, { question: unsupported, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  let calls = 0;
+  const result = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    evidence_set_id: evidence.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "unsupported" },
+    runner: { kind: "code", async run() { calls++; throw new Error("unsupported input reached the runner"); } } });
+  expect(result).toMatchObject({ ok: false, error: { detail: 'Unsupported provenance: artifact_schema_version: recorded="1", pinned="other-schema"' } });
+  expect(calls).toBe(0);
+  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution").selectAll().execute())).toEqual([]);
+}));
+
+integration("later captures preserve execution, blind-assignment and grade evidence on their original revision", async () => scratchGrading(async (db) => {
+  const first = await captureProjectedFixture(db, { revision_id: "brief-original", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "stable", text: "original" }],
+  } });
+  const subject = first.find((item) => item.item_kind === "criterion")!;
+  const selected = { ...question, target_item_kinds: ["criterion"] };
+  expect((await registerGradingContext(db, tenant, { question: selected, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  const frozen = { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, evidence_set_id: evidence.evidence_set_id,
+    question_id: selected.question_id, question_version: selected.question_version };
+  expect((await recordEligibility(db, tenant, { ...tenant, ...frozen, tag: "eligible", payload: { evidence_set_id: frozen.evidence_set_id } })).ok).toBe(true);
+  const assignment = await createBlindAssignment(db, tenant, frozen);
+  expect(assignment.ok).toBe(true);
+  const graded = await runGrade(db, tenant, { identity: { ...frozen, evaluator_definition_id: "code",
+    config_digest: "config-1", attempt_label: "first" }, runner: { kind: "code", async run() {
+      return { ok: true, value: { answer: { state: "answered", kind: "boolean", value: true } } };
+    } } });
+  expect(graded.ok).toBe(true);
+  const snapshot = () => withTenant(db, tenant, async (trx) => ({
+    execution: await trx.selectFrom("observation.evaluation_execution")
+      .select(["evidence_set_id", "subject_occurrence_id", "question_id", "question_version"]).executeTakeFirstOrThrow(),
+    assignment: await trx.selectFrom("observation.blind_assignment")
+      .select(["evidence_set_id", "subject_occurrence_id", "question_id", "question_version"]).executeTakeFirstOrThrow(),
+  }));
+  const before = await snapshot();
+  const before_grades = await listGrades(db, tenant, subject.occurrence_id, { limit: 10, offset: 0 });
+  const later = await captureProjectedFixture(db, { revision_id: "brief-later", predecessor_id: "brief-original",
+    artifact_kind: "brief", recorded_at: "2026-11-01T02:00:00Z", body: {
+      cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "stable", text: "changed" }],
+    } });
+  const newer = later.find((item) => item.item_kind === "criterion")!;
+  expect(newer.occurrence_id).not.toBe(subject.occurrence_id);
+  expect(newer.logical_item_id).toBe(subject.logical_item_id);
+  expect((await recordEligibility(db, tenant, { ...tenant, ...frozen, subject_occurrence_id: newer.occurrence_id as ItemOccurrenceId,
+    tag: "eligible", payload: { evidence_set_id: frozen.evidence_set_id } })).ok).toBe(true);
+  expect(JSON.stringify(await snapshot())).toBe(JSON.stringify(before));
+  expect(before).toEqual({ execution: frozen, assignment: frozen });
+  expect(await listGrades(db, tenant, subject.occurrence_id, { limit: 10, offset: 0 })).toEqual(before_grades);
+  expect((await listGrades(db, tenant, newer.occurrence_id, { limit: 10, offset: 0 }))?.items).toEqual([]);
+  const origin = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation as g")
+    .innerJoin("observation.item_occurrence as i", "i.occurrence_id", "g.subject_occurrence_id")
+    .select(["i.revision_id", "g.evidence_set_id"]).executeTakeFirstOrThrow());
+  expect(origin).toEqual({ revision_id: "brief-original", evidence_set_id: frozen.evidence_set_id });
 }));

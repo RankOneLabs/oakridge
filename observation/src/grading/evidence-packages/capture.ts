@@ -1,11 +1,12 @@
 import type { ItemOccurrenceId } from "../../domain/identity";
+import type { RecordedProvenance } from "../eligibility";
 import type { SelectedItem } from "../../projection/extractor";
 
 export interface CapturedItem extends SelectedItem {
   readonly occurrence_id: ItemOccurrenceId;
   readonly revision_id: string;
 }
-export interface CapturedRevision {
+export interface CapturedRevision extends RecordedProvenance {
   readonly revision_id: string;
   readonly unit_id: string;
   readonly artifact_kind: string;

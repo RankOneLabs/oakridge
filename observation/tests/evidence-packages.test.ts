@@ -22,7 +22,7 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const revision_id = `${kind}-first`;
   const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
-  return { revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
+  return { ...pilotExpectations["plan.criterion_traceability"], revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
 
@@ -83,7 +83,7 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
   const assessmentA = await captured("assessment", "2026-10-23T17:40:00Z");
   // Brief B belongs to a second cohort: its own unit, its own criterion ids, captured between
   // brief A and A's assessment. Nothing of A's is assessed by B and vice versa.
-  const briefB: CapturedRevision = { revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
+  const briefB: CapturedRevision = { ...pilotExpectations["brief.source_fidelity"], revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
     recorded_at: new Date("2026-10-23T17:32:00Z"),
     items: briefA.items.map((item, index) => ({ ...item, revision_id: "brief-b",
       occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
@@ -134,3 +134,26 @@ integration("typed missing evidence and dependency decisions persist", async () 
   expect((await readEligibility(db, tenant, analysis, "v1"))[0]?.tag).toBe("missing_evidence");
   expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ dependency: "ArtifactSource.collect", detail: "no implementor" });
 }));
+
+test("unsupported captured provenance stops before subject or evidence interpretation", async () => {
+  const plan = await captured("plan", "2026-10-23T17:23:49Z");
+  const unsupported = { ...plan, definition_id: "b".repeat(64), items: plan.items.map((item) => ({ ...item,
+    item_scope: null, producer_local_id: null, selected_value: "obsolete layout", links: [] })) };
+  const result = runPackages([unsupported], { "plan.criterion_traceability": questions["plan.criterion_traceability"] });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.packages).toEqual([]);
+  expect(result.value.exclusions).toEqual([]);
+  expect(result.value.eligibility.length).toBeGreaterThan(0);
+  expect(result.value.eligibility.every((row) => row.decision.tag === "inapplicable"
+    && row.decision.payload.reason.includes(`recorded="${unsupported.definition_id}"`)
+    && row.decision.payload.reason.includes('pinned="definition-1"'))).toBe(true);
+});
+
+test("captured derivation requires the question's pinned pilot recipe", async () => {
+  const plan = await captured("plan", "2026-10-23T17:23:49Z");
+  const entry = questions["plan.criterion_traceability"];
+  const result = runPackages([plan], { "plan.criterion_traceability": { ...entry,
+    definition: { ...entry.definition, input_recipe: {} } } });
+  expect(result).toMatchObject({ ok: false, error: { detail: "question has no pinned pilot evidence recipe" } });
+});

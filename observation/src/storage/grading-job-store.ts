@@ -5,6 +5,7 @@ import { networkRunnerNames, runnerEntry, type GradingContext } from "../grading
 import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { concurrencyExceeded, spendExceeded, type BudgetUsage, type GradingLimits } from "../grading/jobs/budget";
 import { withTenant, type Database, type TenantScope } from "./database";
+import { checkGradingProvenance } from "./eligibility-store";
 import type { ObservationGradingJob } from "./db-types";
 import { registerGradingContext, validateIdentity } from "./grading-store";
 
@@ -19,6 +20,9 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
   if (runner.network
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
+  const provenance = await checkGradingProvenance(db, tenant, { ...input.identity,
+    pinned_expectation: input.context?.question.pinned_expectation });
+  if (!provenance.ok) throw new Error(provenance.error.detail);
   if (input.context) {
     const { question, evidence, evaluator } = input.context;
     if (question.question_id !== input.identity.question_id || question.question_version !== input.identity.question_version
