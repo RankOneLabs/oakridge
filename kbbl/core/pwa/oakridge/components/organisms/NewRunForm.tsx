@@ -219,7 +219,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </select>
         </FormField>
 
-        <RepositoryLaunchFields repositories={repositories} setRepositories={setRepositories} disabled={pending} />
+        <RepositoryLaunchFields
+          repositories={repositories}
+          setRepositories={setRepositories}
+          projects={projectsQuery.data ?? []}
+          isLoadingProjects={projectsQuery.isPending}
+          disabled={pending}
+        />
 
         <BriefNotesField
           notes={briefNotes}
