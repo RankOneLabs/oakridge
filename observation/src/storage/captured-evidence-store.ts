@@ -1,0 +1,135 @@
+import type { ItemOccurrenceId } from "../domain/identity";
+import { err, ok, type Result } from "../domain/primitives";
+import type { CapturedItem } from "../grading/evidence-packages/capture";
+import { judgeNeedsRepository } from "../grading/evidence-packages/judge-recipe";
+import type { EvidenceSet } from "../grading/evidence";
+import type { EligibilityDecision } from "../grading/eligibility";
+import type { QuestionDefinition } from "../grading/question";
+import { runPackages } from "../producers/oakridge/evidence-packages";
+import { withTenant, type Database, type TenantScope } from "./database";
+import { persistOakridgeEligibility } from "../producers/oakridge/eligibility";
+import { registerQuestion } from "./grading-store";
+import { questionFromRow, checkGradingProvenance } from "./eligibility-store";
+import { CaptureArtifactSource } from "./capture-artifact-source";
+import { loadRunCapture } from "./run-capture-store";
+
+export interface CapturedEvidenceSelection {
+  readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly question: QuestionDefinition;
+}
+export interface CapturedEvidence {
+  readonly subject: CapturedItem;
+  readonly revision_id: string;
+  readonly evidence: EvidenceSet | null;
+  readonly decision: EligibilityDecision;
+}
+export interface CapturedEvidenceError {
+  readonly operation: "captured_evidence";
+  readonly entity_id: string;
+  readonly detail: string;
+}
+
+/** One live capture-to-package path for a specific subject and immutable question pin. */
+export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, run_id: string,
+  selection: CapturedEvidenceSelection): Promise<Result<CapturedEvidence, CapturedEvidenceError>> {
+  const fail = (detail: string) => err({ operation: "captured_evidence" as const,
+    entity_id: selection.subject_occurrence_id, detail });
+  const capture = await loadRunCapture(db, tenant, run_id);
+  if (!capture.ok) return fail(capture.error.detail);
+  const subject = capture.value.flatMap((revision) => revision.items)
+    .find((item) => item.occurrence_id === selection.subject_occurrence_id);
+  if (!subject) return fail("subject occurrence is absent from captured run");
+  const question = selection.question;
+  const sources = new Map<ItemOccurrenceId, EvidenceSet>();
+  if (question.requires_repository_snapshot || judgeNeedsRepository(question)) {
+    try {
+      const source = new CaptureArtifactSource(db, tenant, run_id);
+      for (const item of capture.value.flatMap((revision) => revision.items)) {
+        const artifact = await source.read(item.occurrence_id);
+        if (artifact) sources.set(item.occurrence_id, await source.collect(artifact));
+      }
+    } catch (cause) { return fail(String(cause)); }
+  }
+  const manifest = runPackages(capture.value, { [question.question_id]: { definition: question, text: question.question_text ?? "" } },
+    "live_all_revisions", sources);
+  if (!manifest.ok) return fail(manifest.error.detail);
+  const decision = manifest.value.eligibility.find((item) => item.question_id === question.question_id
+    && item.occurrence_id === subject.occurrence_id)?.decision;
+  if (!decision) return fail("question does not target captured subject");
+  const pack = decision.tag === "eligible" ? manifest.value.packages.find((item) =>
+    item.subject.occurrence_id === subject.occurrence_id && item.question_id === question.question_id
+    && item.evidence.evidence_set_id === decision.payload.evidence_set_id) : undefined;
+  if (decision.tag === "eligible" && !pack) return fail("eligible decision has no captured evidence package");
+  return ok({ subject, revision_id: pack?.revision_id ?? subject.revision_id,
+    evidence: pack?.evidence ?? null, decision });
+}
+
+export interface SubjectQuestionSelection {
+  readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly question_id: QuestionDefinition["question_id"];
+  readonly question_version: string;
+  readonly question?: QuestionDefinition;
+}
+export interface DerivedSubjectEvidence {
+  readonly question: QuestionDefinition;
+  readonly evidence: EvidenceSet | null;
+  readonly decision: EligibilityDecision;
+}
+
+/** Freeze the first derived decision and package, shared by reads, enqueue and assignment. */
+export async function deriveSubjectEvidence(db: Database, tenant: TenantScope, selection: SubjectQuestionSelection)
+  : Promise<Result<DerivedSubjectEvidence, CapturedEvidenceError>> {
+  const fail = (detail: string) => err({ operation: "captured_evidence" as const,
+    entity_id: selection.subject_occurrence_id, detail });
+  try {
+    const provenance = await checkGradingProvenance(db, tenant, { ...selection,
+      pinned_expectation: selection.question?.pinned_expectation });
+    if (!provenance.ok) return fail(provenance.error.detail);
+    const question = selection.question ?? await withTenant(db, tenant, async (trx) => {
+      const row = await trx.selectFrom("observation.question_definition").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+        .executeTakeFirst();
+      return row ? questionFromRow(row) : null;
+    });
+    if (!question) return fail("question definition does not exist in namespace");
+    const registered = await registerQuestion(db, tenant, question);
+    if (!registered.ok) return fail(registered.error.detail);
+    const frozen = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+      .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
+      .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+      .executeTakeFirst());
+    if (!frozen) {
+      const subject = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
+        .select("run_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("occurrence_id", "=", selection.subject_occurrence_id).executeTakeFirstOrThrow());
+      const derived = await deriveCapturedEvidence(db, tenant, subject.run_id, { ...selection, question });
+      if (!derived.ok) return derived;
+      const value = derived.value;
+      const saved = await persistOakridgeEligibility(db, tenant, { selection_policy: "live_all_revisions",
+        packages: value.evidence ? [{ question_id: question.question_id,
+          subject: value.subject, revision_id: value.revision_id, evidence: value.evidence }] : [], exclusions: [],
+        eligibility: [{ question_id: question.question_id, question_version: question.question_version,
+          occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
+      if (!saved.ok) return fail(saved.error.detail);
+    }
+    // Read the first insert, including a concurrent derivation's winner.
+    return await withTenant(db, tenant, async (trx) => {
+      const row = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
+        .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+        .executeTakeFirstOrThrow();
+      const decision = row as EligibilityDecision;
+      if (decision.tag !== "eligible") return ok({ question, evidence: null, decision });
+      const stored = await trx.selectFrom("observation.evidence_set").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("evidence_set_id", "=", decision.payload.evidence_set_id).executeTakeFirst();
+      if (!stored) return fail("frozen eligible decision has no stored evidence");
+      return ok({ question, decision, evidence: { evidence_set_id: stored.evidence_set_id as EvidenceSet["evidence_set_id"],
+        references: stored.evidence_refs as unknown as EvidenceSet["references"], is_incomplete: stored.is_incomplete,
+        incompleteness_reason: stored.incompleteness_reason } });
+    });
+  } catch (cause) { return fail(String(cause)); }
+}

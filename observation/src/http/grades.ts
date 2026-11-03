@@ -6,6 +6,7 @@ import type { GradeAnswer } from "../grading/observation";
 import type { GradingContext } from "../grading/runner";
 import { blindSubmissionIsValid } from "../grading/evaluator";
 import { acceptHumanGrade } from "../runners/human-intake";
+import { deriveSubjectEvidence } from "../storage/captured-evidence-store";
 import { listGrades, registerGradingContext, type GradeDetails } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
 import { contextMatchesIdentity, contextSchema, identitySchema, responseKindSchema } from "./evaluations";
@@ -46,10 +47,18 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
     let body: unknown;
     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
-    const parsed = z.object({ subject_occurrence_id: z.string().min(1), evidence_set_id: z.string().min(1),
+    const parsed = z.object({ subject_occurrence_id: z.string().min(1), evidence_set_id: z.string().min(1).optional(),
       question_id: z.string().min(1), question_version: z.string().min(1) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_assignment", parsed.error.message);
-    const result = await createBlindAssignment(deps.db, credential, parsed.data as BlindAssignmentIdentity);
+    const derived = await deriveSubjectEvidence(deps.db, credential, parsed.data as BlindAssignmentIdentity);
+    if (!derived.ok) return errorResponse(c, 409, "assignment_refused", derived.error.detail);
+    const { evidence, decision } = derived.value;
+    if (!evidence || decision.tag !== "eligible")
+      return errorResponse(c, 409, "subject_ineligible", JSON.stringify(decision));
+    if (parsed.data.evidence_set_id !== undefined && parsed.data.evidence_set_id !== evidence.evidence_set_id)
+      return errorResponse(c, 409, "evidence_set_mismatch", "supplied evidence set differs from captured evidence");
+    const result = await createBlindAssignment(deps.db, credential,
+      { ...parsed.data, evidence_set_id: evidence.evidence_set_id } as BlindAssignmentIdentity);
     return result.ok ? c.json(result.value, 201) : errorResponse(c, 409, "assignment_refused", result.error.detail);
   });
   app.post("/v1/blind-assignments/:id/claim", async (c) => {

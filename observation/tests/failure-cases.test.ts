@@ -222,3 +222,48 @@ integration("invalid capture versions and absent provenance are refused without 
   const revisions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision").select("revision_id").execute());
   expect(revisions).toEqual([]);
 }));
+
+integration("captured criteria with equal wording and local ids retain cohort identity and typed lineage", async () => {
+  const { scratchGrading, captureProjectedFixture, tenant, pilotExpectations } = await import("./grading-fixture");
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const { loadRunCapture } = await import("../src/storage/run-capture-store");
+  await scratchGrading(async (db) => {
+    const criteria = [{ id: "shared-id", text: "Identical words", task_ids: [], decision_ids: ["decision"] }];
+    const plan = await captureProjectedFixture(db, { revision_id: "cohort-plan", artifact_kind: "plan", body: {
+      cohorts: ["alpha", "beta"].map((id) => ({ id, decisions: [{ id: "decision", text: "source" }], acceptance_criteria: criteria })),
+      acceptance_criteria: [], risks: [],
+    } });
+    const plan_criteria = plan.filter((item) => item.item_kind === "criterion");
+    expect(plan_criteria).toHaveLength(2);
+    expect(new Set(plan_criteria.map((item) => item.item_scope)).size).toBe(2);
+    expect(new Set(plan_criteria.map((item) => item.occurrence_id)).size).toBe(2);
+    const catalogue = oakridgeQuestions(pilotExpectations);
+    for (const cohort_id of ["alpha", "beta", "wrong-scope", "absent-link"] as const) {
+      const items = await captureProjectedFixture(db, { revision_id: `cohort-brief-${cohort_id}`, artifact_kind: "brief", body: {
+        cohort_id, decisions_made: [], approaches_rejected: [], acceptance_criteria: [
+          { id: cohort_id === "absent-link" ? "wrong-local-id" : "shared-id", text: "Identical words" },
+        ],
+      }, recorded_at: "2026-11-01T01:00:00Z" });
+      const subject = items.find((item) => item.item_kind === "criterion")!;
+      const selection = { subject_occurrence_id: subject.occurrence_id as import("../src/domain/identity").ItemOccurrenceId,
+        question: catalogue["brief.source_fidelity"].definition };
+      const derived = await deriveCapturedEvidence(db, tenant, "run-1", selection);
+      if (!derived.ok) throw new Error(derived.error.detail);
+      expect(derived.value.decision.tag).toBe(cohort_id === "alpha" || cohort_id === "beta" ? "eligible" : "invalid_reference");
+      if (derived.value.evidence) {
+        const source = plan_criteria.find((item) => item.item_scope === subject.item_scope)!;
+        expect(derived.value.evidence.references[0]?.deep_link).toBe(`oakridge://revision/cohort-plan#${source.json_pointer}`);
+        const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }] } });
+        const lineage = await app.request(`/v1/items/${encodeURIComponent(subject.occurrence_id)}/lineage`,
+          { headers: { authorization: "Bearer read" } });
+        expect((await lineage.json()).edges.some((edge: { target_occurrence_id: string }) => edge.target_occurrence_id === source.occurrence_id)).toBe(true);
+      }
+    }
+    const capture = await loadRunCapture(db, tenant, "run-1");
+    if (!capture.ok) throw new Error(capture.error.detail);
+    const selected = capture.value.flatMap((revision) => revision.items);
+    for (const criterion of plan_criteria) expect(selected.find((item) => item.occurrence_id === criterion.occurrence_id))
+      .toMatchObject({ revision_id: "cohort-plan", item_scope: criterion.item_scope, producer_local_id: "shared-id" });
+  });
+});

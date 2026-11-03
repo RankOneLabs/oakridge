@@ -73,6 +73,7 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
 export interface CapturedFixtureRevision {
   readonly revision_id: string;
   readonly run_id?: string;
+  readonly unit_id?: string;
   readonly artifact_kind: string;
   readonly body: JsonValue;
   readonly recorded_at?: string;
@@ -85,7 +86,7 @@ export async function captureProjectedFixture(db: Database, input: CapturedFixtu
   if (!digest.ok) throw new Error(digest.error.detail);
   const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
     envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, ...pinnedExpectation,
-      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.artifact_kind,
+      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.unit_id ?? (input.artifact_kind === "assessment" ? "implementation/cohort" : input.artifact_kind),
       artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },
       body: input.body, body_digest: digest.value, recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z" } });
   if (captured.status !== 201) throw new Error("fixture capture refused");
@@ -101,4 +102,21 @@ export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
     probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
     decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
     comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
+}
+
+/** A real captured subject for admission tests; callers send only question/evaluator context. */
+export async function capturedCoverage(db: Database) {
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+    acceptance_criteria: [{ id: "criterion", text: "Works" }],
+  } });
+  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
+    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
+  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
+  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
+  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
+  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
+  return { occurrence_id, question, evidence: derived.value.evidence };
 }
