@@ -1,5 +1,11 @@
 # Live verification records
 
+The prepared `pr.json` and `build_result.json` are artifact bodies awaiting
+republication. The original task secret was refused with HTTP 401 after its
+builder attempt had already succeeded. No PR artifact revision was recorded,
+so the build result was not sent out of order. A current task credential is
+required; these files contain no credentials.
+
 The verified source run is `run-5ca31bc6c2414610`; `latest.json` locates its
 committed capture, original authority rows and HTTP readback report. Real
 TypeSafe execution `9bdc9b8d-9c7b-4065-b663-7b35a56adae6` answered
