@@ -305,15 +305,8 @@ CREATE TABLE observation.grade_observation (
   quality_flags jsonb NOT NULL DEFAULT '[]'::jsonb,
   supersedes_observation_id text,
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  label_origin text GENERATED ALWAYS AS (
-  CASE
-    WHEN question_id LIKE 'oakridge-review:%' AND question_version = '1'
-      AND evaluator_definition_id = 'oakridge-operator-human'
-      AND reviewer_id = 'oakridge-operator' THEN 'oakridge_operator_unblinded'
-    ELSE 'other'
-  END
-) STORED,
-  collection_mode text CHECK (collection_mode IN ('blind', 'in_context')),
+  origin text NOT NULL CHECK (origin IN ('human_rubric_answer', 'workflow_approval', 'automated_evaluation')),
+  collection_mode text NOT NULL CHECK (collection_mode IN ('blind', 'in_context')),
   blind_assignment_id text,
   model_answers_visible boolean,
   workflow_decisions_visible boolean,
@@ -736,9 +729,8 @@ CREATE TABLE observation.grading_job (
   lease_expires_at timestamptz,
   attempts integer NOT NULL DEFAULT 0,
   retry_limit integer NOT NULL,
-  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'disclosure_refused', 'invalid_outcome', 'ineligible', 'budget_exceeded')),
+  terminal_cause text CHECK (terminal_cause IS NULL OR terminal_cause IN ('retry_exhausted', 'runner_failed', 'invalid_outcome', 'ineligible', 'budget_exceeded')),
   estimated_cost double precision NOT NULL DEFAULT 0,
-  disclosure jsonb,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (producer, namespace, job_id),
@@ -819,7 +811,6 @@ ALTER TABLE observation.grade_observation
   ADD CONSTRAINT grade_blind_assignment_ref FOREIGN KEY (producer, namespace, blind_assignment_id)
     REFERENCES observation.blind_assignment(producer, namespace, assignment_id),
   ADD CONSTRAINT grade_collection_consistency CHECK (
-    collection_mode IS NULL OR
     (model_answers_visible IS NOT NULL AND workflow_decisions_visible IS NOT NULL AND
       (collection_mode <> 'blind' OR (blind_assignment_id IS NOT NULL
         AND NOT model_answers_visible AND NOT workflow_decisions_visible))));

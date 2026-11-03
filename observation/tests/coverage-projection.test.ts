@@ -42,7 +42,7 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
       question_id: question.question_id, question_version: question.question_version,
       evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "old" },
       details: { answer: { state: "answered", kind: "boolean", value: true },
-        collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
+        origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
   expect(grade.status).toBe(201);
   const graded = await grade.json() as { execution: { idempotency_digest: string } };
   const readbackPath = `/v1/evaluations/by-digest/${encodeURIComponent(graded.execution.idempotency_digest)}`;
@@ -54,12 +54,12 @@ integration("coverage uses recorded eligibility and keeps successive revisions s
   const full = await readCoverage(db, tenant, selection);
   expect(full.questions[0]).toMatchObject({ eligible: 2, graded: 1, excluded: 1,
     exclusion_reasons: { skipped_budget: 1 },
-    graded_by_collection_mode: { blind: 0, in_context: 1, unknown: 0 } });
+    graded_by_collection_mode: { blind: 0, in_context: 1 } });
   expect(full.query_version).toBe("human-coverage/v2");
   expect(full.questions[0]?.lag_seconds).toBeGreaterThanOrEqual(0);
   const current = await readCoverage(db, tenant, { ...selection, revision_id: "rev-2" });
   expect(current.questions[0]).toMatchObject({ eligible: 1, graded: 0, excluded: 1,
-    graded_by_collection_mode: { blind: 0, in_context: 0, unknown: 0 } });
+    graded_by_collection_mode: { blind: 0, in_context: 0 } });
   const response = await app.request(`/v1/runs/run-1/coverage?question_id=${question.question_id}&question_version=${question.question_version}&revision_id=rev-2`,
     { headers: { authorization: "Bearer read" } });
   expect(response.status).toBe(200);

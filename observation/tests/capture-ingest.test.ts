@@ -118,7 +118,7 @@ integration("live operator grades keep question pins equal to each run's capture
         .onRef("q.question_version", "=", "e.question_version"))
       .innerJoin("observation.grade_observation as g", "g.execution_id", "e.execution_id")
       .select(["e.question_id", "e.question_version", "q.expected_definition_id", "q.expected_artifact_schema_version",
-        "r.definition_id", "r.artifact_schema_version", "g.label_origin"])
+        "r.definition_id", "r.artifact_schema_version", "g.origin"])
       .where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace).orderBy("r.run_id").execute());
     expect(rows.map((row) => ({ definition_id: row.expected_definition_id,
       artifact_schema_version: row.expected_artifact_schema_version }))).toEqual([...expectations]);
@@ -126,8 +126,8 @@ integration("live operator grades keep question pins equal to each run's capture
       artifact_schema_version: row.artifact_schema_version }))).toEqual([...expectations]);
     expect(rows[0]?.question_id).toBe(rows[1]?.question_id);
     expect(new Set(rows.map((row) => row.question_id)).size).toBe(3);
-    expect(rows.map((row) => [row.question_version, row.label_origin]))
-      .toEqual(expectations.map(() => ["1", "oakridge_operator_unblinded"]));
+    expect(rows.map((row) => [row.question_version, row.origin]))
+      .toEqual(expectations.map(() => ["1", "workflow_approval"]));
     const questions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition").select("question_id").execute());
     expect(questions).toHaveLength(3);
   } finally { await db.destroy(); }

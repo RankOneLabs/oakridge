@@ -44,10 +44,7 @@ function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevi
     .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
 }
 
-/** The item body is withheld; a later disclosure gate can only project addresses and
- * digests. Classification is derived from the declared sensitivity of the source body
- * field, so a field reclassified as public or repository content becomes disclosable
- * without touching this producer. */
+/** Capture addresses and digests with classification from the source field's declared sensitivity. */
 function reference(role: string, artifact_kind: string, item: CapturedItem) {
   const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
   if (!kind.ok) return err({ operation: "evidence_packages" as const, entity_id: item.occurrence_id,

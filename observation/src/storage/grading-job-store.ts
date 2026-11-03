@@ -60,8 +60,7 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
       job_id: randomUUID(), idempotency_digest: digest.value, reviewed_commit: input.reviewed_commit ?? null,
       runner_name: input.runner_name, run_id: item.run_id, stage_id: item.unit_id,
       state: "queued", lease_owner: null, lease_expires_at: null, attempts: 0,
-      retry_limit: limits.retry_limit, terminal_cause: null, estimated_cost: input.estimated_cost ?? 0,
-      disclosure: null })
+      retry_limit: limits.retry_limit, terminal_cause: null, estimated_cost: input.estimated_cost ?? 0 })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
       .returningAll().executeTakeFirst();
     return inserted ?? trx.selectFrom("observation.grading_job").selectAll()

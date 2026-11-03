@@ -81,15 +81,21 @@ SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.rel
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
 ORDER BY kind,table_name,name`);
 
-integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and unique eligibility decisions", async () => scratch(async (url) => {
+integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and unique eligibility decisions and explicit grading records", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     await migrateEmptyDatabase(db);
     const catalog = await observationCatalogQuery.execute(db);
     const retiredColumns = ["definition", "bundle"].join("_");
-    const expected = historicalCatalog.filter((entry) => !(entry.kind === "column" && (
+    const expected = historicalCatalog.filter((entry) => !((entry.kind === "column" && (
       (entry.table_name === "source_revision" && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name))
-      || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance"))));
+      || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance")
+      // Retire the outbound refusal record and replace inferred/optional grading facts.
+      || (entry.table_name === "grading_job" && entry.name === "disclosure")
+      || (entry.table_name === "grade_observation" && ["label_origin", "collection_mode"].includes(entry.name))))
+      || (entry.kind === "constraint" && (
+        (entry.table_name === "grading_job" && entry.name === "grading_job_terminal_cause_check")
+        || (entry.table_name === "grade_observation" && entry.name === "grade_collection_consistency")))));
     for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
       expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
     expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });
@@ -97,6 +103,18 @@ integration("the single baseline preserves the historical catalog except for cap
       definition: "UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version)" });
     expected.push({ kind: "index", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
       definition: "CREATE UNIQUE INDEX evaluation_eligibility_subject_question_key ON observation.evaluation_eligibility USING btree (producer, namespace, subject_occurrence_id, question_id, question_version)" });
+    // 1. Remove the outbound refusal column and its terminal cause.
+    expected.push({ kind: "constraint", table_name: "grading_job", name: "grading_job_terminal_cause_check",
+      definition: "CHECK (((terminal_cause IS NULL) OR (terminal_cause = ANY (ARRAY['retry_exhausted'::text, 'runner_failed'::text, 'invalid_outcome'::text, 'ineligible'::text, 'budget_exceeded'::text]))))" });
+    // 2. Replace the generated label with an explicit, closed origin.
+    expected.push({ kind: "column", table_name: "grade_observation", name: "origin", definition: "text NOT NULL DEFAULT  GENERATED " });
+    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_observation_origin_check",
+      definition: "CHECK ((origin = ANY (ARRAY['human_rubric_answer'::text, 'workflow_approval'::text, 'automated_evaluation'::text])))" });
+    // 3. Require a recorded collection mode.
+    expected.push({ kind: "column", table_name: "grade_observation", name: "collection_mode", definition: "text NOT NULL DEFAULT  GENERATED " });
+    // 4. Enforce collection consistency without a null-mode bypass.
+    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_collection_consistency",
+      definition: "CHECK (((model_answers_visible IS NOT NULL) AND (workflow_decisions_visible IS NOT NULL) AND ((collection_mode <> 'blind'::text) OR ((blind_assignment_id IS NOT NULL) AND (NOT model_answers_visible) AND (NOT workflow_decisions_visible)))))" });
     expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
   } finally { await db.destroy(); }
 }));

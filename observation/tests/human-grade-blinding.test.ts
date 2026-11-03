@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { createApp } from "../src/http/app";
 import { storeHumanGradeInTransaction } from "../src/storage/backfill-store";
 import { claimBlindAssignment, createBlindAssignment } from "../src/storage/blind-assignment-store";
-import { withTenant } from "../src/storage/database";
-import { listGrades, registerGradingContext, runGrade } from "../src/storage/grading-store";
+import { evaluationDigest } from "../src/grading/execution";
+import { jsonText, withTenant } from "../src/storage/database";
+import { listGrades, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
-import { question, evidence, evaluator, scratchGrading, tenant } from "./grading-fixture";
+import { question, evidence, evaluator, scratchGrading, tenant, humanGradeDetails } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 
@@ -19,7 +21,7 @@ integration("blind assignment hides model results and refuses duplicate or expir
     runner: { kind: "model", run: async () => ({ ok: true, value: {
       answer: { state: "answered", kind: "boolean", value: true } } }) } });
   expect(scored.ok && scored.value.observation).toBeTruthy();
-  expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0]?.observation.collection_mode).toBe("unknown");
+  expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.items[0]?.observation.collection_mode).toBe("in_context");
   await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
     (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
     VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
@@ -54,7 +56,7 @@ integration("blind assignment hides model results and refuses duplicate or expir
   const submitted = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify({
     identity: { ...identity, evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "blind" },
     context: { question, evidence, evaluator: evaluator("human") }, details: {
-      answer: { state: "answered", kind: "boolean", value: false }, collection_mode: "blind",
+      answer: { state: "answered", kind: "boolean", value: false }, origin: "human_rubric_answer", collection_mode: "blind",
       blind_assignment_id: assignment_id, model_answers_visible: false, workflow_decisions_visible: false,
     },
   }) });
@@ -67,7 +69,7 @@ integration("blind assignment hides model results and refuses duplicate or expir
   const retry = await app.request("/v1/grades", { method: "POST", headers: recoveryHeaders, body: JSON.stringify({
     identity: { ...identity, evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "blind" },
     context: { question, evidence, evaluator: evaluator("human") }, details: {
-      answer: { state: "answered", kind: "boolean", value: false }, collection_mode: "blind",
+      answer: { state: "answered", kind: "boolean", value: false }, origin: "human_rubric_answer", collection_mode: "blind",
       blind_assignment_id: assignment_id, model_answers_visible: false, workflow_decisions_visible: false,
     },
   }) });
@@ -92,7 +94,7 @@ integration("overlapping blind submissions replay the saved grade", async () => 
   const request = { method: "POST", headers: { authorization: "Bearer blind", "content-type": "application/json" },
     body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "human",
       config_digest: "config-1", attempt_label: "overlap" }, details: {
-      answer: { state: "answered", kind: "boolean", value: true }, collection_mode: "blind",
+      answer: { state: "answered", kind: "boolean", value: true }, origin: "human_rubric_answer", collection_mode: "blind",
       blind_assignment_id: assignment.value.assignment_id,
       model_answers_visible: false, workflow_decisions_visible: false } }) };
   const pending: Promise<Response>[] = [];
@@ -129,7 +131,7 @@ integration("readback distinguishes blind, in-context, correction and historical
   const submitted = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify({
     identity: { ...identity, evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "blind" },
     context: { question, evidence, evaluator: evaluator("human") }, details: {
-      answer: { state: "answered", kind: "boolean", value: false }, collection_mode: "blind",
+      answer: { state: "answered", kind: "boolean", value: false }, origin: "human_rubric_answer", collection_mode: "blind",
       blind_assignment_id: assignment_id, model_answers_visible: false, workflow_decisions_visible: false,
     },
   }) });
@@ -140,7 +142,7 @@ integration("readback distinguishes blind, in-context, correction and historical
   const inContextRequest = { identity: { ...identity, evaluator_definition_id: "human",
     config_digest: "config-1", attempt_label: "in-context" },
     details: { answer: { state: "answered", kind: "boolean", value: true },
-      collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } };
+      origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } };
   const inContext = await app.request("/v1/grades", { method: "POST", headers,
     body: JSON.stringify(inContextRequest) });
   expect(inContext.status).toBe(201);
@@ -162,7 +164,7 @@ integration("readback distinguishes blind, in-context, correction and historical
   const grades = await app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/grades`,
     { headers: { authorization: "Bearer read" } });
   const items = (await grades.json()).items as { observation: { observation_id: string; collection_mode: string;
-    label_origin: string; supersedes_observation_id: string | null; reviewer_id: string } }[];
+    origin: string; supersedes_observation_id: string | null; reviewer_id: string } }[];
   expect(items).toHaveLength(4);
   expect(items.find((item) => item.observation.observation_id === observation_id)?.observation).toMatchObject({
     observation_id, collection_mode: "blind",
@@ -170,13 +172,92 @@ integration("readback distinguishes blind, in-context, correction and historical
   expect(items.find((item) => item.observation.observation_id === inContextId)?.observation.collection_mode).toBe("in_context");
   expect(items.find((item) => item.observation.observation_id === correctionId)?.observation)
     .toMatchObject({ collection_mode: "in_context", supersedes_observation_id: inContextId });
-  expect(items.find((item) => item.observation.label_origin === "oakridge_operator_unblinded")?.observation)
-    .toMatchObject({ collection_mode: "unknown", reviewer_id: "oakridge-operator" });
+  expect(items.find((item) => item.observation.origin === "workflow_approval")?.observation)
+    .toMatchObject({ collection_mode: "in_context", reviewer_id: "oakridge-operator" });
   const coverage = await readCoverage(db, tenant, { run_id: "run-1", revision_id: "rev-1",
     question_id: question.question_id, question_version: question.question_version });
   expect(coverage.questions[0]).toMatchObject({ eligible: 1, graded: 1,
-    graded_by_collection_mode: { blind: 1, in_context: 1, unknown: 0 } });
+    graded_by_collection_mode: { blind: 1, in_context: 1 } });
   await expect(withTenant(db, tenant, (trx) => sql`UPDATE observation.grade_observation SET comments = 'changed'
     WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND observation_id = ${observation_id}`.execute(trx)))
     .rejects.toThrow("grade_observation is append-only");
 }));
+
+interface GradeConstraintInput {
+  readonly origin: string | null | undefined;
+  readonly collection_mode: "blind" | "in_context" | null | undefined;
+  readonly blind_assignment_id: string | null;
+  readonly model_answers_visible: boolean | null;
+  readonly workflow_decisions_visible: boolean | null;
+}
+type GradeConstraintError =
+  | { readonly code: "23502"; readonly column: "origin" | "collection_mode" }
+  | { readonly code: "23514" | "23503"; readonly constraint: string };
+interface GradeConstraintCase {
+  readonly description: string;
+  readonly row: GradeConstraintInput;
+  readonly error: GradeConstraintError;
+}
+const in_context: GradeConstraintInput = { origin: "human_rubric_answer", collection_mode: "in_context",
+  blind_assignment_id: null, model_answers_visible: false, workflow_decisions_visible: false };
+const blind: GradeConstraintInput = { ...in_context, collection_mode: "blind", blind_assignment_id: "valid-assignment" };
+const constraint_cases: readonly GradeConstraintCase[] = [
+  { description: "omitted origin", row: { ...in_context, origin: undefined }, error: { code: "23502", column: "origin" } },
+  { description: "null origin", row: { ...in_context, origin: null }, error: { code: "23502", column: "origin" } },
+  { description: "catch-all origin", row: { ...in_context, origin: "other" },
+    error: { code: "23514", constraint: "grade_observation_origin_check" } },
+  { description: "unknown origin", row: { ...in_context, origin: "unknown" },
+    error: { code: "23514", constraint: "grade_observation_origin_check" } },
+  { description: "omitted collection mode", row: { ...in_context, collection_mode: undefined },
+    error: { code: "23502", column: "collection_mode" } },
+  { description: "null collection mode", row: { ...in_context, collection_mode: null },
+    error: { code: "23502", column: "collection_mode" } },
+  { description: "blind grade with no assignment", row: { ...blind, blind_assignment_id: null },
+    error: { code: "23514", constraint: "grade_collection_consistency" } },
+  { description: "blind grade with visible model answers", row: { ...blind, model_answers_visible: true },
+    error: { code: "23514", constraint: "grade_collection_consistency" } },
+  { description: "blind grade with null model visibility", row: { ...blind, model_answers_visible: null },
+    error: { code: "23514", constraint: "grade_collection_consistency" } },
+  { description: "blind grade with visible workflow decisions", row: { ...blind, workflow_decisions_visible: true },
+    error: { code: "23514", constraint: "grade_collection_consistency" } },
+  { description: "blind grade with null workflow visibility", row: { ...blind, workflow_decisions_visible: null },
+    error: { code: "23514", constraint: "grade_collection_consistency" } },
+  { description: "blind grade with nonexistent assignment", row: { ...blind, blind_assignment_id: "missing-assignment" },
+    error: { code: "23503", constraint: "grade_blind_assignment_ref" } },
+];
+for (const { description, row, error } of constraint_cases) {
+  integration(`database rejects ${description}`, async () => scratchGrading(async (db, occurrence_id) => {
+    expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version };
+    const recorded = await recordHumanGrade(db, tenant, { ...identity, evaluator_definition_id: "human",
+      config_digest: "config-1", attempt_label: "valid-source", details: humanGradeDetails("human_rubric_answer") });
+    if (!recorded.ok || !recorded.value.observation) throw new Error("missing valid source grade");
+    const execution_id = randomUUID();
+    const digest = evaluationDigest({ ...identity, evaluator_definition_id: "human",
+      config_digest: "config-1", attempt_label: description });
+    if (!digest.ok) throw new Error(digest.error.detail);
+    await withTenant(db, tenant, async (trx) => {
+      await trx.insertInto("observation.evaluation_execution").values({ ...recorded.value.execution,
+        execution_id, idempotency_digest: digest.value, attempt_label: description,
+        provider_attempts: jsonText(recorded.value.execution.provider_attempts) }).execute();
+      await trx.insertInto("observation.blind_assignment").values({ ...tenant, ...identity,
+        assignment_id: "valid-assignment", claim_owner: null, claimed_at: null,
+        expires_at: null, submitted_observation_id: null }).execute();
+    });
+    // Omit columns entirely to prove PostgreSQL refuses them rather than applying a default.
+    await expect(withTenant(db, tenant, (trx) => sql`INSERT INTO observation.grade_observation
+      (producer, namespace, observation_id, execution_id, subject_occurrence_id, evidence_set_id,
+       question_id, question_version, evaluator_definition_id, answer_kind, answer_state, answer_payload,
+       ${row.origin === undefined ? sql`` : sql`origin,`}
+       ${row.collection_mode === undefined ? sql`` : sql`collection_mode,`}
+       blind_assignment_id, model_answers_visible, workflow_decisions_visible)
+      SELECT producer, namespace, ${randomUUID()}, ${execution_id}, subject_occurrence_id, evidence_set_id,
+       question_id, question_version, evaluator_definition_id, answer_kind, answer_state, answer_payload,
+       ${row.origin === undefined ? sql`` : sql`${row.origin},`}
+       ${row.collection_mode === undefined ? sql`` : sql`${row.collection_mode},`}
+       ${row.blind_assignment_id}, ${row.model_answers_visible}, ${row.workflow_decisions_visible}
+      FROM observation.grade_observation WHERE observation_id = ${recorded.value.observation!.observation_id}`.execute(trx)))
+      .rejects.toMatchObject(error);
+  }));
+}

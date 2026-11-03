@@ -206,8 +206,8 @@ export interface ObservationGradeObservation {
   quality_flags: Generated<JsonValue>;
   supersedes_observation_id: string | null;
   recorded_at: Generated<Date>;
-  label_origin: Generated<string>;
-  collection_mode: string | null;
+  origin: string;
+  collection_mode: string;
   blind_assignment_id: string | null;
   model_answers_visible: boolean | null;
   workflow_decisions_visible: boolean | null;
@@ -355,7 +355,6 @@ export interface ObservationGradingJob {
   retry_limit: number;
   terminal_cause: string | null;
   estimated_cost: Generated<number>;
-  disclosure: JsonValue | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

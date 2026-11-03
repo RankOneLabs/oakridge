@@ -1,3 +1,5 @@
+import type { GradeOrigin } from "../src/grading/observation";
+import type { GradeDetails } from "../src/storage/grading-store";
 import { captureDelivery } from "../src/storage/capture-store";
 import { projectRevision, listRunItems } from "../src/storage/projection-store";
 import type { JsonValue } from "../src/domain/primitives";
@@ -90,4 +92,13 @@ export async function captureProjectedFixture(db: Database, input: CapturedFixtu
   await projectRevision(db, tenant, input.revision_id);
   const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
   return page.items.filter((item) => item.revision_id === input.revision_id);
+}
+
+/** Explicit facts supplied by a caller recording a human grade. */
+export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
+  return { origin, answer: { state: "answered", kind: "boolean", value: true },
+    collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
+    probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
+    decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
+    comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
 }

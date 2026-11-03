@@ -92,7 +92,7 @@ integration("all grading routes serve raw answers, distributions, evaluator iden
     body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "human" },
       context: { question: { ...question, input_recipe: { expected: "sample" } }, evidence, evaluator: evaluator("human") },
       details: { answer: { state: "answered", kind: "boolean", value: false }, reviewer_id: "reviewer",
-        collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
+        origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
   expect(human.status).toBe(201);
   const initialHuman = await human.json();
   const correction = await app.request("/v1/grades", { method: "POST", headers,
@@ -100,7 +100,7 @@ integration("all grading routes serve raw answers, distributions, evaluator iden
       details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "reviewer",
         normalized_score: 1, decision_policy_id: "human-acceptance", decision_policy_version: "1",
         supersedes_observation_id: initialHuman.observation.observation_id,
-        collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
+        origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: true, workflow_decisions_visible: false } }) });
   expect(correction.status).toBe(201);
   const choiceQuestion = { ...question, question_id: "handoff", response_kind: "choice", allowed_values: ["yes", "no"] } as const;
   const model = { ...evaluator("model"), attempt_controls: { answer: { state: "answered", kind: "choice", value: "yes" },
@@ -165,7 +165,7 @@ integration("missing and cross-namespace references refuse grades without partia
     const response = await app.request("/v1/grades", { method: "POST", headers,
       body: JSON.stringify({ identity: { ...identity, ...changed },
         details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "reviewer",
-          collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
+          origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false } }) });
     expect(response.status).toBe(422);
   }
   expect((await listGrades(db, tenant, occurrence_id, { limit: 10, offset: 0 }))?.total).toBe(0);
