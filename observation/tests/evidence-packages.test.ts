@@ -4,7 +4,7 @@ const questions = oakridgeQuestions(pilotExpectations);
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
-import type { ItemOccurrenceId } from "../src/domain/identity";
+import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import type { CapturedRevision } from "../src/grading/evidence-packages/capture";
 import { capturedReference } from "../src/grading/evidence-packages/references";
@@ -44,7 +44,10 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   if (!result.ok) return;
   const manifest = result.value;
   const first = manifest.packages.find((item) => item.question_id === "plan.criterion_traceability" && item.revision_id === plan.revision_id);
-  expect(first?.evidence.references.map((ref) => ref.ref.split(":")[0])).toEqual(["plan_criterion", "plan_decision"]);
+  // References follow pinned slot order — input slots then output — so the package shape is the
+  // recipe's rather than a builder's. The tasks revision is absent from this run, so plan_task
+  // contributes nothing and the criterion's own reference comes last.
+  expect(first?.evidence.references.map((ref) => ref.ref.split(":")[0])).toEqual(["plan_decision", "plan_criterion"]);
   expect(first?.evidence.references.every((ref) => ref.digest?.startsWith("canonical-json/v1:")
     && ref.kind === "internal" && ref.content !== null && ref.deep_link?.startsWith("oakridge://revision/"))).toBe(true);
   const briefPackage = manifest.packages.find((item) => item.question_id === "brief.source_fidelity");
@@ -145,15 +148,17 @@ integration("typed missing evidence decisions persist", async () => scratchGradi
   } });
   const analysis = "analysis.finding_relevance" as const;
   const assessment = "assessment.coverage" as const;
+  // The manifest contract carries branded question ids; the catalogue keys are plain strings.
+  const branded = (id: string) => id as unknown as QuestionId;
   for (const question_id of [analysis, assessment]) {
     const pinned = { ...questions[question_id].definition,
       requires_repository_snapshot: question_id === assessment };
     expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   }
   const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [
-    { question_id: analysis, question_version: "v1", occurrence_id: findings.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
+    { question_id: branded(analysis), question_version: "v1", occurrence_id: findings.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "no excerpt source" } } },
-    { question_id: assessment, question_version: "v1", occurrence_id: criteria.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
+    { question_id: branded(assessment), question_version: "v1", occurrence_id: criteria.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "too few repository content references" } } },
   ] };
   const saved = await persistOakridgeEligibility(db, tenant, manifest);

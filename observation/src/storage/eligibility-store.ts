@@ -2,7 +2,7 @@ import { sql, type Selectable } from "kysely";
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
 import { hasCapturedEvidenceRecipe } from "../grading/evidence-packages/recipe";
-import { pilotSubjectArtifactKind } from "../producers/oakridge/evidence-packages";
+import { pinnedPilotRecipe } from "../grading/evidence-packages/pilot-recipe";
 import { deriveRunQuestionEvidence, deriveSubjectEvidence, type RunQuestionEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
@@ -131,7 +131,9 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
     .where("question_id", "=", question_id).where("question_version", "=", question_version).executeTakeFirst());
   if (!question_row) return { ...page, items: [], total: 0 };
   const question = questionFromRow(question_row);
-  const subject_artifact_kind = pilotSubjectArtifactKind(question_id);
+  // The subject's artifact kind comes from the question's own pin, so a read never consults a
+  // producer-side table keyed by question id. A judge pin binds no artifact kind and filters none.
+  const subject_artifact_kind = pinnedPilotRecipe(question)?.subject.artifact_kind ?? null;
   const population = await withTenant(db, tenant, async (trx) => {
     let query = trx.selectFrom("observation.item_occurrence as i")
     .innerJoin("observation.source_revision as r", (join) => join.onRef("r.revision_id", "=", "i.revision_id")

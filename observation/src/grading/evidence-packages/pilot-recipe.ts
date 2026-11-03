@@ -1,85 +1,143 @@
 import { z } from "zod";
-import { err, ok, type Result } from "../../domain/primitives";
 import type { QuestionDefinition } from "../question";
 
-export const PILOT_QUESTION_IDS = ["analysis.finding_relevance", "plan.criterion_traceability",
-  "brief.source_fidelity", "assessment.coverage"] as const;
-export type PilotQuestionId = typeof PILOT_QUESTION_IDS[number];
 export const EVIDENCE_ROLES = ["requested_change", "relevant_excerpt", "analysis_finding", "plan_task", "plan_decision",
   "plan_criterion", "brief_criterion", "assessment_finding"] as const;
 export type EvidenceRole = typeof EVIDENCE_ROLES[number];
-export interface EvidenceSlot { readonly role: EvidenceRole; readonly min_count: number; readonly max_count: number }
+
+/** Where a slot's items come from. `subject` is the graded item itself. `linked` names one
+ * relation to walk — outward from the subject's own links, or inward from the items that link
+ * back to it. `unscheduled` says no captured artifact in a run supplies this role at all.
+ *
+ * A slot declares the relation; which revisions are in scope stays with the builder, because
+ * capture-time windows are not expressible as a relation and a pin should not pretend otherwise. */
+export type SlotSource =
+  | { readonly from: "subject" }
+  | { readonly from: "linked"; readonly link_type: string; readonly direction: "out" | "in";
+    readonly artifact_kind: string; readonly item_kind: string }
+  | { readonly from: "unscheduled" };
+
+export interface EvidenceSlot {
+  readonly role: EvidenceRole;
+  readonly source: SlotSource;
+  readonly min_count: number;
+  readonly max_count: number;
+}
+
+/** The traversal a question's evidence needs, named because slots cannot express it: which
+ * revisions are in scope, and how a failure to resolve is classified.
+ *
+ * `linked_sources` walks the slot relations and classifies two failures the slots cannot name —
+ * a subject that declares no link at all, and a source revision the run never captured. Plan
+ * traceability and brief fidelity differ only in those two choices. */
+export type EvidenceBuild =
+  | { readonly kind: "linked_sources"; readonly undeclared: "uncited" | "unlinked";
+    readonly uncaptured_source: "incomplete" | "dangling" }
+  | { readonly kind: "assessment_window" }
+  | { readonly kind: "unscheduled_source"; readonly detail: string };
+
+/** The captured item a decision is recorded against. Replaces matching on the question id. */
+export interface SubjectBinding { readonly artifact_kind: string; readonly item_kind: string }
+
 export interface PilotEvidenceRecipe {
-  readonly recipe_id: PilotQuestionId;
   readonly recipe_version: "v1";
+  readonly build: EvidenceBuild;
+  readonly subject: SubjectBinding;
   readonly input: readonly EvidenceSlot[];
   readonly output: readonly EvidenceSlot[];
-  readonly projected_fields: readonly ["ref", "digest", "deep_link"];
 }
-export interface EvidenceSource {
-  readonly role: EvidenceRole;
-  readonly ref: string;
-  readonly digest: string;
-  readonly deep_link: string;
-}
-export interface ProjectedEvidence {
-  readonly role: EvidenceRole;
-  readonly ref: string;
-  readonly digest: string;
-  readonly deep_link: string;
-}
-export interface ProjectedQuestionEvidence {
-  readonly recipe_id: PilotQuestionId;
-  readonly recipe_version: "v1";
-  readonly input: readonly ProjectedEvidence[];
-  readonly output: readonly ProjectedEvidence[];
-}
-export interface EvidenceRecipeError { readonly operation: "project_pilot_evidence"; readonly entity_id: string; readonly detail: string }
 
-/** A bounded package of source addresses; full code, spec, and JSON stay in the observation store.
- * Every package carries at least one input reference, whatever its slots' minimums. */
-export const PILOT_EVIDENCE_RECIPES: Readonly<Record<PilotQuestionId, PilotEvidenceRecipe>> = {
-  "analysis.finding_relevance": { recipe_id: "analysis.finding_relevance", recipe_version: "v1",
-    input: [{ role: "requested_change", min_count: 1, max_count: 1 }, { role: "relevant_excerpt", min_count: 1, max_count: 1 }],
-    output: [{ role: "analysis_finding", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
-  "plan.criterion_traceability": { recipe_id: "plan.criterion_traceability", recipe_version: "v1",
-    input: [{ role: "plan_task", min_count: 0, max_count: 20 }, { role: "plan_decision", min_count: 0, max_count: 20 }],
-    output: [{ role: "plan_criterion", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
-  "brief.source_fidelity": { recipe_id: "brief.source_fidelity", recipe_version: "v1",
-    input: [{ role: "plan_criterion", min_count: 1, max_count: 1 }],
-    output: [{ role: "brief_criterion", min_count: 1, max_count: 1 }], projected_fields: ["ref", "digest", "deep_link"] },
-  "assessment.coverage": { recipe_id: "assessment.coverage", recipe_version: "v1",
-    input: [{ role: "brief_criterion", min_count: 1, max_count: 1 }],
-    output: [{ role: "assessment_finding", min_count: 0, max_count: 100 }], projected_fields: ["ref", "digest", "deep_link"] },
+const subjectSlot = (role: EvidenceRole): EvidenceSlot =>
+  ({ role, source: { from: "subject" }, min_count: 1, max_count: 1 });
+const linkedSlot = (role: EvidenceRole, source: Omit<Extract<SlotSource, { from: "linked" }>, "from">,
+  min_count: number, max_count: number): EvidenceSlot =>
+  ({ role, source: { from: "linked", ...source }, min_count, max_count });
+const unscheduledSlot = (role: EvidenceRole): EvidenceSlot =>
+  ({ role, source: { from: "unscheduled" }, min_count: 1, max_count: 1 });
+
+/** No captured artifact carries the requested change or its excerpt, so this question has no
+ * buildable evidence in a run. The pin says so rather than a builder omitting it silently. */
+export const ANALYSIS_RELEVANCE_RECIPE: PilotEvidenceRecipe = {
+  recipe_version: "v1", subject: { artifact_kind: "analysis", item_kind: "finding" },
+  build: { kind: "unscheduled_source", detail: "no relevant excerpt source is scheduled" },
+  input: [unscheduledSlot("requested_change"), unscheduledSlot("relevant_excerpt")],
+  output: [subjectSlot("analysis_finding")],
 };
 
-const slotSchema = z.object({ role: z.enum(EVIDENCE_ROLES), min_count: z.number().int().min(0),
-  max_count: z.number().int().min(1) }).refine((slot) => slot.max_count >= slot.min_count,
-  { message: "max_count is below min_count" });
+export const PLAN_TRACEABILITY_RECIPE: PilotEvidenceRecipe = {
+  recipe_version: "v1", subject: { artifact_kind: "plan", item_kind: "criterion" },
+  build: { kind: "linked_sources", undeclared: "uncited", uncaptured_source: "incomplete" },
+  input: [
+    linkedSlot("plan_task", { link_type: "derived_from", direction: "out", artifact_kind: "tasks", item_kind: "task" }, 0, 20),
+    linkedSlot("plan_decision", { link_type: "derived_from", direction: "out", artifact_kind: "plan", item_kind: "decision" }, 0, 20),
+  ],
+  output: [subjectSlot("plan_criterion")],
+};
 
-/** The pin carries the whole recipe, slot counts included, so reading it never needs the
- * authored catalogue. A question is supported because of what it pins, not because its id
- * appears in a table in this file. */
-const pinnedRecipeSchema = z.object({ recipe_id: z.enum(PILOT_QUESTION_IDS), recipe_version: z.literal("v1"),
-  input: z.array(slotSchema), output: z.array(slotSchema),
-  projected_fields: z.tuple([z.literal("ref"), z.literal("digest"), z.literal("deep_link")]) });
+export const BRIEF_FIDELITY_RECIPE: PilotEvidenceRecipe = {
+  recipe_version: "v1", subject: { artifact_kind: "brief", item_kind: "criterion" },
+  build: { kind: "linked_sources", undeclared: "unlinked", uncaptured_source: "dangling" },
+  input: [linkedSlot("plan_criterion", { link_type: "derived_from", direction: "out", artifact_kind: "plan", item_kind: "criterion" }, 1, 1)],
+  output: [subjectSlot("brief_criterion")],
+};
+
+export const ASSESSMENT_COVERAGE_RECIPE: PilotEvidenceRecipe = {
+  recipe_version: "v1", subject: { artifact_kind: "brief", item_kind: "criterion" },
+  build: { kind: "assessment_window" },
+  input: [subjectSlot("brief_criterion")],
+  output: [linkedSlot("assessment_finding",
+    { link_type: "assesses", direction: "in", artifact_kind: "assessment", item_kind: "assessment_finding" }, 0, 100)],
+};
+
+const slotSourceSchema = z.discriminatedUnion("from", [
+  z.object({ from: z.literal("subject") }),
+  z.object({ from: z.literal("linked"), link_type: z.string().min(1), direction: z.enum(["out", "in"]),
+    artifact_kind: z.string().min(1), item_kind: z.string().min(1) }),
+  z.object({ from: z.literal("unscheduled") }),
+]);
+
+const slotSchema = z.object({ role: z.enum(EVIDENCE_ROLES), source: slotSourceSchema,
+  min_count: z.number().int().min(0), max_count: z.number().int().min(1) })
+  .refine((slot) => slot.max_count >= slot.min_count, { message: "max_count is below min_count" });
+
+const buildSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("linked_sources"), undeclared: z.enum(["uncited", "unlinked"]),
+    uncaptured_source: z.enum(["incomplete", "dangling"]) }),
+  z.object({ kind: z.literal("assessment_window") }),
+  z.object({ kind: z.literal("unscheduled_source"), detail: z.string().min(1) }),
+]);
+
+/** The pin carries the whole recipe — build, subject binding and slot counts — so reading it
+ * never needs a table keyed by question id. A question is supported because of what it pins. */
+const pinnedRecipeSchema = z.object({ recipe_version: z.literal("v1"), build: buildSchema,
+  subject: z.object({ artifact_kind: z.string().min(1), item_kind: z.string().min(1) }),
+  input: z.array(slotSchema), output: z.array(slotSchema) })
+  // `linked_sources` resolves each relation against the newest source revision captured at or
+  // before the subject, because a subject cites what existed when it was written. An inward
+  // relation points the other way in time — the items that reference a subject are captured
+  // after it — so it needs a forward window and belongs to `assessment_window`. Refusing the
+  // combination here keeps a pin from naming a walk no builder performs.
+  .refine((recipe) => recipe.build.kind !== "linked_sources"
+    || ![...recipe.input, ...recipe.output].some((slot) => slot.source.from === "linked" && slot.source.direction === "in"),
+    { message: "linked_sources cannot walk an inward relation" });
 
 export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefinition["input_recipe"] {
-  return { recipe_id: recipe.recipe_id, recipe_version: recipe.recipe_version,
-    input: recipe.input.map((slot) => ({ ...slot })), output: recipe.output.map((slot) => ({ ...slot })),
-    projected_fields: [...recipe.projected_fields] };
+  const slot = (entry: EvidenceSlot) => ({ role: entry.role, source: { ...entry.source },
+    min_count: entry.min_count, max_count: entry.max_count });
+  return { recipe_version: recipe.recipe_version, build: { ...recipe.build }, subject: { ...recipe.subject },
+    input: recipe.input.map(slot), output: recipe.output.map(slot) };
 }
 
-/** Read the recipe a question pins. Returns null when the pin is not a slot recipe, which is
- * how a judge-recipe or deterministic question reports that this path does not own it. */
+/** Read the recipe a question pins. Returns null when the pin is not a slot recipe, which is how
+ * a judge-recipe or deterministic question reports that this path does not own it. */
 export function pinnedPilotRecipe(question: QuestionDefinition): PilotEvidenceRecipe | null {
   const parsed = pinnedRecipeSchema.safeParse(question.input_recipe);
   if (!parsed.success || question.question_version !== parsed.data.recipe_version) return null;
   return parsed.data;
 }
 
-export function hasPinnedPilotRecipe(question: QuestionDefinition): boolean {
-  return pinnedPilotRecipe(question) !== null;
+export function recipeSlots(recipe: PilotEvidenceRecipe): readonly EvidenceSlot[] {
+  return [...recipe.input, ...recipe.output];
 }
 
 /** Roles whose reference count falls outside the pinned slot's bounds. The role is the prefix
@@ -94,43 +152,8 @@ export function unsatisfiedSlots(recipe: PilotEvidenceRecipe,
     const role = ref.slice(0, separator);
     counts.set(role, (counts.get(role) ?? 0) + 1);
   }
-  return [...recipe.input, ...recipe.output].filter((slot) => {
+  return recipeSlots(recipe).filter((slot) => {
     const seen = counts.get(slot.role) ?? 0;
     return seen < slot.min_count || seen > slot.max_count;
   }).map((slot) => slot.role);
-}
-
-export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
-  : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
-  const recipe = pinnedPilotRecipe(question);
-  if (!recipe)
-    return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
-  const slots = [...recipe.input, ...recipe.output];
-  const allowed = new Set<EvidenceRole>(slots.map((slot) => slot.role));
-  if (sources.some((source) => !allowed.has(source.role)))
-    return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "undeclared evidence role" });
-  const selected = (slot: EvidenceSlot): Result<readonly ProjectedEvidence[], EvidenceRecipeError> => {
-    const matches = sources.filter((source) => source.role === slot.role);
-    if (matches.length < slot.min_count || matches.length > slot.max_count)
-      return err({ operation: "project_pilot_evidence", entity_id: slot.role, detail: "evidence count differs from pinned recipe" });
-    if (matches.some((source) => !source.ref || source.ref.length > 512 || !source.digest || source.digest.length > 128
-      || !source.deep_link || source.deep_link.length > 2048))
-      return err({ operation: "project_pilot_evidence", entity_id: slot.role, detail: "evidence requires a ref, digest and deep link" });
-    return ok(matches.map(({ role, ref, digest, deep_link }) => ({ role, ref, digest, deep_link })));
-  };
-  const input: ProjectedEvidence[] = [];
-  const output: ProjectedEvidence[] = [];
-  for (const slot of recipe.input) {
-    const result = selected(slot);
-    if (!result.ok) return result;
-    input.push(...result.value);
-  }
-  if (input.length === 0)
-    return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "evidence requires at least one input reference" });
-  for (const slot of recipe.output) {
-    const result = selected(slot);
-    if (!result.ok) return result;
-    output.push(...result.value);
-  }
-  return ok({ recipe_id: recipe.recipe_id, recipe_version: recipe.recipe_version, input, output });
 }
