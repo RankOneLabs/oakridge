@@ -62,7 +62,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
   expect(coverage.map((pack) => pack.evidence.references.map((ref) => ref.ref.split(":")[0]))
     .sort((a, b) => b.length - a.length)).toEqual([
-    ["brief_criterion", "assessment_finding"], ["brief_criterion", "assessment_finding"],
+    ["coverage_links", "brief_criterion", "assessment_finding"], ["coverage_links", "brief_criterion", "assessment_finding"],
   ]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "eligible")).toBe(true);
@@ -79,6 +79,31 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
     && row.decision.tag === "missing_evidence")).toBe(true);
   const graph = buildGraph([resolve(import.meta.dir, "../src/producers/oakridge/evidence-packages.ts")]);
   expect([...graph.values()].filter((node) => node.path.includes("/src/langfuse/") || node.packages.some((name) => name.includes("langfuse")))).toEqual([]);
+});
+
+test("coverage hashes its derived content and keeps captured source content at each source address", async () => {
+  const brief = await captured("brief", "2026-10-23T17:29:56Z");
+  const assessment = await captured("assessment", "2026-10-23T17:35:00Z");
+  const result = runPackages([brief, assessment], { "assessment.coverage": questions["assessment.coverage"] });
+  if (!result.ok) throw new Error(result.error.detail);
+  expect(result.value.packages.length).toBeGreaterThan(0);
+  const captured_items = [...brief.items, ...assessment.items];
+  for (const pack of result.value.packages) {
+    const derived = pack.evidence.references[0];
+    if (!derived) throw new Error("coverage package has no derived reference");
+    expect(derived.ref).toStartWith("coverage_links:");
+    expect(derived.deep_link).toBeUndefined();
+    for (const reference of pack.evidence.references) {
+      const digest = canonicalDigest(reference.content);
+      if (!digest.ok) throw new Error(digest.error.detail);
+      expect(reference.digest).toBe(digest.value);
+      if (!reference.deep_link) continue;
+      const source = captured_items.find((item) => reference.deep_link === `oakridge://revision/${encodeURIComponent(item.revision_id)}#${item.path}`);
+      if (!source) throw new Error(`coverage reference has no captured source: ${reference.deep_link}`);
+      expect(reference.content).toEqual(source.selected_value);
+    }
+    expect(pack.evidence.references.slice(1).some((reference) => reference.content === pack.subject.selected_value)).toBe(true);
+  }
 });
 
 test("a concurrent cohort's brief does not close another brief's assessment window", async () => {

@@ -58,9 +58,11 @@ and all transitive prompt and registry references. It returns `hash_mismatch`,
 other filesystem errors return `store_io`. It does not normalize or repair data
 and never falls back to today's registry or prompt authoring files.
 
-Run `bun workflow-config/src/generate.ts` to generate the store and remove obsolete
-generated objects. `--check` reports the differing, missing, or stale output file
-without writing. The existing
+Run `bun workflow-config/src/generate.ts` to generate the store and update the
+launchable catalog. Historical definitions, prompts, and operation registries are
+retained so existing runs can resolve their pinned inputs after regeneration.
+`--check` reports differing or missing current output files without writing and
+allows historical objects alongside them. The existing
 pretty-printed Rust bundle fixtures remain unchanged, and the source-less
 `r5-cohort.json` fixture has no committed definition. Run `bun test
 workflow-config/src` for the identity and store boundary tests; `bun run typecheck`

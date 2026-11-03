@@ -16,7 +16,7 @@ import type { ObservationEvaluationExecution, ObservationGradeObservation } from
 import { subjectProvenance, questionFromRow } from "./eligibility-store";
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
-import { pinnedRepositoryMinimum } from "../grading/evidence-packages/recipe";
+import { pinnedRepositoryMinimum, requiresRepositorySnapshot } from "../grading/evidence-packages/recipe";
 
 export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
   readonly origin: GradeOrigin;
@@ -286,7 +286,7 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
     const minimum = pinnedRepositoryMinimum(question);
     if (!minimum.ok) return err({ operation: "evaluate", entity_id: String(question.question_id),
       detail: minimum.error.detail });
-    const snapshot = question.requires_repository_snapshot
+    const snapshot = requiresRepositorySnapshot(question)
       ? repositorySnapshotEligibility(evidence, minimum.value, input.reviewed_commit ?? "") : null;
     const blocked = snapshot !== null && snapshot.tag !== "eligible";
     const missing = evidence.is_incomplete && question.missing_evidence_policy === "fail";

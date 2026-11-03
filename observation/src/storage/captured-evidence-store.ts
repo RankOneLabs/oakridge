@@ -1,7 +1,7 @@
 import type { ItemOccurrenceId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { CapturedItem } from "../grading/evidence-packages/capture";
-import { judgeNeedsRepository } from "../grading/evidence-packages/judge-recipe";
+import { requiresRepositorySnapshot } from "../grading/evidence-packages/recipe";
 import type { EvidenceSet } from "../grading/evidence";
 import type { EligibilityDecision } from "../grading/eligibility";
 import type { QuestionDefinition } from "../grading/question";
@@ -44,7 +44,7 @@ export async function deriveRunQuestionEvidence(db: Database, tenant: TenantScop
   if (!capture.ok) return fail(capture.error.detail);
   const subjects = capture.value.flatMap((revision) => revision.items);
   const sources = new Map<ItemOccurrenceId, EvidenceSet>();
-  if (question.requires_repository_snapshot || judgeNeedsRepository(question)) {
+  if (requiresRepositorySnapshot(question)) {
     try {
       const source = new CaptureArtifactSource(db, tenant, run_id);
       for (const item of subjects) {

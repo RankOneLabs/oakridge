@@ -13,7 +13,7 @@ import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { instructionDigest } from "../src/grading/evaluator";
 import type { JsonValue } from "../src/domain/primitives";
 import type { QuestionDefinition } from "../src/grading/question";
-import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import type { EvidenceSetId, ItemOccurrenceId, QuestionId } from "../src/domain/identity";
 import { createLlmJudgeRunner } from "../src/runners/llm-judge";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
@@ -73,8 +73,14 @@ interface JudgeEvidence { readonly ref: string; readonly content: JsonValue }
 interface JudgeRequest { readonly messages: readonly { readonly content: string }[] }
 interface JudgePrompt { readonly evidence: string }
 
-for (const target of ["report", "code"] as const) {
-  integration(`a new ${target} judge question derives captured evidence for eligibility, assignment and queued execution`, async () => scratchGrading(async (db) => {
+interface JudgeScenario { readonly target: "report" | "code"; readonly requires_repository_snapshot: boolean }
+const judge_scenarios: readonly JudgeScenario[] = [
+  { target: "report", requires_repository_snapshot: false },
+  { target: "code", requires_repository_snapshot: true },
+  { target: "code", requires_repository_snapshot: false },
+];
+for (const { target, requires_repository_snapshot } of judge_scenarios) {
+  integration(`a ${target} judge with snapshot flag ${requires_repository_snapshot} derives and grades captured evidence`, async () => scratchGrading(async (db) => {
     const original = { id: "criterion", text: "Preserve source", task_ids: [], decision_ids: [] };
     const revised = { ...original, text: "Keep source intact" };
     await captureProjectedFixture(db, { revision_id: "judge-plan", artifact_kind: "plan", body: {
@@ -99,7 +105,7 @@ for (const target of ["report", "code"] as const) {
     ] : [{ ref: address, content: finding }, { ref: repository_address, content: code }];
     const pinned: QuestionDefinition = { ...question, question_id: `judge-${target}` as QuestionId, question_version: "rubric-2026",
       target_item_kinds: [subject.item_kind], response_kind: "choice", allowed_values: ["faithful", "changed", "insufficient_evidence"],
-      requires_repository_snapshot: target === "code", input_recipe: { judge: { rubric: "Judge the captured target",
+      requires_repository_snapshot, input_recipe: { judge: { rubric: "Judge the captured target",
         evidence_refs: expected.map((ref) => ref.ref), max_evidence_chars: 5000, target } } };
     const model = { ...evaluator("model"), evaluator_definition_id: `judge-${target}`, provider: "fixture", model: "pinned-judge" };
     expect((await registerQuestion(db, tenant, pinned)).ok).toBe(true);
@@ -120,6 +126,27 @@ for (const target of ["report", "code"] as const) {
     const mismatch = await enqueue({ ...request, identity: { ...identity, evidence_set_id: "caller-evidence" } });
     expect(mismatch.status).toBe(422);
     expect((await mismatch.json()).error.code).toBe("evidence_set_mismatch");
+    if (target === "code") {
+      for (const reviewed_commit of [undefined, "unrelated-commit"]) {
+        const rejected = await enqueue({ ...request, reviewed_commit });
+        expect(rejected.status).toBe(422);
+        expect(await rejected.json()).toMatchObject({ error: { code: "job_refused",
+          message: expect.stringContaining("repository evidence is not eligible for grading") } });
+        let calls = 0;
+        const blocked = await runGrade(db, tenant, {
+          identity: { ...identity, subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
+            evidence_set_id: evidence_set_id as EvidenceSetId, attempt_label: `rejected-${reviewed_commit ?? "missing"}` },
+          reviewed_commit, runner: { kind: "model", async run() {
+            calls++;
+            return { ok: false, error: { operation: "test", entity_id: "code", detail: "ineligible code reached the runner" } };
+          } },
+        });
+        expect(blocked).toMatchObject({ ok: true, value: { execution: { status: "failed",
+          error: "repository reference has no matching reviewed commit" }, observation: null } });
+        expect(calls).toBe(0);
+      }
+      expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job").select("job_id").execute())).toEqual([]);
+    }
     const queued = await enqueue(request);
     expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
     const assigned = await app.request("/v1/blind-assignments", { method: "POST",

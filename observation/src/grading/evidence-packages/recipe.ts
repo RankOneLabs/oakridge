@@ -2,7 +2,7 @@ import { z } from "zod";
 import { err, ok, type Result } from "../../domain/primitives";
 import type { QuestionDefinition } from "../question";
 import type { EvidencePackageError } from "./references";
-import { judgeRecipeSchema, type JudgeRecipe } from "./judge-recipe";
+import { judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "./judge-recipe";
 import { pinnedPilotRecipe, type PilotEvidenceRecipe } from "./pilot-recipe";
 
 export type RecipeError = EvidencePackageError;
@@ -26,6 +26,11 @@ export function pinnedRecipe(question: QuestionDefinition): PinnedRecipe | null 
 /** Whether captured evidence can be built for this question at all. */
 export function hasCapturedEvidenceRecipe(question: QuestionDefinition): boolean {
   return pinnedRecipe(question) !== null;
+}
+
+/** Code judges require a matching repository snapshot even without the explicit flag. */
+export function requiresRepositorySnapshot(question: QuestionDefinition): boolean {
+  return question.requires_repository_snapshot || judgeNeedsRepository(question);
 }
 
 const repositoryMinimumSchema = z.object({ minimum_repository_content: z.number().int().min(1) });

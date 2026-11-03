@@ -1,3 +1,4 @@
+import { canonicalDigest } from "canonical-json";
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import type { ItemOccurrenceId, QuestionId } from "../../domain/identity";
 import type { EvidenceReference, EvidenceSet } from "../../grading/evidence";
@@ -7,9 +8,9 @@ import { evidenceKindForCapturedPath } from "./classification";
 import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
 import { pinnedPilotRecipe, recipeSlots, unsatisfiedSlots, type EvidenceBuild, type EvidenceSlot,
   type PilotEvidenceRecipe, type SlotSource, type SubjectBinding } from "../../grading/evidence-packages/pilot-recipe";
-import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
-import { hasCapturedEvidenceRecipe, pinnedRepositoryMinimum } from "../../grading/evidence-packages/recipe";
-import { coverageInput } from "../../runners/coverage-checker";
+import { hasJudgeRecipe, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
+import { hasCapturedEvidenceRecipe, pinnedRepositoryMinimum, requiresRepositorySnapshot } from "../../grading/evidence-packages/recipe";
+import { coverageInput, type CoverageInput } from "../../runners/coverage-checker";
 import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
 import type { QuestionDefinition } from "../../grading/question";
 
@@ -160,6 +161,16 @@ function sourceCoversSubjects(source: CapturedRevision, host: CapturedRevision, 
     && linked.has(subjectKey(item.item_scope, item.producer_local_id)));
 }
 
+/** The derived link view has its own digest. Captured source references follow it
+ * in the package; a source deep link must never claim to resolve this view. */
+function coverageLinkReference(subject: CapturedItem, links: CoverageInput): Result<EvidenceReference, EvidencePackageError> {
+  const digest = canonicalDigest(links);
+  if (!digest.ok) return err({ operation: "evidence_packages", entity_id: subject.occurrence_id,
+    detail: digest.error.detail });
+  return ok({ ref: `coverage_links:${subject.occurrence_id}`, kind: "internal",
+    content: links as unknown as JsonValue, digest: digest.value });
+}
+
 /** The pinned relation points inward, so the source revision is found by capture window rather
  * than by a link on the subject. An empty resolved set is valid evidence of a miss. */
 function assessmentWindowPackages({ revisions, subjects, question, recipe }: BuilderInput)
@@ -199,7 +210,8 @@ function assessmentWindowPackages({ revisions, subjects, question, recipe }: Bui
         if (!links.ok) return err({ operation: "evidence_packages", entity_id: subject.occurrence_id,
           detail: links.error.detail });
         const references = collectReferences([
-          ...own.map((slot) => reference(slot.role, host.artifact_kind, subject, links.value as unknown as JsonValue)),
+          coverageLinkReference(subject, links.value),
+          ...own.map((slot) => reference(slot.role, host.artifact_kind, subject)),
           ...found.map((item) => reference(role, source.artifact_kind, item)),
         ]);
         if (!references.ok) return references;
@@ -375,7 +387,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   const enriched: PilotPackage[] = [];
   for (const pack of packages) {
     const question = questions[pack.question_id]?.definition;
-    if (!question || (!question.requires_repository_snapshot && !judgeNeedsRepository(question))) { enriched.push(pack); continue; }
+    if (!question || !requiresRepositorySnapshot(question)) { enriched.push(pack); continue; }
     const sources = source_items.filter((item) => pack.evidence.references.some((ref) =>
       ref.deep_link === `oakridge://revision/${encodeURIComponent(item.revision_id)}#${item.path}`))
       .flatMap((item) => repository_sources.get(item.occurrence_id)?.references ?? []);

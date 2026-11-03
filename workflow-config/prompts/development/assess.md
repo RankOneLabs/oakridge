@@ -65,11 +65,12 @@ Publish the `assessment` artifact with this body:
     "failed": <number>,
     "summary": "<brief description of test run>"
   },
-  "recommended_next_actions": ["<action>"]
+  "recommended_next_actions": [{ "text": "<action>" }]
 }
 ```
 
 `test_evidence` is optional. `recommended_next_actions` should be empty when the verdict is `pass`.
+Each next action is an object with `text`. Omit its `id`; the server generates it when the artifact is published.
 `evidence` is a required list on every finding. Use `kind: file` with a repository path and optional line range in `ref`, `kind: test` with a test id, or `kind: output` with the command that produced the output. Omit optional `detail` when unnecessary.
 
 ## Constraints

@@ -15,14 +15,27 @@ import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakrid
 import { selectRevision } from "../src/projection/extractor";
 import { occurrenceId } from "../src/projection/occurrence-id";
 import { captureProjectedFixture, pilotExpectations, scratchGrading, tenant } from "./grading-fixture";
+import { resolveLaunchableDefinition } from "../../workflow-config/src/definition-store";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 if (!process.env.OAKRIDGE_TEST_DATABASE_URL) console.warn("SKIP: live-walkthrough boundary regressions; missing OAKRIDGE_TEST_DATABASE_URL");
 
+/** These cursor tests use a synthetic current-definition copy of the event shapes.
+ * The checked-in production capture remains pinned to its original definition. */
+function currentDefinitionDelivery(delivery: SourceEventDelivery, definition_id: string): SourceEventDelivery {
+  const outcome = delivery.outcome;
+  if (outcome.kind !== "artifact_revision") return { ...delivery, outcome: { ...outcome, definition_id } };
+  return { ...delivery, outcome: { ...outcome, definition_id, revision: { ...outcome.revision,
+    source: { ...outcome.revision.source, definition_id } } } };
+}
+
 async function withCapture(work: (path: string, deliveries: SourceEventDelivery[]) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "walkthrough-capture-"));
   try {
-    const deliveries = await Bun.file(new URL("../verification/a670bcfbaa3045bc8d4415ac29222b73/capture.json", import.meta.url)).json() as SourceEventDelivery[];
+    const captured = await Bun.file(new URL("../verification/a670bcfbaa3045bc8d4415ac29222b73/capture.json", import.meta.url)).json() as SourceEventDelivery[];
+    const definition = resolveLaunchableDefinition("development");
+    if (!definition.ok) throw new Error(definition.error.detail);
+    const deliveries = captured.map((delivery) => currentDefinitionDelivery(delivery, definition.value.definition_id));
     // A later run starts after the namespace's previously acknowledged event.
     deliveries[0] = { ...deliveries[0]!, previous: { commit_txid: "1", id: "earlier-run-event" } };
     const path = join(directory, "capture.json");
@@ -41,6 +54,12 @@ test("a nonzero starting cursor does not permit a gap in the captured event chai
   deliveries[1] = { ...deliveries[1]!, previous: { commit_txid: "1", id: "wrong-previous-event" } };
   await Bun.write(path, JSON.stringify(deliveries));
   await expect(readCapturedRun(path)).rejects.toThrow("gap in its recorded cursor chain");
+}));
+
+test("live verification still refuses a capture pinned to a historical definition", () => withCapture(async (path) => {
+  const captured_path = new URL("../verification/a670bcfbaa3045bc8d4415ac29222b73/capture.json", import.meta.url);
+  await Bun.write(path, await Bun.file(captured_path).text());
+  await expect(readCapturedRun(path)).rejects.toThrow("capture must contain one run of the current committed definition");
 }));
 
 integration("a new isolated namespace ingests a later launch without rewriting it or rewinding an existing cursor", () =>

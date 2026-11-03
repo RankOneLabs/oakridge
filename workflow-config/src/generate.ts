@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { canonicalJson, type Result } from "canonical-json";
 import YAML from "yaml";
@@ -102,12 +102,5 @@ for (const file of outputs.values()) {
     await Bun.write(file.path, file.bytes);
   }
 }
-// Reconcile only generated object directories so the output depends solely on
-// current authoring sources, including after a prompt or registry changes ID.
-for (const directory of ["workflows", "prompts", "operations"]) {
-  for (const path of filesUnder(resolve(storeRoot, directory))) {
-    if (outputs.has(path)) continue;
-    if (isCheck) throw new Error(`${path} is stale generated output; run bun workflow-config/src/generate.ts`);
-    unlinkSync(path);
-  }
-}
+// Object identities outlive the launchable catalog: existing runs still resolve
+// their pinned definitions, prompts and operations after authoring changes.

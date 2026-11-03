@@ -283,7 +283,7 @@ test("the catalog contains exactly the authored names and no r5-cohort definitio
   expect(Object.keys(unwrap(readLaunchableCatalog())).sort()).toEqual(Object.keys(WORKFLOW_SOURCES).sort());
 });
 
-test("every stored prompt is byte-identical to its authoring source, compared as buffers", () => {
+test("every current authored prompt has a byte-identical stored copy alongside historical prompts", () => {
   const prompt_root = resolve(repository_root, "workflow-config/prompts");
   const expected_ids = readdirSync(prompt_root, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -293,7 +293,7 @@ test("every stored prompt is byte-identical to its authoring source, compared as
       expect(readFileSync(resolve(DEFINITION_STORE_ROOT, "prompts", `${id}.md`))).toEqual(authored_bytes);
       return `${id}.md`;
     });
-  expect(readdirSync(resolve(DEFINITION_STORE_ROOT, "prompts")).sort()).toEqual([...new Set(expected_ids)].sort());
+  expect(readdirSync(resolve(DEFINITION_STORE_ROOT, "prompts"))).toEqual(expect.arrayContaining([...new Set(expected_ids)]));
 });
 
 test("git attributes enforce prompt byte preservation and mark the store generated", () => {
@@ -411,6 +411,7 @@ test("regeneration publishes new identities after an authored prompt byte change
   if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
   const store = resolve(root, "workflow-config/definitions");
   const previous = unwrap(readLaunchableCatalog(store))["review-loop"];
+  const pinned = unwrap(resolveDefinition(previous, store));
   const prompt_path = resolve(root, "workflow-config/prompts/review-loop/write.md");
   writeFileSync(prompt_path, Buffer.concat([readFileSync(prompt_path), Buffer.from("\r\nChanged.\r\n")]));
   expect(runGenerator(root, true).exitCode).not.toBe(0);
@@ -419,7 +420,7 @@ test("regeneration publishes new identities after an authored prompt byte change
   const next = unwrap(resolveLaunchableDefinition("review-loop", store));
   expect(next.definition_id).not.toBe(previous);
   expect(next.prompts["review-loop/write.md"]).toBe(readFileSync(prompt_path, "utf8"));
-  expect(readdirSync(resolve(store, "workflows"))).not.toContain(`${previous}.json`);
+  expect(unwrap(resolveDefinition(previous, store))).toEqual(pinned);
 });
 
 test("--check names a missing store file", () => {
@@ -433,14 +434,41 @@ test("--check names a missing store file", () => {
   expect(check.stderr.toString()).toContain(path);
 });
 
-test("--check names stale generated objects without removing them", () => {
-  const root = generatorFixture();
-  const generated = runGenerator(root);
-  if (generated.exitCode !== 0) throw new Error(generated.stderr.toString());
-  const path = resolve(root, "workflow-config/definitions/workflows", `${"a".repeat(64)}.json`);
-  writeFileSync(path, "{}");
-  const check = runGenerator(root, true);
-  expect(check.exitCode).not.toBe(0);
-  expect(check.stderr.toString()).toContain(path);
-  expect(readFileSync(path, "utf8")).toBe("{}");
-});
+interface AuthoringChange { readonly name: string; readonly path: string; readonly change: (source: string) => string }
+const historical_changes: readonly AuthoringChange[] = [
+  { name: "workflow", path: WORKFLOW_SOURCES["review-loop"],
+    change: (source) => source.replace("workflow: review_loop", "workflow: review_loop_updated") },
+  { name: "operation registry", path: "oakridge-dbos/src/operations/registry.ts",
+    change: (source) => source.replace('key: "repository.prepare"', 'key: "repository.prepare.updated"') },
+];
+for (const change of historical_changes) {
+  test(`regeneration retains pinned definitions and transitive objects after a ${change.name} change`, () => {
+    const root = generatorFixture();
+    expect(runGenerator(root).exitCode).toBe(0);
+    const store = resolve(root, "workflow-config/definitions");
+    const previous = unwrap(resolveLaunchableDefinition("review-loop", store));
+    const snapshot = storeSnapshot(root);
+    const path = resolve(root, change.path);
+    writeFileSync(path, change.change(readFileSync(path, "utf8")));
+    expect(runGenerator(root).exitCode).toBe(0);
+    expect(unwrap(resolveLaunchableDefinition("review-loop", store)).definition_id).not.toBe(previous.definition_id);
+    expect(unwrap(resolveDefinition(previous.definition_id, store))).toEqual(previous);
+    for (const [path, bytes] of Object.entries(snapshot)) {
+      if (path !== "launchable.json") expect(readFileSync(resolve(store, path)).equals(bytes)).toBe(true);
+    }
+    expect(runGenerator(root, true).exitCode).toBe(0);
+  });
+}
+
+interface AssessmentPromptExample { readonly recommended_next_actions: readonly { readonly text: string; readonly id?: string }[] }
+for (const name of ["assess", "assess-revise"]) {
+  test(`${name} prompts show action objects and leave generated identities to the server`, () => {
+    const definition = unwrap(resolveLaunchableDefinition("development"));
+    const prompt = definition.prompts[`development/${name}.md`];
+    const example = prompt.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    if (!example) throw new Error("assessment prompt has no artifact example");
+    const body = JSON.parse(example.replaceAll("<number>", "0")) as AssessmentPromptExample;
+    expect(body.recommended_next_actions).toEqual([{ text: "<action>" }]);
+    expect(prompt).toContain("Omit its `id`; the server generates it");
+  });
+}
