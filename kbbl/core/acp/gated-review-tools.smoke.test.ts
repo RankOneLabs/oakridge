@@ -18,11 +18,13 @@ const missing = [
 ];
 // Probe transport availability only. HTTP/auth/protocol failures on a reachable
 // server belong to the test, rather than being disguised as missing prerequisites.
-try {
-  const response = await fetch(base_url, { method: "HEAD", signal: AbortSignal.timeout(3000) });
-  await response.body?.cancel();
-} catch {
-  missing.push(`reachable gated-review MCP server at ${base_url}`);
+if (missing.length === 0) {
+  try {
+    const response = await fetch(base_url, { method: "HEAD", signal: AbortSignal.timeout(3000) });
+    await response.body?.cancel();
+  } catch {
+    missing.push(`reachable gated-review MCP server at ${base_url}`);
+  }
 }
 const liveTest = missing.length === 0 ? test : test.skip;
 if (missing.length) console.warn(`SKIP: gated-review live tools/list; missing ${missing.join(", ")}`);
