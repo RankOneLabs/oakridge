@@ -15,14 +15,6 @@ observed and expected behavior. Remove an entry once its fix is verified.
 
 ## Observation service deferrals
 
-- **Observation contracts still carry the former definition pair.** After
-  `authority-definition-cutover`,
-  `oakridge-dbos/src/adapters/observation-wire.ts` still declares
-  `definition_bundle: { id, digest }`, and `observation-mapping.ts` writes the
-  run's verified `definition_id` into both fields. The cohort that owns
-  observation contracts must collapse this to a single `definition_id` while
-  moving the corresponding `observation/` schema and consumers together. This
-  coordinated contract change is outside the authority cutover's scope.
 - **No `text_span` selector or `spec` extraction.** The development `spec`
   artifact is a bare string. Stable offsets or heading rules for a span have
   not been defined, so the catalogue leaves it out rather than inventing a
