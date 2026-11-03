@@ -328,6 +328,11 @@ function runGenerator(root: string, is_check = false) {
     stdout: "pipe", stderr: "pipe",
   });
 }
+
+test("the committed definition store matches every authored source (generator --check)", () => {
+  const check = runGenerator(repository_root, true);
+  expect({ code: check.exitCode, errors: check.stderr.toString() }).toEqual({ code: 0, errors: "" });
+});
 interface StoreSnapshot { readonly [path: string]: Buffer }
 function storeSnapshot(root: string): StoreSnapshot {
   const store = resolve(root, "workflow-config/definitions");
