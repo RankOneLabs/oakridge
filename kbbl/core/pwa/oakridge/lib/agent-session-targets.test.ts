@@ -8,7 +8,7 @@ const definition = captured.definition;
 describe("agent session choices from a pinned definition", () => {
   it("exposes each agent worker, including builder and assessor separately", () => {
     expect(selectAgentSessionTargets(definition.workflow).map((target) => [target.stage, target.worker])).toEqual([
-      ["analysis", "author"], ["planning", "planner"], ["brief", "writer"],
+      ["analysis", "author"], ["analysis", "spec_editor"], ["planning", "planner"], ["brief", "writer"],
       ["cohort", "builder"], ["cohort", "assessor"], ["integration", "integrator"],
     ]);
   });
@@ -64,7 +64,7 @@ describe("agent session choices from a pinned definition", () => {
   it("offers a planner and a worker choice covering every agent session", () => {
     expect(selectRoleChoiceTargets(selectAgentSessionTargets(definition.workflow)).map((target) => [target.key, target.covers]))
       .toEqual([
-        ["planner", ["analysis · author", "planning · planner", "brief · writer", "cohort · assessor", "integration · integrator"]],
+        ["planner", ["analysis · author", "analysis · spec_editor", "planning · planner", "brief · writer", "cohort · assessor", "integration · integrator"]],
         ["worker", ["cohort · builder"]],
       ]);
   });

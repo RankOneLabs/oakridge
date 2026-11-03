@@ -5,7 +5,7 @@ import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 import { readCoverage } from "../storage/coverage-store";
 
-function pagination(url: string): Page | null {
+export function pagination(url: string): Page | null {
   const params = new URL(url).searchParams;
   const limit = Number(params.get("limit") ?? "50");
   const offset = Number(params.get("offset") ?? "0");

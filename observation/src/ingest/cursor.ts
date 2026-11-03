@@ -5,7 +5,7 @@ export interface SourceEventCursor { readonly commit_txid: string; readonly id: 
 export const INITIAL_SOURCE_CURSOR: SourceEventCursor = { commit_txid: "0", id: "" };
 
 export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
-  readonly definition_bundle: { readonly id: string; readonly digest: string } | null; readonly artifact_schema_version: string | null }
+  readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "human_grade"; readonly event_kind: "operator_decided"; readonly run_id: string; readonly event_id: string;
@@ -40,9 +40,8 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (typeof outcome.kind !== "string" || typeof outcome.event_kind !== "string" || typeof outcome.run_id !== "string"
     || typeof outcome.event_id !== "string" || outcome.event_id !== value.cursor.id) return null;
   if (outcome.format !== "observation.source-event/v1" || !(outcome.artifact_schema_version === null || typeof outcome.artifact_schema_version === "string")) return null;
-  if (outcome.definition_bundle !== null && (!record(outcome.definition_bundle)
-    || typeof outcome.definition_bundle.id !== "string" || typeof outcome.definition_bundle.digest !== "string")) return null;
-  if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v1")) return null;
+  if (!(outcome.definition_id === null || typeof outcome.definition_id === "string")) return null;
+  if (outcome.kind === "artifact_revision" && (!record(outcome.revision) || outcome.revision.format !== "observation.artifact-revision/v2")) return null;
   if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
     || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;

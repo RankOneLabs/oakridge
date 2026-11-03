@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 output="$root/oakridge-dbos/src/core-client/core-types.ts"
-source_output="$root/kbbl/core/pwa/oakridge/workflow-definition-types.ts"
+source_output="$root/oakridge-dbos/src/core-client/source-types.ts"
 generated="$(mktemp)"
 generated_source="$(mktemp)"
 trap 'rm -f "$generated" "$generated_source"' EXIT

@@ -51,9 +51,9 @@ integration("a blocked oldest stage does not starve another stage or run", async
       ["rev-3", "run-2", "unit-3", thirdOccurrence, "criterion-3"]]) {
       await sql`INSERT INTO observation.source_revision
         (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
-         definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
+         definition_id, body, body_digest, recorded_at)
         SELECT producer, namespace, ${revision}, ${run}, ${stage}, artifact_kind, artifact_schema_version,
-          definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at
+          definition_id, body, body_digest, recorded_at
         FROM observation.source_revision WHERE revision_id = 'rev-1'`.execute(trx);
       await sql`INSERT INTO observation.item_occurrence
         (producer, namespace, occurrence_id, revision_id, run_id, artifact_kind, schema_version,
@@ -221,7 +221,8 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
     const claimed = await claimJob(db, tenant, "budget-worker", limits);
     if (cap.endsWith("spend")) {
       expect(claimed.kind).toBe("refused");
-      expect(claimed.kind === "refused" && claimed.job.state).toBe("skipped_budget");
+      expect(claimed).toMatchObject({ kind: "refused", terminal_cause: "budget_exceeded",
+        job: { state: "skipped_budget", terminal_cause: "budget_exceeded", attempts: 0 } });
       const afterCoverage = (await readCoverage(db, tenant, selection)).questions[0];
       expect(afterCoverage?.eligible).toBe(beforeCoverage?.eligible);
       expect(afterCoverage?.excluded).toBe(beforeCoverage?.excluded);
@@ -233,15 +234,15 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
       const localClaim = await claimJob(db, tenant, "local-worker", limits);
       expect(localClaim.kind === "admitted" && localClaim.job.job_id).toBe(local.job_id);
     } else {
-      expect(claimed.kind).toBe("deferred");
+      expect(claimed).toEqual({ kind: "deferred", reason: "concurrency" });
       const stored = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job")
         .selectAll().where("job_id", "=", job.job_id).executeTakeFirstOrThrow());
       expect(stored.state).toBe("queued");
     }
     expect((await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution").selectAll().execute()))).toHaveLength(0);
-    const rows = await readEligibility(db, tenant, question.question_id, question.question_version);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.tag).toBe("eligible");
+    const rows = await readEligibility(db, tenant, { run_id: "run-1", question_id: question.question_id, question_version: question.question_version, limit: 200, offset: 0 });
+    expect(rows.items).toHaveLength(1);
+    expect(rows.items[0]?.tag).toBe("eligible");
   }));
 }
 
@@ -454,3 +455,7 @@ integration("a provider price above the admitted estimate is recorded as an over
     expect(silent?.cost).toBe(0.2);
     expect(Object.hasOwn(silent ?? {}, "cost_overage")).toBe(false);
   }));
+
+integration("an empty grading queue defers for empty rather than concurrency", async () => scratchGrading(async (db) => {
+  expect(await claimJob(db, tenant, "idle-worker", gradingLimits())).toEqual({ kind: "deferred", reason: "empty" });
+}));

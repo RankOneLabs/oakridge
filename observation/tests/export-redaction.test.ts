@@ -59,7 +59,7 @@ test("an unlisted build payload field is withheld even when its name is innocuou
 
 test("grade intake preserves declared evidence content kinds", () => {
   const parsed = contextSchema.parse({
-    question: { question_id: "q", question_version: "1", target_item_kinds: ["finding"], input_recipe: {},
+    question: { question_id: "q", question_version: "1", pinned_expectation: { definition_id: "fixture-definition", artifact_schema_version: "development-v1" }, target_item_kinds: ["finding"], input_recipe: {},
       response_kind: "boolean", allowed_values: null, missing_evidence_policy: "fail", abstain_semantics: "",
       unclear_semantics: "", interpretation_caveats: "", requires_repository_snapshot: false },
     evidence: { evidence_set_id: "evidence", references: [{ ref: "repo", kind: "repository_content",

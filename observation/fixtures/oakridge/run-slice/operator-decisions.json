@@ -1,21 +1,21 @@
 {
   "pre_existing": {
-    "id": "1a84012e-155d-47b1-8719-42deef16135f",
-    "commit_txid": "1768",
-    "created_at": "2026-10-23T17:28:13.261Z",
+    "id": "7c3c7915-6737-4e33-8a36-4e0bc6b4d042",
+    "commit_txid": "2314831",
+    "created_at": "2026-11-03T17:01:53.255Z",
+    "run_id": "run-5ca31bc6c2414610",
+    "unit_id": "run-5ca31bc6c2414610/planning",
     "payload": {
       "kind": "operator_decided",
-      "unit": "run-38bd8c2fad299e90/planning",
+      "unit": "run-5ca31bc6c2414610/planning",
       "review": "plan_review",
-      "target": "run-38bd8c2fad299e90/planning:plan:1",
+      "target": "run-5ca31bc6c2414610/planning:plan:1",
       "payload": {
-        "feedback": "accepted for fixture replay"
+        "feedback": "Accepted for the isolated live verification run."
       },
       "decision": "accept"
     },
-    "decision_id": "run-slice-plan-review-1",
-    "effect": "approve",
-    "run_id": "run-38bd8c2fad299e90",
-    "unit_id": "run-38bd8c2fad299e90/planning"
+    "decision_id": "run-5ca31bc6c2414610/planning:d1",
+    "effect": "approve"
   }
 }

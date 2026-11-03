@@ -3,7 +3,6 @@
 
 import type { CohortPullRequestResponse, ConfirmCohortMergedRequest, ArtifactDetail, ArtifactTypeDescriptor, ReviewInbox } from "./artifact-types";
 import type { OakridgeConfig, Project, ProjectId, ProjectUpdateCommand, ProjectUpdateError, ProjectWriteInput, WorkflowDefSummary } from "./project-types";
-import type { WorkflowDefFull, WorkflowDefInput } from "./workflow-authoring-types";
 import type { CreateRunRequest, RunSummary, RunDetail, ConfirmFinalPullRequestRequest, EpicWorkflowProfile, FinalPullRequestResponse, RepositoryKey, EpicProfileId, WorkflowRunId, RunSessionAttempt, SessionRunLocation } from "./run-types";
 import type { CollabThread, ReviewItem, PostThreadRequest, PostMessageRequest, PostAtomEditRequest, PostReviewItemRequest, PatchReviewItemRequest } from "./collab-types";
 import type { Result } from "../lib/result";
@@ -80,11 +79,11 @@ async function readRunPage(isArchived = false): Promise<OperatorRunView[]> {
   return items;
 }
 
-async function readDefinitions(isArchived: boolean): Promise<OperatorDefinitionSummary[]> {
+async function readDefinitions(): Promise<OperatorDefinitionSummary[]> {
   const items: OperatorDefinitionSummary[] = [];
   let cursor: string | null = null;
   do {
-    const query = new URLSearchParams({ archived: String(isArchived), limit: "100" });
+    const query = new URLSearchParams({ limit: "100" });
     if (cursor) query.set("cursor", cursor);
     const page = await oakridgeGet<OperatorDefinitionPage>(`${OPERATOR}/definitions?${query}`);
     items.push(...page.items);
@@ -269,34 +268,16 @@ export async function updateProject(command: ProjectUpdateCommand): Promise<Resu
   }
 }
 
-export async function fetchWorkflowDefs(includeArchived = false): Promise<WorkflowDefSummary[]> {
-  const definitions = includeArchived ? (await Promise.all([readDefinitions(false), readDefinitions(true)])).flat() : await readDefinitions(false);
-  return definitions.map(definitionSummary);
+export async function fetchWorkflowDefs(): Promise<WorkflowDefSummary[]> {
+  return (await readDefinitions()).map(definitionSummary);
 }
-
-const definitionSummary = (definition: OperatorDefinitionSummary): WorkflowDefSummary => ({ id: definition.bundle_id,
-  name: definition.bundle.key, version: 1, archived: definition.archived_at !== null });
-
-export function archiveWorkflowDef(defId: string): Promise<unknown> {
-  return oakridgePost<unknown>(`${OPERATOR}/definitions/${encodeURIComponent(defId)}/archive`, {});
-}
-
-export function unarchiveWorkflowDef(defId: string): Promise<unknown> {
-  return oakridgePost<unknown>(`${OPERATOR}/definitions/${encodeURIComponent(defId)}/unarchive`, {});
-}
-
-export function fetchWorkflowDef(id: string): Promise<WorkflowDefFull> {
-  return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`).then((definition) => ({
-    ...definitionSummary(definition), graph: { stages: {}, edges: [] }, created_at: "",
-  }));
+const definitionSummary = (definition: OperatorDefinitionSummary): WorkflowDefSummary => ({ id: definition.definition_id, name: definition.bundle.key });
+export function fetchWorkflowDef(id: string): Promise<OperatorDefinitionDetail> {
+  return fetchOperatorDefinition(id);
 }
 
 export function fetchOperatorDefinition(id: string): Promise<OperatorDefinitionDetail> {
   return oakridgeGet<OperatorDefinitionDetail>(`${OPERATOR}/definitions/${encodeURIComponent(id)}`);
-}
-
-export function createWorkflowDef(body: WorkflowDefInput): Promise<WorkflowDefFull> {
-  return Promise.reject(new Error(`v1 workflow graph ${body.name} cannot compile as a v2 definition`));
 }
 
 export async function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {

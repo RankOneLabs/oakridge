@@ -4,18 +4,21 @@ import type { EvaluationIdentity } from "../grading/execution";
 import type { GradingContext } from "../grading/runner";
 import { runnerEntry, runnerNames } from "../grading/runner";
 import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
+import { deriveSubjectEvidence } from "../storage/captured-evidence-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
-import { readEligibility } from "../storage/eligibility-store";
+import { checkGradingProvenance, readEligibility } from "../storage/eligibility-store";
 import { gradingLimits } from "../grading/jobs/budget";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
+import { pagination } from "./items";
 import { errorResponse } from "./errors";
 
 export const responseKindSchema = z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]);
 export const contextSchema = z.object({
   question: z.object({ question_id: z.string().min(1), question_version: z.string().min(1),
-    question_text: z.string().optional(), evidence_recipe_provenance: z.object({ recipe_id: z.string(), recipe_version: z.string(), source: z.string() }).optional(),
+    question_text: z.string().optional(),
+    pinned_expectation: z.object({ definition_id: z.string().min(1), artifact_schema_version: z.string().min(1) }),
     target_item_kinds: z.array(z.string().min(1)).min(1), input_recipe: z.record(z.string(), z.unknown()),
     response_kind: responseKindSchema, allowed_values: z.array(z.unknown()).nullable(),
     missing_evidence_policy: z.enum(["fail", "abstain"]), abstain_semantics: z.string(),
@@ -50,8 +53,13 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     const params = new URL(c.req.url).searchParams;
     const question_id = params.get("question_id");
     const question_version = params.get("question_version");
-    if (!question_id || !question_version) return errorResponse(c, 400, "invalid_selection", "question id and version required");
-    return c.json({ items: await readEligibility(deps.db, credential, question_id, question_version) });
+    const run_id = params.get("run_id");
+    if (!run_id || !question_id || !question_version)
+      return errorResponse(c, 400, "invalid_selection", "run, question id and version required");
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await readEligibility(deps.db, credential, { run_id, revision_id: params.get("revision_id"),
+      question_id, question_version, ...page }));
   });
   app.get("/v1/evaluations/by-digest/:digest", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
@@ -74,15 +82,20 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
       reviewed_commit: z.string().min(1).optional(),
       runner: z.enum(runnerNames) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
-    if (runnerEntry(parsed.data.runner)?.network)
-      return errorResponse(c, 422, "queued_evaluation_required", "submit network grading to POST /v1/evaluation-jobs");
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
-      const registered = await registerGradingContext(deps.db, credential, context);
+    }
+    const provenance = await checkGradingProvenance(deps.db, credential, { ...identity,
+      pinned_expectation: parsed.data.context?.question.pinned_expectation });
+    if (!provenance.ok) return errorResponse(c, 422, "evaluation_refused", provenance.error.detail);
+    if (runnerEntry(parsed.data.runner)?.network)
+      return errorResponse(c, 422, "queued_evaluation_required", "submit network grading to POST /v1/evaluation-jobs");
+    if (parsed.data.context) {
+      const registered = await registerGradingContext(deps.db, credential, parsed.data.context as unknown as GradingContext);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
     const runner = runnerEntry(parsed.data.runner)!.factory(gradingLimits().provider_deadline_ms, process.env);
@@ -93,24 +106,33 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
   app.post("/v1/evaluation-jobs", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.grade ?? []);
     if (!credential) return errorResponse(c, 403, "forbidden", "grade credential required");
-    const parsed = z.object({ identity: identitySchema, context: contextSchema.optional(),
+    const parsed = z.object({ identity: identitySchema.extend({ evidence_set_id: z.string().min(1).optional() }),
+      context: contextSchema.extend({ evidence: contextSchema.shape.evidence.optional() }).optional(),
       reviewed_commit: z.string().min(1).optional(), estimated_cost: z.number().finite().nonnegative().optional(),
       runner: z.enum(runnerNames) })
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return errorResponse(c, 400, "invalid_job", parsed.error.message);
-    const identity = parsed.data.identity as EvaluationIdentity;
-    if (parsed.data.context) {
-      const context = parsed.data.context as unknown as GradingContext;
-      if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
-      if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
-        return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
-      const registered = await registerGradingContext(deps.db, credential, context);
-      if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
-    }
+    if (parsed.data.context && parsed.data.context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
+      return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
+    const derived = await deriveSubjectEvidence(deps.db, credential, { ...parsed.data.identity,
+      subject_occurrence_id: parsed.data.identity.subject_occurrence_id as EvaluationIdentity["subject_occurrence_id"],
+      question_id: parsed.data.identity.question_id as EvaluationIdentity["question_id"],
+      question: parsed.data.context?.question as GradingContext["question"] | undefined });
+    if (!derived.ok) return errorResponse(c, 422, "evidence_derivation_failed", derived.error.detail);
+    const { evidence, decision } = derived.value;
+    if (!evidence || decision.tag !== "eligible")
+      return errorResponse(c, 422, "subject_ineligible", JSON.stringify(decision));
+    if ([parsed.data.identity.evidence_set_id, parsed.data.context?.evidence?.evidence_set_id]
+      .some((supplied) => supplied !== undefined && supplied !== evidence.evidence_set_id))
+      return errorResponse(c, 422, "evidence_set_mismatch", "supplied evidence set differs from captured evidence");
+    const identity = { ...parsed.data.identity, evidence_set_id: evidence.evidence_set_id } as EvaluationIdentity;
+    const context = parsed.data.context ? { ...parsed.data.context, question: derived.value.question, evidence } as unknown as GradingContext : undefined;
+    if (context && !contextMatchesIdentity(context, identity))
+      return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
     try {
       const job = await enqueueJob(deps.db, credential, { identity, runner_name: parsed.data.runner,
         reviewed_commit: parsed.data.reviewed_commit, estimated_cost: parsed.data.estimated_cost,
-        context: parsed.data.context as GradingContext | undefined },
+        context },
       deps.gradingLimits ?? gradingLimits());
       return c.json({ job_id: job.job_id, state: job.state }, 201);
     } catch (cause) { return errorResponse(c, 422, "job_refused", String(cause)); }

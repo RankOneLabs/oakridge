@@ -15,7 +15,7 @@ export interface QuestionCoverage {
   readonly eligible: number;
   readonly graded: number;
   /** Distinct eligible subjects per mode. A subject with several kinds of label appears in several counts. */
-  readonly graded_by_collection_mode: { readonly blind: number; readonly in_context: number; readonly unknown: number };
+  readonly graded_by_collection_mode: { readonly blind: number; readonly in_context: number };
   readonly excluded: number;
   readonly exclusion_reasons: CoverageExclusions;
   readonly lag_seconds: number | null;
@@ -25,5 +25,4 @@ export interface CoverageProjection {
   readonly selection_revision_id: string | null;
   readonly query_version: typeof COVERAGE_QUERY_VERSION;
   readonly questions: readonly QuestionCoverage[];
-  readonly truncated: boolean;
 }

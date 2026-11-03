@@ -152,7 +152,7 @@ editing the baseline, run `bun run generate:records`; CI fails when the
 committed file differs.
 
 Queries are Kysely queries and live in `src/storage/`: `commit.ts`,
-`snapshot-store.ts`, `read-store.ts`, `executor-store.ts`, `registry-store.ts`,
+`snapshot-store.ts`, `read-store.ts`, `executor-store.ts`, `operator-store.ts`,
 `collaboration-store.ts`, `run-deletion.ts` and `migrate.ts`.
 `tests/storage-boundaries.test.ts` fails the build on raw SQL, on a query
 outside `storage/`, or on a write to workflow-state tables outside commit and
@@ -178,6 +178,17 @@ your own on another port and data directory, then run
 The integration tests require `OAKRIDGE_TEST_DATABASE_URL` for PostgreSQL 15+
 with create/drop database permission; each test file creates and drops its own
 scratch database. Point it at a server of its own, never at a live one.
+
+### Adapter fixture regeneration
+
+`bun oakridge-dbos/scripts/capture-pwa-adapter-fixtures.ts --regenerate`
+refreshes committed-definition projections and references over frozen
+execution scenarios. It preserves their execution evidence rather than
+recapturing live run snapshots. `--check` verifies that those generated
+projections match the committed sources. Source matching and byte-identical
+output across repeated regenerations are verified; this behavior is a
+documentation note, with no fixture recapture change required. To capture a
+live snapshot, use the script's existing `<run-id> [fixture-name]` mode.
 
 ## Database cutover
 

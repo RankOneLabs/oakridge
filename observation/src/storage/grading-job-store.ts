@@ -5,8 +5,10 @@ import { networkRunnerNames, runnerEntry, type GradingContext } from "../grading
 import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { concurrencyExceeded, spendExceeded, type BudgetUsage, type GradingLimits } from "../grading/jobs/budget";
 import { withTenant, type Database, type TenantScope } from "./database";
+import { checkGradingProvenance } from "./eligibility-store";
 import type { ObservationGradingJob } from "./db-types";
 import { registerGradingContext, validateIdentity } from "./grading-store";
+import { pinnedRepositoryMinimum } from "../grading/evidence-packages/recipe";
 
 export type GradingJob = Selectable<ObservationGradingJob>;
 export interface EnqueueInput { readonly identity: EvaluationIdentity; readonly runner_name: string;
@@ -19,6 +21,9 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
   if (runner.network
     && (!input.estimated_cost || input.estimated_cost <= 0))
     throw new Error("network grading requires a positive estimated_cost for budget enforcement");
+  const provenance = await checkGradingProvenance(db, tenant, { ...input.identity,
+    pinned_expectation: input.context?.question.pinned_expectation });
+  if (!provenance.ok) throw new Error(provenance.error.detail);
   if (input.context) {
     const { question, evidence, evaluator } = input.context;
     if (question.question_id !== input.identity.question_id || question.question_version !== input.identity.question_version
@@ -40,8 +45,9 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
     if (evidence.is_incomplete && question.missing_evidence_policy === "fail")
       throw new Error(evidence.incompleteness_reason ?? "evidence set is incomplete");
     if (question.requires_repository_snapshot) {
-      const snapshot = repositorySnapshotEligibility(evidence,
-        Number(question.input_recipe.minimum_repository_content ?? 1), input.reviewed_commit ?? "");
+      const minimum = pinnedRepositoryMinimum(question);
+      if (!minimum.ok) throw new Error(minimum.error.detail);
+      const snapshot = repositorySnapshotEligibility(evidence, minimum.value, input.reviewed_commit ?? "");
       if (snapshot.tag !== "eligible") throw new Error("repository evidence is not eligible for grading");
     }
     const item = await trx.selectFrom("observation.item_occurrence as i")
@@ -56,8 +62,7 @@ export async function enqueueJob(db: Database, tenant: TenantScope, input: Enque
       job_id: randomUUID(), idempotency_digest: digest.value, reviewed_commit: input.reviewed_commit ?? null,
       runner_name: input.runner_name, run_id: item.run_id, stage_id: item.unit_id,
       state: "queued", lease_owner: null, lease_expires_at: null, attempts: 0,
-      retry_limit: limits.retry_limit, terminal_cause: null, estimated_cost: input.estimated_cost ?? 0,
-      disclosure: null })
+      retry_limit: limits.retry_limit, terminal_cause: null, estimated_cost: input.estimated_cost ?? 0 })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "idempotency_digest"]).doNothing())
       .returningAll().executeTakeFirst();
     return inserted ?? trx.selectFrom("observation.grading_job").selectAll()

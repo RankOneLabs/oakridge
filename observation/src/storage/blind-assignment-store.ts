@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { err, ok, type Result } from "../domain/primitives";
 import type { BlindAssignmentId, EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { EvaluationIdentity } from "../grading/execution";
+import { subjectProvenance } from "./eligibility-store";
 import { withTenant, type Database, type TenantScope } from "./database";
 
 export type BlindAssignmentIdentity = Pick<EvaluationIdentity,
@@ -36,6 +37,9 @@ export async function createBlindAssignment(db: Database, tenant: TenantScope, i
   : Promise<Result<BlindAssignmentView, BlindAssignmentError>> {
   try {
     return await withTenant(db, tenant, async (trx) => {
+      const provenance = await subjectProvenance(trx, tenant, identity);
+      if (!provenance.ok) return failure(identity.subject_occurrence_id, provenance.error.detail);
+      if (provenance.value.tag === "inapplicable") return failure(identity.subject_occurrence_id, provenance.value.payload.reason);
       const eligible = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("subject_occurrence_id", "=", identity.subject_occurrence_id)

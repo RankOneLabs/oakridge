@@ -30,12 +30,11 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); });
 
 const runId = capturedRun.run.run_id;
-const definition = { bundle_id: capturedRun.run.definition_bundle_id, digest: capturedRun.run.definition_digest,
-  bundle: { key: "development" }, archived_at: null };
+const definition = definitionFixture.definition;
 const v2Read = (path: string): Response | null => {
   if (path === "/oakridge/api/api/projects") return json({ items: [] });
   if (path === "/oakridge/api/api/definitions") return json({ items: [definition], next_cursor: null });
-  if (path === `/oakridge/api/api/definitions/${definition.bundle_id}`) return json({ ...definitionFixture.definition, ...definition });
+  if (path === `/oakridge/api/api/definitions/${definition.definition_id}`) return json({ ...definitionFixture.definition, ...definition });
   if (path === `/oakridge/api/api/runs/${runId}`) return json(capturedRun.run);
   if (path === `/oakridge/api/api/runs/${runId}/units`) return json(capturedRun.units);
   if (path === "/oakridge/api/run_events") return json([]);
@@ -71,7 +70,7 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     page.on("pageerror", (error) => pageErrors.push(error));
     await page.goto(`${server.url.href}?launch`);
     await page.getByTestId("or-new-run-form").waitFor();
-    await page.getByRole("option", { name: "development v1" }).waitFor({ state: "attached" });
+    await page.getByRole("option", { name: "development" }).waitFor({ state: "attached" });
     await page.getByLabel("Epic title").fill("Ship the v1 UI");
     await page.getByLabel("Repository 1 GitHub owner").fill("RankOneLabs");
     await page.getByLabel("Repository 1 GitHub name").fill("oakridge");
@@ -83,7 +82,7 @@ test("browser starts a v2 workflow run from the frozen v1 launch form", async ()
     await page.getByRole("button", { name: "Start Run" }).click();
     await page.waitForURL(`**#run/${runId}`);
     expect(launches).toHaveLength(1);
-    expect(launches[0]).toMatchObject({ digest: capturedRun.run.definition_digest,
+    expect(launches[0]).toMatchObject({ definition_id: capturedRun.run.definition_id,
       input: { title: "Ship the v1 UI", spec: "Restore the operator UI" },
       config: { sessions: { analysis: { author: {} }, planning: { planner: {} }, brief: { writer: {} },
         cohort: { builder: { model: "sonnet" }, assessor: { model: "opus" } }, integration: { integrator: { model: "opus" } } } } });
@@ -119,5 +118,26 @@ test("browser renders the frozen v1 workspace from v2 run and unit views", async
     expect(requestedPaths).not.toContain(`/oakridge/api/runs/${runId}/gates`);
     expect(requestedPaths).not.toContain(`/oakridge/api/runs/${runId}/sessions`);
     expect(pageErrors).toEqual([]);
+  } finally { await context.close(); server.stop(true); }
+}, 30_000);
+
+test("browser navigates the committed definition list and detail", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/entry.js") return new Response(script, { headers: { "content-type": "application/javascript" } });
+    return v2Read(path) ?? new Response(pageHtml, { headers: { "content-type": "text/html" } });
+  } });
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto(`${server.url.href}?definitions`);
+    await page.getByTestId("or-def-list").waitFor();
+    await page.getByTestId("or-def-view-btn").click();
+    await page.getByTestId("or-def-detail").waitFor();
+    expect(await page.getByTestId("or-def-detail").textContent()).toContain(definition.definition_id);
+    await page.getByRole("heading", { name: "Schemas", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Stages", exact: true }).waitFor();
+    await page.getByRole("button", { name: "← Workflows" }).click();
+    await page.getByTestId("or-def-list").waitFor();
   } finally { await context.close(); server.stop(true); }
 }, 30_000);

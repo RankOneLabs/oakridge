@@ -1,26 +1,26 @@
+import { sampleDefinition, commitTestDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sql } from "kysely";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import type { Workflow } from "../src/core-client/core-types";
 import { openDatabase } from "../src/storage/database";
 import { selectDefinitionGraph } from "../src/projections/definition-view";
 import { listDefinitions, listLiveRuns, listRuns, listRunsNeedingWork, readDefinition, readEventStreamBoundary, readHistory, readOperatorEventsAfter,
   readPinnedDefinition, readRun, readRunInspect, readRunStanding, readUnitDiagnostics } from "../src/storage/read-store";
-import { setRunArchived } from "../src/storage/registry-store";
+import { setRunArchived } from "../src/storage/operator-store";
 import { readStepSnapshot } from "../src/storage/snapshot-store";
-import { actionOf, executor, launch, openAuthority, pinSample, pinWorkflow, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, sampleWorkflow, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
-let digest: string;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id, digest } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 async function launched(): Promise<RunId> {
-  const { run_id, result } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id, result } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   return run_id;
 }
@@ -52,9 +52,9 @@ test("a run reads with its units and pinned definition; listings page newest fir
   const read = await readRun(authority.db, newer);
   const active = await listRuns(authority.db, { after: null, limit: 1, is_archived: false });
   const archived = await listRuns(authority.db, { after: null, limit: 100, is_archived: true });
-  expect({ units: read?.units.map((unit) => unit.declaration), digest: read?.definition.digest, first: active.items[0]?.run.id,
+  expect({ units: read?.units.map((unit) => unit.declaration), definition_id: read?.run.definition_id, first: active.items[0]?.run.id,
     has_next: active.next !== null, archived: archived.items.map((item) => item.run.id) })
-    .toEqual({ units: ["$root", "document"], digest, first: newer, has_next: true, archived: [older] });
+    .toEqual({ units: ["$root", "document"], definition_id, first: newer, has_next: true, archived: [older] });
 });
 
 test("the inspect read holds the run and its events newest first; a missing run reads as null", async () => {
@@ -80,11 +80,11 @@ test("run standing and needs-work follow status and owed intents", async () => {
 
 test("definitions list, read, and resolve from a run with their checked program", async () => {
   const run_id = await launched();
-  const page = await listDefinitions(authority.db, { after: null, limit: 10, is_archived: false });
-  const detail = await readDefinition(authority.db, bundle_id);
+  const page = await listDefinitions(authority.db, { after: null, limit: 10 });
+  const detail = await readDefinition(authority.db, definition_id);
   const pinned = await readPinnedDefinition(authority.db, run_id);
-  expect({ listed: page.items.map((item) => item.bundle_id), detail: detail?.source.workflow, pinned: [pinned?.digest, pinned?.checked_program.stages] })
-    .toEqual({ listed: [bundle_id], detail: "review_loop", pinned: [digest, ["document"]] });
+  expect({ listed: page.items.map((item) => item.definition_id).includes(definition_id), detail: detail?.source.workflow, pinned: [pinned?.definition_id, pinned?.checked_program.stages] })
+    .toEqual({ listed: true, detail: "review_loop", pinned: [definition_id, ["document"]] });
 });
 
 test("the operator stream returns events after a cursor and holds back transactions still open", async () => {
@@ -219,9 +219,9 @@ test("a sibling group's persisted children are present when another unit receive
     }, outcome: {} },
     stages: { waiting: { input: {}, artifacts: {}, workers: {}, done_when: "false", outcome: {} } },
   };
-  const pinned = await pinWorkflow(authority, workflow);
+  const pinned = await commitTestDefinition({ source: workflow });
   const { run_id, result } = await launch(authority, {
-    bundle_id: pinned.bundle_id, request_id: crypto.randomUUID(), input: {},
+    definition_id: pinned.definition_id, request_id: crypto.randomUUID(), input: {},
   });
   if (!result.ok || result.value.kind !== "committed") throw new Error("launch failed");
   const snapshot = await readStepSnapshot(authority.db, run_id, unitOf(run_id, "right"));

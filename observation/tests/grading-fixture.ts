@@ -1,3 +1,8 @@
+import type { GradeOrigin } from "../src/grading/observation";
+import type { GradeDetails } from "../src/storage/grading-store";
+import { captureDelivery } from "../src/storage/capture-store";
+import { projectRevision, listRunItems } from "../src/storage/projection-store";
+import type { JsonValue } from "../src/domain/primitives";
 import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
@@ -12,7 +17,15 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 export const tenant = { producer: "oakridge", namespace: "grading-test" };
+export const pinnedExpectation = { definition_id: "definition-1", artifact_schema_version: "1" };
+export const pilotExpectations = {
+  "analysis.finding_relevance": pinnedExpectation,
+  "plan.criterion_traceability": pinnedExpectation,
+  "brief.source_fidelity": pinnedExpectation,
+  "assessment.coverage": pinnedExpectation,
+};
 export const question: QuestionDefinition = {
+  pinned_expectation: pinnedExpectation,
   question_id: "relevance" as QuestionId, question_version: "1", target_item_kinds: ["cohort_criterion"],
   input_recipe: { source: "selected_value" }, response_kind: "boolean", allowed_values: null,
   missing_evidence_policy: "fail", abstain_semantics: "not enough evidence", unclear_semantics: "ambiguous",
@@ -41,8 +54,8 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
       const occurrence_id = id.value as unknown as ItemOccurrenceId;
       await withTenant(db, tenant, async (trx) => {
         await sql`INSERT INTO observation.source_revision (producer, namespace, revision_id, run_id, unit_id,
-          artifact_kind, artifact_schema_version, definition_bundle_id, definition_bundle_digest, body, body_digest, recorded_at)
-          VALUES (${tenant.producer}, ${tenant.namespace}, 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'bundle', 'digest',
+          artifact_kind, artifact_schema_version, definition_id, body, body_digest, recorded_at)
+          VALUES (${tenant.producer}, ${tenant.namespace}, 'rev-1', 'run-1', 'unit-1', 'brief', '1', 'definition-1',
           '{}'::jsonb, ${id.value}, now())`.execute(trx);
         await sql`INSERT INTO observation.extractor_definition (producer, namespace, artifact_kind, schema_version,
           extractor_id, extractor_version, item_kind, item_selector) VALUES
@@ -55,4 +68,55 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
       await work(db, occurrence_id);
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
+}
+
+export interface CapturedFixtureRevision {
+  readonly revision_id: string;
+  readonly run_id?: string;
+  readonly unit_id?: string;
+  readonly artifact_kind: string;
+  readonly body: JsonValue;
+  readonly recorded_at?: string;
+  readonly predecessor_id?: string;
+}
+/** Exercise the real capture and projection boundaries in database grading tests. */
+export async function captureProjectedFixture(db: Database, input: CapturedFixtureRevision) {
+  const run_id = input.run_id ?? "run-1";
+  const digest = canonicalDigest(input.body);
+  if (!digest.ok) throw new Error(digest.error.detail);
+  const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
+    envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, ...pinnedExpectation,
+      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.unit_id ?? (input.artifact_kind === "assessment" ? "implementation/cohort" : input.artifact_kind),
+      artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },
+      body: input.body, body_digest: digest.value, recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z" } });
+  if (captured.status !== 201) throw new Error("fixture capture refused");
+  await projectRevision(db, tenant, input.revision_id);
+  const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
+  return page.items.filter((item) => item.revision_id === input.revision_id);
+}
+
+/** Explicit facts supplied by a caller recording a human grade. */
+export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
+  return { origin, answer: { state: "answered", kind: "boolean", value: true },
+    collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
+    probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
+    decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
+    comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
+}
+
+/** A real captured subject for admission tests; callers send only question/evaluator context. */
+export async function capturedCoverage(db: Database) {
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+    acceptance_criteria: [{ id: "criterion", text: "Works" }],
+  } });
+  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
+    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
+  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
+  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
+  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
+  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
+  return { occurrence_id, question, evidence: derived.value.evidence };
 }

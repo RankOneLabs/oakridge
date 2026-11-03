@@ -1,22 +1,23 @@
+import { sampleDefinition } from "./committed-fixture";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import type { DefinitionBundleId, RunId } from "../src/domain/primitives";
+import type { DefinitionId, RunId } from "../src/domain/primitives";
 import { Hono } from "hono";
 import { collaborationHandlers } from "../src/http/collaboration";
 import { operatorWriterFromCredential } from "../src/http/control-auth";
 import { addCollaborationMessage, addReviewItem, collaborationRecordId, createCollaborationThread, readCollaborationThreads } from "../src/storage/collaboration-store";
-import { actionOf, executor, launch, openAuthority, pinSample, submitter, unitOf, type Authority } from "./authority-fixture";
+import { actionOf, executor, launch, openAuthority, submitter, unitOf, type Authority } from "./authority-fixture";
 
 let authority: Authority;
-let bundle_id: DefinitionBundleId;
+let definition_id: DefinitionId;
 beforeAll(async () => {
   authority = await openAuthority();
-  ({ bundle_id } = await pinSample(authority));
+  ({ definition_id } = await sampleDefinition());
 });
 afterAll(async () => { await authority.close(); });
 
 /** A run whose draft has `count` revisions, each the predecessor of the next. */
 async function drafted(count: number): Promise<{ readonly run_id: RunId; readonly unit: string; readonly revisions: readonly string[] }> {
-  const { run_id } = await launch(authority, { bundle_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
+  const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: "Oakridge" } });
   const unit = unitOf(run_id, "document");
   const action = await actionOf(authority, run_id, "writer");
   const submit = submitter(authority);

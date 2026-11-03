@@ -40,7 +40,7 @@ const unit = (value: unknown): boolean => record(value) && string(value.unit_id)
   && array(value.artifacts) && value.artifacts.every(artifact);
 
 export function parseRunView(value: unknown): AdapterResult<OperatorRunView> {
-  if (!record(value) || !string(value.run_id) || !string(value.definition_bundle_id) || !string(value.definition_digest)
+  if (!record(value) || !string(value.run_id) || !string(value.definition_id)
       || !string(value.created_at) || !nullableString(value.archived_at) || !status(value.status)
       || !array(value.units)) return fail("parse run", "invalid run view");
   return ok(value as unknown as OperatorRunView);

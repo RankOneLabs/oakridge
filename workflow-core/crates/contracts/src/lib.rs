@@ -213,7 +213,10 @@ pub fn generate() -> String {
     ));
     output.push_str(&format!(
         "export type CoreRequest = {};\n",
-        request_type(&schemas["request"])
+        request_type(&schemas["request"]).replace(
+            "readonly \"workflow\": Workflow",
+            "readonly \"workflow\": AuthoredWorkflow"
+        )
     ));
     output.push_str(&format!(
         "export type CoreResponse = {};\n",
@@ -225,7 +228,7 @@ pub fn generate() -> String {
     output
 }
 
-/// Source-only descriptors for the definition editor, generated from the compiler's model.
+/// Source-only descriptors for committed definition verification, generated from the compiler's model.
 pub fn generate_source() -> String {
     let mut schema = serde_json::to_value(schema_for!(workflow_model::AuthoredWorkflow))
         .expect("source schema is JSON");

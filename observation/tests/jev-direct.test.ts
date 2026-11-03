@@ -1,11 +1,22 @@
 import { expect, test } from "bun:test";
+import { missingLivePrerequisites, verifyCapturedRun } from "../scripts/jev-live-walkthrough";
 import { createJevDirectRunner, createSystemOneRunner } from "../src/runners/jev-direct";
 import { listGrades, readExecution, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
 import { withTenant } from "../src/storage/database";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
-import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
+import { ANALYSIS_RELEVANCE_RECIPE, ASSESSMENT_COVERAGE_RECIPE, BRIEF_FIDELITY_RECIPE, PLAN_TRACEABILITY_RECIPE,
+  pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
+
+const AUTHORED_RECIPES = {
+  "analysis.finding_relevance": ANALYSIS_RELEVANCE_RECIPE,
+  "plan.criterion_traceability": PLAN_TRACEABILITY_RECIPE,
+  "brief.source_fidelity": BRIEF_FIDELITY_RECIPE,
+  "assessment.coverage": ASSESSMENT_COVERAGE_RECIPE,
+} as const;
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 
 const recipe = { system_one: { type: "choice", instructions: "Classify evidence", criteria: {
@@ -64,14 +75,14 @@ test("a pinned pilot recipe reaches the provider using evaluator instructions", 
 
 test("all four pilot input recipes retain their pinned bytes", () => {
   const expected: Record<string, string> = {
-    "analysis.finding_relevance": '{"recipe_id":"analysis.finding_relevance","recipe_version":"v1","input_roles":["requested_change","relevant_excerpt"],"output_roles":["analysis_finding"],"projected_fields":["ref","digest","deep_link"]}',
-    "plan.criterion_traceability": '{"recipe_id":"plan.criterion_traceability","recipe_version":"v1","input_roles":["plan_task","plan_decision"],"output_roles":["plan_criterion"],"projected_fields":["ref","digest","deep_link"]}',
-    "brief.source_fidelity": '{"recipe_id":"brief.source_fidelity","recipe_version":"v1","input_roles":["plan_criterion"],"output_roles":["brief_criterion"],"projected_fields":["ref","digest","deep_link"]}',
-    "assessment.coverage": '{"recipe_id":"assessment.coverage","recipe_version":"v1","input_roles":["brief_criterion"],"output_roles":["assessment_finding"],"projected_fields":["ref","digest","deep_link"]}',
+    "analysis.finding_relevance": '{"recipe_version":"v1","build":{"kind":"unscheduled_source","detail":"no relevant excerpt source is scheduled"},"subject":{"artifact_kind":"analysis","item_kind":"finding"},"input":[{"role":"requested_change","source":{"from":"unscheduled"},"min_count":1,"max_count":1},{"role":"relevant_excerpt","source":{"from":"unscheduled"},"min_count":1,"max_count":1}],"output":[{"role":"analysis_finding","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
+    "plan.criterion_traceability": '{"recipe_version":"v1","build":{"kind":"linked_sources","undeclared":"uncited","uncaptured_source":"incomplete"},"subject":{"artifact_kind":"plan","item_kind":"criterion"},"input":[{"role":"plan_task","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"tasks","item_kind":"task"},"min_count":0,"max_count":20},{"role":"plan_decision","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"plan","item_kind":"decision"},"min_count":0,"max_count":20}],"output":[{"role":"plan_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
+    "brief.source_fidelity": '{"recipe_version":"v1","build":{"kind":"linked_sources","undeclared":"unlinked","uncaptured_source":"dangling"},"subject":{"artifact_kind":"brief","item_kind":"criterion"},"input":[{"role":"plan_criterion","source":{"from":"linked","link_type":"derived_from","direction":"out","artifact_kind":"plan","item_kind":"criterion"},"min_count":1,"max_count":1}],"output":[{"role":"brief_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}]}',
+    "assessment.coverage": '{"recipe_version":"v1","build":{"kind":"assessment_window"},"subject":{"artifact_kind":"brief","item_kind":"criterion"},"input":[{"role":"brief_criterion","source":{"from":"subject"},"min_count":1,"max_count":1}],"output":[{"role":"assessment_finding","source":{"from":"linked","link_type":"assesses","direction":"in","artifact_kind":"assessment","item_kind":"assessment_finding"},"min_count":0,"max_count":100}]}',
   };
   for (const [id, pilot] of Object.entries(OAKRIDGE_QUESTIONS)) {
     expect(JSON.stringify(pilot.definition.input_recipe)).toBe(expected[id]);
-    expect(pilot.definition.input_recipe).toEqual(pinnedInputRecipe(PILOT_EVIDENCE_RECIPES[id as keyof typeof PILOT_EVIDENCE_RECIPES]));
+    expect(pilot.definition.input_recipe).toEqual(pinnedInputRecipe(AUTHORED_RECIPES[id as keyof typeof AUTHORED_RECIPES]));
   }
 });
 
@@ -286,3 +297,16 @@ integration("invalid provider outcomes create failed executions without grade ro
     expect(result.ok && result.value.observation).toBeNull();
   }
 }));
+
+// OAKRIDGE_LIVE_CAPTURE names SourceEventDelivery[] recorded from a newly
+// launched committed-definition run, never the checked-in run-slice fixtures.
+const live_capture = process.env.OAKRIDGE_LIVE_CAPTURE;
+const missing_live = missingLivePrerequisites(live_capture);
+const liveTest = missing_live.length === 0 ? test : test.skip;
+if (missing_live.length) console.warn(`SKIP: direct-provider live verification; missing ${missing_live.join(", ")}`);
+liveTest("a newly captured criterion is graded by TypeSafe and read back through authenticated APIs", async () => {
+  if (!live_capture) throw new Error("OAKRIDGE_LIVE_CAPTURE disappeared");
+  const report = await verifyCapturedRun({ capture_path: live_capture,
+    question_id: "plan.criterion_traceability", estimated_cost: 0.01 });
+  expect(report.execution_id.length).toBeGreaterThan(0);
+}, 120_000);

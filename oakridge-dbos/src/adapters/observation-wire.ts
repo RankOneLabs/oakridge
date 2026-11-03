@@ -6,17 +6,17 @@ export type CanonicalDigest = `canonical-json/v1:${string}` & { readonly __brand
 export interface CaptureSource {
   readonly producer: string; readonly namespace: string; readonly revision_id: string; readonly run_id: string;
   readonly unit_id: string; readonly artifact_kind: string; readonly artifact_schema_version: string;
-  readonly definition_bundle: { readonly id: string; readonly digest: string };
+  readonly definition_id: string;
   readonly predecessor_id: string | null; readonly subject_id: string | null;
   readonly by_id?: string | null;
 }
 export interface CaptureEnvelope {
-  readonly format: "observation.artifact-revision/v1"; readonly source: CaptureSource; readonly recorded_at: string;
+  readonly format: "observation.artifact-revision/v2"; readonly source: CaptureSource; readonly recorded_at: string;
   readonly body: JsonValue;
   readonly body_digest: CanonicalDigest;
 }
 export interface SourceEventProvenance { readonly format: "observation.source-event/v1";
-  readonly definition_bundle: { readonly id: string; readonly digest: string } | null; readonly artifact_schema_version: string | null }
+  readonly definition_id: string | null; readonly artifact_schema_version: string | null }
 export type SourceEventOutcome = SourceEventProvenance & (
   | { readonly kind: "artifact_revision"; readonly event_kind: "revision_published"; readonly run_id: string; readonly event_id: string; readonly revision: CaptureEnvelope }
   | { readonly kind: "human_grade"; readonly event_kind: "operator_decided"; readonly run_id: string; readonly event_id: string;

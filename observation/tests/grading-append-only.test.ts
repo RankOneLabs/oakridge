@@ -12,7 +12,7 @@ test("the store has no grade update or delete API", () => {
 });
 
 test("grading schema has no consensus, aggregate, ground truth, latest, or accepted column", async () => {
-  const schema = await Bun.file(new URL("../src/storage/migrations/0003_grading.sql", import.meta.url)).text();
+  const schema = await Bun.file(new URL("../src/storage/migrations/0001_observation.sql", import.meta.url)).text();
   const columns = [...schema.matchAll(/^  (\w+) (?:text|jsonb|boolean|numeric|double precision|integer|bigint|timestamptz)\b/gm)].map((match) => match[1]);
   for (const forbidden of ["consensus", "aggregate", "ground_truth", "latest", "accepted"])
     expect(columns.some((column) => column.includes(forbidden))).toBe(false);
@@ -31,7 +31,7 @@ integration("three evaluators coexist and a human correction leaves its predeces
     expect(result.ok).toBe(true);
   }
   const details = { answer: { state: "answered", kind: "boolean", value: false } as const,
-    collection_mode: "in_context" as const, model_answers_visible: true, workflow_decisions_visible: false,
+    origin: "human_rubric_answer" as const, collection_mode: "in_context" as const, model_answers_visible: true, workflow_decisions_visible: false,
     probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
     decision_policy_version: null, reviewer_id: "reviewer-1", reviewer_details: null,
     comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };

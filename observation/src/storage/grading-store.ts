@@ -9,14 +9,17 @@ import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { blindSubmissionIsValid, evaluatorIdentity, instructionDigest,
   type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
-import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
+import type { GradeAnswer, GradeListingItem, GradeObservation, GradeOrigin } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
+import { subjectProvenance, questionFromRow } from "./eligibility-store";
 import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
+import { pinnedRepositoryMinimum } from "../grading/evidence-packages/recipe";
 
 export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
+  readonly origin: GradeOrigin;
   readonly collection_mode: "blind" | "in_context";
   readonly blind_assignment_id?: string | null;
   readonly model_answers_visible: boolean;
@@ -34,9 +37,46 @@ function same(left: unknown, right: unknown): boolean {
 }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
 
+/** Register the immutable question before capture-derived eligibility is frozen. */
+export async function registerQuestion(db: Database, tenant: TenantScope, question: QuestionDefinition): Promise<Result<void, GradingError>> {
+  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
+    return failure("register_context", question.question_id, "question requires pinned expectation");
+  if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
+    return failure("register_context", question.question_id, "choice question requires allowed values");
+  try {
+    return await withTenant(db, tenant, async (trx) => {
+      const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
+        .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
+        .where("question_version", "=", question.question_version).executeTakeFirst();
+      if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
+        q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot,
+        q.expected_definition_id, q.expected_artifact_schema_version],
+        [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
+          question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot,
+          question.pinned_expectation.definition_id, question.pinned_expectation.artifact_schema_version]))
+        return failure("register_context", question.question_id, "question definition identity conflict");
+      if (q && q.question_text !== null && q.question_text !== question.question_text)
+        return failure("register_context", question.question_id, "question text conflict");
+      if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
+        question_id: question.question_id, question_version: question.question_version,
+        target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
+        response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : jsonText(asJson(question.allowed_values)),
+        missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
+        unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
+        requires_repository_snapshot: question.requires_repository_snapshot,
+        question_text: question.question_text ?? null,
+        expected_definition_id: question.pinned_expectation.definition_id,
+        expected_artifact_schema_version: question.pinned_expectation.artifact_schema_version }).execute();
+      return ok(undefined);
+    });
+  } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
+}
+
 /** Definitions are immutable within their natural keys. */
 export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
   const { question, evidence, evaluator } = context;
+  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
+    return failure("register_context", question.question_id, "question requires pinned expectation");
   if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
     return failure("register_context", question.question_id, "choice question requires allowed values");
   const digest = evaluatorIdentity(evaluator);
@@ -47,28 +87,10 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
     return failure("register_context", evidence.evidence_set_id, "incompleteness reason must match flag");
   if (evidence.references.some((reference) => !reference.kind))
     return failure("register_context", evidence.evidence_set_id, "new evidence references require classification");
+  const registered = await registerQuestion(db, tenant, question);
+  if (!registered.ok) return registered;
   try {
     return await withTenant(db, tenant, async (trx) => {
-      const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
-        .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
-        .where("question_version", "=", question.question_version).executeTakeFirst();
-      if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
-        q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot],
-        [question.target_item_kinds, question.input_recipe, question.response_kind, question.allowed_values, question.missing_evidence_policy,
-          question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot]))
-        return failure("register_context", question.question_id, "question definition identity conflict");
-      if (q && ((q.question_text !== null && q.question_text !== question.question_text)
-        || (q.evidence_recipe_provenance !== null && !same(q.evidence_recipe_provenance, question.evidence_recipe_provenance))))
-        return failure("register_context", question.question_id, "question text or recipe provenance conflict");
-      if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
-        question_id: question.question_id, question_version: question.question_version,
-        target_item_kinds: jsonText(asJson(question.target_item_kinds)), input_recipe: jsonText(question.input_recipe),
-        response_kind: question.response_kind, allowed_values: question.allowed_values === null ? null : jsonText(asJson(question.allowed_values)),
-        missing_evidence_policy: question.missing_evidence_policy, abstain_semantics: question.abstain_semantics,
-        unclear_semantics: question.unclear_semantics, interpretation_caveats: question.interpretation_caveats,
-        requires_repository_snapshot: question.requires_repository_snapshot,
-        question_text: question.question_text ?? null,
-        evidence_recipe_provenance: question.evidence_recipe_provenance ? jsonText(asJson(question.evidence_recipe_provenance)) : null }).execute();
       const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
       if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],
@@ -104,6 +126,10 @@ export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantS
   if (!q) return failure("evaluate", identity.question_id, "question definition does not exist in namespace");
   if (!Array.isArray(q.target_item_kinds) || !q.target_item_kinds.includes(item.item_kind))
     return failure("evaluate", identity.question_id, "question does not target subject item kind");
+  const provenance = await subjectProvenance(trx, tenant, { ...identity,
+    pinned_expectation: { definition_id: q.expected_definition_id, artifact_schema_version: q.expected_artifact_schema_version } });
+  if (!provenance.ok) return provenance;
+  if (provenance.value.tag === "inapplicable") return failure("evaluate", identity.subject_occurrence_id, provenance.value.payload.reason);
   const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
     .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", identity.evidence_set_id).executeTakeFirst();
   if (!e) return failure("evaluate", identity.evidence_set_id, "evidence set does not exist in namespace");
@@ -111,10 +137,7 @@ export async function validateIdentity(trx: DatabaseTransaction, tenant: TenantS
     .where("namespace", "=", tenant.namespace).where("evaluator_definition_id", "=", identity.evaluator_definition_id).executeTakeFirst();
   if (!d) return failure("evaluate", identity.evaluator_definition_id, "evaluator definition does not exist in namespace");
   if (identity.config_digest !== d.config_digest) return failure("evaluate", identity.evaluator_definition_id, "config digest differs from evaluator definition");
-  return ok({ question: { ...q, question_id: q.question_id as QuestionDefinition["question_id"],
-    target_item_kinds: q.target_item_kinds as string[], input_recipe: q.input_recipe as QuestionDefinition["input_recipe"],
-    response_kind: q.response_kind as QuestionDefinition["response_kind"], allowed_values: q.allowed_values as QuestionDefinition["allowed_values"],
-    missing_evidence_policy: q.missing_evidence_policy as QuestionDefinition["missing_evidence_policy"] },
+  return ok({ question: questionFromRow(q),
     evidence: { ...e, evidence_set_id: e.evidence_set_id as EvidenceSet["evidence_set_id"], references: e.evidence_refs as unknown as EvidenceSet["references"] },
     evaluator: { ...d, kind: d.kind as EvaluatorDefinition["kind"], instruction_text: d.instruction_text ?? "" } });
 }
@@ -260,9 +283,11 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         detail: "grading claim lost before dispatch", outcome: "lost_lease" });
     }
     const { question, evidence, evaluator } = checked;
+    const minimum = pinnedRepositoryMinimum(question);
+    if (!minimum.ok) return err({ operation: "evaluate", entity_id: String(question.question_id),
+      detail: minimum.error.detail });
     const snapshot = question.requires_repository_snapshot
-      ? repositorySnapshotEligibility(evidence, Number(question.input_recipe.minimum_repository_content ?? 1),
-        input.reviewed_commit ?? "") : null;
+      ? repositorySnapshotEligibility(evidence, minimum.value, input.reviewed_commit ?? "") : null;
     const blocked = snapshot !== null && snapshot.tag !== "eligible";
     const missing = evidence.is_incomplete && question.missing_evidence_policy === "fail";
     let result: RunnerResult;
@@ -317,13 +342,14 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         probabilities: outcome.probabilities == null ? null : jsonText(asJson(outcome.probabilities)),
         confidence: outcome.confidence ?? null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: null, reviewer_details: null,
+        origin: "automated_evaluation", collection_mode: "in_context", blind_assignment_id: null,
+        model_answers_visible: false, workflow_decisions_visible: false,
         comments: outcome.comments ?? null, rationale: outcome.rationale ?? null,
         quality_flags: jsonText(asJson(outcome.quality_flags ?? [])), supersedes_observation_id: null })
         .returningAll().executeTakeFirstOrThrow();
       if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
         terminal_cause: outcome ? null : blocked || missing ? "ineligible"
-          : !result.ok && result.error.operation === "disclosure"
-          ? "disclosure_refused" : !result.ok && result.error.category === "invalid_response"
+          : !result.ok && result.error.category === "invalid_response"
             ? "invalid_outcome" : !result.ok && (["rate_limit", "timeout", "transport", "http_error"] as const)
               .some((category) => category === result.error.category) ? "retry_exhausted"
               : !result.ok && result.error.operation === "evaluate" ? "invalid_outcome" : "runner_failed",
@@ -379,7 +405,8 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         const observation = await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", tenant.producer)
           .where("namespace", "=", tenant.namespace).where("execution_id", "=", existing.execution_id).executeTakeFirst();
         if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.origin !== details.origin
+          || observation.collection_mode !== details.collection_mode
           || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
           return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution: existing, observation: observation ?? null, was_replay: true });
@@ -407,6 +434,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
                 .where("execution_id", "=", replay.execution_id).executeTakeFirst();
               if (observation?.observation_id === assignment.submitted_observation_id
                 && observation.reviewer_id === details.reviewer_id
+                && observation.origin === details.origin
                 && observation.collection_mode === "blind"
                 && observation.blind_assignment_id === details.blind_assignment_id)
                 return ok({ execution: replay, observation, was_replay: true });
@@ -442,7 +470,8 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("execution_id", "=", execution.execution_id).executeTakeFirst();
         if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.origin !== details.origin
+          || observation.collection_mode !== details.collection_mode
           || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
           return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution, observation: observation ?? null, was_replay: true });
@@ -457,7 +486,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         confidence: details.confidence, normalized_score: details.normalized_score,
         decision_policy_id: details.decision_policy_id, decision_policy_version: details.decision_policy_version,
         reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : jsonText(details.reviewer_details),
-        collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
+        origin: details.origin, collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
         model_answers_visible: details.model_answers_visible,
         workflow_decisions_visible: details.workflow_decisions_visible,
         comments: details.comments, rationale: details.rationale, quality_flags: jsonText(asJson(details.quality_flags)),
@@ -499,7 +528,7 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
       .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
-      observation: { ...observation, collection_mode: observation.collection_mode ?? "unknown" },
+      observation,
       answer: observation.answer_payload, evaluator, execution,
     }));
     return { items, total: Number(count.count), ...page };

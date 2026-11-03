@@ -17,8 +17,7 @@ export interface SourceRevisionRead {
   readonly revision_id: string;
   readonly artifact_kind: string;
   readonly artifact_schema_version: string;
-  readonly definition_bundle_id: string;
-  readonly definition_bundle_digest: string;
+  readonly definition_id: string;
   readonly body: JsonValue;
   readonly body_digest: string;
   readonly predecessor_id: string | null;
@@ -37,7 +36,7 @@ function sourceRead(row: Selectable<ObservationSourceRevision>): SourceRevisionR
   const prefix = `${row.producer}:${row.namespace}:`;
   return { id, producer: row.producer, namespace: row.namespace, run_id: row.run_id, unit_id: row.unit_id,
     revision_id: id, artifact_kind: row.artifact_kind, artifact_schema_version: row.artifact_schema_version,
-    definition_bundle_id: row.definition_bundle_id, definition_bundle_digest: row.definition_bundle_digest,
+    definition_id: row.definition_id,
     body: row.body, body_digest: row.body_digest,
     predecessor_id: row.predecessor_id ? `${prefix}${row.predecessor_id}` : null,
     subject_id: row.subject_id ? `${prefix}${row.subject_id}` : null,
@@ -78,8 +77,7 @@ export async function captureInTransaction(trx: DatabaseTransaction, delivery: C
   }
   const row = await trx.insertInto("observation.source_revision").values({ producer, namespace, revision_id,
     run_id: source.run_id, unit_id: source.unit_id, artifact_kind: source.artifact_kind,
-    artifact_schema_version: source.artifact_schema_version, definition_bundle_id: source.definition_bundle.id,
-    definition_bundle_digest: source.definition_bundle.digest, body: jsonText(body),
+    artifact_schema_version: source.artifact_schema_version, definition_id: source.definition_id, body: jsonText(body),
     body_digest, predecessor_id, subject_id, recorded_at: new Date(recorded_at) })
     .returningAll().executeTakeFirstOrThrow();
   await hooks.afterMirror?.();
@@ -112,6 +110,17 @@ export function readSourceCursor(db: Database, tenant: TenantScope): Promise<Sou
     const row = await sql<SourceEventCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
       FROM observation.source_event_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { cursor: row.rows[0] ?? INITIAL_SOURCE_CURSOR };
+  });
+}
+
+/** Bootstrap a new replay namespace at its recorded starting position; never rewind an existing cursor. */
+export function initializeSourceCursor(db: Database, tenant: TenantScope, cursor: SourceEventCursor): Promise<boolean> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.insertInto("observation.source_event_cursor").values({ producer: tenant.producer, namespace: tenant.namespace,
+      commit_txid: sql<number>`${cursor.commit_txid}::bigint`, event_id: cursor.id })
+      .onConflict((conflict) => conflict.columns(["producer", "namespace"]).doNothing())
+      .returning("event_id").executeTakeFirst();
+    return row !== undefined;
   });
 }
 

@@ -1,15 +1,100 @@
 {
+  "goal": "Audit and verify the existing live-verification changes on PR #771 at branch cohort/live-verification/bc33be without modifying source or remote state, and publish honest evidence from a newly produced production-wire capture, focused checks, and authenticated HTTP stored-record readback for later assessment.",
+  "title": "Audit existing live-verification slice",
   "cohort_id": "slice",
-  "repository_key": "oakridge",
-  "title": "Observation slice",
   "depends_on": [],
-  "goal": "Capture, grade and export",
-  "files_in_scope": ["observation/tests/vertical-slice.test.ts"],
-  "decisions_made": [{ "id": "decision-capture", "decision": "Keep captured bodies immutable", "rationale": "Preserve provenance" }],
-  "approaches_rejected": [{ "id": "rejected-live", "approach": "Use a provider", "reason": "Offline suite", "decision_ids": ["decision-capture"] }],
-  "acceptance_criteria": [
-    { "id": "criterion-lineage", "text": "Trace a shared criterion id", "task_ids": [], "decision_ids": ["decision-capture"] },
-    { "id": "criterion-export", "text": "Freeze source and evidence references", "task_ids": [], "decision_ids": [] }
+  "next_action": "First inspect the checked-out commit and query gated-review for PR #771 head, report them separately, and determine whether the exact PR head and every named focused-test file are available before running any focused check.",
+  "decisions_made": [
+    {
+      "id": "decision-capture",
+      "decision": "Preserve the production publisher wire payloads exactly in a newly produced capture and use authenticated HTTP response bodies for stored-record readback.",
+      "rationale": "This establishes real source-run provenance and tenant-scoped export evidence without substituting fixtures or direct SQL, and it avoids the unsupported claim that provider grading already occurred because grading happens after this source run."
+    }
   ],
-  "next_action": "Implement"
+  "files_in_scope": [
+    "kbbl/core/acp/gated-review-tools.smoke.test.ts",
+    "kbbl/package.json",
+    "oakridge-dbos/scripts/live-source-agent.ts",
+    "oakridge-dbos/scripts/live-source-git.ts",
+    "oakridge-dbos/scripts/live-source-run.ts",
+    "oakridge-dbos/tests/source-run.smoke.test.ts",
+    "observation/scripts/jev-live-walkthrough.ts",
+    "observation/src/http/app.ts",
+    "observation/src/http/grading-records.ts",
+    "observation/src/storage/grading-record-store.ts",
+    "observation/tests/grading-records.test.ts",
+    "observation/tests/jev-direct.test.ts",
+    "observation/verification/.gitignore",
+    "observation/verification/README.md",
+    "observation/verification/gated-review.json",
+    "observation/verification/source-input.json",
+    "workflow-config/src/definitions.test.ts"
+  ],
+  "repository_key": "oakridge",
+  "acceptance_criteria": [
+    {
+      "id": "criterion-lineage",
+      "text": "Inspect the live source capture launcher and current-definition v2 provenance validation and report factual lineage evidence. The artifact body must be a newly produced capture preserving the exact production publisher wire payloads and must never be a pre-existing observation fixture. Report the checked-out commit and gated-review-confirmed PR #771 head separately. Run the named focused checks only against the exact PR head being audited: kbbl/core/acp/gated-review-tools.smoke.test.ts, workflow-config/src/definitions.test.ts, observation/tests/grading-records.test.ts, and observation/tests/jev-direct.test.ts. Publish exact test counts and explicitly report every failure, skip, absent named file, unavailable exact-head checkout, missing credential, and other gap; do not substitute an unbounded suite. Do not edit code, commit, push, create a PR, merge, reset a database, deploy, or mutate remote state. Publish build_result first and then publish the existing PR #771 on branch cohort/live-verification/bc33be. Preserve this criterion ID and its decision linkage unchanged in the assessment.",
+      "task_ids": [
+        "task-establish-slice-traceability",
+        "task-confirm-audit-target",
+        "task-audit-lineage",
+        "task-run-focused-checks",
+        "task-publish-builder-artifacts",
+        "task-assess-existing-code"
+      ],
+      "decision_ids": [
+        "decision-capture"
+      ]
+    },
+    {
+      "id": "criterion-export",
+      "text": "Inspect the authenticated tenant-scoped question and evidence API routes and direct-provider stored-record readback through authenticated HTTP response bodies, and report factual export evidence. Distinguish the newly produced production capture from any claim that provider grading occurred: actual grading occurs after this source run, so no provider grade may be invented. Run the named focused checks only against the exact PR head being audited: kbbl/core/acp/gated-review-tools.smoke.test.ts, workflow-config/src/definitions.test.ts, observation/tests/grading-records.test.ts, and observation/tests/jev-direct.test.ts. Report the checked-out commit and gated-review-confirmed PR #771 head separately, publish exact test counts, and explicitly report every checkout gap, absent named file, credential gap, failure, skip, and other gap; do not substitute fixtures, direct SQL, or an unbounded suite. Treat the separately recorded gated-review server invalid-token acceptance as an open upstream issue, not authorization to change that server. Do not mutate source or remote state. Publish build_result first and then publish the existing PR #771 on branch cohort/live-verification/bc33be. Preserve this criterion ID and its decision linkage unchanged in the assessment.",
+      "task_ids": [
+        "task-establish-slice-traceability",
+        "task-confirm-audit-target",
+        "task-audit-export",
+        "task-run-focused-checks",
+        "task-publish-builder-artifacts",
+        "task-assess-existing-code"
+      ],
+      "decision_ids": [
+        "decision-capture"
+      ]
+    }
+  ],
+  "approaches_rejected": [
+    {
+      "id": "rejected-fixture-or-sql-evidence",
+      "reason": "Fixtures and direct SQL do not prove production publisher payload provenance or authenticated API readback.",
+      "approach": "Use a pre-existing observation fixture as the artifact body or read stored records directly with SQL.",
+      "decision_ids": [
+        "decision-capture"
+      ]
+    },
+    {
+      "id": "rejected-provider-grade-claim",
+      "reason": "Provider grading occurs after this source run, so claiming it already happened would invent evidence.",
+      "approach": "Present the production capture or direct-provider readback as proof that provider grading already occurred.",
+      "decision_ids": [
+        "decision-capture"
+      ]
+    },
+    {
+      "id": "rejected-substitute-verification",
+      "reason": "A different checkout or an unbounded suite would not provide focused evidence for the exact PR head and would conceal required gaps.",
+      "approach": "Test another commit, replace an absent named check with a broader suite, or omit failures, skips, missing files, credentials, or checkout gaps.",
+      "decision_ids": [
+        "decision-capture"
+      ]
+    },
+    {
+      "id": "rejected-implementation-or-mutation",
+      "reason": "This cohort audits existing PR #771 and is expressly isolated from implementation and remote-state changes.",
+      "approach": "Edit code, commit, push, open another PR, merge, reset a database, deploy, or change the gated-review server in response to its invalid-token issue.",
+      "decision_ids": [
+        "decision-capture"
+      ]
+    }
+  ]
 }

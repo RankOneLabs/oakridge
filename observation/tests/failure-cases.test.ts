@@ -1,3 +1,4 @@
+import type { CaptureEnvelope } from "../src/ingest/capture";
 import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "bun:test";
@@ -19,6 +20,8 @@ const tenant = { producer: "oakridge", namespace: "failure-cases" };
 const run_id = "run-failure-fixtures";
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
   grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
+const source = await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json() as { definition_id: string; captures: CaptureEnvelope[] };
+const schemaVersion = (kind: string): string => source.captures.find((capture) => capture.source.artifact_kind === kind)!.source.artifact_schema_version;
 const fixture = async (name: string): Promise<JsonValue> => Bun.file(new URL(`../fixtures/oakridge/run-slice/${name}-revision.json`, import.meta.url)).json() as Promise<JsonValue>;
 interface PlanCriterion { id: string; text: string; task_ids: string[]; decision_ids: string[] }
 interface PlanBody { summary: string; cohorts: { acceptance_criteria: PlanCriterion[] }[] }
@@ -58,11 +61,11 @@ async function ingest(app: App, kind: string, revision: string, body: JsonValue,
   predecessor: string | null = null, key = revision): Promise<Response> {
   return app.request("/v1/sources/oakridge/sync", { method: "POST", headers: {
     authorization: "Bearer ingest-fixture", "idempotency-key": key, "content-type": "application/json" },
-  body: JSON.stringify({ format: "observation.artifact-revision/v1", source: { ...tenant,
+  body: JSON.stringify({ format: "observation.artifact-revision/v2", source: { ...tenant,
     revision_id: `${tenant.producer}:${tenant.namespace}:${revision}`, run_id,
     unit_id: kind === "plan" ? `${run_id}/planning` : kind === "brief" ? `${run_id}/briefs/slice` : `${run_id}/implementation/slice`,
-    artifact_kind: kind, artifact_schema_version: "development-v1",
-    definition_bundle: { id: "development", digest: "fixture-bundle" },
+    artifact_kind: kind, artifact_schema_version: schemaVersion(kind),
+    definition_id: source.definition_id,
     predecessor_id: predecessor ? `${tenant.producer}:${tenant.namespace}:${predecessor}` : null, subject_id: null },
     recorded_at: `2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`, body, body_digest: digest(body) }) });
 }
@@ -117,7 +120,9 @@ integration("duplicate ids, reorder, revision update, missing source and conflic
 
   // The missing assessment target is retained as an unresolved producer reference.
   expect((await ingest(app, "brief", "brief-1", await fixture("brief"), 5)).status).toBe(201);
-  expect((await ingest(app, "assessment", "assessment-1", await fixture("assessment"), 6)).status).toBe(201);
+  const assessment = await fixture("assessment") as unknown as { findings: { criterion_id: string | null }[] };
+  assessment.findings[1]!.criterion_id = cases.missing_source_ref;
+  expect((await ingest(app, "assessment", "assessment-1", assessment as unknown as JsonValue, 6)).status).toBe(201);
   const missing = (await listRunItems(db, tenant, run_id, { limit: 100, offset: 0 })).items
     .find((item) => item.revision_id === "assessment-1" && item.item_id_or_path === "/findings/1")!;
   const lineage = await readLineage(db, tenant, missing.occurrence_id, { limit: 100, offset: 0 });
@@ -150,7 +155,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     .find((item) => item.item_kind === "criterion")!;
   const headers = { authorization: "Bearer grade-fixture", "content-type": "application/json" };
   const question = (id: string, expected: string | undefined, requires_repository_snapshot = false) => ({
-    question_id: id, question_version: "1", target_item_kinds: ["criterion"],
+    question_id: id, question_version: "1", pinned_expectation: { definition_id: source.definition_id, artifact_schema_version: schemaVersion("brief") }, target_item_kinds: ["criterion"],
     input_recipe: expected === undefined ? {} : { expected }, response_kind: "boolean", allowed_values: null,
     missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
     interpretation_caveats: "fixture", requires_repository_snapshot });
@@ -183,7 +188,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     context: { question: question("human-correction", "matching"), evidence: evidence("complete", false),
       evaluator: evaluator("human") },
     details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.first }, reviewer_id: "operator",
-      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } };
+      origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } };
   const first = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify(base) });
   expect(first.status).toBe(201);
   const initial = await first.json() as { observation: { observation_id: string } };
@@ -191,7 +196,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     body: JSON.stringify({ ...base, identity: { ...base.identity, attempt_label: "correction" },
       context: undefined, details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.corrected },
         reviewer_id: "operator", supersedes_observation_id: initial.observation.observation_id,
-        collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
+        origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
   expect(correction.status).toBe(201);
   const corrected = await correction.json() as { observation: { observation_id: string; supersedes_observation_id: string } };
   expect(corrected.observation.supersedes_observation_id).toBe(initial.observation.observation_id);
@@ -203,3 +208,67 @@ integration("incomplete evidence, runner failure and human correction preserve g
   expect(gradePage.items.map((item) => item.observation.observation_id).sort()).toEqual([
     initial.observation.observation_id, corrected.observation.observation_id].sort());
 }));
+
+integration("invalid capture versions and absent provenance are refused without storing revisions", async () => scratch(async (db) => {
+  const app = createApp({ db, credentials });
+  const valid = { format: "observation.artifact-revision/v2", source: { ...tenant,
+    revision_id: `${tenant.producer}:${tenant.namespace}:invalid-capture`, run_id, unit_id: "unit-1",
+    artifact_kind: "brief", artifact_schema_version: "schema-1", definition_id: "definition-1" },
+    recorded_at: "2026-10-28T00:00:00.000Z", body: {}, body_digest: digest({}) };
+  const invalid = [
+    { ...valid, format: "observation.artifact-revision/" + "v1" },
+    ...["definition_id", "artifact_schema_version"].flatMap((field) => [undefined, ""].map((value) =>
+      ({ ...valid, source: { ...valid.source, [field]: value } }))),
+  ];
+  const statuses = await Promise.all(invalid.map(async (input) => (await app.request("/v1/sources/oakridge/sync", {
+    method: "POST", headers: { authorization: "Bearer ingest-fixture", "idempotency-key": crypto.randomUUID(),
+      "content-type": "application/json" }, body: JSON.stringify(input) })).status));
+  expect(statuses).toEqual([400, 400, 400, 400, 400]);
+  const revisions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision").select("revision_id").execute());
+  expect(revisions).toEqual([]);
+}));
+
+integration("captured criteria with equal wording and local ids retain cohort identity and typed lineage", async () => {
+  const { scratchGrading, captureProjectedFixture, tenant, pilotExpectations } = await import("./grading-fixture");
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const { loadRunCapture } = await import("../src/storage/run-capture-store");
+  await scratchGrading(async (db) => {
+    const criteria = [{ id: "shared-id", text: "Identical words", task_ids: [], decision_ids: ["decision"] }];
+    const plan = await captureProjectedFixture(db, { revision_id: "cohort-plan", artifact_kind: "plan", body: {
+      cohorts: ["alpha", "beta"].map((id) => ({ id, decisions: [{ id: "decision", text: "source" }], acceptance_criteria: criteria })),
+      acceptance_criteria: [], risks: [],
+    } });
+    const plan_criteria = plan.filter((item) => item.item_kind === "criterion");
+    expect(plan_criteria).toHaveLength(2);
+    expect(new Set(plan_criteria.map((item) => item.item_scope)).size).toBe(2);
+    expect(new Set(plan_criteria.map((item) => item.occurrence_id)).size).toBe(2);
+    const catalogue = oakridgeQuestions(pilotExpectations);
+    for (const cohort_id of ["alpha", "beta", "wrong-scope", "absent-link"] as const) {
+      const items = await captureProjectedFixture(db, { revision_id: `cohort-brief-${cohort_id}`, artifact_kind: "brief", body: {
+        cohort_id, decisions_made: [], approaches_rejected: [], acceptance_criteria: [
+          { id: cohort_id === "absent-link" ? "wrong-local-id" : "shared-id", text: "Identical words" },
+        ],
+      }, recorded_at: "2026-11-01T01:00:00Z" });
+      const subject = items.find((item) => item.item_kind === "criterion")!;
+      const selection = { subject_occurrence_id: subject.occurrence_id as import("../src/domain/identity").ItemOccurrenceId,
+        question: catalogue["brief.source_fidelity"].definition };
+      const derived = await deriveCapturedEvidence(db, tenant, "run-1", selection);
+      if (!derived.ok) throw new Error(derived.error.detail);
+      expect(derived.value.decision.tag).toBe(cohort_id === "alpha" || cohort_id === "beta" ? "eligible" : "invalid_reference");
+      if (derived.value.evidence) {
+        const source = plan_criteria.find((item) => item.item_scope === subject.item_scope)!;
+        expect(derived.value.evidence.references[0]?.deep_link).toBe(`oakridge://revision/cohort-plan#${source.json_pointer}`);
+        const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }] } });
+        const lineage = await app.request(`/v1/items/${encodeURIComponent(subject.occurrence_id)}/lineage`,
+          { headers: { authorization: "Bearer read" } });
+        expect((await lineage.json()).edges.some((edge: { target_occurrence_id: string }) => edge.target_occurrence_id === source.occurrence_id)).toBe(true);
+      }
+    }
+    const capture = await loadRunCapture(db, tenant, "run-1");
+    if (!capture.ok) throw new Error(capture.error.detail);
+    const selected = capture.value.flatMap((revision) => revision.items);
+    for (const criterion of plan_criteria) expect(selected.find((item) => item.occurrence_id === criterion.occurrence_id))
+      .toMatchObject({ revision_id: "cohort-plan", item_scope: criterion.item_scope, producer_local_id: "shared-id" });
+  });
+});

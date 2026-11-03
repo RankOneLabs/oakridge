@@ -1,6 +1,8 @@
+import { CoreClient, compileDefinition } from "../core-client/client";
+import { readLaunchableCatalog } from "../runtime/definition-store";
 import { sql, type ExpressionBuilder, type Kysely, type Selectable } from "kysely";
-import type { ParsedWorkflow, UnitStatus, Workflow } from "../core-client/core-types";
-import type { ActionId, Brand, DecisionId, DefinitionBundleId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
+import type { ParsedWorkflow, UnitStatus } from "../core-client/core-types";
+import type { ActionId, Brand, DecisionId, DefinitionId, EventId, IngressId, IntentId, ProjectId, RevisionId, RunId, UnitId } from "../domain/primitives";
 import { TERMINAL_UNIT_STATUSES } from "../domain/unit-status";
 import type { CommitFaultNotice, OperatorEventDeliveryRow } from "../projections/operator-event";
 import type { RunEventCursor } from "../projections/run-event";
@@ -10,7 +12,7 @@ import type { SessionHold, SessionRunLocation } from "../projections/session-hol
 import type { DB } from "./db-types";
 import { anyOf, type DatabaseTransaction } from "./database";
 import { OWED_STATUSES } from "./executor-store";
-import type { CompiledWorkflow, StallRecord, WantedWorkers } from "./json-column-types";
+import type { StallRecord, WantedWorkers } from "./json-column-types";
 import type { ArtifactRevisionRecord, AttemptRecord, EffectIntentRecord, EventRecord, IngressReceiptRecord, ReviewDecisionRecord, RunRecord,
   UnitDependencyRecord, UnitRecord } from "./schema-records";
 
@@ -18,10 +20,10 @@ type Reader = Kysely<DB> | DatabaseTransaction;
 type Row<Table extends keyof DB> = Selectable<DB[Table]>;
 /** Brand the identity columns once as rows cross from SQL into projections. */
 const runRecord = (row: Row<"authority.run">): RunRecord => ({ ...row, id: row.id as RunId,
-  definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
+  definition_id: row.definition_id as DefinitionId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
 const summaryRun = (row: Omit<Row<"authority.run">, "config">): RunSummaryRecord => ({ ...row, id: row.id as RunId,
-  definition_bundle_id: row.definition_bundle_id as DefinitionBundleId, project_id: row.project_id as ProjectId | null,
+  definition_id: row.definition_id as DefinitionId, project_id: row.project_id as ProjectId | null,
   root_unit_id: row.root_unit_id as UnitId | null });
 const unitRecord = (row: Row<"authority.unit">): UnitRecord => ({ ...row, id: row.id as UnitId,
   run_id: row.run_id as RunId, parent_id: row.parent_id as UnitId | null });
@@ -55,7 +57,7 @@ async function consistent<Value>(db: Kysely<DB>, read: (trx: DatabaseTransaction
 // ----------------------------------------------------------------- runs -----
 
 /** The definition a run is pinned to, as the projections read it. */
-export interface PinnedSource { readonly digest: string; readonly workflow: Workflow; readonly parsed_workflow: ParsedWorkflow }
+export interface PinnedSource { readonly workflow: import("../core-client/source-types").WorkflowDefinitionDescriptor; readonly parsed_workflow: ParsedWorkflow }
 /** An operator retry, in the order it was requested. */
 /** An operator's retry request; `retry_id` is its ingress id, the identity an attempt's retry cause names. */
 export interface RetryRequest { readonly unit_id: UnitId; readonly worker: string; readonly retry_id: IngressId }
@@ -102,7 +104,7 @@ export interface RunRead extends RunSummaryRead {
   readonly decisions: readonly ReviewDecisionRecord[];
 }
 
-const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_bundle_id", "run.project_id", "run.root_unit_id",
+const RUN_SUMMARY_COLUMNS = ["run.id", "run.definition_id", "run.project_id", "run.root_unit_id",
   "run.created_at", "run.archived_at", "run.input"] as const;
 const UNIT_SUMMARY_COLUMNS = ["id", "run_id", "parent_id", "declaration", "stage", "collection_key", "pool", "status", "blocked_reason", "review_prompts"] as const;
 const REVISION_REF_COLUMNS = ["id", "run_id", "unit_id", "artifact", "seq", "created_at"] as const;
@@ -118,8 +120,8 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   const ids = anyOf(run_ids);
   // Action ids are hashes: attempts and revisions read in the order commit wrote them.
   const [runs, units, attempts, revisions, retries, stalls, faults] = await Promise.all([
-    trx.selectFrom("authority.run as run").innerJoin("authority.definition_bundle as bundle", "bundle.id", "run.definition_bundle_id")
-      .select(RUN_SUMMARY_COLUMNS).select(["bundle.digest", "bundle.source", "bundle.checked_program"])
+    trx.selectFrom("authority.run as run")
+      .select(RUN_SUMMARY_COLUMNS)
       .where("run.id", "=", ids).where("run.root_unit_id", "is not", null).execute(),
     trx.selectFrom("authority.unit").select(UNIT_SUMMARY_COLUMNS).where("run_id", "=", ids).orderBy("id").execute(),
     trx.selectFrom("authority.attempt").selectAll().where("run_id", "=", ids).orderBy("created_at").orderBy("action_id").orderBy("seq").execute(),
@@ -135,11 +137,13 @@ async function runSummaryReads(trx: DatabaseTransaction, run_ids: readonly strin
   const latest_events = await trx.selectFrom("authority.event").distinctOn(["run_id", "unit_id"])
     .select(["run_id", "unit_id", "id", "created_at"]).where("run_id", "=", ids)
     .orderBy("run_id").orderBy("unit_id").orderBy("created_at", "desc").orderBy("id", "desc").execute();
+  const definitions = new Map(await Promise.all(runs.map(async (run) => [run.definition_id, await loadDefinition(run.definition_id as DefinitionId)] as const)));
   return run_ids.flatMap((run_id) => {
     const found = runs.find((run) => run.id === run_id);
     if (!found) return [];
-    const { digest, source, checked_program, ...run } = found;
-    return [{ run: summaryRun(run), definition: { digest, workflow: source, parsed_workflow: checked_program.workflow },
+    const run = found;
+    const { source, checked_program } = definitions.get(run.definition_id)!;
+    return [{ run: summaryRun(run), definition: { workflow: source, parsed_workflow: checked_program.workflow },
       units: of(units, run_id).map(summaryUnit), attempts: of(attempts, run_id).map(attemptRecord), revisions: of(revisions, run_id).map(revisionRef),
       retries: of(retries, run_id).flatMap((retry) => retry.payload.kind === "retry_requested" && retry.unit_id !== null && retry.ingress_id !== null
         ? [{ unit_id: retry.unit_id as UnitId, worker: retry.payload.worker, retry_id: retry.ingress_id as IngressId }] : []),
@@ -425,30 +429,39 @@ export async function readUnitDiagnostics(db: Kysely<DB>, location: UnitLocation
 
 // ---------------------------------------------------------- definitions -----
 
-/** A pinned definition bundle as recorded. */
-export interface DefinitionRead { readonly bundle_id: string; readonly digest: string; readonly source: Workflow;
-  readonly checked_program: CompiledWorkflow; readonly archived_at: Date | null }
+export type DefinitionRead = import("../core-client/client").CompiledDefinition;
 export type PinnedDefinitionRead = DefinitionRead;
 export interface DefinitionReadPage { readonly items: readonly DefinitionRead[]; readonly next: string | null }
-const DEFINITION_COLUMNS = ["id as bundle_id", "digest", "source", "checked_program", "archived_at"] as const;
 
-/** One listing is either the archived definitions or the active ones. */
-export async function listDefinitions(db: Reader, query: { readonly after: string | null; readonly limit: number; readonly is_archived: boolean }): Promise<DefinitionReadPage> {
-  let page = db.selectFrom("authority.definition_bundle").select(DEFINITION_COLUMNS).where("archived_at", query.is_archived ? "is not" : "is", null);
-  if (query.after !== null) page = page.where("id", "<", query.after);
-  const rows = await page.orderBy("id", "desc").limit(query.limit + 1).execute();
-  const items = rows.slice(0, query.limit);
-  return { items, next: rows.length > query.limit ? items.at(-1)?.bundle_id ?? null : null };
+// A process-local compiler instance. Resolution still verifies disk inputs on every read;
+// only compilation is cached, privately, against every input and this deployed core.
+let projection_core: CoreClient | null = null;
+async function loadDefinition(definition_id: DefinitionId): Promise<DefinitionRead> {
+  if (projection_core === null) {
+    const started = CoreClient.start();
+    if (!started.ok) throw new Error(started.error.detail.detail);
+    projection_core = started.value;
+  }
+  const result = await compileDefinition(projection_core, definition_id);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
 }
-
-export async function readDefinition(db: Reader, bundle_id: string): Promise<DefinitionRead | null> {
-  return await db.selectFrom("authority.definition_bundle").select(DEFINITION_COLUMNS).where("id", "=", bundle_id).executeTakeFirst() ?? null;
+export async function listDefinitions(_db: Reader, query: { readonly after: string | null; readonly limit: number }): Promise<DefinitionReadPage> {
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const ids = [...new Set(Object.values(catalog.value))].sort().reverse().filter((id) => query.after === null || id < query.after);
+  const selected = ids.slice(0, query.limit);
+  return { items: await Promise.all(selected.map(loadDefinition)), next: ids.length > selected.length ? selected.at(-1) ?? null : null };
 }
-
+export async function readDefinition(_db: Reader, definition_id: string): Promise<DefinitionRead | null> {
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  if (!Object.values(catalog.value).includes(definition_id as DefinitionId)) return null;
+  return loadDefinition(definition_id as DefinitionId);
+}
 export async function readPinnedDefinition(db: Reader, run_id: string): Promise<PinnedDefinitionRead | null> {
-  return await db.selectFrom("authority.definition_bundle as bundle").innerJoin("authority.run as run", "run.definition_bundle_id", "bundle.id")
-    .select(["bundle.id as bundle_id", "bundle.digest", "bundle.source", "bundle.archived_at", "bundle.checked_program"])
-    .where("run.id", "=", run_id).executeTakeFirst() ?? null;
+  const run = await db.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).executeTakeFirst();
+  return run ? loadDefinition(run.definition_id as DefinitionId) : null;
 }
 
 // -------------------------------------------------------- operator stream ---
@@ -546,4 +559,10 @@ export async function readAllRunsChangeKey(db: Kysely<DB>): Promise<ReadChangeKe
     eb.selectFrom("authority.run").select((inner) => inner.fn.countAll<number>().as("count")).as("runs"),
   ]).executeTakeFirstOrThrow();
   return changeKey(counted(row), row.runs ?? 0);
+}
+
+/** The sole definition reference recorded on a run, for session preparation. */
+export async function readRunDefinitionId(db: Reader, run_id: string): Promise<DefinitionId | null> {
+  const run = await db.selectFrom("authority.run").select("definition_id").where("id", "=", run_id).executeTakeFirst();
+  return run?.definition_id as DefinitionId | undefined ?? null;
 }

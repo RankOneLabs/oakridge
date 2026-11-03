@@ -5,7 +5,53 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { OperatorArtifactDetail, OperatorDefinitionDetail, OperatorInboxPage, OperatorRunEvent, OperatorRunView, OperatorUnitView } from "../../kbbl/core/pwa/oakridge/operator-contracts";
-import type { AgentWorkerWorkflow } from "../../kbbl/core/pwa/oakridge/lib/agent-session-targets";
+
+/** Frozen execution snapshots keep their evidence; their definition projection is generated from the committed store. */
+async function reconcileFixtures(should_check: boolean): Promise<void> {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { CoreClient, compileDefinition } = await import("../src/core-client/client");
+  const { readLaunchableCatalog } = await import("../src/runtime/definition-store");
+  const { selectDefinitionDetail } = await import("../src/projections/definition-view");
+  const { parseRunView, parseUnitViews } = await import("../../kbbl/core/pwa/oakridge/adapters/parse");
+  const directory = resolve(import.meta.dir, "../../kbbl/core/pwa/oakridge/__fixtures__");
+  const catalog = readLaunchableCatalog();
+  if (!catalog.ok) throw new Error(JSON.stringify(catalog.error));
+  const definition_id = catalog.value.development;
+  const core = CoreClient.start();
+  if (!core.ok) throw new Error(core.error.detail.detail);
+  try {
+    const compiled = await compileDefinition(core.value, definition_id);
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.error));
+    const definition = selectDefinitionDetail(compiled.value);
+    interface CapturedSnapshot {
+      readonly source: string;
+      readonly captured_at: string;
+      readonly run_id?: string;
+      readonly definition?: OperatorDefinitionDetail;
+      readonly run?: OperatorRunView;
+      readonly units?: readonly OperatorUnitView[];
+    }
+    for (const name of readdirSync(directory).filter((name) => /^v2-.*\.json$/.test(name))) {
+      const path = resolve(directory, name);
+      const original = readFileSync(path, "utf8");
+      // Captured evidence is checked at this IO boundary, before being written.
+      const snapshot = JSON.parse(original) as CapturedSnapshot;
+      if (snapshot.run && !parseRunView(snapshot.run).ok) throw new Error(`${name}: malformed run fixture`);
+      if (snapshot.units && !parseUnitViews(snapshot.units).ok) throw new Error(`${name}: malformed unit fixture`);
+      const next: CapturedSnapshot = { ...snapshot,
+        ...(snapshot.run ? { run: { ...snapshot.run, definition_id } } : {}),
+        ...(snapshot.definition ? { source: `/api/definitions/${definition_id}`, definition } : {}),
+      };
+      const generated = `${JSON.stringify(next, null, 2)}\n`;
+      if (should_check && original !== generated) throw new Error(`${name}: fixture projection drift; run capture-pwa-adapter-fixtures.ts --regenerate`);
+      if (!should_check) writeFileSync(path, generated);
+    }
+  } finally { core.value.close(); }
+}
+if (process.argv.includes("--check") || process.argv.includes("--regenerate")) {
+  await reconcileFixtures(process.argv.includes("--check"));
+  process.exit(0);
+}
 
 const runId = process.argv[2];
 if (!runId || !/^run-[0-9a-f]{16}$/.test(runId)) throw new Error("pass a named v2 run id (run-<16 hex characters>)");
@@ -57,20 +103,11 @@ const [run, units, inbox] = await Promise.all([
 if (run.run_id !== runId || units.some((unit) => unit.run_id !== runId)) throw new Error("response run id mismatch");
 const output = resolve(import.meta.dir, `../../kbbl/core/pwa/oakridge/__fixtures__/${fixtureName}.json`);
 if (fixtureName === "v2-definition-detail") {
-  const definitionPath = `/api/definitions/${encodeURIComponent(run.definition_bundle_id)}`;
+  const definitionPath = `/api/definitions/${encodeURIComponent(run.definition_id)}`;
   const definition = await get<OperatorDefinitionDetail>(definitionPath);
-  if (definition.digest !== run.definition_digest) throw new Error(`run ${runId} definition digest mismatch`);
-  // Project only worker declarations, retaining template uses and their kinds.
-  const source: AgentWorkerWorkflow = definition.workflow;
-  const workflow = { workflow: source.workflow,
-    workers: Object.fromEntries(Object.entries(source.workers ?? {}).map(([key, worker]) => [key, { kind: worker.kind }])),
-    stages: Object.fromEntries(Object.entries(source.stages).map(([stage, value]) => [stage, {
-      workers: Object.fromEntries(Object.entries(value.workers).map(([worker, declaration]) =>
-        [worker, declaration.template ? { template: declaration.template } : { kind: declaration.kind }])),
-    }])) };
-  writeFileSync(output, `${JSON.stringify({ source: definitionPath, captured_at: new Date().toISOString(), run_id: runId,
-    definition: { bundle_id: definition.bundle_id, digest: definition.digest, workflow } }, null, 2)}\n`);
-  console.log(`Captured ${runId}: definition ${definition.bundle_id}`);
+  if (definition.definition_id !== run.definition_id) throw new Error(`run ${runId} definition ID mismatch`);
+  writeFileSync(output, `${JSON.stringify({ source: definitionPath, captured_at: new Date().toISOString(), run_id: runId, definition }, null, 2)}\n`);
+  console.log(`Captured ${runId}: definition ${definition.definition_id}`);
   process.exit(0);
 }
 if (fixtureName === "v2-planning-revise") {

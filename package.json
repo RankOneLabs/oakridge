@@ -7,6 +7,6 @@
   "workspaces": ["kbbl", "oakridge-dbos", "workflow-config", "observation", "canonical-json"],
   "scripts": {
     "oakridge": "./scripts/oakridge-start",
-    "typecheck": "bunx tsc --noEmit -p canonical-json/tsconfig.json && bunx tsc --noEmit -p kbbl/tsconfig.json && bunx tsc --noEmit -p oakridge-dbos/tsconfig.json && bunx tsc --noEmit -p observation/tsconfig.json"
+    "typecheck": "bunx tsc --noEmit -p canonical-json/tsconfig.json && bunx tsc --noEmit -p workflow-config/tsconfig.json && bunx tsc --noEmit -p kbbl/tsconfig.json && bunx tsc --noEmit -p oakridge-dbos/tsconfig.json && bunx tsc --noEmit -p observation/tsconfig.json"
   }
 }

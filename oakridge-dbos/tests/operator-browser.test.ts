@@ -106,8 +106,8 @@ test("route guard detects dead routes in helpers, pagination and direct fetches"
 test("operator listing, pinning and digest launch have explicit authority", () => {
   const required: readonly ClientRoute[] = [
     { method: "GET", path: "/api/runs" }, { method: "GET", path: "/api/definitions" },
-    { method: "POST", path: "/api/definitions" }, { method: "POST", path: "/api/runs" },
+    { method: "POST", path: "/api/runs" },
   ];
   expect(required.map(({ method, path }) => HTTP_ROUTES.find((row) => row.method === method && row.path === path)?.authority))
-    .toEqual(["operator", "operator", "operator", "operator"]);
+    .toEqual(["operator", "operator", "operator"]);
 });

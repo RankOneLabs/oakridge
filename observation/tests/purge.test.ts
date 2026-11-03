@@ -22,7 +22,7 @@ export async function seedHumanGrade(db: Database, occurrence_id: ItemOccurrence
     evidence_set_id: evidence.evidence_set_id, question_id: question.question_id,
     question_version: question.question_version, evaluator_definition_id: "human", config_digest: "config-1",
     attempt_label: "one", details: { answer: { state: "answered", kind: "boolean", value: true },
-      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
+      origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
       probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
       decision_policy_version: null, reviewer_id: "operator", reviewer_details: null,
       comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null } });
@@ -90,7 +90,7 @@ integration("purge removes a submitted blind assignment with its grade", async (
     const grade = await recordHumanGrade(db, tenant, { ...identity,
       evaluator_definition_id: "human", config_digest: "config-1", attempt_label: "blind-purge",
       details: { answer: { state: "answered", kind: "boolean", value: true },
-        collection_mode: "blind", blind_assignment_id: assignment.value.assignment_id,
+        origin: "human_rubric_answer" as const, collection_mode: "blind", blind_assignment_id: assignment.value.assignment_id,
         model_answers_visible: false, workflow_decisions_visible: false,
         probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: "reviewer-a", reviewer_details: null,

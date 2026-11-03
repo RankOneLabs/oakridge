@@ -15,20 +15,6 @@ CREATE TABLE authority.schema_baseline (
   applied_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE authority.definition_bundle (
-  id text PRIMARY KEY,
-  digest text NOT NULL UNIQUE,
-  source jsonb NOT NULL,
-  -- The parsed workflow is required by every read projection. Changing this
-  -- baseline digest enforces the W4 database cutover at startup.
-  checked_program jsonb NOT NULL CHECK (checked_program ? 'workflow'),
-  -- prompt path -> content digest, pinned at compile (D9). Editing a prompt
-  -- file afterwards cannot change what this definition renders.
-  prompts jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  archived_at timestamptz
-);
-
 CREATE TABLE authority.project (
   id text PRIMARY KEY,
   name text NOT NULL UNIQUE,
@@ -38,15 +24,9 @@ CREATE TABLE authority.project (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE authority.prompt_content (
-  content_digest text PRIMARY KEY,
-  content text NOT NULL,
-  CHECK (content_digest = encode(sha256(convert_to(content, 'UTF8')), 'hex'))
-);
-
 CREATE TABLE authority.run (
   id text PRIMARY KEY,
-  definition_bundle_id text NOT NULL REFERENCES authority.definition_bundle(id),
+  definition_id text NOT NULL,
   project_id text REFERENCES authority.project(id),
   root_unit_id text,
   input jsonb,
@@ -283,9 +263,6 @@ CREATE INDEX collaboration_thread_revision_idx ON authority.collaboration_thread
 CREATE INDEX collaboration_message_thread_idx ON authority.collaboration_message(run_id, thread_id);
 CREATE INDEX review_item_thread_idx ON authority.review_item(run_id, thread_id);
 
-COMMENT ON COLUMN authority.definition_bundle.source IS '@type {DefinitionBundleSource}';
-COMMENT ON COLUMN authority.definition_bundle.checked_program IS '@type {CompiledWorkflow}';
-COMMENT ON COLUMN authority.definition_bundle.prompts IS '@type {PinnedPrompts}';
 COMMENT ON COLUMN authority.project.forge_repository IS '@type {ForgeRepository}';
 COMMENT ON COLUMN authority.run.input IS '@type {RuntimeValue}';
 COMMENT ON COLUMN authority.run.config IS '@type {RunConfig}';

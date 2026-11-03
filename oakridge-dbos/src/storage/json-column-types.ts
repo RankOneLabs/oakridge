@@ -4,7 +4,7 @@
  * scripts/generate-storage-records.ts imports them into db-types.ts.
  */
 import type { ColumnType } from "kysely";
-import type { Event, ResolvedDecision, WantedWorker, Workflow } from "../core-client/core-types";
+import type { Event, ResolvedDecision, WantedWorker } from "../core-client/core-types";
 
 /**
  * A jsonb value serialized for a write. pg would send an array as a Postgres
@@ -22,7 +22,6 @@ export type { OperatorEventPayload } from "../projections/operator-event";
 /** Run input, unit input, revision bodies and decision payloads are schema-checked by the Rust core. */
 export type RuntimeValue = unknown;
 export type CoreEvent = Event;
-export type DefinitionBundleSource = Workflow;
 export type WantedWorkers = readonly WantedWorker[];
 /**
  * An operator review awaiting a decision: the revision it reviews, each decision legal now with the revision
@@ -32,8 +31,6 @@ export type WantedWorkers = readonly WantedWorker[];
 export interface ReviewPrompt { readonly target: string; readonly decisions: readonly ResolvedDecision[]; readonly prompt: string }
 /** Review key -> its awaiting prompt, on the unit. */
 export type ReviewPrompts = { readonly [review: string]: ReviewPrompt };
-/** Prompt path -> content digest, pinned when the definition is compiled (D9). */
-export type PinnedPrompts = { readonly [path: string]: string };
 /** What an ingress id resolved to. A rejection is stored so a replay returns it again. */
 export type CommitReceipt =
   | { readonly kind: "committed"; readonly event_id: string }

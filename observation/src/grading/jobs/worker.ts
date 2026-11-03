@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import type { EvaluationIdentity } from "../execution";
 import { runnerEntry, type RunnerResult } from "../runner";
-import { checkDisclosure } from "../disclosure";
+import { checkEvidenceIntegrity } from "../evidence-integrity";
 import type { GradeRunner } from "../../ports/grade-runner";
 import { err } from "../../domain/primitives";
 import { runGrade, startDelegatedExecution } from "../../storage/grading-store";
@@ -71,6 +71,7 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("job_id", "=", job.job_id).where("state", "=", "claimed")
           .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
+          .where("lease_expires_at", ">", new Date())
           .returning("job_id").executeTakeFirst();
         if (ended && isNetwork) await trx.updateTable("observation.grading_provider_attempt")
           .set({ outcome: "failed", updated_at: new Date() })
@@ -83,20 +84,8 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
   }
   const guarded: GradeRunner = { kind: base.kind, async run(context) {
     if (isNetwork) {
-      const disclosure = checkDisclosure(context.evidence, context.evaluator.provider);
-      if (!disclosure.ok) {
-        await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_provider_attempt")
-          .set({ outcome: "failed", updated_at: new Date() })
-          .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-          .where("job_id", "=", job.job_id).where("attempt", "=", job.attempts).execute());
-        return err(disclosure.error);
-      }
-      await withTenant(db, tenant, (trx) => trx.updateTable("observation.grading_job")
-        .set({ disclosure: sql`${jsonText(disclosure.value)}::jsonb` })
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("job_id", "=", job.job_id).where("state", "=", "claimed")
-        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
-        .where("lease_expires_at", ">", new Date()).execute());
+      const integrity = checkEvidenceIntegrity(context.evidence);
+      if (!integrity.ok) return err(integrity.error);
     }
     let wasSent = false;
     const onRequest = async (): Promise<boolean> => {
@@ -190,7 +179,8 @@ export async function workOneJob(db: Database, tenant: TenantScope, limits: Grad
           lease_expires_at: null, updated_at: new Date() })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("job_id", "=", job.job_id).where("state", "=", "claimed")
-        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts).returning("job_id").executeTakeFirst();
+        .where("lease_owner", "=", owner).where("attempts", "=", job.attempts)
+        .where("lease_expires_at", ">", new Date()).returning("job_id").executeTakeFirst();
       if (ended) await trx.updateTable("observation.evaluation_execution")
         .set({ status: "failed", ended_at: new Date(), error: result.error.detail })
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)

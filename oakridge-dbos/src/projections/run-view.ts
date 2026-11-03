@@ -1,5 +1,5 @@
 import type { Event, UnitStatus, Writer } from "../core-client/core-types";
-import type { DefinitionBundleId, RunId, UnitId } from "../domain/primitives";
+import type { DefinitionId, RunId, UnitId } from "../domain/primitives";
 import { isTerminalStatus, selectRootStatus } from "../domain/unit-status";
 import type { RunRead, RunSummaryRead } from "../storage/read-store";
 import type { EventRecord } from "../storage/schema-records";
@@ -19,7 +19,7 @@ export interface RunUnitSummary {
   readonly asks: readonly string[];
 }
 export interface RunSummary {
-  readonly run_id: RunId; readonly definition_bundle_id: DefinitionBundleId; readonly definition_digest: string;
+  readonly run_id: RunId; readonly definition_id: DefinitionId;
   readonly created_at: Date; readonly updated_at: Date; readonly archived_at: Date | null;
   readonly title: string | null; readonly repository_keys: readonly string[];
   /** The root unit's status. */
@@ -50,7 +50,7 @@ export function selectRunView(read: RunSummaryRead): RunView {
   const attention = selectRunAttention(read);
   const tree = selectUnitTree(read.units, read.definition.workflow);
   const label = selectRunLaunchLabel(read.run.input);
-  return { run_id: read.run.id, definition_bundle_id: read.run.definition_bundle_id, definition_digest: read.definition.digest,
+  return { run_id: read.run.id, definition_id: read.run.definition_id,
     created_at: read.run.created_at, updated_at: selectRunUpdatedAt(read), archived_at: read.run.archived_at,
     ...label, status: selectRootStatus(read.run, read.units),
     units: read.units.map((unit) => ({ unit_id: unit.id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),

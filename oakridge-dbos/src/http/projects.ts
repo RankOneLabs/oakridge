@@ -3,7 +3,7 @@ import { err, ok, type Result } from "../domain/primitives";
 import type { ProjectDraft, ProjectWriteError, ProjectWriteInput } from "../domain/projects";
 import { resolveProjectRepositoryIdentity } from "../runtime/project-identity";
 import type { Database } from "../storage/database";
-import { createProject, listProjects, updateProject } from "../storage/registry-store";
+import { createProject, listProjects, updateProject } from "../storage/operator-store";
 import type { ForgeRepository } from "../storage/json-column-types";
 import type { ProjectId } from "../storage/schema-records";
 import { ConflictError, errorResponse, InternalFaultError, InvalidPayloadError, MalformedRequestError, MissingEntityError, type RequestError } from "./errors";
