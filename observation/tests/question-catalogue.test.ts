@@ -2,26 +2,22 @@ import { expect, test } from "bun:test";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { pilotExpectations } from "./grading-fixture";
 const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
-import { PILOT_EVIDENCE_RECIPES, projectPilotEvidence, type EvidenceSource } from "../src/grading/evidence-packages/pilot-recipe";
+import { pinnedPilotRecipe, recipeSlots, unsatisfiedSlots } from "../src/grading/evidence-packages/pilot-recipe";
 import { contextSchema } from "../src/http/evaluations";
 import { registerGradingContext } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { tenant, evidence, evaluator, scratchGrading } from "./grading-fixture";
 
-test("each pilot question projects only its declared digest and deep-link references", () => {
-  for (const [id, entry] of Object.entries(OAKRIDGE_QUESTIONS)) {
-    const recipe = PILOT_EVIDENCE_RECIPES[id as keyof typeof PILOT_EVIDENCE_RECIPES];
-    const sources: EvidenceSource[] = [...recipe.input, ...recipe.output].map(({ role }) => ({
-      role, ref: `revision/${role}`, digest: `canonical-json/v1:${"a".repeat(64)}`,
-      deep_link: `https://observation.example/items/${role}`, body: { private: "whole artifact" },
-    }));
-    const projected = projectPilotEvidence(entry.definition, sources);
-    expect(projected.ok).toBe(true);
-    if (!projected.ok) continue;
-    expect(projected.value.input.map((reference) => reference.role)).toEqual(recipe.input.map((slot) => slot.role));
-    expect(projected.value.output.map((reference) => reference.role)).toEqual(recipe.output.map((slot) => slot.role));
-    expect([...projected.value.input, ...projected.value.output].every((reference) =>
-      Boolean(reference.digest && reference.deep_link) && !("body" in reference))).toBe(true);
+test("each pilot question's pin is readable on its own and its slot counts are enforced", () => {
+  for (const entry of Object.values(OAKRIDGE_QUESTIONS)) {
+    const recipe = pinnedPilotRecipe(entry.definition);
+    expect(recipe).not.toBeNull();
+    if (!recipe) continue;
+    const slots = recipeSlots(recipe);
+    const within = slots.flatMap((slot) => Array.from({ length: Math.max(slot.min_count, 1) },
+      (_, index) => ({ ref: `${slot.role}:${index}` })));
+    expect(unsatisfiedSlots(recipe, within)).toEqual([]);
+    expect(unsatisfiedSlots(recipe, [])).toEqual(slots.filter((slot) => slot.min_count > 0).map((slot) => slot.role));
   }
 });
 

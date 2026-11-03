@@ -155,15 +155,17 @@ export async function deriveSubjectEvidence(db: Database, tenant: TenantScope, s
       eligibility: [{ question_id: question.question_id, question_version: question.question_version,
         occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
     if (!saved.ok) return fail(saved.error.detail);
-    // Re-read an eligible outcome so concurrent derivations agree on one pinned evidence set.
-    if (value.decision.tag === "eligible") {
-      const winner = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
-        .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
-        .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
-        .where("tag", "=", "eligible").executeTakeFirstOrThrow());
-      return await loadPinned(winner as Extract<EligibilityDecision, { tag: "eligible" }>);
-    }
+    // Re-read the pinned row after saving, whatever this request derived. An eligible outcome
+    // must agree with concurrent derivations on one evidence set. An exclusion must yield to an
+    // eligible row another request wrote while this one was deriving: the guarded upsert keeps
+    // that row, so returning the local exclusion would refuse work already admitted.
+    const winner = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+      .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
+      .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+      .where("tag", "=", "eligible").executeTakeFirst());
+    if (winner) return await loadPinned(winner as Extract<EligibilityDecision, { tag: "eligible" }>);
+    if (value.decision.tag === "eligible") return fail("eligible decision did not persist");
     return ok({ question, evidence: null, decision: value.decision });
   } catch (cause) { return fail(String(cause)); }
 }

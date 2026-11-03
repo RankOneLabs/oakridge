@@ -1,6 +1,13 @@
 import type { QuestionId } from "../../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../question";
-import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe, type PilotQuestionId } from "../evidence-packages/pilot-recipe";
+import { ANALYSIS_RELEVANCE_RECIPE, ASSESSMENT_COVERAGE_RECIPE, BRIEF_FIDELITY_RECIPE, PLAN_TRACEABILITY_RECIPE,
+  pinnedInputRecipe } from "../evidence-packages/pilot-recipe";
+
+/** The four questions this catalogue authors. Ids live here, where they are the data a question
+ * is declared with — never a dispatch key in the builders. */
+export const PILOT_QUESTION_IDS = ["analysis.finding_relevance", "plan.criterion_traceability",
+  "brief.source_fidelity", "assessment.coverage"] as const;
+export type PilotQuestionId = typeof PILOT_QUESTION_IDS[number];
 
 export interface PilotQuestion { readonly definition: QuestionDefinition; readonly text: string }
 export type PilotExpectations = Readonly<Record<PilotQuestionId, PinnedExpectation>>;
@@ -13,7 +20,7 @@ function pinnedQuestion(definition: Omit<QuestionDefinition, "pinned_expectation
 
 const relevance: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "analysis.finding_relevance" as QuestionId, question_version: "v1", target_item_kinds: ["finding"],
-  input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["analysis.finding_relevance"]),
+  input_recipe: pinnedInputRecipe(ANALYSIS_RELEVANCE_RECIPE),
   response_kind: "choice", allowed_values: ["relevant", "irrelevant", "unclear_insufficient_evidence"],
   missing_evidence_policy: "abstain",
   abstain_semantics: "Abstain only when the pinned requested change or excerpt is unavailable; low confidence alone is not abstention.",
@@ -23,7 +30,7 @@ const relevance: Omit<QuestionDefinition, "pinned_expectation"> = {
 };
 const traceability: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "plan.criterion_traceability" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
-  input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["plan.criterion_traceability"]),
+  input_recipe: pinnedInputRecipe(PLAN_TRACEABILITY_RECIPE),
   response_kind: "choice", allowed_values: ["traceable", "unsupported", "unclear_insufficient_evidence"],
   missing_evidence_policy: "abstain",
   abstain_semantics: "Abstain only when the tasks or plan revision that should hold a cited id was not captured; a cited id absent from a captured revision is a dangling citation and is excluded before grading.",
@@ -33,7 +40,7 @@ const traceability: Omit<QuestionDefinition, "pinned_expectation"> = {
 };
 const fidelity: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "brief.source_fidelity" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
-  input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["brief.source_fidelity"]),
+  input_recipe: pinnedInputRecipe(BRIEF_FIDELITY_RECIPE),
   response_kind: "choice", allowed_values: ["faithful", "changed_meaning", "unclear_insufficient_evidence"],
   missing_evidence_policy: "abstain",
   abstain_semantics: "Abstain when either criterion source is unavailable; do not infer abstention from a flat distribution.",
@@ -43,7 +50,7 @@ const fidelity: Omit<QuestionDefinition, "pinned_expectation"> = {
 };
 const coverage: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "assessment.coverage" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
-  input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["assessment.coverage"]),
+  input_recipe: pinnedInputRecipe(ASSESSMENT_COVERAGE_RECIPE),
   response_kind: "boolean", allowed_values: null, missing_evidence_policy: "fail",
   abstain_semantics: "No answer is recorded when the brief criterion or assessment selection is unavailable; zero covering findings is a negative answer.",
   unclear_semantics: "Link absence is not unknown: an unset criterion_id means no assesses link, never an inferred match.",

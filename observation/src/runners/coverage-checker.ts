@@ -1,3 +1,4 @@
+import { pinnedPilotRecipe } from "../grading/evidence-packages/pilot-recipe";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
@@ -57,7 +58,7 @@ function isObject(value: JsonValue): value is { readonly [key: string]: JsonValu
 
 /** Decode the small, local link view stored in the first coverage evidence reference. */
 export function decodeCoverageInput(value: JsonValue): Result<CoverageInput, GradingError> {
-  const invalid = () => err({ operation: "decode_coverage_input", entity_id: "assessment.coverage",
+  const invalid = () => err({ operation: "decode_coverage_input", entity_id: "assessment_window",
     detail: "coverage evidence must contain a brief criterion and assessment finding links" });
   if (!isObject(value) || !isObject(value.brief_criterion) || !Array.isArray(value.assessment_findings)) return invalid();
   const criterion = value.brief_criterion;
@@ -80,9 +81,12 @@ export function decodeCoverageInput(value: JsonValue): Result<CoverageInput, Gra
 }
 
 export function runCoverageCheck(context: GradingContext): RunnerResult {
-  if (context.question.question_id !== "assessment.coverage" || context.question.response_kind !== "boolean")
+  // Bind to the pinned contract, not to one question id: any boolean question whose pin builds
+  // an assessment window produces the link view this runner decodes.
+  if (pinnedPilotRecipe(context.question)?.build.kind !== "assessment_window"
+    || context.question.response_kind !== "boolean")
     return err({ operation: "assessment_coverage", entity_id: context.question.question_id,
-      detail: "coverage runner requires the boolean assessment.coverage question" });
+      detail: "coverage runner requires a boolean question pinning an assessment window" });
   const content = context.evidence.references[0]?.content;
   if (content === undefined) return err({ operation: "assessment_coverage", entity_id: context.evidence.evidence_set_id,
     detail: "coverage link evidence is absent" });

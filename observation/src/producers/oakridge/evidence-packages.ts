@@ -2,11 +2,11 @@ import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
 import type { ItemOccurrenceId, QuestionId } from "../../domain/identity";
 import type { EvidenceReference, EvidenceSet } from "../../grading/evidence";
 import { collectReferences, capturedReference, packagedEvidenceSet, type EvidencePackageError } from "../../grading/evidence-packages/references";
-import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
-import { planCriterionEligibility } from "./plan-traceability";
+import { declaredLinks, linkedItems, selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { evidenceKindForCapturedPath } from "./classification";
 import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
-import { hasPinnedPilotRecipe, pinnedPilotRecipe, unsatisfiedSlots, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import { pinnedPilotRecipe, recipeSlots, unsatisfiedSlots, type EvidenceBuild, type EvidenceSlot,
+  type PilotEvidenceRecipe, type SlotSource, type SubjectBinding } from "../../grading/evidence-packages/pilot-recipe";
 import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
 import { hasCapturedEvidenceRecipe } from "../../grading/evidence-packages/recipe";
 import { coverageInput } from "../../runners/coverage-checker";
@@ -14,7 +14,7 @@ import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
 import type { QuestionDefinition } from "../../grading/question";
 
 export type RunQuestionSelection = Readonly<Record<string, PilotQuestion | undefined>>;
-type PackageQuestionId = PilotQuestionId | QuestionId;
+type PackageQuestionId = QuestionId;
 
 export interface PilotPackage {
   readonly question_id: PackageQuestionId;
@@ -44,17 +44,6 @@ export interface RunPackages extends PackageBatch {
 }
 export type RunPackageError = EvidencePackageError;
 
-function itemsOf(revisions: readonly CapturedRevision[], artifact_kind: string, item_kind: string): readonly CapturedItem[] {
-  return revisions.filter((revision) => revision.artifact_kind === artifact_kind)
-    .flatMap((revision) => revision.items.filter((item) => item.item_kind === item_kind));
-}
-
-/** A brief sees the most recent matching plan that existed at its capture time. */
-function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevision): CapturedRevision | undefined {
-  return revisions.filter((revision) => revision.artifact_kind === "plan" && revision.recorded_at <= brief.recorded_at)
-    .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
-}
-
 /** Capture addresses and digests with classification from the source field's declared sensitivity. */
 function reference(role: string, artifact_kind: string, item: CapturedItem, content: JsonValue | null = item.selected_value) {
   const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
@@ -63,168 +52,194 @@ function reference(role: string, artifact_kind: string, item: CapturedItem, cont
   return capturedReference(role, item, kind.value, content);
 }
 
-function planPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<PackageBatch, RunPackageError> {
+type LinkRelation = Extract<SlotSource, { from: "linked" }>;
+
+interface BuilderInput {
+  readonly revisions: readonly CapturedRevision[];
+  /** Revisions whose provenance matches the pin; the only ones a decision is derived for. */
+  readonly subjects: readonly CapturedRevision[];
+  readonly question: QuestionDefinition;
+  readonly recipe: PilotEvidenceRecipe;
+}
+
+function slotsFrom(slots: readonly EvidenceSlot[], from: SlotSource["from"]): readonly EvidenceSlot[] {
+  return slots.filter((slot) => slot.source.from === from);
+}
+
+/** The revision a linked slot resolves against: the subject's own when the relation names its
+ * artifact kind, otherwise the newest revision of that kind captured at or before it. A plan
+ * cites the tasks that existed when it was written, not a later revision of them. */
+function slotPool(revisions: readonly CapturedRevision[], host: CapturedRevision, relation: LinkRelation)
+  : CapturedRevision | undefined {
+  if (relation.artifact_kind === host.artifact_kind) return host;
+  return revisions.filter((candidate) => candidate.artifact_kind === relation.artifact_kind
+    && candidate.recorded_at <= host.recorded_at)
+    .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
+}
+
+/** Walk every relation the pin declares and package each subject with what resolves. References
+ * come out in pinned slot order — input slots then output slots — so the package shape is the
+ * recipe's, not a builder's. The two failures slots cannot name are classified by the build: a
+ * subject declaring no link at all, and a source revision the run never captured. */
+function linkedSourcePackages({ revisions, subjects, question, recipe }: BuilderInput,
+  build: Extract<EvidenceBuild, { kind: "linked_sources" }>): Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
-  for (const revision of subjects) {
-    const task_revision = revisions.filter((candidate) => candidate.artifact_kind === "tasks"
-      && candidate.recorded_at <= revision.recorded_at)
-      .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
-    const tasks = task_revision ? task_revision.items.filter((item) => item.item_kind === "task") : null;
-    const decisions = revision.items.filter((item) => item.item_kind === "decision");
-    for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
-      const eligibility = planCriterionEligibility(criterion, { tasks, plan_decisions: decisions });
-      if (!eligibility.ok) return err({ operation: "evidence_packages", entity_id: criterion.occurrence_id, detail: eligibility.error.detail });
-      const outcome = eligibility.value;
-      if (outcome.kind === "uncited" || outcome.kind === "dangling_citation") {
-        exclusions.push({ question_id: "plan.criterion_traceability", occurrence_id: criterion.occurrence_id,
-          reason: outcome.kind === "uncited" ? { kind: "uncited" } : { kind: "dangling_citation", evidence_refs: outcome.evidence_refs } });
+  const question_id = question.question_id;
+  const slots = recipeSlots(recipe);
+  for (const host of subjects) {
+    for (const subject of host.items.filter((item) => item.item_kind === recipe.subject.item_kind)) {
+      const refs = new Map<number, readonly Result<EvidenceReference, EvidencePackageError>[]>();
+      const dangling: string[] = [];
+      const uncaptured: string[] = [];
+      let declared = 0;
+      for (const [index, slot] of slots.entries()) {
+        if (slot.source.from === "subject") {
+          refs.set(index, [reference(slot.role, host.artifact_kind, subject)]);
+          continue;
+        }
+        if (slot.source.from === "unscheduled") continue;
+        const relation = slot.source;
+        const links = declaredLinks(subject, relation);
+        declared += links.length;
+        const pool = slotPool(revisions, host, relation);
+        if (!pool) {
+          if (links.length === 0) continue;
+          if (build.uncaptured_source === "dangling") dangling.push(...links.map((link) => link.evidence_ref));
+          else uncaptured.push(relation.artifact_kind);
+          continue;
+        }
+        const walk = linkedItems(subject, relation, recipe.subject, pool.items);
+        dangling.push(...walk.dangling);
+        refs.set(index, walk.resolved.map((item) => reference(slot.role, pool.artifact_kind, item)));
+      }
+      if (declared === 0) {
+        exclusions.push({ question_id, occurrence_id: subject.occurrence_id,
+          reason: build.undeclared === "uncited" ? { kind: "uncited" } : { kind: "unlinked" } });
         continue;
       }
-      const cited = outcome.kind === "eligible" ? outcome.tasks : [];
-      const references = collectReferences([reference("plan_criterion", revision.artifact_kind, criterion),
-        ...cited.map((task) => reference("plan_task", task_revision?.artifact_kind ?? "tasks", task)),
-        ...outcome.decisions.map((decision) => reference("plan_decision", revision.artifact_kind, decision))]);
+      if (dangling.length > 0) {
+        exclusions.push({ question_id, occurrence_id: subject.occurrence_id,
+          reason: { kind: "dangling_citation", evidence_refs: dangling } });
+        continue;
+      }
+      const references = collectReferences(slots.flatMap((_, index) => refs.get(index) ?? []));
       if (!references.ok) return references;
-      const evidence = packagedEvidenceSet("plan.criterion_traceability", references.value,
-        outcome.kind === "tasks_uncaptured" ? "the run's tasks revision was not captured" : null);
+      const evidence = packagedEvidenceSet(question_id, references.value,
+        uncaptured.length > 0 ? `the run's ${uncaptured[0]} revision was not captured` : null);
       if (!evidence.ok) return evidence;
-      packages.push({ question_id: "plan.criterion_traceability", subject: criterion,
-        revision_id: revision.revision_id, evidence: evidence.value });
+      packages.push({ question_id, subject, revision_id: host.revision_id, evidence: evidence.value });
     }
   }
   return ok({ packages, exclusions, eligibility: [] });
 }
 
-function briefPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<PackageBatch, RunPackageError> {
-  const packages: PilotPackage[] = [];
-  const exclusions: PackageExclusion[] = [];
-  for (const revision of subjects) {
-    const plan = planAtBrief(revisions, revision);
-    const plan_criteria = plan?.items.filter((item) => item.item_kind === "criterion") ?? [];
-    for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
-      const link = criterion.links.find((candidate) => candidate.type === "derived_from"
-        && candidate.target_artifact_kind === "plan" && candidate.target_item_kind === "criterion");
-      if (!link) {
-        exclusions.push({ question_id: "brief.source_fidelity", occurrence_id: criterion.occurrence_id,
-          reason: { kind: "unlinked" } });
-        continue;
-      }
-      const source = plan_criteria.find((item) => item.item_scope === link.target_scope
-        && item.producer_local_id === link.target_local_id);
-      if (!source) {
-        exclusions.push({ question_id: "brief.source_fidelity", occurrence_id: criterion.occurrence_id,
-          reason: { kind: "dangling_citation", evidence_refs: [link.evidence_ref] } });
-        continue;
-      }
-      const references = collectReferences([reference("plan_criterion", plan?.artifact_kind ?? "plan", source),
-        reference("brief_criterion", revision.artifact_kind, criterion)]);
-      if (!references.ok) return references;
-      const evidence = packagedEvidenceSet("brief.source_fidelity", references.value, null);
-      if (!evidence.ok) return evidence;
-      packages.push({ question_id: "brief.source_fidelity", subject: criterion, revision_id: revision.revision_id,
-        evidence: evidence.value });
-    }
-  }
-  return ok({ packages, exclusions, eligibility: [] });
-}
+const subjectKey = (scope: string | null, local_id: string | null): string => `${scope}\u0000${local_id}`;
 
-const criterionKey = (scope: string | null, local_id: string | null): string => `${scope}\u0000${local_id}`;
-
-/** Every brief criterion an assessment's findings explicitly assess. */
-function assessedCriterionKeys(assessment: CapturedRevision): ReadonlySet<string> {
-  return new Set(assessment.items.flatMap((item) => item.links
-    .filter((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
-      && link.target_item_kind === "criterion")
-    .map((link) => criterionKey(link.target_scope, link.target_local_id))));
+/** Every subject item a source revision's items explicitly point at through the pinned relation. */
+function linkedSubjectKeys(source: CapturedRevision, relation: LinkRelation, binding: SubjectBinding): ReadonlySet<string> {
+  return new Set(source.items.flatMap((item) => item.links
+    .filter((link) => link.type === relation.link_type && link.target_artifact_kind === binding.artifact_kind
+      && link.target_item_kind === binding.item_kind)
+    .map((link) => subjectKey(link.target_scope, link.target_local_id))));
 }
 
 /** A brief and its assessment sit in different units — `briefs/<cohort>` against
  * `implementation/<cohort>` — and no captured revision links them structurally. Criterion
  * identity is flat and run-unique, so an `assesses` link names exactly one brief revision's
- * criterion and is the reliable key. An assessment that assesses no captured brief criterion
- * at all cannot be placed that way; it is attributed by capture time, which is what lets a
- * findings-free assessment still answer coverage negatively. */
-function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevision): boolean {
-  const assessed = assessedCriterionKeys(assessment);
-  if (assessed.size === 0) return true;
-  return brief.items.some((item) => item.item_kind === "criterion"
-    && assessed.has(criterionKey(item.item_scope, item.producer_local_id)));
+ * criterion and is the reliable key. A source that points at no captured subject at all cannot
+ * be placed that way; it is attributed by capture time, which is what lets a findings-free
+ * assessment still answer coverage negatively. */
+function sourceCoversSubjects(source: CapturedRevision, host: CapturedRevision, relation: LinkRelation,
+  binding: SubjectBinding): boolean {
+  const linked = linkedSubjectKeys(source, relation, binding);
+  if (linked.size === 0) return true;
+  return host.items.some((item) => item.item_kind === binding.item_kind
+    && linked.has(subjectKey(item.item_scope, item.producer_local_id)));
 }
 
-/** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
-interface AssessmentSources { readonly revisions: readonly CapturedRevision[]; readonly subjects: readonly CapturedRevision[];
-}
-function assessmentPackages({ revisions, subjects }: AssessmentSources): Result<PackageBatch, RunPackageError> {
+/** The pinned relation points inward, so the source revision is found by capture window rather
+ * than by a link on the subject. An empty resolved set is valid evidence of a miss. */
+function assessmentWindowPackages({ revisions, subjects, question, recipe }: BuilderInput)
+  : Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageDecision[] = [];
-  const supported_ids = new Set(subjects.map((revision) => revision.revision_id));
-  const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
+  const question_id = question.question_id;
+  const inward = recipeSlots(recipe).flatMap((slot) => slot.source.from === "linked" && slot.source.direction === "in"
+    ? [{ role: slot.role, relation: slot.source }] : []);
+  if (inward.length !== 1) return err({ operation: "evidence_packages", entity_id: question_id,
+    detail: "an assessment window recipe pins exactly one inward relation" });
+  const { role, relation } = inward[0]!;
+  const own = slotsFrom(recipeSlots(recipe), "subject");
+  const supported = new Set(subjects.map((revision) => revision.revision_id));
+  const hosts = revisions.filter((revision) => revision.artifact_kind === recipe.subject.artifact_kind)
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
-  for (const [index, brief] of briefs.entries()) {
-    if (!supported_ids.has(brief.revision_id)) continue;
+  for (const [index, host] of hosts.entries()) {
+    if (!supported.has(host.revision_id)) continue;
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
-    // supersedes this brief, including a successor whose provenance is unsupported.
-    const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id);
-    const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
-      && assessmentCoversBrief(revision, brief)
-      && revision.recorded_at >= brief.recorded_at
-      && (!next_brief || revision.recorded_at < next_brief.recorded_at))
+    // supersedes this host, including a successor whose provenance is unsupported.
+    const successor = hosts.slice(index + 1).find((candidate) => candidate.unit_id === host.unit_id);
+    const sources = revisions.filter((revision) => revision.artifact_kind === relation.artifact_kind
+      && sourceCoversSubjects(revision, host, relation, recipe.subject)
+      && revision.recorded_at >= host.recorded_at
+      && (!successor || revision.recorded_at < successor.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
-    for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
-      if (assessments.length === 0) {
-        exclusions.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
-          reason: { kind: "unevidenced" } });
+    for (const subject of host.items.filter((item) => item.item_kind === recipe.subject.item_kind)) {
+      if (sources.length === 0) {
+        exclusions.push({ question_id, occurrence_id: subject.occurrence_id, reason: { kind: "unevidenced" } });
         continue;
       }
-      for (const assessment of assessments) {
-        const findings = assessment.items.filter((item) => item.item_kind === "assessment_finding"
-          && item.links.some((link) => link.type === "assesses" && link.target_artifact_kind === "brief"
-            && link.target_item_kind === "criterion" && link.target_scope === criterion.item_scope
-            && link.target_local_id === criterion.producer_local_id));
-        const links = coverageInput(criterion, findings);
-        if (!links.ok) return err({ operation: "evidence_packages", entity_id: criterion.occurrence_id, detail: links.error.detail });
-        const references = collectReferences([reference("brief_criterion", brief.artifact_kind, criterion,
-          links.value as unknown as JsonValue),
-          ...findings.map((finding) => reference("assessment_finding", assessment.artifact_kind, finding))]);
+      for (const source of sources) {
+        const found = linkedItems(subject, relation, recipe.subject, source.items).resolved;
+        const links = coverageInput(subject, found);
+        if (!links.ok) return err({ operation: "evidence_packages", entity_id: subject.occurrence_id,
+          detail: links.error.detail });
+        const references = collectReferences([
+          ...own.map((slot) => reference(slot.role, host.artifact_kind, subject, links.value as unknown as JsonValue)),
+          ...found.map((item) => reference(role, source.artifact_kind, item)),
+        ]);
         if (!references.ok) return references;
-        const evidence = packagedEvidenceSet("assessment.coverage", references.value, null);
+        const evidence = packagedEvidenceSet(question_id, references.value, null);
         if (!evidence.ok) return evidence;
-        packages.push({ question_id: "assessment.coverage", subject: criterion,
-          revision_id: assessment.revision_id, evidence: evidence.value });
+        packages.push({ question_id, subject, revision_id: source.revision_id, evidence: evidence.value });
       }
       const latest = packages.at(-1)!;
-      eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
+      eligibility.push({ question_id, occurrence_id: subject.occurrence_id,
         decision: { tag: "eligible", payload: { evidence_set_id: latest.evidence.evidence_set_id } } });
     }
   }
   return ok({ packages, exclusions, eligibility });
 }
 
+/** No captured artifact supplies this question's inputs, so every subject is excluded for a
+ * missing source. The pin says which, instead of a branch keyed on the question id. */
+function unscheduledSourcePackages({ subjects, question, recipe }: BuilderInput,
+  build: Extract<EvidenceBuild, { kind: "unscheduled_source" }>): PackageBatch {
+  return { packages: [], exclusions: [], eligibility: subjects.flatMap((revision) =>
+    revision.items.filter((item) => item.item_kind === recipe.subject.item_kind).map((subject) => ({
+      question_id: question.question_id, occurrence_id: subject.occurrence_id,
+      decision: { tag: "missing_evidence" as const, payload: { kind: "missing_source" as const, detail: build.detail } },
+    }))) };
+}
+
 interface SubjectSelection {
   readonly revisions: readonly CapturedRevision[];
   readonly eligibility: readonly PackageDecision[];
 }
-const subjectArtifactKinds: Readonly<Record<PilotQuestionId, string>> = {
-  "analysis.finding_relevance": "analysis", "plan.criterion_traceability": "plan",
-  "brief.source_fidelity": "brief", "assessment.coverage": "brief",
-};
-export function pilotSubjectArtifactKind(question_id: string): string | null {
-  return Object.hasOwn(subjectArtifactKinds, question_id) ? subjectArtifactKinds[question_id as PilotQuestionId] : null;
-}
-function selectSubjects(revisions: readonly CapturedRevision[], question: PilotQuestion | undefined): SubjectSelection {
-  if (!question) return { revisions: [], eligibility: [] };
-  const question_id = question.definition.question_id as PilotQuestionId;
-  const candidates = revisions.filter((revision) => revision.artifact_kind === subjectArtifactKinds[question_id]);
+/** Revisions whose recorded provenance matches the pin, and an inapplicable decision for every
+ * targeted item in the ones that do not. The subject's artifact kind comes from the pin. */
+function selectSubjects(revisions: readonly CapturedRevision[], question: QuestionDefinition,
+  recipe: PilotEvidenceRecipe): SubjectSelection {
+  const candidates = revisions.filter((revision) => revision.artifact_kind === recipe.subject.artifact_kind);
   const decisions = candidates.map((revision) => ({ revision,
-    decision: provenanceEligibility(question.definition.pinned_expectation, revision) }));
+    decision: provenanceEligibility(question.pinned_expectation, revision) }));
   return {
     revisions: decisions.filter(({ decision }) => decision.tag === "eligible").map(({ revision }) => revision),
     eligibility: decisions.flatMap(({ revision, decision }) => decision.tag === "inapplicable"
-      ? revision.items.filter((item) => question.definition.target_item_kinds.includes(item.item_kind))
-        .map((item) => ({ question_id, occurrence_id: item.occurrence_id, decision })) : []),
+      ? revision.items.filter((item) => question.target_item_kinds.includes(item.item_kind))
+        .map((item) => ({ question_id: question.question_id, occurrence_id: item.occurrence_id, decision })) : []),
   };
 }
 
@@ -285,53 +300,60 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
       return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no supported captured evidence recipe" });
   }
   const selected = selectCapturedRevisions(revisions, policy);
-  const pilot = (id: PilotQuestionId) => {
-    const question = questions[id];
-    return question && hasPinnedPilotRecipe(question.definition) ? question : undefined;
-  };
-  const analysis_subjects = selectSubjects(selected.revisions, pilot("analysis.finding_relevance"));
-  const plan_subjects = selectSubjects(selected.revisions, pilot("plan.criterion_traceability"));
-  const brief_subjects = selectSubjects(selected.revisions, pilot("brief.source_fidelity"));
-  const coverage_subjects = selectSubjects(selected.revisions, pilot("assessment.coverage"));
-  const plan = planPackages(selected.revisions, plan_subjects.revisions);
-  if (!plan.ok) return plan;
-  const brief = briefPackages(selected.revisions, brief_subjects.revisions);
-  if (!brief.ok) return brief;
-  const assessment = assessmentPackages({ revisions: selected.revisions, subjects: coverage_subjects.revisions });
-  if (!assessment.ok) return assessment;
+  // Dispatch on the build the question pins, never on its id. Two questions may pin the same
+  // build and subject binding; each still carries its own id through to its own decisions.
+  const batches: PackageBatch[] = [];
+  for (const question of Object.values(questions)) {
+    if (!question) continue;
+    const recipe = pinnedPilotRecipe(question.definition);
+    if (!recipe) continue;
+    const selection = selectSubjects(selected.revisions, question.definition, recipe);
+    const input: BuilderInput = { revisions: selected.revisions, subjects: selection.revisions,
+      question: question.definition, recipe };
+    const built = recipe.build.kind === "linked_sources" ? linkedSourcePackages(input, recipe.build)
+      : recipe.build.kind === "assessment_window" ? assessmentWindowPackages(input)
+        : ok(unscheduledSourcePackages(input, recipe.build));
+    if (!built.ok) return built;
+    batches.push({ ...built.value, eligibility: [...selection.eligibility, ...built.value.eligibility] });
+  }
   // A built package must satisfy the slot counts its question pins. The builders construct
-  // references from their own rules and never see the pin, so without this a pin requiring two
-  // plan_decision references is marked eligible against a capture holding one.
+  // references from the pinned relations but do not enforce the counts, so without this a pin
+  // requiring two plan_decision references is marked eligible against a capture holding one.
   const slotShortfall = (pack: PilotPackage): readonly string[] => {
     const question = questions[pack.question_id];
     const recipe = question ? pinnedPilotRecipe(question.definition) : null;
     return recipe ? unsatisfiedSlots(recipe, pack.evidence.references) : [];
   };
-  const built = [...plan.value.packages, ...brief.value.packages];
+  const built = batches.flatMap((batch) => batch.packages);
   const satisfied = built.filter((pack) => slotShortfall(pack).length === 0);
   const underEvidenced = built.filter((pack) => slotShortfall(pack).length > 0);
-  let packages = [...satisfied, ...assessment.value.packages];
-  const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
+  const shortfallOf = new Map(underEvidenced.map((pack) => [String(pack.evidence.evidence_set_id), pack]));
+  const unsatisfiedDecision = (pack: PilotPackage): EligibilityDecision => ({ tag: "missing_evidence",
+    payload: { kind: "missing_source", detail: `pinned recipe is unsatisfied for ${slotShortfall(pack).join(", ")}` } });
+  let packages = [...satisfied];
+  const exclusions = batches.flatMap((batch) => batch.exclusions);
+  // A builder that names its own eligible evidence set — the assessment window picks the latest
+  // in the window — must not keep that decision when the package it names failed the slot check.
+  const fromBuilders = batches.flatMap((batch) => batch.eligibility).map((item) => {
+    if (item.decision.tag !== "eligible") return item;
+    const dropped = shortfallOf.get(String(item.decision.payload.evidence_set_id));
+    return dropped ? { ...item, decision: unsatisfiedDecision(dropped) } : item;
+  });
+  const decided = new Set(fromBuilders.map((item) => `${item.question_id} ${item.occurrence_id}`));
+  const undecided = (pack: PilotPackage) => !decided.has(`${pack.question_id} ${pack.subject.occurrence_id}`);
   const eligibility: PackageDecision[] = [
-    ...[analysis_subjects, plan_subjects, brief_subjects, coverage_subjects].flatMap((selection) => selection.eligibility),
-    ...satisfied.map((pack): PackageDecision => ({ question_id: pack.question_id,
+    ...fromBuilders,
+    ...satisfied.filter(undecided).map((pack): PackageDecision => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
-    ...underEvidenced.map((pack): PackageDecision => ({ question_id: pack.question_id,
-      occurrence_id: pack.subject.occurrence_id,
-      decision: { tag: "missing_evidence", payload: { kind: "missing_source",
-        detail: `pinned recipe is unsatisfied for ${slotShortfall(pack).join(", ")}` } } })),
+    ...underEvidenced.filter(undecided).map((pack): PackageDecision => ({ question_id: pack.question_id,
+      occurrence_id: pack.subject.occurrence_id, decision: unsatisfiedDecision(pack) })),
     ...exclusions.map((excluded): PackageDecision => ({ question_id: excluded.question_id,
       occurrence_id: excluded.occurrence_id,
       decision: excluded.reason.kind === "dangling_citation" || excluded.reason.kind === "unlinked"
         ? { tag: "invalid_reference", payload: excluded.reason }
         : excluded.reason.kind === "skipped_budget" ? { tag: "skipped_budget", payload: excluded.reason }
           : { tag: "missing_evidence", payload: excluded.reason } })),
-    ...itemsOf(analysis_subjects.revisions, "analysis", "finding").map((subject): PackageDecision => ({
-      question_id: "analysis.finding_relevance", occurrence_id: subject.occurrence_id,
-      decision: { tag: "missing_evidence", payload: { kind: "missing_source", detail: "no relevant excerpt source is scheduled" } },
-    })),
-    ...assessment.value.eligibility,
   ];
   for (const question of Object.values(questions)) {
     if (!question) continue;
