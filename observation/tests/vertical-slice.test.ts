@@ -181,7 +181,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       .some((edge) => edge.asserted_by === "human")).toBe(true);
 
     // (e) The shipped deterministic and stub-model runners grade the same pinned occurrence independently.
-    const question = { question_id: "criterion-check", question_version: "1", target_item_kinds: ["criterion"],
+    const question = { question_id: "criterion-check", question_version: "1", pinned_expectation: { definition_id: "development", artifact_schema_version: "development-v1" }, target_item_kinds: ["criterion"],
       input_recipe: { expected: "matching evidence" }, response_kind: "boolean", allowed_values: null,
       missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
       interpretation_caveats: "fixture check", requires_repository_snapshot: false };

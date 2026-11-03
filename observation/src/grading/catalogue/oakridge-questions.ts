@@ -1,15 +1,17 @@
 import type { QuestionId } from "../../domain/identity";
-import type { QuestionDefinition } from "../question";
+import type { PinnedExpectation, QuestionDefinition } from "../question";
 import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe, type PilotQuestionId } from "../evidence-packages/pilot-recipe";
 
 export interface PilotQuestion { readonly definition: QuestionDefinition; readonly text: string }
-function pinnedQuestion(definition: QuestionDefinition, text: string): PilotQuestion {
-  return { definition: { ...definition, question_text: text,
-    evidence_recipe_provenance: { recipe_id: definition.question_id, recipe_version: definition.question_version,
-      source: "observation/src/grading/evidence-packages/pilot-recipe.ts" } }, text };
+export type PilotExpectations = Readonly<Record<PilotQuestionId, PinnedExpectation>>;
+export type PilotQuestionSelection = Readonly<Partial<Record<PilotQuestionId, PilotQuestion>>>;
+export type PilotQuestions = Readonly<Record<PilotQuestionId, PilotQuestion>>;
+function pinnedQuestion(definition: Omit<QuestionDefinition, "pinned_expectation">, text: string,
+  pinned_expectation: PinnedExpectation): PilotQuestion {
+  return { definition: { ...definition, question_text: text, pinned_expectation }, text };
 }
 
-const relevance: QuestionDefinition = {
+const relevance: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "analysis.finding_relevance" as QuestionId, question_version: "v1", target_item_kinds: ["finding"],
   input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["analysis.finding_relevance"]),
   response_kind: "choice", allowed_values: ["relevant", "irrelevant", "unclear_insufficient_evidence"],
@@ -19,7 +21,7 @@ const relevance: QuestionDefinition = {
   interpretation_caveats: "Judge one analysis finding against the original requested change and its relevant excerpt, not the whole analysis body.",
   requires_repository_snapshot: false,
 };
-const traceability: QuestionDefinition = {
+const traceability: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "plan.criterion_traceability" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
   input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["plan.criterion_traceability"]),
   response_kind: "choice", allowed_values: ["traceable", "unsupported", "unclear_insufficient_evidence"],
@@ -29,7 +31,7 @@ const traceability: QuestionDefinition = {
   interpretation_caveats: "Judge one plan criterion only against the tasks and decisions it cites, not the whole plan, analysis or task list. Added implementation detail is not unsupported; only scope or a requirement no cited source supports is.",
   requires_repository_snapshot: false,
 };
-const fidelity: QuestionDefinition = {
+const fidelity: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "brief.source_fidelity" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
   input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["brief.source_fidelity"]),
   response_kind: "choice", allowed_values: ["faithful", "changed_meaning", "unclear_insufficient_evidence"],
@@ -39,7 +41,7 @@ const fidelity: QuestionDefinition = {
   interpretation_caveats: "Pair plan and brief criteria by the unchanged cohort criterion id and derived_from link; rewording does not create a new item.",
   requires_repository_snapshot: false,
 };
-const coverage: QuestionDefinition = {
+const coverage: Omit<QuestionDefinition, "pinned_expectation"> = {
   question_id: "assessment.coverage" as QuestionId, question_version: "v1", target_item_kinds: ["criterion"],
   input_recipe: pinnedInputRecipe(PILOT_EVIDENCE_RECIPES["assessment.coverage"]),
   response_kind: "boolean", allowed_values: null, missing_evidence_policy: "fail",
@@ -50,9 +52,11 @@ const coverage: QuestionDefinition = {
 };
 
 /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
-export const OAKRIDGE_QUESTIONS: Readonly<Record<PilotQuestionId, PilotQuestion>> = {
-  "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?"),
-  "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?"),
-  "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?"),
-  "assessment.coverage": pinnedQuestion(coverage, "Does at least one assessment finding explicitly assess this brief criterion?"),
-};
+export function oakridgeQuestions(expectations: PilotExpectations): PilotQuestions {
+  return {
+    "analysis.finding_relevance": pinnedQuestion(relevance, "Is this analysis finding relevant to the originally requested change?", expectations["analysis.finding_relevance"]),
+    "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?", expectations["plan.criterion_traceability"]),
+    "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?", expectations["brief.source_fidelity"]),
+    "assessment.coverage": pinnedQuestion(coverage, "Does at least one assessment finding explicitly assess this brief criterion?", expectations["assessment.coverage"]),
+  };
+}

@@ -58,13 +58,18 @@ export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefiniti
     projected_fields: [...recipe.projected_fields] };
 }
 
-export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
-  : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
+export function hasPinnedPilotRecipe(question: QuestionDefinition): boolean {
   const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
   const expected = recipe ? canonicalJson(pinnedInputRecipe(recipe)) : null;
   const actual = canonicalJson(question.input_recipe);
-  if (!recipe || question.question_version !== recipe.recipe_version || !expected?.ok || !actual.ok
-    || expected.value !== actual.value)
+  return Boolean(recipe && question.question_version === recipe.recipe_version && expected?.ok && actual.ok
+    && expected.value === actual.value);
+}
+
+export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
+  : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
+  const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
+  if (!hasPinnedPilotRecipe(question))
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
   const slots = [...recipe.input, ...recipe.output];
   const allowed = new Set<EvidenceRole>(slots.map((slot) => slot.role));

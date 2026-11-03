@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { expect, test } from "bun:test";
 import { createApp } from "../src/http/app";
 import { workOneJob } from "../src/grading/jobs/worker";
@@ -110,3 +111,57 @@ integration("grade operator fences an abandoned manual execution and retries wit
   expect(rows.executions.find((row) => row.execution_id === execution.execution_id)?.error).toBe("operator_recovery");
   expect(rows.grades).toHaveLength(1);
 }));
+
+for (const recorded of [
+  { definition_id: "old-definition", artifact_schema_version: "1", field: "definition_id" },
+  { definition_id: "definition-1", artifact_schema_version: "old-schema", field: "artifact_schema_version" },
+  { definition_id: null, artifact_schema_version: "1", field: "definition_id" },
+  { definition_id: "definition-1", artifact_schema_version: null, field: "artifact_schema_version" },
+]) {
+  integration(`all four routes refuse unsupported ${recorded.field}=${recorded[recorded.field as "definition_id" | "artifact_schema_version"]} without grading rows`,
+    async () => scratchGrading(async (db, occurrence_id) => {
+      // Emulate a pre-identity capture in this disposable database only.
+      await sql`ALTER TABLE observation.source_revision ALTER COLUMN definition_id DROP NOT NULL,
+        ALTER COLUMN artifact_schema_version DROP NOT NULL`.execute(db);
+      await withTenant(db, tenant, (trx) => sql`UPDATE observation.source_revision
+        SET definition_id = ${recorded.definition_id}, artifact_schema_version = ${recorded.artifact_schema_version},
+          body = '{"legacy":"no decoder should inspect this"}'::jsonb
+        WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx));
+      expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+      // Even a previously recorded eligible decision cannot bypass the provenance gate.
+      await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
+        (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
+        VALUES (${tenant.producer}, ${tenant.namespace}, ${occurrence_id}, ${question.question_id}, ${question.question_version},
+          'eligible', ${JSON.stringify({ evidence_set_id: evidence.evidence_set_id })}::jsonb)`.execute(trx));
+      const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+      const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
+        question_id: question.question_id, question_version: question.question_version,
+        evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "unsupported" };
+      const counts = () => withTenant(db, tenant, async (trx) => ({
+        jobs: await trx.selectFrom("observation.grading_job").select("job_id").execute(),
+        assignments: await trx.selectFrom("observation.blind_assignment").select("assignment_id").execute(),
+        executions: await trx.selectFrom("observation.evaluation_execution").select("execution_id").execute(),
+      }));
+      const before = await counts();
+      const eligibility = await app.request(`/v1/evaluation-eligibility?question_id=${question.question_id}&question_version=${question.question_version}`,
+        { headers: { authorization: "Bearer read-token" } });
+      expect(eligibility.status).toBe(200);
+      const decision = (await eligibility.json()).items[0];
+      expect(decision).toMatchObject({ subject_occurrence_id: occurrence_id, tag: "inapplicable" });
+      expect(decision.payload.reason).toContain(`${recorded.field}: recorded=${JSON.stringify(recorded[recorded.field as "definition_id" | "artifact_schema_version"])}`);
+      expect(decision.payload.reason).toContain(`pinned=${JSON.stringify(question.pinned_expectation[recorded.field as "definition_id" | "artifact_schema_version"])}`);
+      expect(await counts()).toEqual(before);
+      for (const path of ["/v1/evaluation-jobs", "/v1/blind-assignments", "/v1/evaluations"]) {
+        const response = await app.request(path, { method: "POST",
+          headers: { authorization: "Bearer grade-token", "content-type": "application/json" },
+          body: JSON.stringify(path === "/v1/blind-assignments" ? identity
+            : { identity, runner: "deterministic" }) });
+        expect(response.status).toBe(path === "/v1/blind-assignments" ? 409 : 422);
+        expect((await response.json()).error.message).toContain("Unsupported provenance");
+        expect(await counts()).toEqual(before);
+      }
+      await expect(enqueueJob(db, tenant, { identity, runner_name: "deterministic" }, gradingLimits()))
+        .rejects.toThrow("Unsupported provenance");
+      expect(await counts()).toEqual(before);
+    }));
+}

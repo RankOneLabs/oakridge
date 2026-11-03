@@ -4,7 +4,9 @@ import { listGrades, readExecution, registerGradingContext, runGrade } from "../
 import type { GradingContext } from "../src/grading/runner";
 import { evaluatorIdentity, instructionDigest } from "../src/grading/evaluator";
 import { withTenant } from "../src/storage/database";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { PILOT_EVIDENCE_RECIPES, pinnedInputRecipe } from "../src/grading/evidence-packages/pilot-recipe";
 import { evidence, evaluator, question, scratchGrading, tenant } from "./grading-fixture";
 

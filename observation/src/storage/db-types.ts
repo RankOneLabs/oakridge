@@ -123,7 +123,8 @@ export interface ObservationQuestionDefinition {
   interpretation_caveats: string;
   requires_repository_snapshot: boolean;
   question_text: string | null;
-  evidence_recipe_provenance: JsonValue | null;
+  expected_definition_id: string;
+  expected_artifact_schema_version: string;
 }
 
 export interface ObservationEvidenceSet {

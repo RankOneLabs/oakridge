@@ -1,3 +1,6 @@
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const questions = oakridgeQuestions(pilotExpectations);
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
@@ -19,7 +22,7 @@ async function captured(kind: string, at: string): Promise<CapturedRevision> {
   const body = await Bun.file(new URL(`../fixtures/oakridge/run-slice/${kind}-revision.json`, import.meta.url)).json() as JsonValue;
   const revision_id = `${kind}-first`;
   const pass = selectRevision(body, revision_id, oakridgeDevelopmentCatalogue(kind, "1"));
-  return { revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
+  return { ...pilotExpectations["plan.criterion_traceability"], revision_id, unit_id: kind, artifact_kind: kind, recorded_at: new Date(at),
     items: pass.items.map(({ item }, index) => ({ ...item, occurrence_id: `${kind}-${index}` as ItemOccurrenceId, revision_id })) };
 }
 
@@ -35,7 +38,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
       .map((item) => ({ ...item, item_kind: "finding" })) };
   const laterPlan: CapturedRevision = { ...plan, revision_id: "plan-later", recorded_at: new Date("2026-10-23T18:00:00Z"),
     items: plan.items.map((item) => ({ ...item, revision_id: "plan-later", selected_value: { changed: true } })) };
-  const result = runPackages([analysis, plan, brief, assessment, laterPlan]);
+  const result = runPackages([analysis, plan, brief, assessment, laterPlan], questions);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   const manifest = result.value;
@@ -49,7 +52,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   expect(briefPackage?.evidence.references[0]?.digest).toBe(firstDigest.ok ? firstDigest.value : null);
   expect(manifest.selection_policy).toBe("live_all_revisions");
   const missingLink = runPackages([plan, { ...brief, items: brief.items.map((item) => item.item_kind === "criterion"
-    ? { ...item, links: [] } : item) }]);
+    ? { ...item, links: [] } : item) }], questions);
   expect(missingLink.ok && missingLink.value.exclusions.every((excluded) => excluded.reason.kind !== "dangling_citation")).toBe(true);
   expect(missingLink.ok && missingLink.value.exclusions.some((excluded) => excluded.reason.kind === "unlinked")).toBe(true);
   const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
@@ -59,13 +62,13 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   ]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "eligible")).toBe(true);
-  const withoutAssessment = runPackages([plan, brief]);
+  const withoutAssessment = runPackages([plan, brief], questions);
   expect(withoutAssessment.ok && withoutAssessment.value.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "missing_evidence" && row.decision.payload.kind === "unevidenced")).toBe(true);
   const laterAssessment: CapturedRevision = { ...assessment, revision_id: "assessment-later",
     recorded_at: new Date("2026-10-23T17:45:00Z"), items: assessment.items.map((item, index) => ({ ...item,
       revision_id: "assessment-later", occurrence_id: `assessment-later-${index}` as ItemOccurrenceId })) };
-  const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment]);
+  const repeatedCoverage = runPackages([plan, brief, assessment, laterAssessment], questions);
   expect(repeatedCoverage.ok && repeatedCoverage.value.packages.filter((pack) => pack.question_id === "assessment.coverage").length).toBe(4);
   expect(repeatedCoverage.ok && repeatedCoverage.value.eligibility.filter((row) => row.question_id === "assessment.coverage").length).toBe(2);
   expect(manifest.eligibility.some((row) => row.question_id === "analysis.finding_relevance"
@@ -80,13 +83,13 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
   const assessmentA = await captured("assessment", "2026-10-23T17:40:00Z");
   // Brief B belongs to a second cohort: its own unit, its own criterion ids, captured between
   // brief A and A's assessment. Nothing of A's is assessed by B and vice versa.
-  const briefB: CapturedRevision = { revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
+  const briefB: CapturedRevision = { ...pilotExpectations["brief.source_fidelity"], revision_id: "brief-b", unit_id: "briefs/other", artifact_kind: "brief",
     recorded_at: new Date("2026-10-23T17:32:00Z"),
     items: briefA.items.map((item, index) => ({ ...item, revision_id: "brief-b",
       occurrence_id: `brief-b-${index}` as ItemOccurrenceId,
       producer_local_id: item.producer_local_id === null ? null : `${item.producer_local_id}-b` })) };
 
-  const result = runPackages([plan, briefA, briefB, assessmentA]);
+  const result = runPackages([plan, briefA, briefB, assessmentA], questions);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
 
@@ -111,6 +114,26 @@ test("a concurrent cohort's brief does not close another brief's assessment wind
     && bOccurrences.has(pack.subject.occurrence_id))).toEqual([]);
 });
 
+for (const has_findings of [true, false]) {
+  test(`an unsupported successor closes coverage's assessment window with ${has_findings ? "stable criterion links" : "no findings"}`, async () => {
+    const brief = await captured("brief", "2026-10-23T17:29:56Z");
+    const successor: CapturedRevision = { ...brief, definition_id: "other-definition", revision_id: "brief-successor",
+      recorded_at: new Date("2026-10-23T17:32:00Z"), items: brief.items.map((item, index) => ({ ...item,
+        revision_id: "brief-successor", occurrence_id: `brief-successor-${index}` as ItemOccurrenceId })) };
+    const captured_assessment = await captured("assessment", "2026-10-23T17:40:00Z");
+    const assessment = { ...captured_assessment, items: has_findings ? captured_assessment.items : [] };
+    const result = runPackages([brief, successor, assessment], { "assessment.coverage": questions["assessment.coverage"] });
+    if (!result.ok) throw new Error(result.error.detail);
+    const supported_ids = new Set(brief.items.filter((item) => item.item_kind === "criterion").map((item) => item.occurrence_id));
+    const unsupported_ids = new Set(successor.items.filter((item) => item.item_kind === "criterion").map((item) => item.occurrence_id));
+    expect(result.value.eligibility.filter((row) => supported_ids.has(row.occurrence_id)).map((row) => row.decision))
+      .toEqual([...supported_ids].map(() => ({ tag: "missing_evidence", payload: { kind: "unevidenced" } })));
+    expect(result.value.eligibility.filter((row) => unsupported_ids.has(row.occurrence_id)).map((row) => row.decision.tag))
+      .toEqual([...unsupported_ids].map(() => "inapplicable"));
+    expect(result.value.packages).toEqual([]);
+  });
+}
+
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 integration("typed missing evidence and dependency decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
   const analysis = "analysis.finding_relevance" as const;
@@ -131,3 +154,26 @@ integration("typed missing evidence and dependency decisions persist", async () 
   expect((await readEligibility(db, tenant, analysis, "v1"))[0]?.tag).toBe("missing_evidence");
   expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ dependency: "ArtifactSource.collect", detail: "no implementor" });
 }));
+
+test("unsupported captured provenance stops before subject or evidence interpretation", async () => {
+  const plan = await captured("plan", "2026-10-23T17:23:49Z");
+  const unsupported = { ...plan, definition_id: "b".repeat(64), items: plan.items.map((item) => ({ ...item,
+    item_scope: null, producer_local_id: null, selected_value: "obsolete layout", links: [] })) };
+  const result = runPackages([unsupported], { "plan.criterion_traceability": questions["plan.criterion_traceability"] });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.packages).toEqual([]);
+  expect(result.value.exclusions).toEqual([]);
+  expect(result.value.eligibility.length).toBeGreaterThan(0);
+  expect(result.value.eligibility.every((row) => row.decision.tag === "inapplicable"
+    && row.decision.payload.reason.includes(`recorded="${unsupported.definition_id}"`)
+    && row.decision.payload.reason.includes('pinned="definition-1"'))).toBe(true);
+});
+
+test("captured derivation requires the question's pinned pilot recipe", async () => {
+  const plan = await captured("plan", "2026-10-23T17:23:49Z");
+  const entry = questions["plan.criterion_traceability"];
+  const result = runPackages([plan], { "plan.criterion_traceability": { ...entry,
+    definition: { ...entry.definition, input_recipe: {} } } });
+  expect(result).toMatchObject({ ok: false, error: { detail: "question has no pinned pilot evidence recipe" } });
+});

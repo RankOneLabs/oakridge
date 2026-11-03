@@ -6,7 +6,7 @@ import { runnerEntry, runnerNames } from "../grading/runner";
 import { recoverManualExecution, registerGradingContext, runGrade } from "../storage/grading-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
-import { readEligibility } from "../storage/eligibility-store";
+import { checkGradingProvenance, readEligibility } from "../storage/eligibility-store";
 import { gradingLimits } from "../grading/jobs/budget";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
@@ -15,7 +15,8 @@ import { errorResponse } from "./errors";
 export const responseKindSchema = z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]);
 export const contextSchema = z.object({
   question: z.object({ question_id: z.string().min(1), question_version: z.string().min(1),
-    question_text: z.string().optional(), evidence_recipe_provenance: z.object({ recipe_id: z.string(), recipe_version: z.string(), source: z.string() }).optional(),
+    question_text: z.string().optional(),
+    pinned_expectation: z.object({ definition_id: z.string().min(1), artifact_schema_version: z.string().min(1) }),
     target_item_kinds: z.array(z.string().min(1)).min(1), input_recipe: z.record(z.string(), z.unknown()),
     response_kind: responseKindSchema, allowed_values: z.array(z.unknown()).nullable(),
     missing_evidence_policy: z.enum(["fail", "abstain"]), abstain_semantics: z.string(),
@@ -74,15 +75,20 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
       reviewed_commit: z.string().min(1).optional(),
       runner: z.enum(runnerNames) }).safeParse(body);
     if (!parsed.success) return errorResponse(c, 400, "invalid_evaluation", parsed.error.message);
-    if (runnerEntry(parsed.data.runner)?.network)
-      return errorResponse(c, 422, "queued_evaluation_required", "submit network grading to POST /v1/evaluation-jobs");
     const identity = parsed.data.identity as EvaluationIdentity;
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
-      const registered = await registerGradingContext(deps.db, credential, context);
+    }
+    const provenance = await checkGradingProvenance(deps.db, credential, { ...identity,
+      pinned_expectation: parsed.data.context?.question.pinned_expectation });
+    if (!provenance.ok) return errorResponse(c, 422, "evaluation_refused", provenance.error.detail);
+    if (runnerEntry(parsed.data.runner)?.network)
+      return errorResponse(c, 422, "queued_evaluation_required", "submit network grading to POST /v1/evaluation-jobs");
+    if (parsed.data.context) {
+      const registered = await registerGradingContext(deps.db, credential, parsed.data.context as unknown as GradingContext);
       if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
     const runner = runnerEntry(parsed.data.runner)!.factory(gradingLimits().provider_deadline_ms, process.env);
@@ -104,8 +110,6 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");
       if (context.evaluator.kind !== runnerEntry(parsed.data.runner)?.kind)
         return errorResponse(c, 400, "runner_mismatch", "runner does not match evaluator kind");
-      const registered = await registerGradingContext(deps.db, credential, context);
-      if (!registered.ok) return errorResponse(c, 422, "invalid_context", registered.error.detail);
     }
     try {
       const job = await enqueueJob(deps.db, credential, { identity, runner_name: parsed.data.runner,

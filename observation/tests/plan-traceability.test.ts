@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import type { JsonValue } from "../src/domain/primitives";
-import { OAKRIDGE_QUESTIONS } from "../src/grading/catalogue/oakridge-questions";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations } from "./grading-fixture";
+const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
 import { projectPilotEvidence, type EvidenceSource } from "../src/grading/evidence-packages/pilot-recipe";
 import { planCriterionEligibility, traceabilityExclusion } from "../src/producers/oakridge/plan-traceability";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";

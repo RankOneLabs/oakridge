@@ -5,9 +5,9 @@ import { collectReferences, capturedReference, packagedEvidenceSet, type Evidenc
 import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
-import type { EligibilityDecision, ExclusionReason } from "../../grading/eligibility";
-import type { PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
-import { OAKRIDGE_QUESTIONS } from "../../grading/catalogue/oakridge-questions";
+import { provenanceEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
+import { hasPinnedPilotRecipe, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import type { PilotQuestion, PilotQuestionSelection } from "../../grading/catalogue/oakridge-questions";
 
 export interface PilotPackage {
   readonly question_id: PilotQuestionId;
@@ -55,10 +55,10 @@ function reference(role: string, artifact_kind: string, item: CapturedItem) {
   return capturedReference(role, item, kind.value);
 }
 
-function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+function planPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
-  for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "plan")) {
+  for (const revision of subjects) {
     const task_revision = revisions.filter((candidate) => candidate.artifact_kind === "tasks"
       && candidate.recorded_at <= revision.recorded_at)
       .sort((a, b) => b.recorded_at.getTime() - a.recorded_at.getTime())[0];
@@ -88,10 +88,10 @@ function planPackages(revisions: readonly CapturedRevision[]): Result<RunPackage
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
 }
 
-function briefPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+function briefPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
-  for (const revision of revisions.filter((candidate) => candidate.artifact_kind === "brief")) {
+  for (const revision of subjects) {
     const plan = planAtBrief(revisions, revision);
     const plan_criteria = plan?.items.filter((item) => item.item_kind === "criterion") ?? [];
     for (const criterion of revision.items.filter((item) => item.item_kind === "criterion")) {
@@ -145,17 +145,20 @@ function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevi
 }
 
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
-function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+interface AssessmentSources { readonly revisions: readonly CapturedRevision[]; readonly subjects: readonly CapturedRevision[];
+  readonly requires_repository_snapshot: boolean }
+function assessmentPackages({ revisions, subjects, requires_repository_snapshot }: AssessmentSources): Result<RunPackages, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   const eligibility: PackageEligibility[] = [];
-  const needs_repository = OAKRIDGE_QUESTIONS["assessment.coverage"].definition.requires_repository_snapshot;
+  const supported_ids = new Set(subjects.map((revision) => revision.revision_id));
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
   for (const [index, brief] of briefs.entries()) {
+    if (!supported_ids.has(brief.revision_id)) continue;
     // A concurrent cohort's brief must not close this one's assessment window: a run can
     // capture brief A, brief B, then A's assessment. Only a later revision of the same unit
-    // supersedes this brief.
+    // supersedes this brief, including a successor whose provenance is unsupported.
     const next_brief = briefs.slice(index + 1).find((candidate) => candidate.unit_id === brief.unit_id);
     const assessments = revisions.filter((revision) => revision.artifact_kind === "assessment"
       && assessmentCoversBrief(revision, brief)
@@ -163,7 +166,7 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
       && (!next_brief || revision.recorded_at < next_brief.recorded_at))
       .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
     for (const criterion of brief.items.filter((item) => item.item_kind === "criterion")) {
-      if (needs_repository) {
+      if (requires_repository_snapshot) {
         eligibility.push({ question_id: "assessment.coverage", occurrence_id: criterion.occurrence_id,
           decision: { tag: "blocked_dependency", payload: { dependency: "ArtifactSource.collect",
             detail: "no repository-content implementor of ArtifactSource.collect exists" } } });
@@ -195,18 +198,53 @@ function assessmentPackages(revisions: readonly CapturedRevision[]): Result<RunP
   return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility });
 }
 
-export function runPackages(revisions: readonly CapturedRevision[], policy: RevisionSelection["policy"] = "live_all_revisions")
+interface SubjectSelection {
+  readonly revisions: readonly CapturedRevision[];
+  readonly eligibility: readonly PackageEligibility[];
+}
+const subjectArtifactKinds: Readonly<Record<PilotQuestionId, string>> = {
+  "analysis.finding_relevance": "analysis", "plan.criterion_traceability": "plan",
+  "brief.source_fidelity": "brief", "assessment.coverage": "brief",
+};
+export function pilotSubjectArtifactKind(question_id: string): string | null {
+  return Object.hasOwn(subjectArtifactKinds, question_id) ? subjectArtifactKinds[question_id as PilotQuestionId] : null;
+}
+function selectSubjects(revisions: readonly CapturedRevision[], question: PilotQuestion | undefined): SubjectSelection {
+  if (!question) return { revisions: [], eligibility: [] };
+  const question_id = question.definition.question_id as PilotQuestionId;
+  const candidates = revisions.filter((revision) => revision.artifact_kind === subjectArtifactKinds[question_id]);
+  const decisions = candidates.map((revision) => ({ revision,
+    decision: provenanceEligibility(question.definition.pinned_expectation, revision) }));
+  return {
+    revisions: decisions.filter(({ decision }) => decision.tag === "eligible").map(({ revision }) => revision),
+    eligibility: decisions.flatMap(({ revision, decision }) => decision.tag === "inapplicable"
+      ? revision.items.filter((item) => question.definition.target_item_kinds.includes(item.item_kind))
+        .map((item) => ({ question_id, occurrence_id: item.occurrence_id, decision })) : []),
+  };
+}
+
+export function runPackages(revisions: readonly CapturedRevision[], questions: PilotQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions")
   : Result<RunPackages, RunPackageError> {
+  for (const [question_id, question] of Object.entries(questions)) {
+    if (question_id !== question.definition.question_id || !hasPinnedPilotRecipe(question.definition))
+      return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no pinned pilot evidence recipe" });
+  }
   const selected = selectCapturedRevisions(revisions, policy);
-  const plan = planPackages(selected.revisions);
+  const analysis_subjects = selectSubjects(selected.revisions, questions["analysis.finding_relevance"]);
+  const plan_subjects = selectSubjects(selected.revisions, questions["plan.criterion_traceability"]);
+  const brief_subjects = selectSubjects(selected.revisions, questions["brief.source_fidelity"]);
+  const coverage_subjects = selectSubjects(selected.revisions, questions["assessment.coverage"]);
+  const plan = planPackages(selected.revisions, plan_subjects.revisions);
   if (!plan.ok) return plan;
-  const brief = briefPackages(selected.revisions);
+  const brief = briefPackages(selected.revisions, brief_subjects.revisions);
   if (!brief.ok) return brief;
-  const assessment = assessmentPackages(selected.revisions);
+  const assessment = assessmentPackages({ revisions: selected.revisions, subjects: coverage_subjects.revisions,
+    requires_repository_snapshot: questions["assessment.coverage"]?.definition.requires_repository_snapshot ?? false });
   if (!assessment.ok) return assessment;
   const packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
   const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
   const eligibility: PackageEligibility[] = [
+    ...[analysis_subjects, plan_subjects, brief_subjects, coverage_subjects].flatMap((selection) => selection.eligibility),
     ...[...plan.value.packages, ...brief.value.packages].map((pack): PackageEligibility => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
@@ -216,7 +254,7 @@ export function runPackages(revisions: readonly CapturedRevision[], policy: Revi
         ? { tag: "invalid_reference", payload: excluded.reason }
         : excluded.reason.kind === "skipped_budget" ? { tag: "skipped_budget", payload: excluded.reason }
           : { tag: "missing_evidence", payload: excluded.reason } })),
-    ...itemsOf(selected.revisions, "analysis", "finding").map((subject): PackageEligibility => ({
+    ...itemsOf(analysis_subjects.revisions, "analysis", "finding").map((subject): PackageEligibility => ({
       question_id: "analysis.finding_relevance", occurrence_id: subject.occurrence_id,
       decision: { tag: "missing_evidence", payload: { kind: "missing_source", detail: "no relevant excerpt source is scheduled" } },
     })),
