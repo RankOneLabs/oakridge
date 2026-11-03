@@ -23,19 +23,19 @@ import { instructionDigest } from "../src/grading/evaluator";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { createApp } from "../src/http/app";
-import { decodeSourceEventDelivery, type SourceEventDelivery } from "../src/ingest/cursor";
-import type { GradePage } from "../src/storage/grading-store";
+import { decodeSourceEventDelivery, type SourceEventCursor, type SourceEventDelivery } from "../src/ingest/cursor";
+import { registerQuestion, type GradePage } from "../src/storage/grading-store";
 import type { GradingJob } from "../src/storage/grading-job-store";
-import type { ItemsPage } from "../src/storage/projection-store";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
-import type { SourceRevisionRead } from "../src/storage/capture-store";
+import { initializeSourceCursor, type SourceRevisionRead } from "../src/storage/capture-store";
+import { readAllPages, selectGradeSubject } from "./live-grade-subject";
 
 type LiveQuestionId = "plan.criterion_traceability" | "brief.source_fidelity";
 export interface LiveOptions { readonly capture_path: string; readonly question_id: LiveQuestionId;
   readonly estimated_cost: number; readonly report_path?: string; readonly resume_database_name?: string }
-interface CapturedRun { readonly run_id: string; readonly definition_id: string;
-  readonly namespace: string; readonly deliveries: readonly SourceEventDelivery[] }
+export interface CapturedRun { readonly run_id: string; readonly definition_id: string;
+  readonly namespace: string; readonly starting_cursor: SourceEventCursor; readonly deliveries: readonly SourceEventDelivery[] }
 
 /** The two pilot questions whose evidence a captured planning-and-brief pass can supply. */
 const SYSTEM_ONE_CRITERIA: Readonly<Record<LiveQuestionId, Readonly<Record<string, string>>>> = {
@@ -82,7 +82,7 @@ function normalizedExecution(execution: GradePage["items"][number]["execution"])
 }
 
 /** Decode the producer boundary, retaining its v2 envelopes and provenance verbatim. */
-async function readCapturedRun(path: string): Promise<CapturedRun> {
+export async function readCapturedRun(path: string): Promise<CapturedRun> {
   const input: unknown = await Bun.file(path).json();
   requireCondition(Array.isArray(input) && input.length > 0, "capture must be a nonempty SourceEventDelivery[]");
   const deliveries = input.map((value: unknown) => {
@@ -92,7 +92,14 @@ async function readCapturedRun(path: string): Promise<CapturedRun> {
   });
   const launch = deliveries[0];
   requireCondition(launch?.outcome.kind === "run_input", "capture must start with this run's launch");
-  requireCondition(launch.previous.commit_txid === "0" && launch.previous.id === "", "capture must start at the initial cursor");
+  let previous = launch.previous;
+  for (const delivery of deliveries) {
+    requireCondition(sameJson(delivery.previous, previous), "capture has a gap in its recorded cursor chain");
+    requireCondition(BigInt(delivery.cursor.commit_txid) > BigInt(previous.commit_txid)
+      || delivery.cursor.commit_txid === previous.commit_txid && delivery.cursor.id > previous.id,
+    "capture cursor must advance for every delivery");
+    previous = delivery.cursor;
+  }
   const definition = resolveLaunchableDefinition("development");
   requireCondition(definition.ok, "committed development definition cannot be resolved");
   const run_id = launch.outcome.run_id;
@@ -106,7 +113,7 @@ async function readCapturedRun(path: string): Promise<CapturedRun> {
     && revision.source.producer === "oakridge" && revision.source.namespace === namespace
     && revision.source.run_id === run_id && revision.source.definition_id === definition.value.definition_id),
   "capture revisions must retain the run's v2 provenance");
-  return { run_id, definition_id: definition.value.definition_id, namespace, deliveries };
+  return { run_id, definition_id: definition.value.definition_id, namespace, starting_cursor: launch.previous, deliveries };
 }
 
 // These fields mirror the stored records returned by the authenticated HTTP API.
@@ -176,8 +183,10 @@ export async function verifyCapturedRun(options: LiveOptions): Promise<LiveRepor
     const ingest_token = credentials.ingest[0].token;
     const read_token = credentials.read[0].token;
     const grade_token = credentials.grade[0].token;
-    if (!options.resume_database_name)
+    if (!options.resume_database_name) {
+      requireCondition(await initializeSourceCursor(db, tenant, captured.starting_cursor), "verification source cursor already exists");
       for (const delivery of captured.deliveries) await request("/v1/sources/oakridge/events", ingest_token, delivery);
+    }
     for (const { outcome } of captured.deliveries) {
       if (outcome.kind !== "artifact_revision") continue;
       const revision = outcome.revision;
@@ -187,18 +196,16 @@ export async function verifyCapturedRun(options: LiveOptions): Promise<LiveRepor
         && stored.body_digest === revision.body_digest && sameJson(stored.body, revision.body),
       "stored source revision differs from the production capture");
     }
-    const items = await (await request(`/v1/runs/${encodeURIComponent(captured.run_id)}/items?limit=200`, read_token)).json() as ItemsPage;
-    const candidates = items.items.filter((item) => item.item_kind === "criterion" && item.artifact_kind === artifact
-      && revision.source.revision_id.endsWith(`:${item.revision_id}`) && item.producer_local_id !== null);
-    requireCondition(candidates.length > 0, `capture did not project a producer-identified ${artifact} criterion`);
+    const registered = await registerQuestion(db, tenant, question);
+    requireCondition(registered.ok, `cannot register pinned question: ${registered.ok ? "" : registered.error.detail}`);
+    const subject = await selectGradeSubject((path) => request(path, read_token), { run_id: captured.run_id,
+      revision_id: revision.source.revision_id.slice(`oakridge:${captured.namespace}:`.length), artifact_kind: artifact, question });
     const instruction_text = JSON.stringify({ system_one: { type: "choice",
       instructions: SYSTEM_ONE_INSTRUCTIONS[options.question_id], criteria: SYSTEM_ONE_CRITERIA[options.question_id] } });
     const evaluator = { evaluator_definition_id: `jev-direct-${options.question_id}`, kind: "model",
       backend_kind: "local", provider: "typesafe", model: "jev-latest", instruction_text,
       prompt_digest: instructionDigest(instruction_text), config_digest: "jev-live-2", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: null };
-    const subject = candidates[0];
-    requireCondition(subject, "no grade subject");
     // No evidence is supplied: queue admission must derive it from this capture.
     const identity = { subject_occurrence_id: subject.occurrence_id, question_id: question.question_id,
       question_version: question.question_version, evaluator_definition_id: evaluator.evaluator_definition_id,
@@ -211,8 +218,9 @@ export async function verifyCapturedRun(options: LiveOptions): Promise<LiveRepor
       `provider job ${job.job_id} ended in ${job.state}/${job.terminal_cause}`);
     const grades_path = `/v1/items/${encodeURIComponent(subject.occurrence_id)}/grades?limit=200`;
     requireCondition((await app.request(grades_path)).status === 403, "unauthenticated grade read must be refused");
-    const grades = await (await request(grades_path, read_token)).json() as GradePage;
-    const matching = grades.items.filter((grade) => grade.execution.question_id === identity.question_id
+    const grades = await readAllPages<GradePage["items"][number]>(async (offset) =>
+      (await request(`${grades_path}&offset=${offset}`, read_token)).json() as Promise<GradePage>);
+    const matching = grades.filter((grade) => grade.execution.question_id === identity.question_id
       && grade.execution.question_version === identity.question_version
       && grade.execution.evaluator_definition_id === identity.evaluator_definition_id
       && grade.execution.config_digest === identity.config_digest && grade.execution.attempt_label === identity.attempt_label);

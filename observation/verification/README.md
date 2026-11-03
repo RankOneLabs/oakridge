@@ -66,6 +66,13 @@ Question versions use `GET /v1/questions/:id/versions/:version`; evidence
 sets use `GET /v1/evidence-sets/:id`. These routes require read authority and
 scope every lookup to its credential's producer and namespace.
 
+A later run can start after an existing namespace cursor. Its recorded
+starting cursor seeds only the new verification namespace; the original
+deliveries remain unchanged, and gaps or backwards positions are refused.
+Subject selection pages through the eligibility API for the captured revision,
+skipping uncited or unlinked criteria before any provider call. Grade readback
+also follows every result page.
+
 `--resume-database observation_jev_live_<16 hex digits>` resumes a retained
 verification database after a readback interruption. Every captured revision
 is compared to its stored HTTP response before selecting the exact provider
