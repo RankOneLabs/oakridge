@@ -67,11 +67,14 @@ async function verifyGrant(grant: RoleGrant): Promise<void> {
     expect(listed.error).toBeUndefined();
     const result = toolList.parse(listed.result);
     expect(result.nextCursor).toBeUndefined();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual([...grant.expected_tools].sort());
+    const tool_names = result.tools.map((tool) => tool.name).sort();
+    console.info(JSON.stringify({ role: grant.role, tool_names }));
+    expect(tool_names).toEqual([...grant.expected_tools].sort());
 
     // An invented credential must not inherit an authenticated MCP session.
     const refused = await post({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} },
       { ...headers, authorization: `Bearer invalid-${crypto.randomUUID()}` });
+    console.info(JSON.stringify({ role: grant.role, invalid_credential_status: refused.status }));
     expect([401, 403]).toContain(refused.status);
     await refused.body?.cancel();
   } finally {

@@ -1,0 +1,38 @@
+{
+  "checked_at": "2026-11-03T16:46:49.320432+00:00",
+  "endpoint": "http://otto:3555/mcp",
+  "credential_kind": "deliberately_invalid_bearer",
+  "credential_issuance": "No issuer or bearer validator in the checked-out gated-review server; no legitimate role credentials were fabricated.",
+  "roles": {
+    "builder": {
+      "initialize_status": 200,
+      "tools_list_status": 200,
+      "tools": [
+        "review.get_state",
+        "review.list_actions",
+        "open_pr",
+        "reply_to_thread",
+        "resolve_thread",
+        "request_next_round",
+        "git.push",
+        "git.pull",
+        "git.fetch",
+        "get_review_round",
+        "pr_status"
+      ]
+    },
+    "assessor": {
+      "initialize_status": 200,
+      "tools_list_status": 200,
+      "tools": [
+        "review.get_state",
+        "review.list_actions",
+        "set_pr_draft",
+        "git.fetch",
+        "get_review_round",
+        "pr_status"
+      ]
+    }
+  },
+  "result": "blocked: invalid credentials received tool lists; requires a gated-review server authentication change"
+}
