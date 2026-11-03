@@ -45,7 +45,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   const first = manifest.packages.find((item) => item.question_id === "plan.criterion_traceability" && item.revision_id === plan.revision_id);
   expect(first?.evidence.references.map((ref) => ref.ref.split(":")[0])).toEqual(["plan_criterion", "plan_decision"]);
   expect(first?.evidence.references.every((ref) => ref.digest?.startsWith("canonical-json/v1:")
-    && ref.kind === "internal" && ref.content === null && ref.deep_link?.startsWith("oakridge://revision/"))).toBe(true);
+    && ref.kind === "internal" && ref.content !== null && ref.deep_link?.startsWith("oakridge://revision/"))).toBe(true);
   const briefPackage = manifest.packages.find((item) => item.question_id === "brief.source_fidelity");
   const planSource = plan.items.find((item) => item.item_kind === "criterion" && item.producer_local_id === briefPackage?.subject.producer_local_id);
   const firstDigest = canonicalDigest(planSource?.selected_value);

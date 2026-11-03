@@ -7,13 +7,64 @@ import { registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { enqueueJob } from "../src/storage/grading-job-store";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { tenant, question, evidence, evaluator, scratchGrading, capturedCoverage } from "./grading-fixture";
+import { tenant, question, evidence, evaluator, scratchGrading, capturedCoverage, captureProjectedFixture, pilotExpectations } from "./grading-fixture";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { createJevDirectRunner } from "../src/runners/jev-direct";
+import { instructionDigest } from "../src/grading/evaluator";
+import type { JsonValue } from "../src/domain/primitives";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 const grade = { ...tenant, token: "grade-token" };
 const read = { ...tenant, token: "read-token" };
 const runner: GradeRunner = { kind: "model", async run() { return { ok: true,
   value: { answer: { state: "answered", kind: "boolean", value: true } } }; } };
+
+integration("queued plan and brief model requests contain the captured criteria and cited sources", async () => scratchGrading(async (db) => {
+  const plan_criterion = { id: "criterion", text: "Preserve captured source", task_ids: ["task"], decision_ids: ["decision"] };
+  const task = { id: "task", description: "Capture the source", requirement_ids: [] };
+  const decision = { id: "decision", text: "Keep immutable evidence" };
+  const brief_criterion = { ...plan_criterion, text: "Retain the captured source unchanged" };
+  await captureProjectedFixture(db, { revision_id: "model-tasks", artifact_kind: "tasks", body: { tasks: [task] } });
+  const plan = await captureProjectedFixture(db, { revision_id: "model-plan", artifact_kind: "plan", body: {
+    cohorts: [{ id: "cohort", decisions: [decision], acceptance_criteria: [plan_criterion] }], acceptance_criteria: [], risks: [],
+  } });
+  const brief = await captureProjectedFixture(db, { revision_id: "model-brief", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [brief_criterion],
+  } });
+  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+  for (const [question_id, items, expected] of [
+    ["plan.criterion_traceability", plan, { "plan_criterion:criterion": plan_criterion, "plan_task:task": task, "plan_decision:decision": decision }],
+    ["brief.source_fidelity", brief, { "plan_criterion:criterion": plan_criterion, "brief_criterion:criterion": brief_criterion }],
+  ] as const) {
+    const question = oakridgeQuestions(pilotExpectations)[question_id].definition;
+    const subject = items.find((item) => item.item_kind === "criterion")!;
+    const criteria = Object.fromEntries(question.allowed_values!.map((value) => [String(value), String(value)]));
+    const instruction_text = JSON.stringify({ system_one: { type: "choice", instructions: "Judge captured evidence", criteria } });
+    const model = { ...evaluator("model"), evaluator_definition_id: question_id, model: "pinned-model", instruction_text,
+      prompt_digest: instructionDigest(instruction_text) };
+    const queued = await app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade-token", "content-type": "application/json" },
+      body: JSON.stringify({ identity: { subject_occurrence_id: subject.occurrence_id,
+        question_id, question_version: question.question_version, evaluator_definition_id: model.evaluator_definition_id,
+        config_digest: model.config_digest, attempt_label: "captured-content" },
+      context: { question, evaluator: model }, runner: "jev_direct", estimated_cost: 0.1 }) });
+    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
+    const requests: JsonValue[] = [];
+    const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1", transport: async (_url, init) => {
+      const request = JSON.parse(String(init.body)) as { readonly state: JsonValue };
+      requests.push(request.state);
+      const choice = String(question.allowed_values![0]);
+      return Response.json({ model: "pinned-model", answers: { [question_id]: { type: "choice", choice,
+        probabilities: Object.fromEntries(Object.keys(criteria).map((value) => [value, value === choice ? 1 : 0])), confidence: 1 } },
+        usage: { input_tokens: 12, output_tokens: 3 } });
+    } });
+    expect((await workOneJob(db, tenant, gradingLimits(), "captured-model", runner)).kind).toBe("processed");
+    expect(requests).toEqual([expected]);
+    const job = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job").selectAll()
+      .where("question_id", "=", question_id).executeTakeFirstOrThrow());
+    expect(job).toMatchObject({ state: "terminal", terminal_cause: null });
+  }
+}));
 
 integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db) => {
   const { occurrence_id, question, evidence } = await capturedCoverage(db);

@@ -46,7 +46,7 @@ function planAtBrief(revisions: readonly CapturedRevision[], brief: CapturedRevi
 }
 
 /** Capture addresses and digests with classification from the source field's declared sensitivity. */
-function reference(role: string, artifact_kind: string, item: CapturedItem, content: JsonValue | null = null) {
+function reference(role: string, artifact_kind: string, item: CapturedItem, content: JsonValue | null = item.selected_value) {
   const kind = evidenceKindForCapturedPath(artifact_kind, item.path);
   if (!kind.ok) return err({ operation: "evidence_packages" as const, entity_id: item.occurrence_id,
     detail: kind.error.detail });
