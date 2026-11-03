@@ -1,3 +1,5 @@
+import { canonicalDigest } from "canonical-json";
+import type { ItemOccurrenceId } from "../src/domain/identity";
 import { expect, test } from "bun:test";
 import { repositorySnapshotEligibility } from "../src/grading/eligibility";
 import type { EvidenceSet } from "../src/grading/evidence";
@@ -144,4 +146,32 @@ integration("abstain and unclear remain distinct from a negative answer and no e
   expect(response.status).toBe(200);
   const page = await response.json();
   expect(page.items.map((item: { answer: { state: string } }) => item.answer.state).sort()).toEqual(["abstain", "answered", "unclear"]);
+}));
+
+integration("production reader pins canonical references to captured source revisions", async () => scratchGrading(async (db) => {
+  const { captureProjectedFixture, pilotExpectations } = await import("./grading-fixture");
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const body = { cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }],
+    acceptance_criteria: [{ id: "criterion", text: "Works", task_ids: [], decision_ids: ["decision"] }] }],
+    acceptance_criteria: [], risks: [] };
+  const items = await captureProjectedFixture(db, { revision_id: "plan-first", artifact_kind: "plan", body });
+  const subject = items.find((item) => item.item_kind === "criterion")!;
+  const selection = { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
+    question: oakridgeQuestions(pilotExpectations)["plan.criterion_traceability"].definition };
+  const first = await deriveCapturedEvidence(db, tenant, "run-1", selection);
+  if (!first.ok) throw new Error(first.error.detail);
+  expect(first.value.subject).toMatchObject({ occurrence_id: subject.occurrence_id, revision_id: "plan-first" });
+  expect(first.value.revision_id).toBe("plan-first");
+  expect(first.value.decision.tag).toBe("eligible");
+  expect(first.value.evidence?.references).toHaveLength(2);
+  for (const reference of first.value.evidence!.references) {
+    const source = items.find((item) => reference.deep_link === `oakridge://revision/plan-first#${item.json_pointer}`)!;
+    const digest = canonicalDigest(source.selected_value);
+    expect(reference.digest).toBe(digest.ok ? digest.value : null);
+  }
+  await captureProjectedFixture(db, { revision_id: "plan-new", artifact_kind: "plan", body: {
+    ...body, cohorts: [{ ...body.cohorts[0]!, decisions: [{ id: "decision", text: "changed source" }] }],
+  }, recorded_at: "2026-11-01T01:00:00Z", predecessor_id: "plan-first" });
+  expect(await deriveCapturedEvidence(db, tenant, "run-1", selection)).toEqual(first);
 }));
