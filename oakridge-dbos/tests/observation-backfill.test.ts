@@ -41,6 +41,7 @@ integration("collaboration sweep retains anchors and provenance while decisions 
         return app.request(new Request(input, init));
       } };
     const { definition_id } = await sampleDefinition();
+    const pinned_expectation = { definition_id, artifact_schema_version: "1" };
     async function seed(archived: boolean, effect: "approve" | "request_changes", number: number) {
       const { run_id } = await launch(authority, { definition_id, request_id: crypto.randomUUID(), input: { topic: `run-${number}` } });
       const unit_id = unitOf(run_id, "document");
@@ -52,7 +53,8 @@ integration("collaboration sweep retains anchors and provenance while decisions 
         (producer, namespace, revision_id, run_id, unit_id, artifact_kind, artifact_schema_version,
          definition_id, body, body_digest, recorded_at)
         VALUES (${tenant.producer}, ${tenant.namespace}, ${revision_id}, ${run_id}, ${unit_id},
-          'brief', '1', ${definition_id}, ${JSON.stringify(brief)}::jsonb, ${digest(brief)}, now())`.execute(trx));
+          'brief', ${pinned_expectation.artifact_schema_version}, ${pinned_expectation.definition_id},
+          ${JSON.stringify(brief)}::jsonb, ${digest(brief)}, now())`.execute(trx));
       expect(await projectRevision(observation, tenant, revision_id)).toMatchObject({ occurrences: 3, relations: 1 });
       const decision_id = `${unit_id}:d${number}`;
       const event_id = crypto.randomUUID();
@@ -132,7 +134,8 @@ integration("collaboration sweep retains anchors and provenance while decisions 
     const archivedOccurrence = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
       .select("occurrence_id").where("run_id", "=", archived.run_id)
       .where("item_kind", "=", "criterion").executeTakeFirstOrThrow());
-    const comparisonQuestion = { ...sampleQuestion, target_item_kinds: ["criterion"], response_kind: "structured" as const };
+    const comparisonQuestion = { ...sampleQuestion, pinned_expectation,
+      target_item_kinds: ["criterion"], response_kind: "structured" as const };
     expect((await registerGradingContext(observation, tenant, { question: comparisonQuestion,
       evidence: sampleEvidence, evaluator: sampleEvaluator("human") })).ok).toBe(true);
     const submitted = await recordHumanGrade(observation, tenant, { subject_occurrence_id: archivedOccurrence.occurrence_id as ItemOccurrenceId,
@@ -144,7 +147,8 @@ integration("collaboration sweep retains anchors and provenance while decisions 
         probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: "operator", reviewer_details: null, comments: null,
         rationale: null, quality_flags: [], supersedes_observation_id: null } });
-    if (!submitted.ok || !submitted.value.observation) throw new Error("fresh human grade was not stored");
+    if (!submitted.ok) throw new Error(submitted.error.detail);
+    if (!submitted.value.observation) throw new Error("fresh human grade was not stored");
     const shape = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.grade_observation as g")
       .innerJoin("observation.evaluator_definition as d", (join) => join.onRef("d.producer", "=", "g.producer")
         .onRef("d.namespace", "=", "g.namespace").onRef("d.evaluator_definition_id", "=", "g.evaluator_definition_id"))
