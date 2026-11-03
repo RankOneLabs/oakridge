@@ -36,7 +36,7 @@ test("a token is configured for exactly one capability and tenant", () => {
     OBSERVATION_EXPORT_RAW_CREDENTIALS: JSON.stringify(credentials.read) })).toThrow("unique");
 });
 
-integration("ingest credential rejects another tenant and all read or grade routes without disclosure", async () => {
+integration("ingest credential rejects another tenant and all read or grade routes without exposing data", async () => {
   if (!serverUrl) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
   const name = `observation_auth_${randomBytes(6).toString("hex")}`;
   const admin = new Client({ connectionString: serverUrl });

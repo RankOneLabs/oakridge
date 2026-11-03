@@ -355,7 +355,6 @@ export interface ObservationGradingJob {
   retry_limit: number;
   terminal_cause: string | null;
   estimated_cost: Generated<number>;
-  disclosure: JsonValue | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

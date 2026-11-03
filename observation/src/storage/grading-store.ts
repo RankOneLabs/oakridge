@@ -328,8 +328,7 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         .returningAll().executeTakeFirstOrThrow();
       if (input.lease) await trx.updateTable("observation.grading_job").set({ state: "terminal",
         terminal_cause: outcome ? null : blocked || missing ? "ineligible"
-          : !result.ok && result.error.operation === "disclosure"
-          ? "disclosure_refused" : !result.ok && result.error.category === "invalid_response"
+          : !result.ok && result.error.category === "invalid_response"
             ? "invalid_outcome" : !result.ok && (["rate_limit", "timeout", "transport", "http_error"] as const)
               .some((category) => category === result.error.category) ? "retry_exhausted"
               : !result.ok && result.error.operation === "evaluate" ? "invalid_outcome" : "runner_failed",

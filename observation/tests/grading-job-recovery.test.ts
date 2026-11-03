@@ -255,27 +255,54 @@ integration("duplicate delivery retains one job while an evaluator regrade adds 
   expect(stored.executions).toHaveLength(2);
 }));
 
-integration("restricted evidence terminates before runner invocation", async () => scratchGrading(async (db, occurrence_id) => {
-  const restricted = { ...evidence, evidence_set_id: "restricted-evidence" as typeof evidence.evidence_set_id,
-    references: [{ ref: "hidden", kind: "internal" as const, content: "secret", digest: "digest" }] };
-  expect((await registerGradingContext(db, tenant, { question, evidence: restricted,
+for (const kind of ["raw_build_output", "raw_test_output", "internal"] as const) {
+  integration(`queued network runner grades ${kind} evidence`, async () => scratchGrading(async (db, occurrence_id) => {
+    const captured = { ...evidence, evidence_set_id: `${kind}-evidence` as typeof evidence.evidence_set_id,
+      references: [{ ref: "captured", kind, content: "captured-output", digest: "digest" }] };
+    expect((await registerGradingContext(db, tenant, { question, evidence: captured,
+      evaluator: evaluator("model") })).ok).toBe(true);
+    const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: captured.evidence_set_id,
+      question_id: question.question_id, question_version: question.question_version,
+      evaluator_definition_id: "model", config_digest: "config-1", attempt_label: kind };
+    const job = await enqueueJob(db, tenant, { identity, runner_name: "jev_direct", estimated_cost: 0.1 }, limits);
+    let calls = 0;
+    const runner: GradeRunner = { kind: "model", async run(context) {
+      calls++;
+      expect(context.evidence.references).toEqual(captured.references);
+      return good.run(context);
+    } };
+    await workOneJob(db, tenant, limits, "network-worker", runner);
+    const stored = await outcome(db, job.job_id);
+    expect(calls).toBe(1);
+    expect(stored.job).toMatchObject({ state: "terminal", terminal_cause: null });
+    expect(stored.grades).toHaveLength(1);
+    expect(stored.attempts[0]).toMatchObject({ request_sent: true, outcome: "completed", charged_cost: 0.2 });
+  }));
+}
+
+integration("queued network runner refuses content with no canonical digest before sending", async () => scratchGrading(async (db, occurrence_id) => {
+  const missing = { ...evidence, references: [{ ref: "missing-content", kind: "internal" as const,
+    content: null, digest: null }] };
+  expect((await registerGradingContext(db, tenant, { question, evidence: missing,
     evaluator: evaluator("model") })).ok).toBe(true);
-  const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: restricted.evidence_set_id,
-    question_id: question.question_id, question_version: question.question_version,
-    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "restricted" };
-  const job = await enqueueJob(db, tenant, { identity, runner_name: "jev_direct", estimated_cost: 0.1 }, limits);
+  const job = await enqueueJob(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
+    evidence_set_id: missing.evidence_set_id, question_id: question.question_id, question_version: question.question_version,
+    evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "missing-digest" },
+    runner_name: "jev_direct", estimated_cost: 0.1 }, limits);
   let calls = 0;
-  const forbidden: GradeRunner = { kind: "model", async run() { calls++; return good.run({} as never); } };
-  await workOneJob(db, tenant, limits, "restricted-worker", forbidden);
+  await workOneJob(db, tenant, limits, "integrity-worker", { kind: "model", async run(context) {
+    calls++;
+    return good.run(context);
+  } });
   const stored = await outcome(db, job.job_id);
   expect(calls).toBe(0);
-  expect(stored.job.state).toBe("terminal");
-  expect(stored.job.terminal_cause).toBe("disclosure_refused");
-  expect(stored.job.disclosure).toBeNull();
-  expect(JSON.stringify(stored)).not.toContain("secret");
+  expect(stored.job).toMatchObject({ state: "terminal", terminal_cause: "runner_failed" });
+  expect(stored.executions[0]?.error).toBe("evidence content has no canonical digest");
+  expect(stored.grades).toEqual([]);
+  expect(stored.attempts[0]).toMatchObject({ request_sent: false, outcome: "failed", charged_cost: 0 });
 }));
 
-integration("queued local runner can grade internal evidence without outbound disclosure", async () => scratchGrading(async (db, occurrence_id) => {
+integration("queued local runner can grade internal evidence", async () => scratchGrading(async (db, occurrence_id) => {
   const internal = { ...evidence, evidence_set_id: "internal-evidence" as typeof evidence.evidence_set_id,
     references: [{ ref: "local", kind: "internal" as const, content: "kept-local", digest: "digest" }] };
   expect((await registerGradingContext(db, tenant, { question, evidence: internal,
@@ -287,7 +314,6 @@ integration("queued local runner can grade internal evidence without outbound di
   await workOneJob(db, tenant, limits, "local-worker", good);
   const stored = await outcome(db, job.job_id);
   expect(stored.job.state).toBe("terminal");
-  expect(stored.job.disclosure).toBeNull();
   expect(stored.grades).toHaveLength(1);
 }));
 
