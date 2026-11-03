@@ -13,7 +13,7 @@ const credentials = { ingest: [{ ...tenant, token: "ingest-secret" }], read: [{ 
 
 test("the cursor decoder rejects an outcome that names a different event", () => {
   expect(decodeSourceEventDelivery({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" },
-    outcome: { format: "observation.source-event/v1", definition_bundle: null, artifact_schema_version: null,
+    outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
       kind: "unmapped", event_kind: "future", run_id: "run-1", event_id: "event-2", reason: "unknown" } })).toBeNull();
 });
 
@@ -33,7 +33,7 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
       const first = await app.request("/v1/sources/oakridge/cursor", { headers: auth });
       expect(await first.json()).toEqual({ cursor: { commit_txid: "0", id: "" } });
       const delivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "20", id: "event-1" },
-        outcome: { format: "observation.source-event/v1", definition_bundle: null, artifact_schema_version: null,
+        outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
           kind: "unmapped", event_kind: "future", run_id: "run-1", event_id: "event-1", reason: "unknown variant" } };
       const send = () => app.request("/v1/sources/oakridge/events", { method: "POST", headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify(delivery) });

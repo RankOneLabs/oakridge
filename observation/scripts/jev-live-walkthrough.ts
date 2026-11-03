@@ -102,26 +102,26 @@ const revisionRef = (row: RevisionEvent): string => `${row.payload.unit}:${row.p
 async function ingestCapturedPass(app: ReturnType<typeof createApp>, events: EventFixture): Promise<readonly RevisionEvent[]> {
   const headers = { authorization: `Bearer ${credentials.ingest[0]!.token}`, "content-type": "application/json" };
   let cursor = { commit_txid: "0", id: "" };
-  const bundle = { id: "development", digest: "fixture-bundle" };
+  const definition_id = "fixture-definition";
   const delivered: RevisionEvent[] = [];
   for (const row of events.rows) {
     const next = { commit_txid: row.commit_txid, id: row.id };
     const outcome = row.payload.kind === "launched"
       ? { format: "observation.source-event/v1", kind: "run_input", event_kind: "launched",
-        run_id: row.run_id, event_id: row.id, definition_bundle: bundle, artifact_schema_version: null,
+        run_id: row.run_id, event_id: row.id, definition_id, artifact_schema_version: null,
         input: (row.payload as unknown as { input: JsonValue }).input, input_schema_version: "development-v1" }
       : row.payload.kind === "revision_published"
         ? { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published",
-          run_id: row.run_id, event_id: row.id, definition_bundle: bundle,
+          run_id: row.run_id, event_id: row.id, definition_id,
           artifact_schema_version: "development-v1",
-          revision: { format: "observation.artifact-revision/v1",
+          revision: { format: "observation.artifact-revision/v2",
             source: { ...tenant, revision_id: `${tenant.producer}:${tenant.namespace}:${revisionRef(row)}`,
               run_id: row.run_id, unit_id: row.unit_id, artifact_kind: row.payload.artifact,
-              artifact_schema_version: "development-v1", definition_bundle: bundle,
+              artifact_schema_version: "development-v1", definition_id,
               predecessor_id: row.payload.predecessor, subject_id: row.payload.subject, by_id: row.payload.by },
             recorded_at: row.created_at, body: row.payload.body, body_digest: digestOf(row.payload.body) } }
         : null;
-    // The observed operator decision predates capture and enters through backfill, not here.
+    // This walkthrough delivers only run inputs and captured revisions.
     if (!outcome) continue;
     const response = await app.request("/v1/sources/oakridge/events", { method: "POST", headers,
       body: JSON.stringify({ previous: cursor, cursor: next, outcome }) });

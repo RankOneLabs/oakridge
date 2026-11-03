@@ -32,9 +32,9 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
 function envelope(body: unknown, revision_id = "oakridge:local-dev:rev-123"): Record<string, unknown> {
   const hashed = canonicalDigest(body);
   if (!hashed.ok) throw new Error(hashed.error.detail);
-  return { format: "observation.artifact-revision/v1", source: { producer: "oakridge", namespace: "local-dev",
+  return { format: "observation.artifact-revision/v2", source: { producer: "oakridge", namespace: "local-dev",
     revision_id, run_id: "run-1", unit_id: "unit-1", artifact_kind: "build_result", artifact_schema_version: "schema-sha256:abc",
-    definition_bundle: { id: "bundle-1", digest: "bundle-sha256:def" } }, recorded_at: "2026-10-28T10:00:00.000Z",
+    definition_id: "definition-1" }, recorded_at: "2026-10-28T10:00:00.000Z",
     body, body_digest: hashed.value };
 }
 async function post(app: ReturnType<typeof createApp>, input: unknown, key = "delivery-1"): Promise<Response> {
@@ -68,7 +68,7 @@ integration("three identical deliveries keep one revision and receipt, and read 
     const revision = await read.json();
     expect(revision).toMatchObject({ id: "oakridge:local-dev:rev-123", producer: "oakridge", namespace: "local-dev",
       run_id: "run-1", unit_id: "unit-1", artifact_kind: "build_result", artifact_schema_version: "schema-sha256:abc",
-      definition_bundle_id: "bundle-1", definition_bundle_digest: "bundle-sha256:def", body: { z: 1, a: ["x"] } });
+      definition_id: "definition-1", body: { z: 1, a: ["x"] } });
     const rehashed = canonicalDigest(revision.body);
     expect(rehashed.ok && rehashed.value).toBe(revision.body_digest);
   } finally { await db.destroy(); }
@@ -87,7 +87,7 @@ integration("live source feedback retains all JSON value kinds", async () => scr
       const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
         headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
         body: JSON.stringify({ previous, cursor, outcome: {
-          format: "observation.source-event/v1", definition_bundle: null, artifact_schema_version: null,
+          format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
           kind: "human_grade", event_kind: "operator_decided", run_id: "run-live", event_id,
           decision_id: event_id, evaluator: { kind: "human" }, unit: "run-live/cohort/a",
           review: "assessment_review", decision: "request_build_changes", target: "pending-capture",
@@ -195,7 +195,7 @@ integration("a string body, such as a markdown spec, is stored as a JSON string"
       headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" },
       body: JSON.stringify({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "event-1" },
         outcome: { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published",
-          run_id: "run-1", event_id: "event-1", definition_bundle: { id: "bundle-1", digest: "bundle-sha256:def" },
+          run_id: "run-1", event_id: "event-1", definition_id: "definition-1",
           artifact_schema_version: "schema-sha256:abc", revision: live } }) });
     expect(delivered.status).toBe(200);
   } finally { await db.destroy(); }
@@ -226,3 +226,26 @@ integration("service boots and serves ingest using only its own database and con
     expect(response.status).toBe(201);
   } finally { await service.stop(); }
 }));
+
+test("capture v2 accepts the explicit definition and artifact schema provenance", () => {
+  expect(decodeCapture(envelope({ value: 1 }), "v2")).toMatchObject({ ok: true,
+    value: { envelope: { format: "observation.artifact-revision/v2",
+      source: { definition_id: "definition-1", artifact_schema_version: "schema-sha256:abc" } } } });
+});
+
+test("the previous capture version is rejected with the named format failure", () => {
+  const input = { ...envelope({ value: 1 }), format: "observation.artifact-revision/" + "v1" };
+  expect(decodeCapture(input, "previous")).toEqual({ ok: false,
+    error: { operation: "decode_capture", entity_id: "envelope", detail: "invalid capture format" } });
+});
+
+for (const field of ["definition_id", "artifact_schema_version"] as const) {
+  for (const value of [undefined, ""]) {
+    test(`capture rejects ${value === undefined ? "absent" : "empty"} ${field} without inferring provenance`, () => {
+      const input = envelope({ value: 1 });
+      const invalid = { ...input, source: { ...input.source as object, [field]: value } };
+      expect(decodeCapture(invalid, "invalid")).toEqual({ ok: false,
+        error: { operation: "decode_capture", entity_id: `source.${field}`, detail: `${field} is required` } });
+    });
+  }
+}

@@ -58,11 +58,11 @@ async function ingest(app: App, kind: string, revision: string, body: JsonValue,
   predecessor: string | null = null, key = revision): Promise<Response> {
   return app.request("/v1/sources/oakridge/sync", { method: "POST", headers: {
     authorization: "Bearer ingest-fixture", "idempotency-key": key, "content-type": "application/json" },
-  body: JSON.stringify({ format: "observation.artifact-revision/v1", source: { ...tenant,
+  body: JSON.stringify({ format: "observation.artifact-revision/v2", source: { ...tenant,
     revision_id: `${tenant.producer}:${tenant.namespace}:${revision}`, run_id,
     unit_id: kind === "plan" ? `${run_id}/planning` : kind === "brief" ? `${run_id}/briefs/slice` : `${run_id}/implementation/slice`,
     artifact_kind: kind, artifact_schema_version: "development-v1",
-    definition_bundle: { id: "development", digest: "fixture-bundle" },
+    definition_id: "development",
     predecessor_id: predecessor ? `${tenant.producer}:${tenant.namespace}:${predecessor}` : null, subject_id: null },
     recorded_at: `2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`, body, body_digest: digest(body) }) });
 }
@@ -202,4 +202,23 @@ integration("incomplete evidence, runner failure and human correction preserve g
   expect(gradePage.total).toBe(2);
   expect(gradePage.items.map((item) => item.observation.observation_id).sort()).toEqual([
     initial.observation.observation_id, corrected.observation.observation_id].sort());
+}));
+
+integration("invalid capture versions and absent provenance are refused without storing revisions", async () => scratch(async (db) => {
+  const app = createApp({ db, credentials });
+  const valid = { format: "observation.artifact-revision/v2", source: { ...tenant,
+    revision_id: `${tenant.producer}:${tenant.namespace}:invalid-capture`, run_id, unit_id: "unit-1",
+    artifact_kind: "brief", artifact_schema_version: "schema-1", definition_id: "definition-1" },
+    recorded_at: "2026-10-28T00:00:00.000Z", body: {}, body_digest: digest({}) };
+  const invalid = [
+    { ...valid, format: "observation.artifact-revision/" + "v1" },
+    ...["definition_id", "artifact_schema_version"].flatMap((field) => [undefined, ""].map((value) =>
+      ({ ...valid, source: { ...valid.source, [field]: value } }))),
+  ];
+  const statuses = await Promise.all(invalid.map(async (input) => (await app.request("/v1/sources/oakridge/sync", {
+    method: "POST", headers: { authorization: "Bearer ingest-fixture", "idempotency-key": crypto.randomUUID(),
+      "content-type": "application/json" }, body: JSON.stringify(input) })).status));
+  expect(statuses).toEqual([400, 400, 400, 400, 400]);
+  const revisions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision").select("revision_id").execute());
+  expect(revisions).toEqual([]);
 }));

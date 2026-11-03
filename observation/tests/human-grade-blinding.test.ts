@@ -153,7 +153,7 @@ integration("readback distinguishes blind, in-context, correction and historical
   expect(correction.status).toBe(201);
   const correctionId = (await correction.json()).observation.observation_id as string;
   await withTenant(db, tenant, (trx) => storeHumanGradeInTransaction(trx, tenant, {
-    format: "observation.source-event/v1", definition_bundle: null, artifact_schema_version: null,
+    format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
     kind: "human_grade", event_kind: "operator_decided", run_id: "run-1", event_id: "event-four-kinds",
     decision_id: "decision-four-kinds", evaluator: { kind: "human" }, unit: "unit-1", review: "assessment",
     decision: "approve", target: "rev-1", feedback: { reason: "approved" }, effect: "approve",

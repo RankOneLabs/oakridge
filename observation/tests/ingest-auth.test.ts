@@ -19,9 +19,9 @@ function delivery(namespace: string, revision: string): object {
   const body = { value: revision };
   const digest = canonicalDigest(body);
   if (!digest.ok) throw new Error(digest.error.detail);
-  return { format: "observation.artifact-revision/v1", source: { producer: "oakridge", namespace,
+  return { format: "observation.artifact-revision/v2", source: { producer: "oakridge", namespace,
     revision_id: `oakridge:${namespace}:${revision}`, run_id: "run-1", unit_id: "unit-1", artifact_kind: "result",
-    artifact_schema_version: "schema-1", definition_bundle: { id: "bundle-1", digest: "bundle-digest-1" } },
+    artifact_schema_version: "schema-1", definition_id: "bundle-1" },
     recorded_at: "2026-10-28T10:00:00Z", body, body_digest: digest.value };
 }
 async function send(app: ReturnType<typeof createApp>, token: string, namespace: string, revision: string): Promise<Response> {

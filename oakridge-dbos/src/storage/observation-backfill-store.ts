@@ -4,20 +4,8 @@ import type { AuthorityCollaborationMessage, AuthorityCollaborationThread, Autho
 import { jsonText } from "./database";
 
 export interface BackfillCursor { readonly created_at: string; readonly id: string }
-export interface ReviewDecisionBatchRow { readonly decision: Selectable<AuthorityReviewDecision>;
-  readonly archived_at: Date | null }
 export interface CollaborationThreadBatchRow { readonly thread: Selectable<AuthorityCollaborationThread>;
   readonly archived_at: Date | null; readonly messages: readonly Selectable<AuthorityCollaborationMessage>[] }
-
-export async function readReviewDecisionRows(db: Kysely<DB>, cursor: BackfillCursor,
-  limit: number): Promise<readonly ReviewDecisionBatchRow[]> {
-  const rows = await db.selectFrom("authority.review_decision as d")
-    .innerJoin("authority.run as r", "r.id", "d.run_id")
-    .selectAll("d").select("r.archived_at")
-    .where((eb) => eb(eb.refTuple("d.created_at", "d.id"), ">", eb.tuple(new Date(cursor.created_at), cursor.id)))
-    .orderBy("d.created_at").orderBy("d.id").limit(limit).execute();
-  return rows.map(({ archived_at, ...decision }) => ({ decision, archived_at }));
-}
 
 export async function readCollaborationThreadRows(db: Kysely<DB>, cursor: BackfillCursor,
   limit: number): Promise<readonly CollaborationThreadBatchRow[]> {
@@ -34,18 +22,6 @@ export async function readCollaborationThreadRows(db: Kysely<DB>, cursor: Backfi
     batch.push({ thread, archived_at, messages });
   }
   return batch;
-}
-
-export async function findDecisionEventId(db: Kysely<DB>, decision: Selectable<AuthorityReviewDecision>): Promise<string | null> {
-  const event: Event = { kind: "operator_decided", unit: decision.unit_id, review: decision.review,
-    decision: decision.decision, target: decision.target_revision_id, payload: decision.payload };
-  const rows = await db.selectFrom("authority.event").select(["id", "created_at"])
-    .where("run_id", "=", decision.run_id).where("payload", "=", event)
-    .orderBy("created_at").orderBy("id").execute();
-  const nearest = rows.reduce<(typeof rows)[number] | null>((best, row) => !best
-    || Math.abs(row.created_at.getTime() - decision.created_at.getTime())
-      < Math.abs(best.created_at.getTime() - decision.created_at.getTime()) ? row : best, null);
-  return nearest?.id ?? null;
 }
 
 export async function readDecisionForEvent(db: Kysely<DB>, run_id: string,

@@ -16,8 +16,7 @@ export interface ObservationSourceRevision {
   unit_id: string;
   artifact_kind: string;
   artifact_schema_version: string;
-  definition_bundle_id: string;
-  definition_bundle_digest: string;
+  definition_id: string;
   body: JsonValue;
   body_digest: string;
   recorded_at: Date;

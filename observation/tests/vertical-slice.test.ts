@@ -112,16 +112,16 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     const ingest = async (row: RevisionEventRow): Promise<void> => {
       const body = row.payload.body;
       const revision = {
-          format: "observation.artifact-revision/v1", source: { ...tenant,
+          format: "observation.artifact-revision/v2", source: { ...tenant,
             revision_id: `${tenant.producer}:${tenant.namespace}:${revisionId(row)}`,
             run_id: row.run_id, unit_id: row.unit_id, artifact_kind: row.payload.artifact,
-            artifact_schema_version: "development-v1", definition_bundle: { id: "development", digest: "fixture-bundle" },
+            artifact_schema_version: "development-v1", definition_id: "development",
             predecessor_id: row.payload.predecessor, subject_id: row.payload.subject, by_id: row.payload.by },
           recorded_at: row.created_at, body, body_digest: digest(body),
         };
       await deliver(row, { format: "observation.source-event/v1", kind: "artifact_revision",
         event_kind: "revision_published", run_id: row.run_id, event_id: row.id,
-        definition_bundle: { id: "development", digest: "fixture-bundle" },
+        definition_id: "development",
         artifact_schema_version: "development-v1", revision } as unknown as JsonValue);
     };
 
@@ -135,7 +135,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     if (!launch) throw new Error("missing launch event");
     await deliver(launch, { format: "observation.source-event/v1", kind: "run_input",
       event_kind: "launched", run_id: launch.run_id, event_id: launch.id,
-      definition_bundle: { id: "development", digest: "fixture-bundle" },
+      definition_id: "development",
       artifact_schema_version: null, input: launch.payload.input,
       input_schema_version: "development-v1" } as JsonValue);
     await ingest(planRow!);
@@ -208,32 +208,32 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     expect(code.observation.answer_payload).toMatchObject({ value: true });
     expect(model.observation.answer_payload).toMatchObject({ value: false });
 
-    // (f) A new human grade and a pre-existing operator decision use the normalized grade store.
+    // (f) A new human grade and a live operator decision use the normalized grade store.
     const human = await app.request("/v1/grades", { method: "POST", headers: gradeHeaders,
       body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "slice-human" },
         context: { question, evidence, evaluator: evaluator("human") },
         details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator",
           collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
     expect(human.status).toBe(201);
-    const preExistingOutcome = { format: "observation.source-event/v1", definition_bundle: null,
+    const preExistingOutcome = { format: "observation.source-event/v1", definition_id: null,
       artifact_schema_version: "development-v1", kind: "human_grade", event_kind: "operator_decided",
       run_id: decision.run_id, event_id: decision.id, decision_id: decision.decision_id,
       evaluator: { kind: "human" }, unit: decision.unit_id, review: decision.payload.review,
       decision: decision.payload.decision, target: revisionId(planRow!), feedback: decision.payload.payload,
       effect: decision.effect, decided_at: decision.created_at };
-    const before = { source: "review_decision", created_at: new Date(0).toISOString(), id: "" };
-    const after = { source: "review_decision", created_at: decision.created_at, id: decision.decision_id };
-    const backfill = await app.request("/v1/sources/oakridge/backfill", { method: "POST", headers: ingestHeaders,
-      body: JSON.stringify({ previous: before, position: after,
-        counts: { review_decision: { active: 1, archived: 0 }, collaboration_thread: { active: 0, archived: 0 } },
+    const beforeDecision = await (await app.request("/v1/sources/oakridge/cursor", { headers: ingestHeaders })).json() as
+      { cursor: { commit_txid: string; id: string } };
+    const decisionDelivery = await app.request("/v1/sources/oakridge/events", { method: "POST", headers: ingestHeaders,
+      body: JSON.stringify({ previous: beforeDecision.cursor,
+        cursor: { commit_txid: String(BigInt(beforeDecision.cursor.commit_txid) + 1n), id: decision.id },
         outcome: preExistingOutcome }) });
-    expect(backfill.status).toBe(200);
-    const backfilledHistory = await app.request(`/v1/items/${encodeURIComponent(planCriterion.occurrence_id)}/grades`,
+    expect(decisionDelivery.status).toBe(200);
+    const decisionHistory = await app.request(`/v1/items/${encodeURIComponent(planCriterion.occurrence_id)}/grades`,
       { headers: readHeaders });
-    const backfilled = (await backfilledHistory.json() as { items: { evaluator: { kind: string };
+    const liveGrade = (await decisionHistory.json() as { items: { evaluator: { kind: string };
       observation: { reviewer_id: string; recorded_at: string } }[] }).items.find((grade) =>
       grade.evaluator.kind === "human" && grade.observation.reviewer_id === "oakridge-operator");
-    expect(new Date(backfilled!.observation.recorded_at).getTime()).toBe(new Date(decision.created_at).getTime());
+    expect(new Date(liveGrade!.observation.recorded_at).getTime()).toBe(new Date(decision.created_at).getTime());
     const sourceGrades = await app.request("/v1/sources/oakridge/human-grades", { headers: readHeaders });
     expect((await sourceGrades.json()).items.some((grade: { decision_id: string }) =>
       grade.decision_id === decision.decision_id)).toBe(true);
