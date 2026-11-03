@@ -26,9 +26,12 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
         .select(["occurrence_id", "revision_id", "extractor_id", "item_selector", "item_id_or_path"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("run_id", "=", run_id).execute();
-      const relations = await trx.selectFrom("observation.item_relation")
-        .select(["source_occurrence_id", "type", "evidence_ref"])
-        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace).execute();
+      const relations = await trx.selectFrom("observation.item_relation as relation")
+        .innerJoin("observation.item_occurrence as source", (join) => join.onRef("source.producer", "=", "relation.producer")
+          .onRef("source.namespace", "=", "relation.namespace").onRef("source.occurrence_id", "=", "relation.source_occurrence_id"))
+        .select(["relation.source_occurrence_id", "relation.type", "relation.evidence_ref"])
+        .where("relation.producer", "=", tenant.producer).where("relation.namespace", "=", tenant.namespace)
+        .where("source.run_id", "=", run_id).execute();
       const linked = new Set(relations.map((row) => `${row.source_occurrence_id}\u0000${row.type}\u0000${row.evidence_ref}`));
       const ids = new Map(occurrences.map((row) => [occurrenceKey(row.revision_id, row.extractor_id, row.item_selector,
         row.item_id_or_path), row.occurrence_id as ItemOccurrenceId]));

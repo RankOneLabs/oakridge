@@ -70,6 +70,7 @@ export async function scratchGrading(work: (db: Database, occurrence_id: ItemOcc
 
 export interface CapturedFixtureRevision {
   readonly revision_id: string;
+  readonly run_id?: string;
   readonly artifact_kind: string;
   readonly body: JsonValue;
   readonly recorded_at?: string;
@@ -77,15 +78,16 @@ export interface CapturedFixtureRevision {
 }
 /** Exercise the real capture and projection boundaries in database grading tests. */
 export async function captureProjectedFixture(db: Database, input: CapturedFixtureRevision) {
+  const run_id = input.run_id ?? "run-1";
   const digest = canonicalDigest(input.body);
   if (!digest.ok) throw new Error(digest.error.detail);
   const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
     envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, ...pinnedExpectation,
-      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id: "run-1", unit_id: input.artifact_kind,
+      revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.artifact_kind,
       artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },
       body: input.body, body_digest: digest.value, recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z" } });
   if (captured.status !== 201) throw new Error("fixture capture refused");
   await projectRevision(db, tenant, input.revision_id);
-  const page = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
+  const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
   return page.items.filter((item) => item.revision_id === input.revision_id);
 }

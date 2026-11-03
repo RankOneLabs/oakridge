@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { sql } from "kysely";
+import { sql, type QueryId } from "kysely";
 import { canonicalDigest } from "canonical-json";
 import type { ItemOccurrenceId } from "../src/domain/identity";
 import { eligibilityExclusionCounts, exclusionReason, provenanceEligibility, type EligibilityDecision } from "../src/grading/eligibility";
@@ -41,6 +41,33 @@ integration("four exclusion causes persist as distinct typed eligibility rows", 
   expect(rows.map((row) => exclusionReason(row)?.kind).sort()).toEqual([...["uncited", "dangling_citation", "unlinked", "unevidenced"] as const].sort());
   expect(eligibilityExclusionCounts(rows)).toEqual({ uncited: 1, dangling_citation: 1, unlinked: 1,
     unevidenced: 1, skipped_budget: 0 });
+}));
+
+integration("a run capture transfers only relations sourced in that run", async () => scratchGrading(async (db) => {
+  const body = { cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }],
+    acceptance_criteria: [{ id: "criterion", text: "Works", task_ids: [], decision_ids: ["decision"] }] }],
+    acceptance_criteria: [], risks: [] };
+  await captureProjectedFixture(db, { revision_id: "own-plan", artifact_kind: "plan", body });
+  await captureProjectedFixture(db, { revision_id: "unrelated-plan", run_id: "unrelated-run", artifact_kind: "plan", body });
+  const relation_queries = new Set<QueryId>();
+  const relation_row_counts: number[] = [];
+  const observed = db.withPlugin({
+    transformQuery({ node, queryId }) {
+      if (JSON.stringify(node).includes('"name":"item_relation"')) relation_queries.add(queryId);
+      return node;
+    },
+    async transformResult({ result, queryId }) {
+      if (relation_queries.has(queryId)) relation_row_counts.push(result.rows.length);
+      return result;
+    },
+  });
+  for (const [run_id, revision_id] of [["run-1", "own-plan"], ["unrelated-run", "unrelated-plan"]] as const) {
+    const capture = await loadRunCapture(observed, tenant, run_id);
+    if (!capture.ok) throw new Error(capture.error.detail);
+    expect(capture.value.find((revision) => revision.revision_id === revision_id)?.items
+      .find((item) => item.item_kind === "criterion")?.links).toHaveLength(1);
+  }
+  expect(relation_row_counts).toEqual([1, 1]);
 }));
 
 const expected = { definition_id: "a".repeat(64), artifact_schema_version: "schema-pinned" };
