@@ -3,7 +3,7 @@
  * Supply the ordered SourceEventDelivery[] recorded by the production observation
  * publisher for a new run launched from the committed development definition:
  *
- *   bun observation/scripts/jev-live-walkthrough.ts --capture /tmp/new-run.json \
+ *   bun observation/scripts/jev-live-walkthrough.ts --capture observation/fixtures/oakridge/live-verification/capture.json \
  *     --question plan.criterion_traceability --estimated-cost 0.01
  *
  * OAKRIDGE_TEST_DATABASE_URL and TYPESAFE_API_KEY are prerequisites. Missing
@@ -11,16 +11,14 @@
  * This command creates and retains its own empty observation database. It never
  * connects to the deployed database, resets data, or deploys a stack. The capture
  * must include the launch and all deliveries through the criterion being graded.
- * Readback uses authenticated API routes and the authenticated API's frozen
- * export artifact (question and evidence); no grading record is read with SQL.
- * Producing the source run/capture is a separate prerequisite, not simulated here.
+ * Readback uses authenticated HTTP response bodies for every grading record.
+ * Produce the capture with source-run-capture.ts; no grading record uses SQL.
  */
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { z } from "zod";
 import { canonicalJson } from "canonical-json";
 import { resolveLaunchableDefinition } from "../../workflow-config/src/definition-store";
-import type { ExportManifest } from "../src/export/manifest";
 import { instructionDigest } from "../src/grading/evaluator";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { workOneJob } from "../src/grading/jobs/worker";
@@ -34,7 +32,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 
 type LiveQuestionId = "plan.criterion_traceability" | "brief.source_fidelity";
 export interface LiveOptions { readonly capture_path: string; readonly question_id: LiveQuestionId;
-  readonly estimated_cost: number }
+  readonly estimated_cost: number; readonly report_path?: string }
 interface CapturedRun { readonly run_id: string; readonly definition_id: string;
   readonly namespace: string; readonly deliveries: readonly SourceEventDelivery[] }
 
@@ -105,8 +103,8 @@ async function readCapturedRun(path: string): Promise<CapturedRun> {
   return { run_id, definition_id: definition.value.definition_id, namespace, deliveries };
 }
 
-// These fields mirror the actual API-generated export record's storage schema.
-const exportedGrade = z.object({
+// These fields mirror the stored records returned by the authenticated HTTP API.
+const storedGrade = z.object({
   question: z.object({ question_id: z.string(), question_version: z.string(), question_text: z.string(),
     input_recipe: z.unknown(), expected_definition_id: z.string(), expected_artifact_schema_version: z.string() }),
   evidence_set: z.object({ evidence_set_id: z.string(), is_incomplete: z.literal(false),
@@ -120,7 +118,10 @@ const exportedGrade = z.object({
     probabilities: z.record(z.string(), z.number().min(0).max(1)) }),
 });
 export interface LiveReport { readonly database_name: string; readonly run_id: string;
-  readonly execution_id: string; readonly subject_occurrence_id: string; readonly export_path: string }
+  readonly execution_id: string; readonly subject_occurrence_id: string;
+  readonly question_id: LiveQuestionId; readonly raw_answer: unknown;
+  readonly probabilities: Readonly<Record<string, number>>;
+  readonly records: z.infer<typeof storedGrade> }
 
 /** Ingest a real capture, derive production evidence, call the provider, then read back. */
 export async function verifyCapturedRun(options: LiveOptions): Promise<LiveReport> {
@@ -193,14 +194,15 @@ export async function verifyCapturedRun(options: LiveOptions): Promise<LiveRepor
     const execution_response = await request(`/v1/evaluation-executions/${grade.execution.execution_id}`, read_token);
     const execution: unknown = await execution_response.json();
     requireCondition(sameJson(execution, grade.execution), "execution readback differs from grade listing");
-    const output = await (await request("/v1/exports/assay", read_token, { selection: {
-      run_id: captured.run_id, occurrence_ids: [subject.occurrence_id] } })).json() as
-      { manifest: ExportManifest; files: { data: string } };
-    const included = output.manifest.membership.filter((member) => member.disposition === "included");
-    requireCondition(included.length === 1 && included[0]?.redaction_reasons.length === 0, "verified grade must export without redaction");
-    const lines = (await Bun.file(output.files.data).text()).trim().split("\n");
-    requireCondition(lines.length === 1, "expected one frozen export record");
-    const record = exportedGrade.parse(JSON.parse(lines[0] ?? ""));
+    const question_path = `/v1/questions/${encodeURIComponent(question.question_id)}/versions/${encodeURIComponent(question.question_version)}`;
+    const evidence_path = `/v1/evidence-sets/${encodeURIComponent(job.evidence_set_id!)}`;
+    for (const path of [question_path, evidence_path])
+      requireCondition((await app.request(path)).status === 403, `${path} must refuse unauthenticated readback`);
+    const record = storedGrade.parse({
+      question: await (await request(question_path, read_token)).json(),
+      evidence_set: await (await request(evidence_path, read_token)).json(),
+      evaluator: grade.evaluator, execution, observation: grade.observation,
+    });
     requireCondition(record.question.expected_definition_id === captured.definition_id
       && record.question.expected_artifact_schema_version === expectation.artifact_schema_version
       && record.question.question_id === options.question_id && record.question.question_text === question.question_text,
@@ -215,8 +217,11 @@ export async function verifyCapturedRun(options: LiveOptions): Promise<LiveRepor
       && record.observation.subject_occurrence_id === subject.occurrence_id, "stored grade identities disagree");
     requireCondition(record.execution.reproducibility_metadata.raw_answer !== undefined
       && Object.keys(record.observation.probabilities).length > 0, "provider raw answer or probabilities were not retained");
-    const report = { database_name: name, run_id: captured.run_id, execution_id: grade.execution.execution_id,
-      subject_occurrence_id: subject.occurrence_id, export_path: output.files.data };
+    const report: LiveReport = { database_name: name, run_id: captured.run_id, execution_id: grade.execution.execution_id,
+      subject_occurrence_id: subject.occurrence_id, question_id: options.question_id,
+      raw_answer: record.execution.reproducibility_metadata.raw_answer,
+      probabilities: record.observation.probabilities, records: record };
+    if (options.report_path) await Bun.write(options.report_path, JSON.stringify(report, null, 2) + "\n");
     console.log(JSON.stringify(report, null, 2));
     return report;
   } finally { await db.destroy(); }
@@ -232,6 +237,6 @@ if (import.meta.main) {
     const question_id = argument("--question") ?? "plan.criterion_traceability";
     requireCondition(question_id === "plan.criterion_traceability" || question_id === "brief.source_fidelity", "unsupported --question");
     requireCondition(capture_path, "--capture is required");
-    await verifyCapturedRun({ capture_path, question_id, estimated_cost: Number(argument("--estimated-cost") ?? "0.01") });
+    await verifyCapturedRun({ capture_path, question_id, estimated_cost: Number(argument("--estimated-cost") ?? "0.01"), report_path: argument("--report") });
   }
 }
