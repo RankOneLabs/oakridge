@@ -1,31 +1,23 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 
 import type { Project, RepositoryInputDraft } from "../../types";
-import { repositoryDraftFromProject } from "../../repository-inputs";
 import { Button } from "../../../components/atoms/Button";
 
 interface RepositoryLaunchFieldsProps {
   repositories: RepositoryInputDraft[];
   setRepositories: Dispatch<SetStateAction<RepositoryInputDraft[]>>;
   projects: Project[];
+  onAddRepository: (project: Project) => void;
   isLoadingProjects: boolean;
   disabled: boolean;
 }
 
 const inputClass = "or-form-input";
 
-export function RepositoryLaunchFields({ repositories, setRepositories, projects, isLoadingProjects, disabled }: RepositoryLaunchFieldsProps) {
+export function RepositoryLaunchFields({ repositories, setRepositories, projects, onAddRepository, isLoadingProjects, disabled }: RepositoryLaunchFieldsProps) {
   const [isChoosingProject, setIsChoosingProject] = useState(false);
   const update = (index: number, patch: Partial<RepositoryInputDraft>) => {
     setRepositories((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
-  };
-  const addFromProject = (projectId: string) => {
-    const project = projects.find((candidate) => candidate.id === projectId);
-    if (!project) return;
-    setRepositories((current) => [...current, repositoryDraftFromProject(project, {
-      key: "", path: "", forge_owner: "", forge_name: "", integration_branch: "main",
-    })]);
-    setIsChoosingProject(false);
   };
 
   return (
@@ -41,7 +33,12 @@ export function RepositoryLaunchFields({ repositories, setRepositories, projects
           <select
             className={inputClass}
             value=""
-            onChange={(event) => addFromProject(event.target.value)}
+            onChange={(event) => {
+              const project = projects.find((candidate) => candidate.id === event.target.value);
+              if (!project) return;
+              onAddRepository(project);
+              setIsChoosingProject(false);
+            }}
             disabled={disabled || isLoadingProjects || projects.length === 0}
             aria-label="Project for additional repository"
             autoFocus
