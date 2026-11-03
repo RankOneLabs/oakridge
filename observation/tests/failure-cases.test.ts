@@ -183,7 +183,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     context: { question: question("human-correction", "matching"), evidence: evidence("complete", false),
       evaluator: evaluator("human") },
     details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.first }, reviewer_id: "operator",
-      collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } };
+      origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } };
   const first = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify(base) });
   expect(first.status).toBe(201);
   const initial = await first.json() as { observation: { observation_id: string } };
@@ -191,7 +191,7 @@ integration("incomplete evidence, runner failure and human correction preserve g
     body: JSON.stringify({ ...base, identity: { ...base.identity, attempt_label: "correction" },
       context: undefined, details: { answer: { state: "answered", kind: "boolean", value: cases.human_correction.corrected },
         reviewer_id: "operator", supersedes_observation_id: initial.observation.observation_id,
-        collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
+        origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
   expect(correction.status).toBe(201);
   const corrected = await correction.json() as { observation: { observation_id: string; supersedes_observation_id: string } };
   expect(corrected.observation.supersedes_observation_id).toBe(initial.observation.observation_id);

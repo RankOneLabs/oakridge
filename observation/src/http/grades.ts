@@ -23,7 +23,7 @@ const answerSchema = z.union([
   z.object({ state: z.literal("answered"), kind: z.literal("structured"), value: z.unknown() }),
   z.object({ state: z.enum(["abstain", "unclear"]), kind: responseKindSchema, reason: z.string().min(1) }),
 ]);
-const detailsSchema = z.object({ answer: answerSchema, probabilities: z.record(z.string(), z.number().min(0).max(1)).nullable().default(null),
+const detailsSchema = z.object({ origin: z.enum(["human_rubric_answer", "workflow_approval", "automated_evaluation"]), answer: answerSchema, probabilities: z.record(z.string(), z.number().min(0).max(1)).nullable().default(null),
   confidence: z.number().min(0).max(1).nullable().default(null), normalized_score: z.number().finite().nullable().default(null),
   decision_policy_id: z.string().nullable().default(null), decision_policy_version: z.string().nullable().default(null),
   reviewer_id: z.string().min(1).optional(), reviewer_details: z.unknown().nullable().default(null),

@@ -12,7 +12,10 @@ export type GradeAnswer =
   | { readonly state: "answered"; readonly kind: "text"; readonly value: string }
   | { readonly state: "answered"; readonly kind: "structured"; readonly value: JsonValue }
   | { readonly state: "abstain" | "unclear"; readonly kind: ResponseKind; readonly reason: string };
+export type GradeOrigin = "human_rubric_answer" | "workflow_approval" | "automated_evaluation";
+
 export interface GradeObservation {
+  readonly origin: GradeOrigin;
   readonly observation_id: GradeObservationId;
   readonly answer: GradeAnswer;
   readonly probabilities: Readonly<Record<string, number>> | null;
@@ -30,11 +33,10 @@ export interface GradeObservation {
 
 /** The grades read contract mirrors the joined grading rows after JSON serialization. */
 export interface GradeObservationListing extends Omit<GradeObservation, "answer" | "probabilities" | "quality_flags"> {
-  readonly collection_mode: "blind" | "in_context" | "unknown";
+  readonly collection_mode: "blind" | "in_context";
   readonly blind_assignment_id: string | null;
   readonly model_answers_visible: boolean | null;
   readonly workflow_decisions_visible: boolean | null;
-  readonly label_origin: "oakridge_operator_unblinded" | "other";
   readonly producer: string;
   readonly namespace: string;
   readonly execution_id: ExecutionId;

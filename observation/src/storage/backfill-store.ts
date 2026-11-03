@@ -91,6 +91,8 @@ export async function storeHumanGradeInTransaction(trx: DatabaseTransaction, ten
       decision_policy_id: null, decision_policy_version: null, reviewer_id: "oakridge-operator",
       reviewer_details: json({ review: outcome.review, decision: outcome.decision, effect: outcome.effect }),
       comments: null, rationale: null, quality_flags: json([]), supersedes_observation_id: null,
+      origin: "workflow_approval", collection_mode: "in_context", blind_assignment_id: null,
+      model_answers_visible: true, workflow_decisions_visible: true,
       recorded_at: new Date(outcome.decided_at) })
       .onConflict((conflict) => conflict.columns(["producer", "namespace", "observation_id"]).doNothing()).execute();
   }

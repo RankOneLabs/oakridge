@@ -9,7 +9,7 @@ import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { blindSubmissionIsValid, evaluatorIdentity, instructionDigest,
   type EvaluatorDefinition } from "../grading/evaluator";
 import { evaluationDigest, runGradeDigest, type EvaluationIdentity } from "../grading/execution";
-import type { GradeAnswer, GradeListingItem, GradeObservation } from "../grading/observation";
+import type { GradeAnswer, GradeListingItem, GradeObservation, GradeOrigin } from "../grading/observation";
 import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationEvaluationExecution, ObservationGradeObservation } from "./db-types";
@@ -18,6 +18,7 @@ import type { Page } from "./projection-store";
 import type { GradeRunner } from "../ports/grade-runner";
 
 export interface GradeDetails extends Omit<GradeObservation, "observation_id"> {
+  readonly origin: GradeOrigin;
   readonly collection_mode: "blind" | "in_context";
   readonly blind_assignment_id?: string | null;
   readonly model_answers_visible: boolean;
@@ -323,6 +324,8 @@ export async function runGrade(db: Database, tenant: TenantScope, input: RunGrad
         probabilities: outcome.probabilities == null ? null : jsonText(asJson(outcome.probabilities)),
         confidence: outcome.confidence ?? null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: null, reviewer_details: null,
+        origin: "automated_evaluation", collection_mode: "in_context", blind_assignment_id: null,
+        model_answers_visible: false, workflow_decisions_visible: false,
         comments: outcome.comments ?? null, rationale: outcome.rationale ?? null,
         quality_flags: jsonText(asJson(outcome.quality_flags ?? [])), supersedes_observation_id: null })
         .returningAll().executeTakeFirstOrThrow();
@@ -384,7 +387,8 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         const observation = await trx.selectFrom("observation.grade_observation").selectAll().where("producer", "=", tenant.producer)
           .where("namespace", "=", tenant.namespace).where("execution_id", "=", existing.execution_id).executeTakeFirst();
         if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.origin !== details.origin
+          || observation.collection_mode !== details.collection_mode
           || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
           return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution: existing, observation: observation ?? null, was_replay: true });
@@ -412,6 +416,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
                 .where("execution_id", "=", replay.execution_id).executeTakeFirst();
               if (observation?.observation_id === assignment.submitted_observation_id
                 && observation.reviewer_id === details.reviewer_id
+                && observation.origin === details.origin
                 && observation.collection_mode === "blind"
                 && observation.blind_assignment_id === details.blind_assignment_id)
                 return ok({ execution: replay, observation, was_replay: true });
@@ -447,7 +452,8 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
           .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
           .where("execution_id", "=", execution.execution_id).executeTakeFirst();
         if (observation && (observation.reviewer_id !== details.reviewer_id
-          || observation.collection_mode !== (details.collection_mode ?? null)
+          || observation.origin !== details.origin
+          || observation.collection_mode !== details.collection_mode
           || observation.blind_assignment_id !== (details.blind_assignment_id ?? null)))
           return failure("human_grade", identity.subject_occurrence_id, "execution belongs to a different reviewer or collection");
         return ok({ execution, observation: observation ?? null, was_replay: true });
@@ -462,7 +468,7 @@ export async function recordHumanGrade(db: Database, tenant: TenantScope, input:
         confidence: details.confidence, normalized_score: details.normalized_score,
         decision_policy_id: details.decision_policy_id, decision_policy_version: details.decision_policy_version,
         reviewer_id: details.reviewer_id, reviewer_details: details.reviewer_details == null ? null : jsonText(details.reviewer_details),
-        collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
+        origin: details.origin, collection_mode: details.collection_mode, blind_assignment_id: details.blind_assignment_id ?? null,
         model_answers_visible: details.model_answers_visible,
         workflow_decisions_visible: details.workflow_decisions_visible,
         comments: details.comments, rationale: details.rationale, quality_flags: jsonText(asJson(details.quality_flags)),
@@ -504,7 +510,7 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
       .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
-      observation: { ...observation, collection_mode: observation.collection_mode ?? "unknown" },
+      observation,
       answer: observation.answer_payload, evaluator, execution,
     }));
     return { items, total: Number(count.count), ...page };

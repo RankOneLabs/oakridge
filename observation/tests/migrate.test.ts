@@ -49,7 +49,7 @@ integration("an incompatible schema is refused instead of adopted", async () => 
   } finally { await db.destroy(); }
 }));
 
-// Captured from the thirteen-file sequence at 01c8b605, before consolidation.
+// Captured from the thirteen-file sequence at 01c8b605, with explicit grading record changes applied.
 // Column ordinals are deliberately absent: moving ADD COLUMN into CREATE TABLE
 // changes ordinals without changing the schema contract.
 interface CatalogEntry { readonly kind: string; readonly table_name: string; readonly name: string; readonly definition: string }
@@ -81,7 +81,7 @@ SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.rel
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
 ORDER BY kind,table_name,name`);
 
-integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and unique eligibility decisions", async () => scratch(async (url) => {
+integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and unique eligibility decisions and explicit grading records", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
     await migrateEmptyDatabase(db);
@@ -92,6 +92,8 @@ integration("the single baseline preserves the historical catalog except for cap
       || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance"))));
     for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
       expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
+    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_observation_origin_check",
+      definition: "CHECK ((origin = ANY (ARRAY['human_rubric_answer'::text, 'workflow_approval'::text, 'automated_evaluation'::text])))" });
     expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });
     expected.push({ kind: "constraint", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
       definition: "UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version)" });

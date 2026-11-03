@@ -143,7 +143,7 @@ integration("collaboration sweep retains anchors and provenance while decisions 
       question_version: comparisonQuestion.question_version, evaluator_definition_id: "human", config_digest: "config-1",
       attempt_label: "comparison", details: { answer: { state: "answered", kind: "structured",
         value: { review: "editor", decision: "request_changes", effect: "request_changes", feedback: { note: "fresh" } } },
-        collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true,
+        origin: "human_rubric_answer", collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true,
         probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
         decision_policy_version: null, reviewer_id: "operator", reviewer_details: null, comments: null,
         rationale: null, quality_flags: [], supersedes_observation_id: null } });

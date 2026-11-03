@@ -329,3 +329,30 @@ integration("reviewed commit changes the queued and execution identities togethe
   expect(stored.grades).toHaveLength(2);
   expect(stored.executions).toHaveLength(2);
 }));
+
+for (const invalidation of ["attempt", "expiry"] as const) {
+  integration(`a response with stale ${invalidation} cannot settle a grade or another attempt's accounting`, async () => scratchGrading(async (db, occurrence_id) => {
+    const { job } = await setup(db, occurrence_id, `stale-${invalidation}`);
+    const changed: GradeRunner = { kind: "model", async run(context) {
+      await withTenant(db, tenant, async (trx) => {
+        await trx.updateTable("observation.grading_job")
+          .set(invalidation === "attempt" ? { attempts: 2 } : { lease_expires_at: new Date(Date.now() - 1) })
+          .where("job_id", "=", job.job_id).execute();
+        await trx.insertInto("observation.grading_provider_attempt").values({ ...tenant,
+          job_id: job.job_id, attempt: 2, run_id: job.run_id, stage_id: job.stage_id,
+          request_sent: false, outcome: null, charged_cost: 0, admitted_estimate: 0.1,
+          cost_overage: 0, provider_request_id: null, failure_category: null }).execute();
+      });
+      return good.run(context);
+    } };
+    expect(await workOneJob(db, tenant, limits, "same-owner", changed))
+      .toEqual({ kind: "lost_lease", job_id: job.job_id, attempt: 1 });
+    const stored = await outcome(db, job.job_id);
+    expect(stored.grades).toEqual([]);
+    expect(stored.executions[0]?.status).toBe("running");
+    expect(stored.attempts).toMatchObject([
+      { attempt: 1, request_sent: true, outcome: null, charged_cost: 0.1, provider_request_id: null },
+      { attempt: 2, request_sent: false, outcome: null, charged_cost: 0, provider_request_id: null },
+    ]);
+  }));
+}

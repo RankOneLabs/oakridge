@@ -213,7 +213,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       body: JSON.stringify({ identity: { ...identity, evaluator_definition_id: "slice-human" },
         context: { question, evidence, evaluator: evaluator("human") },
         details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator",
-          collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
+          origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
     expect(human.status).toBe(201);
     const preExistingOutcome = { format: "observation.source-event/v1", definition_id: null,
       artifact_schema_version: "development-v1", kind: "human_grade", event_kind: "operator_decided",
