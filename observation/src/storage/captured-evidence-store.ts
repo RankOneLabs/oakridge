@@ -5,7 +5,10 @@ import type { EvidenceSet } from "../grading/evidence";
 import type { EligibilityDecision } from "../grading/eligibility";
 import type { QuestionDefinition } from "../grading/question";
 import { runPackages } from "../producers/oakridge/evidence-packages";
-import type { Database, TenantScope } from "./database";
+import { withTenant, type Database, type TenantScope } from "./database";
+import { persistOakridgeEligibility } from "../producers/oakridge/eligibility";
+import { registerQuestion } from "./grading-store";
+import { questionFromRow, checkGradingProvenance } from "./eligibility-store";
 import { loadRunCapture } from "./run-capture-store";
 
 export interface CapturedEvidenceSelection {
@@ -46,4 +49,74 @@ export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, 
   if (decision.tag === "eligible" && !pack) return fail("eligible decision has no captured evidence package");
   return ok({ subject, revision_id: pack?.revision_id ?? subject.revision_id,
     evidence: pack?.evidence ?? null, decision });
+}
+
+export interface SubjectQuestionSelection {
+  readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly question_id: QuestionDefinition["question_id"];
+  readonly question_version: string;
+  readonly question?: QuestionDefinition;
+}
+export interface DerivedSubjectEvidence {
+  readonly question: QuestionDefinition;
+  readonly evidence: EvidenceSet | null;
+  readonly decision: EligibilityDecision;
+}
+
+/** Freeze the first derived decision and package, shared by reads, enqueue and assignment. */
+export async function deriveSubjectEvidence(db: Database, tenant: TenantScope, selection: SubjectQuestionSelection)
+  : Promise<Result<DerivedSubjectEvidence, CapturedEvidenceError>> {
+  const fail = (detail: string) => err({ operation: "captured_evidence" as const,
+    entity_id: selection.subject_occurrence_id, detail });
+  try {
+    const provenance = await checkGradingProvenance(db, tenant, { ...selection,
+      pinned_expectation: selection.question?.pinned_expectation });
+    if (!provenance.ok) return fail(provenance.error.detail);
+    const question = selection.question ?? await withTenant(db, tenant, async (trx) => {
+      const row = await trx.selectFrom("observation.question_definition").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+        .executeTakeFirst();
+      return row ? questionFromRow(row) : null;
+    });
+    if (!question) return fail("question definition does not exist in namespace");
+    const registered = await registerQuestion(db, tenant, question);
+    if (!registered.ok) return fail(registered.error.detail);
+    const frozen = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+      .select(["tag", "payload"]).where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
+      .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+      .executeTakeFirst());
+    if (!frozen) {
+      const subject = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.item_occurrence")
+        .select("run_id").where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("occurrence_id", "=", selection.subject_occurrence_id).executeTakeFirstOrThrow());
+      const derived = await deriveCapturedEvidence(db, tenant, subject.run_id, { ...selection, question });
+      if (!derived.ok) return derived;
+      const value = derived.value;
+      const saved = await persistOakridgeEligibility(db, tenant, { selection_policy: "live_all_revisions",
+        packages: value.evidence ? [{ question_id: question.question_id as import("../grading/evidence-packages/pilot-recipe").PilotQuestionId,
+          subject: value.subject, revision_id: value.revision_id, evidence: value.evidence }] : [], exclusions: [],
+        eligibility: [{ question_id: question.question_id as import("../grading/evidence-packages/pilot-recipe").PilotQuestionId,
+          occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
+      if (!saved.ok) return fail(saved.error.detail);
+    }
+    // Read the first insert, including a concurrent derivation's winner.
+    return await withTenant(db, tenant, async (trx) => {
+      const row = await trx.selectFrom("observation.evaluation_eligibility").select(["tag", "payload"])
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("subject_occurrence_id", "=", selection.subject_occurrence_id)
+        .where("question_id", "=", selection.question_id).where("question_version", "=", selection.question_version)
+        .executeTakeFirstOrThrow();
+      const decision = row as EligibilityDecision;
+      if (decision.tag !== "eligible") return ok({ question, evidence: null, decision });
+      const stored = await trx.selectFrom("observation.evidence_set").selectAll()
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("evidence_set_id", "=", decision.payload.evidence_set_id).executeTakeFirst();
+      if (!stored) return fail("frozen eligible decision has no stored evidence");
+      return ok({ question, decision, evidence: { evidence_set_id: stored.evidence_set_id as EvidenceSet["evidence_set_id"],
+        references: stored.evidence_refs as unknown as EvidenceSet["references"], is_incomplete: stored.is_incomplete,
+        incompleteness_reason: stored.incompleteness_reason } });
+    });
+  } catch (cause) { return fail(String(cause)); }
 }

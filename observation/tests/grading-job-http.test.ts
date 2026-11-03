@@ -7,7 +7,7 @@ import { registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { enqueueJob } from "../src/storage/grading-job-store";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
+import { tenant, question, evidence, evaluator, scratchGrading, capturedCoverage } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 const grade = { ...tenant, token: "grade-token" };
@@ -15,7 +15,8 @@ const read = { ...tenant, token: "read-token" };
 const runner: GradeRunner = { kind: "model", async run() { return { ok: true,
   value: { answer: { state: "answered", kind: "boolean", value: true } } }; } };
 
-integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db, occurrence_id) => {
+integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db) => {
+  const { occurrence_id, question, evidence } = await capturedCoverage(db);
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] },
     gradingLimits: gradingLimits({ OBSERVATION_GRADING_RETRY_LIMIT: "7" }) });
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
@@ -29,8 +30,11 @@ integration("network runner requires the durable route and its pending job is re
   const synchronous = await post("/v1/evaluations");
   expect(synchronous.status).toBe(422);
   expect(await synchronous.json()).toMatchObject({ error: { code: "queued_evaluation_required" } });
-  const queued = await post("/v1/evaluation-jobs");
-  expect(queued.status).toBe(201);
+  const { evidence_set_id: _supplied, ...derivedIdentity } = identity;
+  const queuedBody = { ...body, identity: derivedIdentity, context: { question, evaluator: evaluator("model") } };
+  const queued = await app.request("/v1/evaluation-jobs", { method: "POST",
+    headers: { authorization: "Bearer grade-token", "content-type": "application/json" }, body: JSON.stringify(queuedBody) });
+  expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
   const result = await queued.json();
   expect(result.state).toBe("queued");
   const readAs = (path: string) => app.request(path, { headers: { authorization: "Bearer read-token" } });
@@ -44,7 +48,7 @@ integration("network runner requires the durable route and its pending job is re
   expect((await readAs("/v1/evaluation-executions/" + grades.items[0].execution.execution_id)).status).toBe(200);
   const unavailable = await app.request("/v1/evaluation-jobs", { method: "POST",
     headers: { authorization: "Bearer grade-token", "content-type": "application/json" },
-    body: JSON.stringify({ ...body, identity: { ...identity, attempt_label: "missing-credential" } }) });
+    body: JSON.stringify({ ...queuedBody, identity: { ...derivedIdentity, attempt_label: "missing-credential" } }) });
   expect(unavailable.status).toBe(201);
   const pending = await unavailable.json();
   await workOneJob(db, tenant, gradingLimits(), "no-key", undefined, {});
@@ -165,3 +169,46 @@ for (const recorded of [
       expect(await counts()).toEqual(before);
     }));
 }
+
+integration("enqueue and assignment derive evidence and refuse a disagreeing caller id without creating work", async () => scratchGrading(async (db) => {
+  const { occurrence_id, question, evidence } = await capturedCoverage(db);
+  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+  const identity = { subject_occurrence_id: occurrence_id, question_id: question.question_id,
+    question_version: question.question_version };
+  const post = (path: string, body: unknown) => app.request(path, { method: "POST",
+    headers: { authorization: "Bearer grade-token", "content-type": "application/json" }, body: JSON.stringify(body) });
+  const jobBody = { identity: { ...identity, evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "derived" },
+    context: { question, evaluator: evaluator("model") }, runner: "stub_model" };
+  const badJob = await post("/v1/evaluation-jobs", { ...jobBody,
+    identity: { ...jobBody.identity, evidence_set_id: "caller-named-evidence" } });
+  expect(badJob.status).toBe(422);
+  expect((await badJob.json()).error.code).toBe("evidence_set_mismatch");
+  const badAssignment = await post("/v1/blind-assignments", { ...identity, evidence_set_id: "caller-named-evidence" });
+  expect(badAssignment.status).toBe(409);
+  expect((await badAssignment.json()).error.code).toBe("evidence_set_mismatch");
+  expect(await withTenant(db, tenant, async (trx) => ({
+    jobs: await trx.selectFrom("observation.grading_job").select("job_id").execute(),
+    assignments: await trx.selectFrom("observation.blind_assignment").select("assignment_id").execute(),
+  }))).toEqual({ jobs: [], assignments: [] });
+  const job = await post("/v1/evaluation-jobs", jobBody);
+  expect(job.status).toBe(201);
+  const assignment = await post("/v1/blind-assignments", identity);
+  expect(assignment.status).toBe(201);
+  expect((await assignment.json()).evidence_set_id).toBe(evidence.evidence_set_id);
+  const { captureProjectedFixture } = await import("./grading-fixture");
+  await captureProjectedFixture(db, { revision_id: "assessment-newer", artifact_kind: "assessment",
+    body: { findings: [{ criterion_id: "criterion", evidence: [], description: "new evidence" }] },
+    recorded_at: "2026-11-01T02:00:00Z" });
+  const pinned = await post("/v1/evaluation-jobs", { ...jobBody,
+    identity: { ...jobBody.identity, attempt_label: "still-pinned" } });
+  expect(pinned.status).toBe(201);
+  const stored = await withTenant(db, tenant, async (trx) => ({
+    jobs: await trx.selectFrom("observation.grading_job").select("evidence_set_id").execute(),
+    assignments: await trx.selectFrom("observation.blind_assignment").select("evidence_set_id").execute(),
+    evidence: await trx.selectFrom("observation.evidence_set").selectAll()
+      .where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirstOrThrow(),
+  }));
+  expect(stored.jobs.map((row) => row.evidence_set_id)).toEqual([evidence.evidence_set_id, evidence.evidence_set_id]);
+  expect(stored.assignments.map((row) => row.evidence_set_id)).toEqual([evidence.evidence_set_id]);
+  expect(stored.evidence.evidence_refs).toEqual(evidence.references);
+}));

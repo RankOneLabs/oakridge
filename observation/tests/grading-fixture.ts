@@ -102,3 +102,20 @@ export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
     decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
     comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
 }
+
+/** A real captured subject for admission tests; callers send only question/evaluator context. */
+export async function capturedCoverage(db: Database) {
+  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
+  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+    acceptance_criteria: [{ id: "criterion", text: "Works" }],
+  } });
+  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
+    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
+  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
+  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
+  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
+  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
+  return { occurrence_id, question, evidence: derived.value.evidence };
+}

@@ -36,21 +36,12 @@ function same(left: unknown, right: unknown): boolean {
 }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
 
-/** Definitions are immutable within their natural keys. */
-export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
-  const { question, evidence, evaluator } = context;
+/** Register the immutable question before capture-derived eligibility is frozen. */
+export async function registerQuestion(db: Database, tenant: TenantScope, question: QuestionDefinition): Promise<Result<void, GradingError>> {
   if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
     return failure("register_context", question.question_id, "question requires pinned expectation");
   if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
     return failure("register_context", question.question_id, "choice question requires allowed values");
-  const digest = evaluatorIdentity(evaluator);
-  if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
-  if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
-    return failure("register_context", evaluator.evaluator_definition_id, "prompt digest differs from canonical instruction text digest");
-  if (evidence.is_incomplete !== (evidence.incompleteness_reason !== null))
-    return failure("register_context", evidence.evidence_set_id, "incompleteness reason must match flag");
-  if (evidence.references.some((reference) => !reference.kind))
-    return failure("register_context", evidence.evidence_set_id, "new evidence references require classification");
   try {
     return await withTenant(db, tenant, async (trx) => {
       const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
@@ -75,6 +66,30 @@ export async function registerGradingContext(db: Database, tenant: TenantScope, 
         question_text: question.question_text ?? null,
         expected_definition_id: question.pinned_expectation.definition_id,
         expected_artifact_schema_version: question.pinned_expectation.artifact_schema_version }).execute();
+      return ok(undefined);
+    });
+  } catch (cause) { return failure("register_context", question.question_id, String(cause)); }
+}
+
+/** Definitions are immutable within their natural keys. */
+export async function registerGradingContext(db: Database, tenant: TenantScope, context: GradingContext): Promise<Result<void, GradingError>> {
+  const { question, evidence, evaluator } = context;
+  if (!question.pinned_expectation?.definition_id || !question.pinned_expectation.artifact_schema_version)
+    return failure("register_context", question.question_id, "question requires pinned expectation");
+  if (question.response_kind === "choice" && (!question.allowed_values || question.allowed_values.length === 0))
+    return failure("register_context", question.question_id, "choice question requires allowed values");
+  const digest = evaluatorIdentity(evaluator);
+  if (!digest.ok) return failure("register_context", evaluator.evaluator_definition_id, digest.error.detail);
+  if (evaluator.prompt_digest !== instructionDigest(evaluator.instruction_text))
+    return failure("register_context", evaluator.evaluator_definition_id, "prompt digest differs from canonical instruction text digest");
+  if (evidence.is_incomplete !== (evidence.incompleteness_reason !== null))
+    return failure("register_context", evidence.evidence_set_id, "incompleteness reason must match flag");
+  if (evidence.references.some((reference) => !reference.kind))
+    return failure("register_context", evidence.evidence_set_id, "new evidence references require classification");
+  const registered = await registerQuestion(db, tenant, question);
+  if (!registered.ok) return registered;
+  try {
+    return await withTenant(db, tenant, async (trx) => {
       const e = await trx.selectFrom("observation.evidence_set").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("evidence_set_id", "=", evidence.evidence_set_id).executeTakeFirst();
       if (e && !same([e.evidence_refs, e.is_incomplete, e.incompleteness_reason],

@@ -2,8 +2,8 @@ import { sql, type Selectable } from "kysely";
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
 import { PILOT_EVIDENCE_RECIPES } from "../grading/evidence-packages/pilot-recipe";
-import { pilotSubjectArtifactKind, runPackages } from "../producers/oakridge/evidence-packages";
-import { loadRunCapture } from "./run-capture-store";
+import { pilotSubjectArtifactKind } from "../producers/oakridge/evidence-packages";
+import { deriveSubjectEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
@@ -117,7 +117,6 @@ export async function readEligibility(db: Database, tenant: TenantScope, questio
   });
   const stored = await storedEligibility(db, tenant, question_id, question_version);
   const decisions = new Map(stored.map((row) => [String(row.subject_occurrence_id), row]));
-  const runs = new Set<string>();
   for (const subject of subjects) {
     const decision = provenanceEligibility(question.pinned_expectation, subject);
     if (decision.tag === "inapplicable") {
@@ -126,22 +125,10 @@ export async function readEligibility(db: Database, tenant: TenantScope, questio
       const recorded = await recordEligibility(db, tenant, row);
       if (!recorded.ok) throw new Error(recorded.error.detail);
       decisions.set(subject.occurrence_id, row);
-    } else if (!decisions.has(subject.occurrence_id)) runs.add(subject.run_id);
-  }
-  if (Object.hasOwn(PILOT_EVIDENCE_RECIPES, question_id)) {
-    for (const run_id of runs) {
-      const captured = await loadRunCapture(db, tenant, run_id);
-      if (!captured.ok) throw new Error(captured.error.detail);
-      const manifest = runPackages(captured.value, { [question_id]: { definition: question, text: question.question_text ?? "" } });
-      if (!manifest.ok) throw new Error(manifest.error.detail);
-      for (const item of manifest.value.eligibility.filter((item) => item.question_id === question_id)) {
-        if (decisions.has(item.occurrence_id)) continue;
-        const row: EligibilityRow = { ...tenant, subject_occurrence_id: item.occurrence_id,
-          question_id: question.question_id, question_version, ...item.decision };
-        const recorded = await recordEligibility(db, tenant, row);
-        if (!recorded.ok) throw new Error(recorded.error.detail);
-        decisions.set(item.occurrence_id, row);
-      }
+    } else if (!decisions.has(subject.occurrence_id) && Object.hasOwn(PILOT_EVIDENCE_RECIPES, question_id)) {
+      const derived = await deriveSubjectEvidence(db, tenant, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
+        question_id: question.question_id, question_version, question });
+      if (!derived.ok) throw new Error(derived.error.detail);
     }
   }
   // Concurrent reads may have won the insert; return the authoritative first decisions.

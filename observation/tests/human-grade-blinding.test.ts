@@ -8,11 +8,12 @@ import { evaluationDigest } from "../src/grading/execution";
 import { jsonText, withTenant } from "../src/storage/database";
 import { listGrades, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { readCoverage } from "../src/storage/coverage-store";
-import { question, evidence, evaluator, scratchGrading, tenant, humanGradeDetails } from "./grading-fixture";
+import { question, evidence, evaluator, scratchGrading, tenant, humanGradeDetails, capturedCoverage } from "./grading-fixture";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 
-integration("blind assignment hides model results and refuses duplicate or expired claims", async () => scratchGrading(async (db, occurrence_id) => {
+integration("blind assignment hides model results and refuses duplicate or expired claims", async () => scratchGrading(async (db) => {
+  const { occurrence_id, question, evidence } = await capturedCoverage(db);
   const model = evaluator("model");
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: model })).ok).toBe(true);
   const scored = await runGrade(db, tenant, { identity: { subject_occurrence_id: occurrence_id,
@@ -33,7 +34,7 @@ integration("blind assignment hides model results and refuses duplicate or expir
   const recoveryHeaders = { authorization: "Bearer recovery", "content-type": "application/json" };
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version };
-  const created = await app.request("/v1/blind-assignments", { method: "POST", headers, body: JSON.stringify(identity) });
+  const created = await app.request("/v1/blind-assignments", { method: "POST", headers, body: JSON.stringify({ subject_occurrence_id: identity.subject_occurrence_id, question_id: identity.question_id, question_version: identity.question_version }) });
   expect(created.status).toBe(201);
   const assignment_id = (await created.json()).assignment_id as string;
   const queue = await app.request("/v1/blind-assignments?limit=10", { headers });
@@ -114,7 +115,8 @@ integration("overlapping blind submissions replay the saved grade", async () => 
   expect(firstGrade.observation.observation_id).toBe(secondGrade.observation.observation_id);
 }));
 
-integration("readback distinguishes blind, in-context, correction and historical operator grades", async () => scratchGrading(async (db, occurrence_id) => {
+integration("readback distinguishes blind, in-context, correction and historical operator grades", async () => scratchGrading(async (db) => {
+  const { occurrence_id, question, evidence } = await capturedCoverage(db);
   expect((await registerGradingContext(db, tenant, { question, evidence, evaluator: evaluator("human") })).ok).toBe(true);
   await withTenant(db, tenant, (trx) => sql`INSERT INTO observation.evaluation_eligibility
     (producer, namespace, subject_occurrence_id, question_id, question_version, tag, payload)
@@ -125,7 +127,7 @@ integration("readback distinguishes blind, in-context, correction and historical
   const headers = { authorization: "Bearer blind", "content-type": "application/json" };
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
     question_id: question.question_id, question_version: question.question_version };
-  const created = await app.request("/v1/blind-assignments", { method: "POST", headers, body: JSON.stringify(identity) });
+  const created = await app.request("/v1/blind-assignments", { method: "POST", headers, body: JSON.stringify({ subject_occurrence_id: identity.subject_occurrence_id, question_id: identity.question_id, question_version: identity.question_version }) });
   const assignment_id = (await created.json()).assignment_id as string;
   expect((await app.request(`/v1/blind-assignments/${assignment_id}/claim`, { method: "POST", headers })).status).toBe(200);
   const submitted = await app.request("/v1/grades", { method: "POST", headers, body: JSON.stringify({
@@ -158,7 +160,7 @@ integration("readback distinguishes blind, in-context, correction and historical
     format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
     kind: "human_grade", event_kind: "operator_decided", run_id: "run-1", event_id: "event-four-kinds",
     decision_id: "decision-four-kinds", evaluator: { kind: "human" }, unit: "unit-1", review: "assessment",
-    decision: "approve", target: "rev-1", feedback: { reason: "approved" }, effect: "approve",
+    decision: "approve", target: "captured-brief", feedback: { reason: "approved" }, effect: "approve",
     decided_at: "2026-10-29T10:00:00.000Z",
   }));
   const grades = await app.request(`/v1/items/${encodeURIComponent(occurrence_id)}/grades`,
@@ -174,7 +176,7 @@ integration("readback distinguishes blind, in-context, correction and historical
     .toMatchObject({ collection_mode: "in_context", supersedes_observation_id: inContextId });
   expect(items.find((item) => item.observation.origin === "workflow_approval")?.observation)
     .toMatchObject({ collection_mode: "in_context", reviewer_id: "oakridge-operator" });
-  const coverage = await readCoverage(db, tenant, { run_id: "run-1", revision_id: "rev-1",
+  const coverage = await readCoverage(db, tenant, { run_id: "run-1", revision_id: "captured-brief",
     question_id: question.question_id, question_version: question.question_version });
   expect(coverage.questions[0]).toMatchObject({ eligible: 1, graded: 1,
     graded_by_collection_mode: { blind: 1, in_context: 1 } });
