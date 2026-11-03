@@ -5,8 +5,32 @@ import type { EvidenceSetId } from "../src/domain/identity";
 import { listGrades, readExecution, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { createApp } from "../src/http/app";
+import { checkEvidenceIntegrity } from "../src/grading/evidence-integrity";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
+
+test("evidence integrity accepts a reference carrying a digest without content", () => {
+  expect(checkEvidenceIntegrity({ ...evidence, references: [{ ref: "captured", kind: "internal",
+    content: null, digest: `canonical-json/v1:${"a".repeat(64)}` }] })).toEqual({ ok: true, value: undefined });
+});
+
+test("evidence integrity accepts content that canonicalizes without a supplied digest", () => {
+  expect(checkEvidenceIntegrity({ ...evidence, references: [{ ref: "captured", kind: "raw_build_output",
+    content: { output: "build passed" }, digest: null }] })).toEqual({ ok: true, value: undefined });
+});
+
+test("evidence integrity refuses a reference with neither content nor digest", () => {
+  expect(checkEvidenceIntegrity({ ...evidence, references: [{ ref: "missing", content: null, digest: null }] }))
+    .toEqual({ ok: false, error: { operation: "evidence_integrity", entity_id: evidence.evidence_set_id,
+      detail: "evidence content has no canonical digest" } });
+});
+
+test("evidence integrity failure does not include content or a canonicalization path", () => {
+  const result = checkEvidenceIntegrity({ ...evidence, references: [{ ref: "do-not-log", kind: "raw_test_output",
+    content: { "private-test-output": Number.NaN }, digest: null }] });
+  expect(result.ok).toBe(false);
+  expect(JSON.stringify(result)).not.toMatch(/do-not-log|private-test-output|NaN/);
+});
 
 test("repository snapshot eligibility checks presence, classification, commit and excerpt provenance", () => {
   const valid: EvidenceSet = { evidence_set_id: "repository-evidence" as EvidenceSetId,
