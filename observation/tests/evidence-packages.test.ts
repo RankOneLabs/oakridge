@@ -10,6 +10,7 @@ import type { CapturedRevision } from "../src/grading/evidence-packages/capture"
 import { capturedReference } from "../src/grading/evidence-packages/references";
 import type { EvidenceKind } from "../src/grading/evidence";
 import { runPackages } from "../src/producers/oakridge/evidence-packages";
+import { withTenant } from "../src/storage/database";
 import { persistOakridgeEligibility } from "../src/producers/oakridge/eligibility";
 import { readEligibility } from "../src/storage/eligibility-store";
 import { registerGradingContext } from "../src/storage/grading-store";
@@ -158,7 +159,11 @@ integration("typed missing evidence decisions persist", async () => scratchGradi
   const saved = await persistOakridgeEligibility(db, tenant, manifest);
   expect(saved).toEqual({ ok: true, value: 2 });
   expect((await readEligibility(db, tenant, { run_id: "run-1", question_id: analysis, question_version: "v1", limit: 200, offset: 0 })).items[0]?.tag).toBe("missing_evidence");
-  expect((await readEligibility(db, tenant, { run_id: "run-1", question_id: assessment, question_version: "v1", limit: 200, offset: 0 })).items[0]?.payload).toEqual({ kind: "missing_source", detail: "too few repository content references" });
+  // Read the cached row directly: readEligibility re-derives by design, so it is not the place
+  // to assert what was stored.
+  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
+    .select(["payload"]).where("question_id", "=", assessment).executeTakeFirstOrThrow()))
+    .toEqual({ payload: { kind: "missing_source", detail: "too few repository content references" } });
 }));
 
 test("unsupported captured provenance stops before subject or evidence interpretation", async () => {

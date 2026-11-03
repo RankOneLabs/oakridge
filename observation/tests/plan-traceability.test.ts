@@ -3,7 +3,7 @@ import type { JsonValue } from "../src/domain/primitives";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { pilotExpectations } from "./grading-fixture";
 const OAKRIDGE_QUESTIONS = oakridgeQuestions(pilotExpectations);
-import { projectPilotEvidence, type EvidenceSource } from "../src/grading/evidence-packages/pilot-recipe";
+import { PILOT_EVIDENCE_RECIPES, projectPilotEvidence, unsatisfiedSlots, type EvidenceSource } from "../src/grading/evidence-packages/pilot-recipe";
 import { planCriterionEligibility, traceabilityExclusion } from "../src/producers/oakridge/plan-traceability";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
 import { selectRevision, type SelectedItem } from "../src/projection/extractor";
@@ -62,4 +62,14 @@ test("the traceability recipe accepts tasks alone but refuses a package with no 
     digest: `canonical-json/v1:${"a".repeat(64)}`, deep_link: `https://observation.example/items/${role}` });
   expect(projectPilotEvidence(question, [source("plan_task"), source("plan_criterion")]).ok).toBe(true);
   expect(projectPilotEvidence(question, [source("plan_criterion")]).ok).toBe(false);
+});
+
+test("a pin requiring more references than the capture holds is not eligible", () => {
+  const recipe = PILOT_EVIDENCE_RECIPES["plan.criterion_traceability"];
+  const demanding = { ...recipe, input: [{ role: "plan_decision" as const, min_count: 2, max_count: 2 }] };
+  expect(unsatisfiedSlots(demanding, [{ ref: "plan_criterion:c" }, { ref: "plan_decision:d" }]))
+    .toEqual(["plan_decision"]);
+  expect(unsatisfiedSlots(demanding, [{ ref: "plan_criterion:c" }, { ref: "plan_decision:d" }, { ref: "plan_decision:e" }]))
+    .toEqual([]);
+  expect(unsatisfiedSlots(recipe, [{ ref: "plan_criterion:c" }])).toEqual([]);
 });

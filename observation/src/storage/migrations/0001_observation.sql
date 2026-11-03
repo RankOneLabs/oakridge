@@ -705,8 +705,10 @@ ALTER TABLE observation.evaluation_eligibility FORCE ROW LEVEL SECURITY;
 CREATE POLICY evaluation_eligibility_tenant ON observation.evaluation_eligibility
   USING (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true))
   WITH CHECK (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true));
-CREATE TRIGGER evaluation_eligibility_append_only BEFORE UPDATE OR DELETE ON observation.evaluation_eligibility
-  FOR EACH ROW EXECUTE FUNCTION observation.reject_grade_mutation();
+-- No append-only trigger: eligibility is derived from capture and the question pin, so a row
+-- here is a refreshable cache of that derivation, not a decision of record. An eligible row
+-- still must not move once work pins its evidence set, which recordEligibility enforces by
+-- refusing to overwrite a row already tagged eligible.
 
 CREATE TABLE observation.grading_job (
   producer text NOT NULL,

@@ -1,9 +1,10 @@
+import { z } from "zod";
 import { err, ok, type Result } from "../../domain/primitives";
-import { canonicalJson } from "canonical-json";
 import type { QuestionDefinition } from "../question";
 
-export type PilotQuestionId = "analysis.finding_relevance" | "plan.criterion_traceability" | "brief.source_fidelity"
-  | "assessment.coverage";
+export const PILOT_QUESTION_IDS = ["analysis.finding_relevance", "plan.criterion_traceability",
+  "brief.source_fidelity", "assessment.coverage"] as const;
+export type PilotQuestionId = typeof PILOT_QUESTION_IDS[number];
 export const EVIDENCE_ROLES = ["requested_change", "relevant_excerpt", "analysis_finding", "plan_task", "plan_decision",
   "plan_criterion", "brief_criterion", "assessment_finding"] as const;
 export type EvidenceRole = typeof EVIDENCE_ROLES[number];
@@ -52,24 +53,57 @@ export const PILOT_EVIDENCE_RECIPES: Readonly<Record<PilotQuestionId, PilotEvide
     output: [{ role: "assessment_finding", min_count: 0, max_count: 100 }], projected_fields: ["ref", "digest", "deep_link"] },
 };
 
+const slotSchema = z.object({ role: z.enum(EVIDENCE_ROLES), min_count: z.number().int().min(0),
+  max_count: z.number().int().min(1) }).refine((slot) => slot.max_count >= slot.min_count,
+  { message: "max_count is below min_count" });
+
+/** The pin carries the whole recipe, slot counts included, so reading it never needs the
+ * authored catalogue. A question is supported because of what it pins, not because its id
+ * appears in a table in this file. */
+const pinnedRecipeSchema = z.object({ recipe_id: z.enum(PILOT_QUESTION_IDS), recipe_version: z.literal("v1"),
+  input: z.array(slotSchema), output: z.array(slotSchema),
+  projected_fields: z.tuple([z.literal("ref"), z.literal("digest"), z.literal("deep_link")]) });
+
 export function pinnedInputRecipe(recipe: PilotEvidenceRecipe): QuestionDefinition["input_recipe"] {
   return { recipe_id: recipe.recipe_id, recipe_version: recipe.recipe_version,
-    input_roles: recipe.input.map((slot) => slot.role), output_roles: recipe.output.map((slot) => slot.role),
+    input: recipe.input.map((slot) => ({ ...slot })), output: recipe.output.map((slot) => ({ ...slot })),
     projected_fields: [...recipe.projected_fields] };
 }
 
+/** Read the recipe a question pins. Returns null when the pin is not a slot recipe, which is
+ * how a judge-recipe or deterministic question reports that this path does not own it. */
+export function pinnedPilotRecipe(question: QuestionDefinition): PilotEvidenceRecipe | null {
+  const parsed = pinnedRecipeSchema.safeParse(question.input_recipe);
+  if (!parsed.success || question.question_version !== parsed.data.recipe_version) return null;
+  return parsed.data;
+}
+
 export function hasPinnedPilotRecipe(question: QuestionDefinition): boolean {
-  const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
-  const expected = recipe ? canonicalJson(pinnedInputRecipe(recipe)) : null;
-  const actual = canonicalJson(question.input_recipe);
-  return Boolean(recipe && question.question_version === recipe.recipe_version && expected?.ok && actual.ok
-    && expected.value === actual.value);
+  return pinnedPilotRecipe(question) !== null;
+}
+
+/** Roles whose reference count falls outside the pinned slot's bounds. The role is the prefix
+ * `capturedReference` writes into every ref, so a built package can be checked against the pin
+ * that is supposed to govern it. Empty means the package satisfies its recipe. */
+export function unsatisfiedSlots(recipe: PilotEvidenceRecipe,
+  references: readonly { readonly ref: string }[]): readonly EvidenceRole[] {
+  const counts = new Map<string, number>();
+  for (const { ref } of references) {
+    const separator = ref.indexOf(":");
+    if (separator <= 0) continue;
+    const role = ref.slice(0, separator);
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return [...recipe.input, ...recipe.output].filter((slot) => {
+    const seen = counts.get(slot.role) ?? 0;
+    return seen < slot.min_count || seen > slot.max_count;
+  }).map((slot) => slot.role);
 }
 
 export function projectPilotEvidence(question: QuestionDefinition, sources: readonly EvidenceSource[])
   : Result<ProjectedQuestionEvidence, EvidenceRecipeError> {
-  const recipe = PILOT_EVIDENCE_RECIPES[question.question_id as PilotQuestionId];
-  if (!hasPinnedPilotRecipe(question))
+  const recipe = pinnedPilotRecipe(question);
+  if (!recipe)
     return err({ operation: "project_pilot_evidence", entity_id: question.question_id, detail: "question has no pinned pilot evidence recipe" });
   const slots = [...recipe.input, ...recipe.output];
   const allowed = new Set<EvidenceRole>(slots.map((slot) => slot.role));

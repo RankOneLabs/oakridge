@@ -6,8 +6,9 @@ import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type
 import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
 import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
-import { hasPinnedPilotRecipe, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import { hasPinnedPilotRecipe, pinnedPilotRecipe, unsatisfiedSlots, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
 import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
+import { hasCapturedEvidenceRecipe } from "../../grading/evidence-packages/recipe";
 import { coverageInput } from "../../runners/coverage-checker";
 import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
 import type { QuestionDefinition } from "../../grading/question";
@@ -26,7 +27,7 @@ export interface PackageExclusion {
   readonly occurrence_id: ItemOccurrenceId;
   readonly reason: ExclusionReason;
 }
-interface PackageBatch {
+export interface PackageBatch {
   readonly packages: readonly PilotPackage[];
   readonly exclusions: readonly PackageExclusion[];
   readonly eligibility: readonly PackageDecision[];
@@ -280,7 +281,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   for (const [question_id, question] of Object.entries(questions)) {
     if (!question) continue;
     if (question_id !== question.definition.question_id
-      || (!hasPinnedPilotRecipe(question.definition) && !hasJudgeRecipe(question.definition)))
+      || !hasCapturedEvidenceRecipe(question.definition))
       return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no supported captured evidence recipe" });
   }
   const selected = selectCapturedRevisions(revisions, policy);
@@ -298,13 +299,28 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   if (!brief.ok) return brief;
   const assessment = assessmentPackages({ revisions: selected.revisions, subjects: coverage_subjects.revisions });
   if (!assessment.ok) return assessment;
-  let packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
+  // A built package must satisfy the slot counts its question pins. The builders construct
+  // references from their own rules and never see the pin, so without this a pin requiring two
+  // plan_decision references is marked eligible against a capture holding one.
+  const slotShortfall = (pack: PilotPackage): readonly string[] => {
+    const question = questions[pack.question_id];
+    const recipe = question ? pinnedPilotRecipe(question.definition) : null;
+    return recipe ? unsatisfiedSlots(recipe, pack.evidence.references) : [];
+  };
+  const built = [...plan.value.packages, ...brief.value.packages];
+  const satisfied = built.filter((pack) => slotShortfall(pack).length === 0);
+  const underEvidenced = built.filter((pack) => slotShortfall(pack).length > 0);
+  let packages = [...satisfied, ...assessment.value.packages];
   const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
   const eligibility: PackageDecision[] = [
     ...[analysis_subjects, plan_subjects, brief_subjects, coverage_subjects].flatMap((selection) => selection.eligibility),
-    ...[...plan.value.packages, ...brief.value.packages].map((pack): PackageDecision => ({ question_id: pack.question_id,
+    ...satisfied.map((pack): PackageDecision => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
+    ...underEvidenced.map((pack): PackageDecision => ({ question_id: pack.question_id,
+      occurrence_id: pack.subject.occurrence_id,
+      decision: { tag: "missing_evidence", payload: { kind: "missing_source",
+        detail: `pinned recipe is unsatisfied for ${slotShortfall(pack).join(", ")}` } } })),
     ...exclusions.map((excluded): PackageDecision => ({ question_id: excluded.question_id,
       occurrence_id: excluded.occurrence_id,
       decision: excluded.reason.kind === "dangling_citation" || excluded.reason.kind === "unlinked"
