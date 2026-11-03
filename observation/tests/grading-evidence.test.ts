@@ -8,6 +8,17 @@ import { listGrades, readExecution, recordHumanGrade, registerGradingContext, ru
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { createApp } from "../src/http/app";
 import { checkEvidenceIntegrity } from "../src/grading/evidence-integrity";
+import { captureDelivery } from "../src/storage/capture-store";
+import { jsonText, withTenant } from "../src/storage/database";
+import { projectRevision, listRunItems, readLineage } from "../src/storage/projection-store";
+import { loadRunCapture } from "../src/storage/run-capture-store";
+import { readEligibility } from "../src/storage/eligibility-store";
+import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
+import { selectRevision } from "../src/projection/extractor";
+import { occurrenceId } from "../src/projection/occurrence-id";
+import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
+import { pilotExpectations, captureProjectedFixture } from "./grading-fixture";
+import type { JsonValue } from "../src/domain/primitives";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL || process.env.CI === "true" ? test : test.skip;
 
@@ -174,4 +185,81 @@ integration("production reader pins canonical references to captured source revi
     ...body, cohorts: [{ ...body.cohorts[0]!, decisions: [{ id: "decision", text: "changed source" }] }],
   }, recorded_at: "2026-11-01T01:00:00Z", predecessor_id: "plan-first" });
   expect(await deriveCapturedEvidence(db, tenant, "run-1", selection)).toEqual(first);
+}));
+
+integration("legacy extractor identities remain gradeable alongside cohort-scoped captures and survive replay", async () => scratchGrading(async (db) => {
+  for (const [artifact_kind, extractor_id, body] of [
+    ["plan", "plan.criteria", { cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }],
+      acceptance_criteria: [{ id: "criterion", text: "Original criterion", task_ids: [], decision_ids: ["decision"] }] }],
+      acceptance_criteria: [], risks: [] }],
+    ["brief", "brief.criteria", { cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+      acceptance_criteria: [{ id: "criterion", text: "Brief criterion", task_ids: [], decision_ids: [] }] }],
+    ["assessment", "assessment.findings", { findings: [{ criterion_id: "criterion", evidence: [], description: "Covered" }] }],
+  ] as const) {
+    const revision_id = `legacy-${artifact_kind}`;
+    const value = body as unknown as JsonValue;
+    const digest = canonicalDigest(value);
+    if (!digest.ok) throw new Error(digest.error.detail);
+    const captured = await captureDelivery(db, { local_revision_id: revision_id, request_key: revision_id,
+      envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, definition_id: "definition-1", artifact_schema_version: "1",
+        revision_id: `${tenant.producer}:${tenant.namespace}:${revision_id}`, run_id: "run-1", unit_id: "implementation/cohort",
+        artifact_kind, predecessor_id: null, subject_id: null }, body: value, body_digest: digest.value, recorded_at: "2026-11-01T00:00:00Z" } });
+    expect(captured.status).toBe(201);
+    const definitions = oakridgeDevelopmentCatalogue(artifact_kind, "1", { unit_id: "implementation/cohort",
+      extractor_versions: [{ extractor_id, extractor_version: "1" }] });
+    // Seed the historical projection shape; production replay must honor these persisted pins.
+    const selected = selectRevision(value, revision_id, definitions).items.filter((entry) => entry.definition.extractor_id === extractor_id);
+    await withTenant(db, tenant, async (trx) => {
+      for (const { definition, item } of selected) {
+        const identity = occurrenceId({ ...tenant, revision_id, extractor_id, extractor_version: "1",
+          item_selector: item.item_selector, item_id_or_path: item.item_id_or_path });
+        if (!identity.ok) throw new Error(identity.error.detail);
+        const { select: _select, ...stored_definition } = definition;
+        await trx.insertInto("observation.extractor_definition").values({ ...tenant, ...stored_definition }).execute();
+        await trx.insertInto("observation.item_occurrence").values({ ...tenant, revision_id, run_id: "run-1", artifact_kind,
+          occurrence_id: identity.value, schema_version: "1", extractor_id, extractor_version: "1", item_kind: item.item_kind,
+          item_selector: item.item_selector, item_id_or_path: item.item_id_or_path, item_scope: item.item_scope,
+          producer_local_id: item.producer_local_id, selected_value: jsonText(item.selected_value), logical_item_id: null,
+          json_pointer: null }).execute();
+      }
+    });
+    await projectRevision(db, tenant, revision_id);
+  }
+  const before = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
+  const capture = await loadRunCapture(db, tenant, "run-1");
+  if (!capture.ok) throw new Error(capture.error.detail);
+  const legacy_items = capture.value.flatMap((revision) => revision.items);
+  expect(legacy_items.map((item) => String(item.occurrence_id)).sort()).toEqual(before.items
+    .filter((item) => item.revision_id.startsWith("legacy-")).map((item) => item.occurrence_id).sort());
+  const questions = oakridgeQuestions(pilotExpectations);
+  const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }], grade: [{ ...tenant, token: "grade" }] } });
+  for (const [artifact_kind, question_id] of [["plan", "plan.criterion_traceability"], ["brief", "brief.source_fidelity"]] as const) {
+    const subject = before.items.find((item) => item.revision_id === `legacy-${artifact_kind}` && item.item_kind === "criterion")!;
+    expect(subject).toMatchObject({ item_id_or_path: "criterion:criterion", item_scope: "criterion", extractor_version: "1" });
+    const question = questions[question_id].definition;
+    const queued = await app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify({
+        identity: { subject_occurrence_id: subject.occurrence_id, question_id, question_version: question.question_version,
+          evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "legacy" },
+        context: { question, evaluator: evaluator("model") }, runner: "stub_model" }) });
+    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
+    const eligibility = await readEligibility(db, tenant, { run_id: "run-1", revision_id: subject.revision_id,
+      question_id, question_version: question.question_version, limit: 20, offset: 0 });
+    expect(eligibility.items).toMatchObject([{ subject_occurrence_id: subject.occurrence_id, tag: "eligible" }]);
+    const lineage = await readLineage(db, tenant, subject.occurrence_id, { limit: 200, offset: 0 });
+    expect(lineage?.edges.some((edge) => edge.type === "derived_from")).toBe(true);
+    const assigned = await app.request("/v1/blind-assignments", { method: "POST",
+      headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify({
+        subject_occurrence_id: subject.occurrence_id, question_id, question_version: question.question_version }) });
+    expect(assigned.status).toBe(201);
+  }
+  const current = await captureProjectedFixture(db, { revision_id: "current-brief", artifact_kind: "brief",
+    recorded_at: "2026-11-01T01:00:00Z", body: { cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+      acceptance_criteria: [{ id: "criterion", text: "Current criterion" }] } });
+  expect(current.find((item) => item.item_kind === "criterion")).toMatchObject({
+    extractor_version: "2", item_scope: "cohort/cohort/criterion", item_id_or_path: "cohort/cohort/criterion:criterion" });
+  for (const kind of ["plan", "brief", "assessment"]) await projectRevision(db, tenant, `legacy-${kind}`);
+  const after = await listRunItems(db, tenant, "run-1", { limit: 200, offset: 0 });
+  expect(after.items.filter((item) => item.revision_id.startsWith("legacy-"))).toEqual(before.items
+    .filter((item) => item.revision_id.startsWith("legacy-")));
 }));

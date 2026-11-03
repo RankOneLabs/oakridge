@@ -7,8 +7,8 @@ import { withTenant, type Database, type TenantScope } from "./database";
 
 export interface RunCaptureError { readonly operation: "run_capture"; readonly entity_id: string; readonly detail: string }
 
-function occurrenceKey(revision_id: string, extractor_id: string, item_selector: string, item_id_or_path: string): string {
-  return [revision_id, extractor_id, item_selector, item_id_or_path].join("\u0000");
+function occurrenceKey(revision_id: string, extractor_id: string, extractor_version: string, item_selector: string, item_id_or_path: string): string {
+  return [revision_id, extractor_id, extractor_version, item_selector, item_id_or_path].join("\u0000");
 }
 
 /** Re-select captured items and pair them with their stored occurrences. Conditional links exist
@@ -23,7 +23,7 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
         .where("run_id", "=", run_id).orderBy("recorded_at").orderBy("revision_id").execute();
       if (revisions.length === 0) return err({ operation: "run_capture", entity_id: run_id, detail: "no captured revisions for run" });
       const occurrences = await trx.selectFrom("observation.item_occurrence")
-        .select(["occurrence_id", "revision_id", "extractor_id", "item_selector", "item_id_or_path"])
+        .select(["occurrence_id", "revision_id", "extractor_id", "extractor_version", "item_selector", "item_id_or_path"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
         .where("run_id", "=", run_id).execute();
       const relations = await trx.selectFrom("observation.item_relation as relation")
@@ -33,13 +33,14 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
         .where("relation.producer", "=", tenant.producer).where("relation.namespace", "=", tenant.namespace)
         .where("source.run_id", "=", run_id).execute();
       const linked = new Set(relations.map((row) => `${row.source_occurrence_id}\u0000${row.type}\u0000${row.evidence_ref}`));
-      const ids = new Map(occurrences.map((row) => [occurrenceKey(row.revision_id, row.extractor_id, row.item_selector,
+      const ids = new Map(occurrences.map((row) => [occurrenceKey(row.revision_id, row.extractor_id, row.extractor_version, row.item_selector,
         row.item_id_or_path), row.occurrence_id as ItemOccurrenceId]));
       return ok(revisions.map((revision): CapturedRevision => {
         const pass = selectRevision(revision.body as JsonValue, revision.revision_id,
-          oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version, { unit_id: revision.unit_id }));
+          oakridgeDevelopmentCatalogue(revision.artifact_kind, revision.artifact_schema_version, { unit_id: revision.unit_id,
+            extractor_versions: occurrences.filter((row) => row.revision_id === revision.revision_id) }));
         const items = pass.items.flatMap(({ definition, item }): CapturedItem[] => {
-          const occurrence_id = ids.get(occurrenceKey(revision.revision_id, definition.extractor_id,
+          const occurrence_id = ids.get(occurrenceKey(revision.revision_id, definition.extractor_id, definition.extractor_version,
             item.item_selector, item.item_id_or_path));
           return occurrence_id ? [{ ...item, occurrence_id, revision_id: revision.revision_id,
             links: item.links.filter((link) => !link.if_present

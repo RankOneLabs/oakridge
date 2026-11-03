@@ -9,7 +9,10 @@ async function fixture(name: string): Promise<JsonValue> {
 
 test("the pinned plan catalogue addresses cohort ids and plan-wide paths honestly", async () => {
   const definitions = oakridgeDevelopmentCatalogue("plan", "development-v1");
-  expect(definitions.every((definition) => definition.schema_version === "development-v1" && definition.extractor_version === "1")).toBe(true);
+  expect(definitions.every((definition) => definition.schema_version === "development-v1")).toBe(true);
+  expect(definitions.find((definition) => definition.extractor_id === "plan.criteria")?.extractor_version).toBe("2");
+  expect(definitions.filter((definition) => definition.extractor_id !== "plan.criteria")
+    .every((definition) => definition.extractor_version === "1")).toBe(true);
   const pass = selectRevision(await fixture("plan"), "plan-1", definitions);
   expect(pass.issues).toEqual([]);
   const criterion = pass.items.find(({ item }) => item.item_kind === "criterion")?.item;

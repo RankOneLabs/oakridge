@@ -5,7 +5,11 @@ import { idList, listAt, objectAt, requiredId, type ExtractionFailure, type Extr
 /** Legacy context-free criteria remain readable; live capture records cohort ownership. */
 export const CRITERION_SCOPE = "criterion";
 export function cohortCriterionScope(cohort_id: string): string { return `cohort/${cohort_id}/criterion`; }
-export interface ProjectionCaptureContext { readonly unit_id: string }
+export interface ExtractorVersionPin { readonly extractor_id: string; readonly extractor_version: string }
+export interface ProjectionCaptureContext {
+  readonly unit_id: string;
+  readonly extractor_versions?: readonly ExtractorVersionPin[];
+}
 function assessmentCriterionScope(context?: ProjectionCaptureContext): string {
   const parts = context?.unit_id.split("/") ?? [];
   const index = parts.lastIndexOf("implementation");
@@ -92,12 +96,13 @@ function idsLink(value: JsonValue, field: string, path: string, target_artifact_
     target_scope, target_local_id, evidence_ref: `${path}/${field}/${index}` }))) : ids;
 }
 function definition(artifact_kind: string, schema_version: string, extractor_id: string, item_kind: string,
-  item_selector: string, select: ExtractorDefinition["select"]): ExtractorDefinition {
-  return { artifact_kind, schema_version, extractor_id, extractor_version: VERSION, item_kind, item_selector, select };
+  item_selector: string, select: ExtractorDefinition["select"], extractor_version = VERSION): ExtractorDefinition {
+  return { artifact_kind, schema_version, extractor_id, extractor_version, item_kind, item_selector, select };
 }
 
-/** Register selections against the captured revision's pinned schema version. */
-export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion: string, context?: ProjectionCaptureContext): readonly ExtractorDefinition[] {
+function catalogueVersion(artifactKind: string, schemaVersion: string, version: "1" | "2",
+  context?: ProjectionCaptureContext): readonly ExtractorDefinition[] {
+  const criterionScope = (cohort_id: string) => version === "1" ? CRITERION_SCOPE : cohortCriterionScope(cohort_id);
   const definitions: ExtractorDefinition[] = [
     definition("analysis", schemaVersion, "analysis.findings", "finding", "/findings/*",
       topList("findings", (value, path) => { const id = requiredId(value, path); return id.ok
@@ -136,8 +141,8 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (!tasks.ok) return tasks;
         const decisions = idsLink(value, "decision_ids", path, "plan", "decision", `cohort/${cohortId}/decision`, "derived_from");
         return decisions.ok ? ok(idItem("criterion", "/cohorts/*/acceptance_criteria/*", path,
-          cohortCriterionScope(cohortId), id.value, value, [...tasks.value, ...decisions.value])) : decisions;
-      })),
+          criterionScope(cohortId), id.value, value, [...tasks.value, ...decisions.value])) : decisions;
+      }), version),
     definition("plan", schemaVersion, "plan.acceptance_criteria", "plan_wide_criterion", "/acceptance_criteria/*",
       topList("acceptance_criteria", (value, path) => typeof value === "string"
         ? ok(pathItem("plan_wide_criterion", "/acceptance_criteria/*", path, value))
@@ -159,10 +164,10 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
       })),
     definition("brief", schemaVersion, "brief.criteria", "criterion", "/acceptance_criteria/*",
       briefList("acceptance_criteria", (value, path, cohortId) => { const id = requiredId(value, path);
-        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, cohortCriterionScope(cohortId),
+        return id.ok ? ok(idItem("criterion", "/acceptance_criteria/*", path, criterionScope(cohortId),
           id.value, value, [{ type: "derived_from", target_artifact_kind: "plan", target_item_kind: "criterion",
-          target_scope: cohortCriterionScope(cohortId), target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
-      })),
+          target_scope: criterionScope(cohortId), target_local_id: id.value, evidence_ref: `${path}/id`, if_present: true }])) : id;
+      }), version),
     definition("assessment", schemaVersion, "assessment.findings", "assessment_finding", "/findings/*",
       topList("findings", (value, path) => { const object = objectAt(value, path);
         if (!object.ok) return object;
@@ -170,10 +175,25 @@ export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion
         if (criterionId !== undefined && criterionId !== null && typeof criterionId !== "string")
           return err({ operation: "select_items", entity_id: `${path}/criterion_id`, detail: "invalid criterion id" });
         const links: LinkReference[] = typeof criterionId === "string" ? [{ type: "assesses", target_artifact_kind: "brief",
-          target_item_kind: "criterion", target_scope: assessmentCriterionScope(context), target_local_id: criterionId,
+          target_item_kind: "criterion", target_scope: version === "1" ? CRITERION_SCOPE : assessmentCriterionScope(context), target_local_id: criterionId,
           evidence_ref: `${path}/criterion_id` }] : [];
         return ok(pathItem("assessment_finding", "/findings/*", path, value, links));
-      })),
+      }), version),
   ];
   return definitions.filter((entry) => entry.artifact_kind === artifactKind);
+}
+
+/** New projections use cohort-scoped v2 rules; replays and readers honor the stored extractor pins. */
+export function oakridgeDevelopmentCatalogue(artifactKind: string, schemaVersion: string, context?: ProjectionCaptureContext): readonly ExtractorDefinition[] {
+  const current = catalogueVersion(artifactKind, schemaVersion, "2", context);
+  const pins = context?.extractor_versions;
+  if (!pins?.length) return current;
+  const legacy = catalogueVersion(artifactKind, schemaVersion, "1", context);
+  return current.flatMap((definition) => {
+    const versions = pins.filter((pin) => pin.extractor_id === definition.extractor_id);
+    if (versions.length === 0) return [definition];
+    return [definition, ...legacy.filter((candidate) => candidate.extractor_id === definition.extractor_id
+      && candidate.extractor_version !== definition.extractor_version)]
+      .filter((candidate) => versions.some((pin) => pin.extractor_version === candidate.extractor_version));
+  });
 }
