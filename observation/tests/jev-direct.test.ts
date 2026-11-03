@@ -67,10 +67,10 @@ test("a pinned pilot recipe reaches the provider using evaluator instructions", 
 
 test("all four pilot input recipes retain their pinned bytes", () => {
   const expected: Record<string, string> = {
-    "analysis.finding_relevance": '{"recipe_id":"analysis.finding_relevance","recipe_version":"v1","input_roles":["requested_change","relevant_excerpt"],"output_roles":["analysis_finding"],"projected_fields":["ref","digest","deep_link"]}',
-    "plan.criterion_traceability": '{"recipe_id":"plan.criterion_traceability","recipe_version":"v1","input_roles":["plan_task","plan_decision"],"output_roles":["plan_criterion"],"projected_fields":["ref","digest","deep_link"]}',
-    "brief.source_fidelity": '{"recipe_id":"brief.source_fidelity","recipe_version":"v1","input_roles":["plan_criterion"],"output_roles":["brief_criterion"],"projected_fields":["ref","digest","deep_link"]}',
-    "assessment.coverage": '{"recipe_id":"assessment.coverage","recipe_version":"v1","input_roles":["brief_criterion"],"output_roles":["assessment_finding"],"projected_fields":["ref","digest","deep_link"]}',
+    "analysis.finding_relevance": '{"recipe_id":"analysis.finding_relevance","recipe_version":"v1","input":[{"role":"requested_change","min_count":1,"max_count":1},{"role":"relevant_excerpt","min_count":1,"max_count":1}],"output":[{"role":"analysis_finding","min_count":1,"max_count":1}],"projected_fields":["ref","digest","deep_link"]}',
+    "plan.criterion_traceability": '{"recipe_id":"plan.criterion_traceability","recipe_version":"v1","input":[{"role":"plan_task","min_count":0,"max_count":20},{"role":"plan_decision","min_count":0,"max_count":20}],"output":[{"role":"plan_criterion","min_count":1,"max_count":1}],"projected_fields":["ref","digest","deep_link"]}',
+    "brief.source_fidelity": '{"recipe_id":"brief.source_fidelity","recipe_version":"v1","input":[{"role":"plan_criterion","min_count":1,"max_count":1}],"output":[{"role":"brief_criterion","min_count":1,"max_count":1}],"projected_fields":["ref","digest","deep_link"]}',
+    "assessment.coverage": '{"recipe_id":"assessment.coverage","recipe_version":"v1","input":[{"role":"brief_criterion","min_count":1,"max_count":1}],"output":[{"role":"assessment_finding","min_count":0,"max_count":100}],"projected_fields":["ref","digest","deep_link"]}',
   };
   for (const [id, pilot] of Object.entries(OAKRIDGE_QUESTIONS)) {
     expect(JSON.stringify(pilot.definition.input_recipe)).toBe(expected[id]);

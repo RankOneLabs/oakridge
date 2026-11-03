@@ -8,6 +8,7 @@ import { evidenceKindForCapturedPath } from "./classification";
 import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
 import { hasPinnedPilotRecipe, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
 import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
+import { hasCapturedEvidenceRecipe } from "../../grading/evidence-packages/recipe";
 import { coverageInput } from "../../runners/coverage-checker";
 import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
 import type { QuestionDefinition } from "../../grading/question";
@@ -280,7 +281,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
   for (const [question_id, question] of Object.entries(questions)) {
     if (!question) continue;
     if (question_id !== question.definition.question_id
-      || (!hasPinnedPilotRecipe(question.definition) && !hasJudgeRecipe(question.definition)))
+      || !hasCapturedEvidenceRecipe(question.definition))
       return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no supported captured evidence recipe" });
   }
   const selected = selectCapturedRevisions(revisions, policy);
