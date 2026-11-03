@@ -4,7 +4,7 @@ const questions = oakridgeQuestions(pilotExpectations);
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { canonicalDigest } from "canonical-json";
-import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import type { ItemOccurrenceId } from "../src/domain/identity";
 import type { JsonValue } from "../src/domain/primitives";
 import type { CapturedRevision } from "../src/grading/evidence-packages/capture";
 import { capturedReference } from "../src/grading/evidence-packages/references";
@@ -13,7 +13,7 @@ import { runPackages } from "../src/producers/oakridge/evidence-packages";
 import { persistOakridgeEligibility } from "../src/producers/oakridge/eligibility";
 import { readEligibility } from "../src/storage/eligibility-store";
 import { registerGradingContext } from "../src/storage/grading-store";
-import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
+import { tenant, evidence, evaluator, scratchGrading, captureProjectedFixture } from "./grading-fixture";
 import { oakridgeDevelopmentCatalogue } from "../src/projection/catalogue/oakridge-development";
 import { selectRevision } from "../src/projection/extractor";
 import { buildGraph } from "./dependency-graph";
@@ -135,24 +135,30 @@ for (const has_findings of [true, false]) {
 }
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
-integration("typed missing evidence decisions persist", async () => scratchGrading(async (db, occurrence_id) => {
+integration("typed missing evidence decisions persist", async () => scratchGrading(async (db) => {
+  const findings = await captureProjectedFixture(db, { revision_id: "missing-analysis", artifact_kind: "analysis", body: {
+    findings: [{ id: "finding", description: "needs source", severity: "info" }], requirements: [], proposed_spec_updates: [], risks: [],
+  } });
+  const criteria = await captureProjectedFixture(db, { revision_id: "missing-brief", artifact_kind: "brief", body: {
+    cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "criterion", text: "needs assessment" }],
+  } });
   const analysis = "analysis.finding_relevance" as const;
   const assessment = "assessment.coverage" as const;
   for (const question_id of [analysis, assessment]) {
-    const pinned = { ...question, question_id: question_id as QuestionId, question_version: "v1",
+    const pinned = { ...questions[question_id].definition,
       requires_repository_snapshot: question_id === assessment };
     expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   }
   const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [
-    { question_id: analysis, occurrence_id, decision: { tag: "missing_evidence" as const,
+    { question_id: analysis, occurrence_id: findings.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "no excerpt source" } } },
-    { question_id: assessment, occurrence_id, decision: { tag: "missing_evidence" as const,
+    { question_id: assessment, occurrence_id: criteria.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "too few repository content references" } } },
   ] };
   const saved = await persistOakridgeEligibility(db, tenant, manifest);
   expect(saved).toEqual({ ok: true, value: 2 });
-  expect((await readEligibility(db, tenant, analysis, "v1"))[0]?.tag).toBe("missing_evidence");
-  expect((await readEligibility(db, tenant, assessment, "v1"))[0]?.payload).toEqual({ kind: "missing_source", detail: "too few repository content references" });
+  expect((await readEligibility(db, tenant, { run_id: "run-1", question_id: analysis, question_version: "v1", limit: 200, offset: 0 })).items[0]?.tag).toBe("missing_evidence");
+  expect((await readEligibility(db, tenant, { run_id: "run-1", question_id: assessment, question_version: "v1", limit: 200, offset: 0 })).items[0]?.payload).toEqual({ kind: "missing_source", detail: "too few repository content references" });
 }));
 
 test("unsupported captured provenance stops before subject or evidence interpretation", async () => {

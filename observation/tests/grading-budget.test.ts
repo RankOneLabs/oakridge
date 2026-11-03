@@ -240,9 +240,9 @@ for (const cap of ["run_spend", "stage_spend", "run_concurrency", "stage_concurr
       expect(stored.state).toBe("queued");
     }
     expect((await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_execution").selectAll().execute()))).toHaveLength(0);
-    const rows = await readEligibility(db, tenant, question.question_id, question.question_version);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.tag).toBe("eligible");
+    const rows = await readEligibility(db, tenant, { run_id: "run-1", question_id: question.question_id, question_version: question.question_version, limit: 200, offset: 0 });
+    expect(rows.items).toHaveLength(1);
+    expect(rows.items[0]?.tag).toBe("eligible");
   }));
 }
 

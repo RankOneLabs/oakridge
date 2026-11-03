@@ -37,9 +37,9 @@ integration("four exclusion causes persist as distinct typed eligibility rows", 
       question_version: question.question_version });
     expect(result.ok).toBe(true);
   }
-  const rows = await readEligibility(db, tenant, question.question_id, question.question_version);
-  expect(rows.map((row) => exclusionReason(row)?.kind).sort()).toEqual([...["uncited", "dangling_citation", "unlinked", "unevidenced"] as const].sort());
-  expect(eligibilityExclusionCounts(rows)).toEqual({ uncited: 1, dangling_citation: 1, unlinked: 1,
+  const rows = await readEligibility(db, tenant, { run_id: "run-1", question_id: question.question_id, question_version: question.question_version, limit: 200, offset: 0 });
+  expect(rows.items.map((row) => exclusionReason(row)?.kind).sort()).toEqual([...["uncited", "dangling_citation", "unlinked", "unevidenced"] as const].sort());
+  expect(eligibilityExclusionCounts(rows.items)).toEqual({ uncited: 1, dangling_citation: 1, unlinked: 1,
     unevidenced: 1, skipped_budget: 0 });
 }));
 
@@ -113,9 +113,9 @@ integration("supported captures derive distinct exclusions exactly once and reje
   for (const id of ["analysis.finding_relevance", "plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"] as const) {
     const selected = catalogue[id].definition;
     expect((await registerGradingContext(db, tenant, { question: selected, evidence, evaluator: evaluator("code") })).ok).toBe(true);
-    const [first, concurrent] = await Promise.all([readEligibility(db, tenant, id, "v1"), readEligibility(db, tenant, id, "v1")]);
+    const [first, concurrent] = await Promise.all([readEligibility(db, tenant, { run_id: "run-1", question_id: id, question_version: "v1", limit: 200, offset: 0 }), readEligibility(db, tenant, { run_id: "run-1", question_id: id, question_version: "v1", limit: 200, offset: 0 })]);
     expect(concurrent).toEqual(first);
-    expect(await readEligibility(db, tenant, id, "v1")).toEqual(first);
+    expect(await readEligibility(db, tenant, { run_id: "run-1", question_id: id, question_version: "v1", limit: 200, offset: 0 })).toEqual(first);
   }
   const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility").selectAll().execute());
   expect(rows).toHaveLength(6);
@@ -153,10 +153,50 @@ integration("an unsupported pilot capture records one inapplicable decision with
     if (JSON.stringify(node).includes('"name":"body"')) throw new Error("unsupported capture body was read");
     return node;
   }, transformResult: async ({ result }) => result });
-  const first = await readEligibility(guarded, tenant, selected.question_id, selected.question_version);
-  expect(first).toHaveLength(1);
-  expect(first[0]).toMatchObject({ tag: "inapplicable", payload: {
+  const first = await readEligibility(guarded, tenant, { run_id: "run-1", question_id: selected.question_id, question_version: selected.question_version, limit: 200, offset: 0 });
+  expect(first.items).toHaveLength(1);
+  expect(first.items[0]).toMatchObject({ tag: "inapplicable", payload: {
     reason: 'Unsupported provenance: definition_id: recorded="old-definition", pinned="definition-1"' } });
-  expect(await readEligibility(guarded, tenant, selected.question_id, selected.question_version)).toEqual(first);
+  expect(await readEligibility(guarded, tenant, { run_id: "run-1", question_id: selected.question_id, question_version: selected.question_version, limit: 200, offset: 0 })).toEqual(first);
   expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility").selectAll().execute())).toHaveLength(1);
+}));
+
+integration("eligibility pages bound derivation and reads by run, revision and question in stable order", async () => scratchGrading(async (db) => {
+  const { createApp } = await import("../src/http/app");
+  const selected = oakridgeQuestions(pilotExpectations)["plan.criterion_traceability"].definition;
+  expect((await registerGradingContext(db, tenant, { question: selected, evidence, evaluator: evaluator("code") })).ok).toBe(true);
+  const body = { cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }],
+    acceptance_criteria: [0, 1, 2, 3, 4].map((index) => ({ id: `criterion-${index}`, text: "Works", task_ids: [], decision_ids: ["decision"] })) }],
+    acceptance_criteria: [], risks: [] };
+  const captured = await captureProjectedFixture(db, { revision_id: "page-plan", artifact_kind: "plan", body });
+  await captureProjectedFixture(db, { run_id: "other-run", revision_id: "other-page-plan", artifact_kind: "plan", body });
+  const app = createApp({ db, credentials: { ingest: [], read: [{ ...tenant, token: "read" }] } });
+  const path = `/v1/evaluation-eligibility?run_id=run-1&question_id=${selected.question_id}&question_version=${selected.question_version}`;
+  const get = (url: string) => app.request(url, { headers: { authorization: "Bearer read" } });
+  const first = await (await get(`${path}&limit=3&offset=0`)).json();
+  expect(first.items).toHaveLength(3);
+  expect(first.total).toBe(5);
+  const derived = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility").selectAll().execute());
+  expect(derived).toHaveLength(3);
+  const second = await (await get(`${path}&limit=3&offset=3`)).json();
+  expect(second.items).toHaveLength(2);
+  expect(second.total).toBe(5);
+  const ids = [...first.items, ...second.items].map((row: { subject_occurrence_id: string }) => row.subject_occurrence_id);
+  expect(new Set(ids).size).toBe(5);
+  expect(ids).toEqual(captured.filter((item) => item.item_kind === "criterion").map((item) => item.occurrence_id).sort());
+  expect((await (await get(`${path}&limit=3&offset=0`)).json()).items).toEqual(first.items);
+  await captureProjectedFixture(db, { revision_id: "page-successor", artifact_kind: "plan", body: {
+    ...body, cohorts: [{ ...body.cohorts[0]!, acceptance_criteria: [body.cohorts[0]!.acceptance_criteria[0]!] }],
+  }, recorded_at: "2026-11-01T01:00:00Z", predecessor_id: "page-plan" });
+  expect((await (await get(`${path}&revision_id=page-plan`)).json()).total).toBe(5);
+  const successor = await (await get(`${path}&revision_id=page-successor`)).json();
+  expect(successor.total).toBe(1);
+  expect(ids).not.toContain(successor.items[0].subject_occurrence_id);
+  expect((await get(path.replace("run_id=run-1&", ""))).status).toBe(400);
+  for (const pagination of ["limit=0", "limit=201", "limit=1.5", "offset=-1", "offset=1.5", "offset=9007199254740992"]) {
+    const response = await get(`${path}&${pagination}`);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("invalid_pagination");
+  }
+  expect((await (await get(path.replace("run-1", "unknown-run"))).json())).toMatchObject({ items: [], total: 0 });
 }));

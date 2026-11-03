@@ -8,6 +8,7 @@ import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
 import { provenanceEligibility, type EligibilityRow, type ProvenanceDecision } from "../grading/eligibility";
+import type { Page } from "./projection-store";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
 export interface EligibilityStoreError { readonly operation: "eligibility_store"; readonly entity_id: string; readonly detail: string }
@@ -30,12 +31,31 @@ export async function recordEligibility(db: Database, tenant: TenantScope, row: 
   }
 }
 
-async function storedEligibility(db: Database, tenant: TenantScope, question_id: string, question_version: string)
-  : Promise<readonly EligibilityRow[]> {
-  const rows = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility")
-    .selectAll().where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("question_id", "=", question_id).where("question_version", "=", question_version)
-    .orderBy("subject_occurrence_id").orderBy("recorded_at").orderBy("eligibility_id").execute());
+export interface EligibilitySelection extends Page {
+  readonly run_id: string;
+  readonly revision_id?: string | null;
+  readonly question_id: string;
+  readonly question_version: string;
+}
+export interface EligibilityPage extends Page {
+  readonly items: readonly EligibilityRow[];
+  readonly total: number;
+}
+
+async function storedEligibility(db: Database, tenant: TenantScope, selection: EligibilitySelection,
+  subject_ids: readonly string[]): Promise<readonly EligibilityRow[]> {
+  if (subject_ids.length === 0) return [];
+  const rows = await withTenant(db, tenant, (trx) => {
+    let query = trx.selectFrom("observation.evaluation_eligibility as e")
+      .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "e.producer")
+        .onRef("i.namespace", "=", "e.namespace").onRef("i.occurrence_id", "=", "e.subject_occurrence_id"))
+      .selectAll("e").where("e.producer", "=", tenant.producer).where("e.namespace", "=", tenant.namespace)
+      .where("i.run_id", "=", selection.run_id).where("e.subject_occurrence_id", "in", subject_ids)
+      .where("e.question_id", "=", selection.question_id).where("e.question_version", "=", selection.question_version)
+      .orderBy("e.subject_occurrence_id").limit(selection.limit);
+    if (selection.revision_id) query = query.where("i.revision_id", "=", selection.revision_id);
+    return query.execute();
+  });
   return rows.map((row) => ({ producer: row.producer, namespace: row.namespace,
     subject_occurrence_id: row.subject_occurrence_id as EligibilityRow["subject_occurrence_id"],
     question_id: row.question_id as EligibilityRow["question_id"], question_version: row.question_version,
@@ -97,25 +117,32 @@ export async function checkGradingProvenance(db: Database, tenant: TenantScope, 
 }
 
 /** Gate metadata first, derive supported pilot decisions from captures, then record each pin once. */
-export async function readEligibility(db: Database, tenant: TenantScope, question_id: string, question_version: string)
-  : Promise<readonly EligibilityRow[]> {
+export async function readEligibility(db: Database, tenant: TenantScope, selection: EligibilitySelection)
+  : Promise<EligibilityPage> {
+  const { question_id, question_version } = selection;
+  const page = { limit: selection.limit, offset: selection.offset };
   const question_row = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("question_id", "=", question_id).where("question_version", "=", question_version).executeTakeFirst());
-  if (!question_row) return [];
+  if (!question_row) return { ...page, items: [], total: 0 };
   const question = questionFromRow(question_row);
   const subject_artifact_kind = pilotSubjectArtifactKind(question_id);
-  const subjects = await withTenant(db, tenant, (trx) => {
+  const population = await withTenant(db, tenant, async (trx) => {
     let query = trx.selectFrom("observation.item_occurrence as i")
     .innerJoin("observation.source_revision as r", (join) => join.onRef("r.revision_id", "=", "i.revision_id")
       .onRef("r.producer", "=", "i.producer").onRef("r.namespace", "=", "i.namespace"))
-    .select(["i.occurrence_id", "i.run_id", "r.definition_id", "r.artifact_schema_version"])
     .where("i.producer", "=", tenant.producer).where("i.namespace", "=", tenant.namespace)
-    .where("i.item_kind", "in", question.target_item_kinds);
+    .where("i.run_id", "=", selection.run_id).where("i.item_kind", "in", question.target_item_kinds);
     if (subject_artifact_kind) query = query.where("i.artifact_kind", "=", subject_artifact_kind);
-    return query.execute();
+    if (selection.revision_id) query = query.where("i.revision_id", "=", selection.revision_id);
+    const count = await query.select(sql<string>`count(*)::text`.as("total")).executeTakeFirstOrThrow();
+    const subjects = await query.select(["i.occurrence_id", "r.definition_id", "r.artifact_schema_version"])
+      .orderBy("i.occurrence_id").limit(selection.limit).offset(selection.offset).execute();
+    return { total: Number(count.total), subjects };
   });
-  const stored = await storedEligibility(db, tenant, question_id, question_version);
+  const subjects = population.subjects;
+  const subject_ids = subjects.map((subject) => subject.occurrence_id);
+  const stored = await storedEligibility(db, tenant, selection, subject_ids);
   const decisions = new Map(stored.map((row) => [String(row.subject_occurrence_id), row]));
   for (const subject of subjects) {
     const decision = provenanceEligibility(question.pinned_expectation, subject);
@@ -132,7 +159,7 @@ export async function readEligibility(db: Database, tenant: TenantScope, questio
     }
   }
   // Concurrent reads may have won the insert; return the authoritative first decisions.
-  const rows = await storedEligibility(db, tenant, question_id, question_version);
-  return rows.map((row) => decisions.get(row.subject_occurrence_id)?.tag === "inapplicable"
-    ? decisions.get(row.subject_occurrence_id)! : row);
+  const rows = await storedEligibility(db, tenant, selection, subject_ids);
+  return { ...page, total: population.total, items: rows.map((row) => decisions.get(row.subject_occurrence_id)?.tag === "inapplicable"
+    ? decisions.get(row.subject_occurrence_id)! : row) };
 }

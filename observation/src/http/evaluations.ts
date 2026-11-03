@@ -11,6 +11,7 @@ import { checkGradingProvenance, readEligibility } from "../storage/eligibility-
 import { gradingLimits } from "../grading/jobs/budget";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
+import { pagination } from "./items";
 import { errorResponse } from "./errors";
 
 export const responseKindSchema = z.enum(["boolean", "choice", "ordinal", "numeric", "text", "structured"]);
@@ -52,8 +53,13 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
     const params = new URL(c.req.url).searchParams;
     const question_id = params.get("question_id");
     const question_version = params.get("question_version");
-    if (!question_id || !question_version) return errorResponse(c, 400, "invalid_selection", "question id and version required");
-    return c.json({ items: await readEligibility(deps.db, credential, question_id, question_version) });
+    const run_id = params.get("run_id");
+    if (!run_id || !question_id || !question_version)
+      return errorResponse(c, 400, "invalid_selection", "run, question id and version required");
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await readEligibility(deps.db, credential, { run_id, revision_id: params.get("revision_id"),
+      question_id, question_version, ...page }));
   });
   app.get("/v1/evaluations/by-digest/:digest", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);

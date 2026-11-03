@@ -65,9 +65,9 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
       count(*) FILTER (WHERE tag = 'blocked_dependency')::text AS blocked_dependency,
       count(*) FILTER (WHERE tag = 'skipped_budget')::text AS skipped_budget,
       EXTRACT(EPOCH FROM clock_timestamp() - max(recorded_at))::double precision AS lag_seconds
-    FROM counted GROUP BY question_id, question_version ORDER BY question_id, question_version LIMIT 51
+    FROM counted GROUP BY question_id, question_version ORDER BY question_id, question_version
   `.execute(trx));
-  const questions: QuestionCoverage[] = rows.rows.slice(0, 50).map((row) => {
+  const questions: QuestionCoverage[] = rows.rows.map((row) => {
     const exclusion_reasons = { inapplicable: Number(row.inapplicable), missing_evidence: Number(row.missing_evidence),
       invalid_reference: Number(row.invalid_reference), blocked_dependency: Number(row.blocked_dependency),
       skipped_budget: Number(row.skipped_budget) };
@@ -78,5 +78,5 @@ export async function readCoverage(db: Database, tenant: TenantScope, selection:
       exclusion_reasons, lag_seconds: row.lag_seconds };
   });
   return { run_id: selection.run_id, selection_revision_id: selection.revision_id,
-    query_version: COVERAGE_QUERY_VERSION, questions, truncated: rows.rows.length > 50 };
+    query_version: COVERAGE_QUERY_VERSION, questions, truncated: false };
 }

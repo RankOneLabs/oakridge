@@ -147,7 +147,7 @@ for (const recorded of [
         executions: await trx.selectFrom("observation.evaluation_execution").select("execution_id").execute(),
       }));
       const before = await counts();
-      const eligibility = await app.request(`/v1/evaluation-eligibility?question_id=${question.question_id}&question_version=${question.question_version}`,
+      const eligibility = await app.request(`/v1/evaluation-eligibility?run_id=run-1&question_id=${question.question_id}&question_version=${question.question_version}`,
         { headers: { authorization: "Bearer read-token" } });
       expect(eligibility.status).toBe(200);
       const decision = (await eligibility.json()).items[0];
