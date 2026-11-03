@@ -15,6 +15,7 @@ import { useOperatorDefinition } from "../../hooks/useOperatorDefinition";
 import { useAgentSessionSelections } from "../../hooks/useAgentSessionSelections";
 import { useCreateRun } from "../../hooks/useCreateRun";
 import type { FinalMergePolicy, RepositoryInputDraft } from "../../run-types";
+import type { Project } from "../../project-types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { SessionModelFields } from "../molecules/SessionModelFields";
 import { selectAgentSessionTargets, selectLaunchSessionSettings, selectRoleChoiceTargets, selectSessionKeysFromRoleKeys,
@@ -96,6 +97,12 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
   const coreUrl = configQuery.data?.core_url ?? "";
   const pending = createRun.isPending;
+
+  const onAddRepository = (project: Project) => {
+    setRepositories((current) => [...current, repositoryDraftFromProject(project, {
+      key: "", path: "", forge_owner: "", forge_name: "", integration_branch: "main",
+    })]);
+  };
 
   // The input is cleared afterwards so picking the same file twice still fires
   // a change event — otherwise a failed read cannot be retried without first
@@ -219,7 +226,14 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </select>
         </FormField>
 
-        <RepositoryLaunchFields repositories={repositories} setRepositories={setRepositories} disabled={pending} />
+        <RepositoryLaunchFields
+          repositories={repositories}
+          setRepositories={setRepositories}
+          projects={projectsQuery.data ?? []}
+          onAddRepository={onAddRepository}
+          isLoadingProjects={projectsQuery.isPending}
+          disabled={pending}
+        />
 
         <BriefNotesField
           notes={briefNotes}
