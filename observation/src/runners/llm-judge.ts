@@ -2,11 +2,8 @@ import { z } from "zod";
 import { err, ok } from "../domain/primitives";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
+import { judgeRecipeSchema } from "../grading/evidence-packages/judge-recipe";
 
-const judgeRecipeSchema = z.object({ judge: z.object({
-  rubric: z.string().min(1), evidence_refs: z.array(z.string().min(1)).min(1),
-  max_evidence_chars: z.number().int().min(1).max(32_000), target: z.enum(["report", "code"]),
-}) });
 export const judgeAnswerSchema = z.object({ choice: z.string().min(1),
   probabilities: z.record(z.string(), z.number().finite().min(0).max(1)),
   confidence: z.number().finite().min(0).max(1), explanation: z.string().optional() });

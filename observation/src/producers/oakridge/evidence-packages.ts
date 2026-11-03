@@ -1,36 +1,45 @@
 import { err, ok, type JsonValue, type Result } from "../../domain/primitives";
-import type { ItemOccurrenceId } from "../../domain/identity";
-import type { EvidenceSet } from "../../grading/evidence";
+import type { ItemOccurrenceId, QuestionId } from "../../domain/identity";
+import type { EvidenceReference, EvidenceSet } from "../../grading/evidence";
 import { collectReferences, capturedReference, packagedEvidenceSet, type EvidencePackageError } from "../../grading/evidence-packages/references";
 import { selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { planCriterionEligibility } from "./plan-traceability";
 import { evidenceKindForCapturedPath } from "./classification";
 import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
 import { hasPinnedPilotRecipe, type PilotQuestionId } from "../../grading/evidence-packages/pilot-recipe";
+import { hasJudgeRecipe, judgeNeedsRepository, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
 import { coverageInput } from "../../runners/coverage-checker";
-import type { PilotQuestion, PilotQuestionSelection } from "../../grading/catalogue/oakridge-questions";
+import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
+import type { QuestionDefinition } from "../../grading/question";
+
+export type RunQuestionSelection = Readonly<Record<string, PilotQuestion | undefined>>;
+type PackageQuestionId = PilotQuestionId | QuestionId;
 
 export interface PilotPackage {
-  readonly question_id: PilotQuestionId;
+  readonly question_id: PackageQuestionId;
   readonly subject: CapturedItem;
   readonly revision_id: string;
   readonly evidence: EvidenceSet;
 }
 export interface PackageExclusion {
-  readonly question_id: PilotQuestionId;
+  readonly question_id: PackageQuestionId;
   readonly occurrence_id: ItemOccurrenceId;
   readonly reason: ExclusionReason;
 }
-export interface RunPackages {
-  readonly selection_policy: RevisionSelection["policy"];
+interface PackageBatch {
   readonly packages: readonly PilotPackage[];
   readonly exclusions: readonly PackageExclusion[];
-  readonly eligibility: readonly PackageEligibility[];
+  readonly eligibility: readonly PackageDecision[];
 }
-export interface PackageEligibility {
-  readonly question_id: PilotQuestionId;
+interface PackageDecision {
+  readonly question_id: PackageQuestionId;
   readonly occurrence_id: ItemOccurrenceId;
   readonly decision: EligibilityDecision;
+}
+export interface PackageEligibility extends PackageDecision { readonly question_version: string }
+export interface RunPackages extends PackageBatch {
+  readonly selection_policy: RevisionSelection["policy"];
+  readonly eligibility: readonly PackageEligibility[];
 }
 export type RunPackageError = EvidencePackageError;
 
@@ -53,7 +62,7 @@ function reference(role: string, artifact_kind: string, item: CapturedItem, cont
   return capturedReference(role, item, kind.value, content);
 }
 
-function planPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+function planPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of subjects) {
@@ -83,10 +92,10 @@ function planPackages(revisions: readonly CapturedRevision[], subjects: readonly
         revision_id: revision.revision_id, evidence: evidence.value });
     }
   }
-  return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
+  return ok({ packages, exclusions, eligibility: [] });
 }
 
-function briefPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<RunPackages, RunPackageError> {
+function briefPackages(revisions: readonly CapturedRevision[], subjects: readonly CapturedRevision[]): Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
   for (const revision of subjects) {
@@ -116,7 +125,7 @@ function briefPackages(revisions: readonly CapturedRevision[], subjects: readonl
         evidence: evidence.value });
     }
   }
-  return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility: [] });
+  return ok({ packages, exclusions, eligibility: [] });
 }
 
 const criterionKey = (scope: string | null, local_id: string | null): string => `${scope}\u0000${local_id}`;
@@ -145,10 +154,10 @@ function assessmentCoversBrief(assessment: CapturedRevision, brief: CapturedRevi
 /** Coverage uses the assessment captured for this brief revision. An empty findings list is valid evidence of a miss. */
 interface AssessmentSources { readonly revisions: readonly CapturedRevision[]; readonly subjects: readonly CapturedRevision[];
 }
-function assessmentPackages({ revisions, subjects }: AssessmentSources): Result<RunPackages, RunPackageError> {
+function assessmentPackages({ revisions, subjects }: AssessmentSources): Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const exclusions: PackageExclusion[] = [];
-  const eligibility: PackageEligibility[] = [];
+  const eligibility: PackageDecision[] = [];
   const supported_ids = new Set(subjects.map((revision) => revision.revision_id));
   const briefs = revisions.filter((revision) => revision.artifact_kind === "brief")
     .sort((a, b) => a.recorded_at.getTime() - b.recorded_at.getTime());
@@ -190,12 +199,12 @@ function assessmentPackages({ revisions, subjects }: AssessmentSources): Result<
         decision: { tag: "eligible", payload: { evidence_set_id: latest.evidence.evidence_set_id } } });
     }
   }
-  return ok({ selection_policy: "live_all_revisions", packages, exclusions, eligibility });
+  return ok({ packages, exclusions, eligibility });
 }
 
 interface SubjectSelection {
   readonly revisions: readonly CapturedRevision[];
-  readonly eligibility: readonly PackageEligibility[];
+  readonly eligibility: readonly PackageDecision[];
 }
 const subjectArtifactKinds: Readonly<Record<PilotQuestionId, string>> = {
   "analysis.finding_relevance": "analysis", "plan.criterion_traceability": "plan",
@@ -218,18 +227,71 @@ function selectSubjects(revisions: readonly CapturedRevision[], question: PilotQ
   };
 }
 
-export function runPackages(revisions: readonly CapturedRevision[], questions: PilotQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions",
+interface JudgeSources {
+  readonly revisions: readonly CapturedRevision[];
+  readonly question: QuestionDefinition;
+  readonly recipe: JudgeRecipe;
+  readonly repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet>;
+}
+
+/** Judge allowlists name exact captured addresses, never request-body evidence or similar prose. */
+function judgePackages({ revisions, question, recipe, repository_sources }: JudgeSources): Result<PackageBatch, RunPackageError> {
+  const packages: PilotPackage[] = [];
+  const eligibility: PackageDecision[] = [];
+  const available: EvidenceReference[] = [];
+  for (const revision of revisions) for (const item of revision.items) {
+    const ref = reference(item.item_kind, revision.artifact_kind, item);
+    if (!ref.ok) return ref;
+    available.push({ ...ref.value, ref: ref.value.deep_link! });
+  }
+  for (const evidence of repository_sources.values()) for (const ref of evidence.references) {
+    if (ref.deep_link && ref.kind === "repository_content") available.push({ ...ref, kind: ref.kind, ref: ref.deep_link });
+  }
+  for (const revision of revisions) for (const subject of revision.items.filter((item) => question.target_item_kinds.includes(item.item_kind))) {
+    const provenance = provenanceEligibility(question.pinned_expectation, revision);
+    if (provenance.tag !== "eligible") {
+      eligibility.push({ question_id: question.question_id, occurrence_id: subject.occurrence_id, decision: provenance });
+      continue;
+    }
+    const references = recipe.judge.evidence_refs.map((address) => available.find((ref) => ref.ref === address));
+    const absent = recipe.judge.evidence_refs.find((_address, index) => !references[index]);
+    const subject_address = `oakridge://revision/${encodeURIComponent(subject.revision_id)}#${subject.path}`;
+    const selects_subject = recipe.judge.evidence_refs.includes(subject_address)
+      || (recipe.judge.target === "code" && (repository_sources.get(subject.occurrence_id)?.references ?? [])
+        .some((ref) => ref.deep_link && recipe.judge.evidence_refs.includes(ref.deep_link)));
+    if (absent || !selects_subject) {
+      eligibility.push({ question_id: question.question_id, occurrence_id: subject.occurrence_id,
+        decision: { tag: "missing_evidence", payload: { kind: "missing_source", detail: absent
+          ? `judge evidence reference is absent from captured run: ${absent}` : "judge allowlist does not select this captured subject" } } });
+      continue;
+    }
+    const evidence = packagedEvidenceSet(question.question_id, references as EvidenceReference[], null);
+    if (!evidence.ok) return evidence;
+    packages.push({ question_id: question.question_id, subject, revision_id: revision.revision_id, evidence: evidence.value });
+    eligibility.push({ question_id: question.question_id, occurrence_id: subject.occurrence_id,
+      decision: { tag: "eligible", payload: { evidence_set_id: evidence.value.evidence_set_id } } });
+  }
+  return ok({ packages, exclusions: [], eligibility });
+}
+
+export function runPackages(revisions: readonly CapturedRevision[], questions: RunQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions",
   repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet> = new Map())
   : Result<RunPackages, RunPackageError> {
   for (const [question_id, question] of Object.entries(questions)) {
-    if (question_id !== question.definition.question_id || !hasPinnedPilotRecipe(question.definition))
-      return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no pinned pilot evidence recipe" });
+    if (!question) continue;
+    if (question_id !== question.definition.question_id
+      || (!hasPinnedPilotRecipe(question.definition) && !hasJudgeRecipe(question.definition)))
+      return err({ operation: "evidence_packages", entity_id: question_id, detail: "question has no supported captured evidence recipe" });
   }
   const selected = selectCapturedRevisions(revisions, policy);
-  const analysis_subjects = selectSubjects(selected.revisions, questions["analysis.finding_relevance"]);
-  const plan_subjects = selectSubjects(selected.revisions, questions["plan.criterion_traceability"]);
-  const brief_subjects = selectSubjects(selected.revisions, questions["brief.source_fidelity"]);
-  const coverage_subjects = selectSubjects(selected.revisions, questions["assessment.coverage"]);
+  const pilot = (id: PilotQuestionId) => {
+    const question = questions[id];
+    return question && hasPinnedPilotRecipe(question.definition) ? question : undefined;
+  };
+  const analysis_subjects = selectSubjects(selected.revisions, pilot("analysis.finding_relevance"));
+  const plan_subjects = selectSubjects(selected.revisions, pilot("plan.criterion_traceability"));
+  const brief_subjects = selectSubjects(selected.revisions, pilot("brief.source_fidelity"));
+  const coverage_subjects = selectSubjects(selected.revisions, pilot("assessment.coverage"));
   const plan = planPackages(selected.revisions, plan_subjects.revisions);
   if (!plan.ok) return plan;
   const brief = briefPackages(selected.revisions, brief_subjects.revisions);
@@ -238,33 +300,42 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: P
   if (!assessment.ok) return assessment;
   let packages = [...plan.value.packages, ...brief.value.packages, ...assessment.value.packages];
   const exclusions = [...plan.value.exclusions, ...brief.value.exclusions, ...assessment.value.exclusions];
-  const eligibility: PackageEligibility[] = [
+  const eligibility: PackageDecision[] = [
     ...[analysis_subjects, plan_subjects, brief_subjects, coverage_subjects].flatMap((selection) => selection.eligibility),
-    ...[...plan.value.packages, ...brief.value.packages].map((pack): PackageEligibility => ({ question_id: pack.question_id,
+    ...[...plan.value.packages, ...brief.value.packages].map((pack): PackageDecision => ({ question_id: pack.question_id,
       occurrence_id: pack.subject.occurrence_id,
       decision: { tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } } })),
-    ...exclusions.map((excluded): PackageEligibility => ({ question_id: excluded.question_id,
+    ...exclusions.map((excluded): PackageDecision => ({ question_id: excluded.question_id,
       occurrence_id: excluded.occurrence_id,
       decision: excluded.reason.kind === "dangling_citation" || excluded.reason.kind === "unlinked"
         ? { tag: "invalid_reference", payload: excluded.reason }
         : excluded.reason.kind === "skipped_budget" ? { tag: "skipped_budget", payload: excluded.reason }
           : { tag: "missing_evidence", payload: excluded.reason } })),
-    ...itemsOf(analysis_subjects.revisions, "analysis", "finding").map((subject): PackageEligibility => ({
+    ...itemsOf(analysis_subjects.revisions, "analysis", "finding").map((subject): PackageDecision => ({
       question_id: "analysis.finding_relevance", occurrence_id: subject.occurrence_id,
       decision: { tag: "missing_evidence", payload: { kind: "missing_source", detail: "no relevant excerpt source is scheduled" } },
     })),
     ...assessment.value.eligibility,
   ];
+  for (const question of Object.values(questions)) {
+    if (!question) continue;
+    const recipe = judgeRecipeSchema.safeParse(question.definition.input_recipe);
+    if (!recipe.success) continue;
+    const judged = judgePackages({ revisions: selected.revisions, question: question.definition, recipe: recipe.data, repository_sources });
+    if (!judged.ok) return judged;
+    packages.push(...judged.value.packages);
+    eligibility.push(...judged.value.eligibility);
+  }
   const source_items = selected.revisions.flatMap((revision) => revision.items);
   const enriched: PilotPackage[] = [];
   for (const pack of packages) {
     const question = questions[pack.question_id]?.definition;
-    if (!question?.requires_repository_snapshot) { enriched.push(pack); continue; }
+    if (!question || (!question.requires_repository_snapshot && !judgeNeedsRepository(question))) { enriched.push(pack); continue; }
     const sources = source_items.filter((item) => pack.evidence.references.some((ref) =>
       ref.deep_link === `oakridge://revision/${encodeURIComponent(item.revision_id)}#${item.path}`))
       .flatMap((item) => repository_sources.get(item.occurrence_id)?.references ?? []);
     const evidence = packagedEvidenceSet(pack.question_id,
-      [...pack.evidence.references, ...sources] as import("../../grading/evidence").EvidenceReference[],
+      (hasJudgeRecipe(question) ? pack.evidence.references : [...pack.evidence.references, ...sources]) as EvidenceReference[],
       pack.evidence.incompleteness_reason);
     if (!evidence.ok) return evidence;
     const source_revision = selected.revisions.find((revision) => revision.revision_id === pack.revision_id);
@@ -276,5 +347,6 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: P
     if (decision.tag === "eligible") enriched.push({ ...pack, evidence: evidence.value });
   }
   packages = enriched;
-  return ok({ selection_policy: policy, packages, exclusions, eligibility });
+  return ok({ selection_policy: policy, packages, exclusions, eligibility: eligibility.map((item) => ({ ...item,
+    question_version: questions[item.question_id]!.definition.question_version })) });
 }

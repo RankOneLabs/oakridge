@@ -2,6 +2,7 @@ import { sql, type Selectable } from "kysely";
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
 import { PILOT_EVIDENCE_RECIPES } from "../grading/evidence-packages/pilot-recipe";
+import { hasJudgeRecipe } from "../grading/evidence-packages/judge-recipe";
 import { pilotSubjectArtifactKind } from "../producers/oakridge/evidence-packages";
 import { deriveSubjectEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
@@ -152,7 +153,7 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
       const recorded = await recordEligibility(db, tenant, row);
       if (!recorded.ok) throw new Error(recorded.error.detail);
       decisions.set(subject.occurrence_id, row);
-    } else if (!decisions.has(subject.occurrence_id) && Object.hasOwn(PILOT_EVIDENCE_RECIPES, question_id)) {
+    } else if (!decisions.has(subject.occurrence_id) && (Object.hasOwn(PILOT_EVIDENCE_RECIPES, question_id) || hasJudgeRecipe(question))) {
       const derived = await deriveSubjectEvidence(db, tenant, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
         question_id: question.question_id, question_version, question });
       if (!derived.ok) throw new Error(derived.error.detail);

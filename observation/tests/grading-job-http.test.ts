@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createApp } from "../src/http/app";
 import { workOneJob } from "../src/grading/jobs/worker";
 import { gradingLimits } from "../src/grading/jobs/budget";
-import { registerGradingContext, runGrade } from "../src/storage/grading-store";
+import { registerGradingContext, registerQuestion, runGrade } from "../src/storage/grading-store";
 import { withTenant } from "../src/storage/database";
 import { enqueueJob } from "../src/storage/grading-job-store";
 import type { GradeRunner } from "../src/ports/grade-runner";
@@ -12,6 +12,9 @@ import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
 import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { instructionDigest } from "../src/grading/evaluator";
 import type { JsonValue } from "../src/domain/primitives";
+import type { QuestionDefinition } from "../src/grading/question";
+import type { ItemOccurrenceId, QuestionId } from "../src/domain/identity";
+import { createLlmJudgeRunner } from "../src/runners/llm-judge";
 
 const integration = process.env.OAKRIDGE_TEST_DATABASE_URL ? test : test.skip;
 const grade = { ...tenant, token: "grade-token" };
@@ -64,6 +67,109 @@ integration("queued plan and brief model requests contain the captured criteria 
       .where("question_id", "=", question_id).executeTakeFirstOrThrow());
     expect(job).toMatchObject({ state: "terminal", terminal_cause: null });
   }
+}));
+
+interface JudgeEvidence { readonly ref: string; readonly content: JsonValue }
+interface JudgeRequest { readonly messages: readonly { readonly content: string }[] }
+interface JudgePrompt { readonly evidence: string }
+
+for (const target of ["report", "code"] as const) {
+  integration(`a new ${target} judge question derives captured evidence for eligibility, assignment and queued execution`, async () => scratchGrading(async (db) => {
+    const original = { id: "criterion", text: "Preserve source", task_ids: [], decision_ids: [] };
+    const revised = { ...original, text: "Keep source intact" };
+    await captureProjectedFixture(db, { revision_id: "judge-plan", artifact_kind: "plan", body: {
+      cohorts: [{ id: "cohort", decisions: [], acceptance_criteria: [original] }], acceptance_criteria: [], risks: [],
+    } });
+    const brief = await captureProjectedFixture(db, { revision_id: "judge-brief", artifact_kind: "brief", body: {
+      cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [revised],
+    } });
+    const code = "export const captured = true;";
+    const repository_address = "oakridge://revision/judge-source#/content";
+    await captureProjectedFixture(db, { revision_id: "judge-source", artifact_kind: "repository_content",
+      body: { head_sha: "reviewed-commit", content: code } });
+    const finding = { criterion_id: "criterion", description: "Check source", evidence: [{ kind: "file", ref: repository_address }] };
+    const assessment = await captureProjectedFixture(db, { revision_id: "judge-assessment", artifact_kind: "assessment",
+      body: { head_sha: "reviewed-commit", verdict: "must stay hidden", findings: [finding] } });
+    const subject = target === "report" ? brief.find((item) => item.item_kind === "criterion")!
+      : assessment.find((item) => item.item_kind === "assessment_finding")!;
+    const address = `oakridge://revision/${subject.revision_id}#${subject.json_pointer}`;
+    const expected: readonly JudgeEvidence[] = target === "report" ? [
+      { ref: "oakridge://revision/judge-plan#/cohorts/0/acceptance_criteria/0", content: original },
+      { ref: address, content: revised },
+    ] : [{ ref: address, content: finding }, { ref: repository_address, content: code }];
+    const pinned: QuestionDefinition = { ...question, question_id: `judge-${target}` as QuestionId, question_version: "rubric-2026",
+      target_item_kinds: [subject.item_kind], response_kind: "choice", allowed_values: ["faithful", "changed", "insufficient_evidence"],
+      requires_repository_snapshot: target === "code", input_recipe: { judge: { rubric: "Judge the captured target",
+        evidence_refs: expected.map((ref) => ref.ref), max_evidence_chars: 5000, target } } };
+    const model = { ...evaluator("model"), evaluator_definition_id: `judge-${target}`, provider: "fixture", model: "pinned-judge" };
+    expect((await registerQuestion(db, tenant, pinned)).ok).toBe(true);
+    const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+    const eligibility = await app.request(`/v1/evaluation-eligibility?run_id=run-1&revision_id=${subject.revision_id}&question_id=${pinned.question_id}&question_version=${pinned.question_version}`,
+      { headers: { authorization: "Bearer read-token" } });
+    expect(eligibility.status).toBe(200);
+    const decisions = await eligibility.json();
+    expect(decisions.items).toMatchObject([{ subject_occurrence_id: subject.occurrence_id, question_version: "rubric-2026", tag: "eligible" }]);
+    const evidence_set_id = decisions.items[0].payload.evidence_set_id as string;
+    const identity = { subject_occurrence_id: subject.occurrence_id, question_id: pinned.question_id,
+      question_version: pinned.question_version, evaluator_definition_id: model.evaluator_definition_id,
+      config_digest: model.config_digest, attempt_label: "judge" };
+    const request = { identity, context: { question: pinned, evaluator: model }, runner: "llm_judge",
+      estimated_cost: 0.1, reviewed_commit: target === "code" ? "reviewed-commit" : undefined };
+    const enqueue = (body: unknown) => app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade-token", "content-type": "application/json" }, body: JSON.stringify(body) });
+    const mismatch = await enqueue({ ...request, identity: { ...identity, evidence_set_id: "caller-evidence" } });
+    expect(mismatch.status).toBe(422);
+    expect((await mismatch.json()).error.code).toBe("evidence_set_mismatch");
+    const queued = await enqueue(request);
+    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
+    const assigned = await app.request("/v1/blind-assignments", { method: "POST",
+      headers: { authorization: "Bearer grade-token", "content-type": "application/json" }, body: JSON.stringify({
+        subject_occurrence_id: subject.occurrence_id, question_id: pinned.question_id, question_version: pinned.question_version }) });
+    expect(assigned.status).toBe(201);
+    expect((await assigned.json()).evidence_set_id).toBe(evidence_set_id);
+    const requests: (readonly JudgeEvidence[])[] = [];
+    const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://stub.invalid/v1", transport: async (_url, init) => {
+      const body = JSON.parse(String(init.body)) as JudgeRequest;
+      const prompt = JSON.parse(body.messages[0]!.content) as JudgePrompt;
+      requests.push(JSON.parse(prompt.evidence) as JudgeEvidence[]);
+      expect(String(init.body)).not.toContain("must stay hidden");
+      return Response.json({ id: "judge-completion", model: "pinned-judge", choices: [{ message: { content: JSON.stringify({
+        choice: "faithful", probabilities: { faithful: 0.8, changed: 0.1, insufficient_evidence: 0.1 }, confidence: 0.8,
+      }) } }] });
+    } });
+    expect((await workOneJob(db, tenant, gradingLimits(), "judge-worker", runner)).kind).toBe("processed");
+    expect(requests).toEqual([expected]);
+    const rows = await withTenant(db, tenant, async (trx) => ({
+      jobs: await trx.selectFrom("observation.grading_job").select(["state", "terminal_cause", "evidence_set_id"]).execute(),
+      grades: await trx.selectFrom("observation.grade_observation").select(["question_version", "evidence_set_id"]).execute(),
+    }));
+    expect(rows.jobs).toEqual([{ state: "terminal", terminal_cause: null, evidence_set_id }]);
+    expect(rows.grades).toEqual([{ question_version: "rubric-2026", evidence_set_id }]);
+  }));
+}
+
+integration("judge requests refuse evidence absent from the captured run without queuing work", async () => scratchGrading(async (db) => {
+  const brief_body = { cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
+    acceptance_criteria: [{ id: "criterion", text: "Keep captured evidence" }] };
+  const items = await captureProjectedFixture(db, { revision_id: "judge-local", artifact_kind: "brief", body: brief_body });
+  await captureProjectedFixture(db, { revision_id: "judge-other-run", run_id: "other-run", artifact_kind: "brief", body: brief_body });
+  const subject = items.find((item) => item.item_kind === "criterion")!;
+  const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
+  for (const [name, address] of [["absent", "oakridge://revision/absent#/acceptance_criteria/0"],
+    ["other-run", "oakridge://revision/judge-other-run#/acceptance_criteria/0"]]) {
+    const pinned: QuestionDefinition = { ...question, question_id: `judge-missing-${name}` as QuestionId, question_version: "rubric-2",
+      target_item_kinds: ["criterion"], response_kind: "choice", allowed_values: ["faithful", "insufficient_evidence"],
+      input_recipe: { judge: { rubric: "Judge captured evidence", target: "report", max_evidence_chars: 1000,
+        evidence_refs: [`oakridge://revision/judge-local#${subject.json_pointer}`, address!] } } };
+    const response = await app.request("/v1/evaluation-jobs", { method: "POST",
+      headers: { authorization: "Bearer grade-token", "content-type": "application/json" }, body: JSON.stringify({
+        identity: { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, question_id: pinned.question_id,
+          question_version: pinned.question_version, evaluator_definition_id: "model", config_digest: "config-1", attempt_label: name },
+        context: { question: pinned, evaluator: evaluator("model") }, runner: "llm_judge", estimated_cost: 0.1 }) });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: { code: "subject_ineligible", message: expect.stringContaining("missing_source") } });
+  }
+  expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job").select("job_id").execute())).toEqual([]);
 }));
 
 integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db) => {

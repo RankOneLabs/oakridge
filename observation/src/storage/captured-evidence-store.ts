@@ -1,6 +1,7 @@
 import type { ItemOccurrenceId } from "../domain/identity";
 import { err, ok, type Result } from "../domain/primitives";
 import type { CapturedItem } from "../grading/evidence-packages/capture";
+import { judgeNeedsRepository } from "../grading/evidence-packages/judge-recipe";
 import type { EvidenceSet } from "../grading/evidence";
 import type { EligibilityDecision } from "../grading/eligibility";
 import type { QuestionDefinition } from "../grading/question";
@@ -40,7 +41,7 @@ export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, 
   if (!subject) return fail("subject occurrence is absent from captured run");
   const question = selection.question;
   const sources = new Map<ItemOccurrenceId, EvidenceSet>();
-  if (question.requires_repository_snapshot) {
+  if (question.requires_repository_snapshot || judgeNeedsRepository(question)) {
     try {
       const source = new CaptureArtifactSource(db, tenant, run_id);
       for (const item of capture.value.flatMap((revision) => revision.items)) {
@@ -107,9 +108,9 @@ export async function deriveSubjectEvidence(db: Database, tenant: TenantScope, s
       if (!derived.ok) return derived;
       const value = derived.value;
       const saved = await persistOakridgeEligibility(db, tenant, { selection_policy: "live_all_revisions",
-        packages: value.evidence ? [{ question_id: question.question_id as import("../grading/evidence-packages/pilot-recipe").PilotQuestionId,
+        packages: value.evidence ? [{ question_id: question.question_id,
           subject: value.subject, revision_id: value.revision_id, evidence: value.evidence }] : [], exclusions: [],
-        eligibility: [{ question_id: question.question_id as import("../grading/evidence-packages/pilot-recipe").PilotQuestionId,
+        eligibility: [{ question_id: question.question_id, question_version: question.question_version,
           occurrence_id: selection.subject_occurrence_id, decision: value.decision }] });
       if (!saved.ok) return fail(saved.error.detail);
     }

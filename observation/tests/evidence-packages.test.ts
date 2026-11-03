@@ -150,9 +150,9 @@ integration("typed missing evidence decisions persist", async () => scratchGradi
     expect((await registerGradingContext(db, tenant, { question: pinned, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   }
   const manifest = { selection_policy: "live_all_revisions" as const, packages: [], exclusions: [], eligibility: [
-    { question_id: analysis, occurrence_id: findings.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
+    { question_id: analysis, question_version: "v1", occurrence_id: findings.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "no excerpt source" } } },
-    { question_id: assessment, occurrence_id: criteria.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
+    { question_id: assessment, question_version: "v1", occurrence_id: criteria.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId, decision: { tag: "missing_evidence" as const,
       payload: { kind: "missing_source" as const, detail: "too few repository content references" } } },
   ] };
   const saved = await persistOakridgeEligibility(db, tenant, manifest);
@@ -176,12 +176,12 @@ test("unsupported captured provenance stops before subject or evidence interpret
     && row.decision.payload.reason.includes('pinned="definition-1"'))).toBe(true);
 });
 
-test("captured derivation requires the question's pinned pilot recipe", async () => {
+test("captured derivation refuses a question with no supported evidence recipe", async () => {
   const plan = await captured("plan", "2026-10-23T17:23:49Z");
   const entry = questions["plan.criterion_traceability"];
   const result = runPackages([plan], { "plan.criterion_traceability": { ...entry,
     definition: { ...entry.definition, input_recipe: {} } } });
-  expect(result).toMatchObject({ ok: false, error: { detail: "question has no pinned pilot evidence recipe" } });
+  expect(result).toMatchObject({ ok: false, error: { detail: "question has no supported captured evidence recipe" } });
 });
 
 integration("repository questions follow explicit addresses into captured content, never a checkout", async () => scratchGrading(async (db) => {
