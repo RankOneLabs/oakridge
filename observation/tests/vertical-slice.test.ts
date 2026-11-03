@@ -1,3 +1,5 @@
+import type { CaptureEnvelope } from "../src/ingest/capture";
+import type { SourceEventOutcome } from "../src/ingest/cursor";
 import { instructionDigest } from "../src/grading/evaluator";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -22,7 +24,8 @@ const integration = serverUrl ? test : test.skip;
 test("vertical slice requires OAKRIDGE_TEST_DATABASE_URL", () => {
   expect(serverUrl).toBeTruthy();
 });
-const tenant = { producer: "oakridge", namespace: "run-slice" };
+const recorded_fixture = await Bun.file(new URL("../fixtures/oakridge/run-slice/events.json", import.meta.url)).json() as EventFixture;
+const tenant = { producer: "oakridge", namespace: recorded_fixture.captures[0]!.source.namespace };
 const credentials = { ingest: [{ ...tenant, token: "ingest-fixture" }], read: [{ ...tenant, token: "read-fixture" }],
   grade: [{ ...tenant, token: "grade-fixture", reviewer_id: "operator" }] };
 const fixtureRoot = new URL("../fixtures/oakridge/run-slice/", import.meta.url);
@@ -37,7 +40,8 @@ interface OperatorEventRow extends EventMetadata { readonly payload: { readonly 
 type EventRow = RevisionEventRow | LaunchEventRow | OperatorEventRow;
 const isRevision = (row: EventRow): row is RevisionEventRow => row.payload.kind === "revision_published";
 const isLaunch = (row: EventRow): row is LaunchEventRow => row.payload.kind === "launched";
-interface EventFixture { readonly run_id: string; readonly rows: readonly EventRow[] }
+interface EventFixture { readonly run_id: string; readonly definition_id: string; readonly rows: readonly EventRow[];
+  readonly captures: readonly CaptureEnvelope[]; readonly launch: Extract<SourceEventOutcome, { kind: "run_input" }> }
 interface DecisionFixture { readonly pre_existing: { readonly id: string; readonly created_at: string;
   readonly run_id: string; readonly unit_id: string; readonly decision_id: string; readonly effect: string; readonly payload: {
     readonly unit: string; readonly review: string; readonly target: string; readonly decision: string;
@@ -73,9 +77,11 @@ test("checked-in event fixture preserves observed transaction order and explicit
     "launched", "revision_published", "operator_decided", "revision_published", "revision_published"]);
   expect(events.rows.every((row) => row.run_id === events.run_id)).toBe(true);
   expect(events.rows.filter(isRevision).map((row) => row.payload.artifact)).toEqual(["plan", "brief", "assessment"]);
+  expect(events.captures.every((capture) => capture.format === "observation.artifact-revision/v2"
+    && capture.source.definition_id === events.definition_id && capture.source.artifact_schema_version.length > 0)).toBe(true);
   expect(new Set(plan.cohorts[0]!.acceptance_criteria.map((item) => item.id)).size).toBeGreaterThanOrEqual(2);
   expect(brief.acceptance_criteria.map((item) => item.id)).toEqual(plan.cohorts[0]!.acceptance_criteria.map((item) => item.id));
-  expect(assessment.findings[0]?.criterion_id).toBe(brief.acceptance_criteria[0]?.id);
+  expect(assessment.findings.some((finding) => finding.criterion_id === brief.acceptance_criteria[0]?.id)).toBe(true);
 });
 
 test("the suite's reachable modules import no hosted grader, Langfuse, JIG or Assay package", () => {
@@ -110,19 +116,14 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       cursor = next;
     };
     const ingest = async (row: RevisionEventRow): Promise<void> => {
-      const body = row.payload.body;
-      const revision = {
-          format: "observation.artifact-revision/v2", source: { ...tenant,
-            revision_id: `${tenant.producer}:${tenant.namespace}:${revisionId(row)}`,
-            run_id: row.run_id, unit_id: row.unit_id, artifact_kind: row.payload.artifact,
-            artifact_schema_version: "development-v1", definition_id: "development",
-            predecessor_id: row.payload.predecessor, subject_id: row.payload.subject, by_id: row.payload.by },
-          recorded_at: row.created_at, body, body_digest: digest(body),
-        };
+      const revision = events.captures.find((capture) => capture.source.unit_id === row.unit_id
+        && capture.source.artifact_kind === row.payload.artifact);
+      if (!revision) throw new Error(`missing recorded v2 capture for ${row.id}`);
+      expect(revision.body).toEqual(row.payload.body);
       await deliver(row, { format: "observation.source-event/v1", kind: "artifact_revision",
         event_kind: "revision_published", run_id: row.run_id, event_id: row.id,
-        definition_id: "development",
-        artifact_schema_version: "development-v1", revision } as unknown as JsonValue);
+        definition_id: revision.source.definition_id,
+        artifact_schema_version: revision.source.artifact_schema_version, revision } as unknown as JsonValue);
     };
 
     // (a-c) Ingest and select the L0 revisions, then follow the producer's unchanged criterion id.
@@ -133,11 +134,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       planBody, briefBody, assessmentBody]);
     const launch = events.rows.find(isLaunch);
     if (!launch) throw new Error("missing launch event");
-    await deliver(launch, { format: "observation.source-event/v1", kind: "run_input",
-      event_kind: "launched", run_id: launch.run_id, event_id: launch.id,
-      definition_id: "development",
-      artifact_schema_version: null, input: launch.payload.input,
-      input_schema_version: "development-v1" } as JsonValue);
+    await deliver(launch, events.launch as unknown as JsonValue);
     await ingest(planRow!);
     // The observed operator row predates capture and enters through backfill below.
     await ingest(briefRow!);
@@ -153,11 +150,15 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     const planCriterion = item(revisionId(planRow!), "criterion", "criterion-lineage");
     const briefCriterion = item(revisionId(briefRow!), "criterion", "criterion-lineage");
     const finding = page.items.find((entry) => entry.revision_id === revisionId(assessmentRow!)
-      && entry.item_kind === "assessment_finding" && entry.item_id_or_path === "/findings/0");
+      && entry.item_kind === "assessment_finding" && entry.selected_value !== null
+      && typeof entry.selected_value === "object" && "criterion_id" in entry.selected_value
+      && entry.selected_value.criterion_id === "criterion-lineage");
     if (!finding) throw new Error("missing linked assessment finding");
-    const legacy = item(revisionId(planRow!), "plan_wide_criterion");
-    expect(legacy.item_id_or_path).toBe("/acceptance_criteria/0");
-    expect(legacy.logical_item_id).toBeNull();
+    const plan_wide = page.items.find((entry) => entry.revision_id === revisionId(planRow!)
+      && entry.item_kind === "plan_wide_criterion" && entry.item_id_or_path === "/acceptance_criteria/0");
+    if (!plan_wide) throw new Error("missing first plan-wide criterion");
+    expect(plan_wide.item_id_or_path).toBe("/acceptance_criteria/0");
+    expect(plan_wide.logical_item_id).toBeNull();
     for (const [row, expected] of [[planRow!, planBody], [briefRow!, briefBody], [assessmentRow!, assessmentBody]] as const) {
       const response = await app.request(`/v1/source-revisions/${encodeURIComponent(`${tenant.producer}:${tenant.namespace}:${revisionId(row)}`)}`,
         { headers: readHeaders });
@@ -169,19 +170,19 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       && edge.target_occurrence_id === briefCriterion.occurrence_id && edge.asserted_by === "producer_explicit")).toBe(true);
     expect(producerLineage?.edges.some((edge) => edge.source_occurrence_id === briefCriterion.occurrence_id
       && edge.target_occurrence_id === planCriterion.occurrence_id && edge.asserted_by === "producer_explicit")).toBe(true);
-    expect((await readLineage(db, tenant, legacy.occurrence_id, { limit: 100, offset: 0 }))?.edges).toEqual([]);
+    expect((await readLineage(db, tenant, plan_wide.occurrence_id, { limit: 100, offset: 0 }))?.edges).toEqual([]);
 
-    // (d) The legacy path acquires a relation only by a human assertion.
-    await recordHumanRelation(db, tenant, briefCriterion.occurrence_id, legacy.occurrence_id,
+    // (d) A plan-wide text criterion acquires a relation only by a human assertion.
+    await recordHumanRelation(db, tenant, briefCriterion.occurrence_id, plan_wide.occurrence_id,
       "split_from", "operator:fixture-split");
     const connected = await readLineage(db, tenant, finding.occurrence_id, { limit: 100, offset: 0 });
     expect(connected?.edges.some((edge) => edge.type === "split_from" && edge.asserted_by === "human"
-      && edge.target_occurrence_id === legacy.occurrence_id)).toBe(true);
-    expect((await readLineage(db, tenant, legacy.occurrence_id, { limit: 100, offset: 0 }))?.edges
+      && edge.target_occurrence_id === plan_wide.occurrence_id)).toBe(true);
+    expect((await readLineage(db, tenant, plan_wide.occurrence_id, { limit: 100, offset: 0 }))?.edges
       .some((edge) => edge.asserted_by === "human")).toBe(true);
 
     // (e) The shipped deterministic and stub-model runners grade the same pinned occurrence independently.
-    const question = { question_id: "criterion-check", question_version: "1", pinned_expectation: { definition_id: "development", artifact_schema_version: "development-v1" }, target_item_kinds: ["criterion"],
+    const question = { question_id: "criterion-check", question_version: "1", pinned_expectation: { definition_id: events.definition_id, artifact_schema_version: events.captures.find((capture) => capture.source.artifact_kind === "brief")!.source.artifact_schema_version }, target_item_kinds: ["criterion"],
       input_recipe: { expected: "matching evidence" }, response_kind: "boolean", allowed_values: null,
       missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
       interpretation_caveats: "fixture check", requires_repository_snapshot: false };
@@ -215,8 +216,8 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
         details: { answer: { state: "answered", kind: "boolean", value: true }, reviewer_id: "operator",
           origin: "human_rubric_answer" as const, collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: true } }) });
     expect(human.status).toBe(201);
-    const preExistingOutcome = { format: "observation.source-event/v1", definition_id: null,
-      artifact_schema_version: "development-v1", kind: "human_grade", event_kind: "operator_decided",
+    const preExistingOutcome = { format: "observation.source-event/v1", definition_id: events.definition_id,
+      artifact_schema_version: events.captures.find((capture) => capture.source.artifact_kind === "plan")!.source.artifact_schema_version, kind: "human_grade", event_kind: "operator_decided",
       run_id: decision.run_id, event_id: decision.id, decision_id: decision.decision_id,
       evaluator: { kind: "human" }, unit: decision.unit_id, review: decision.payload.review,
       decision: decision.payload.decision, target: revisionId(planRow!), feedback: decision.payload.payload,

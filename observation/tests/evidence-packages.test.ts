@@ -58,7 +58,7 @@ test("run-slice produces a dry-run manifest without Langfuse dependencies", asyn
   const coverage = manifest.packages.filter((pack) => pack.question_id === "assessment.coverage");
   expect(coverage.map((pack) => pack.evidence.references.map((ref) => ref.ref.split(":")[0]))
     .sort((a, b) => b.length - a.length)).toEqual([
-    ["brief_criterion", "assessment_finding"], ["brief_criterion"],
+    ["brief_criterion", "assessment_finding"], ["brief_criterion", "assessment_finding"],
   ]);
   expect(manifest.eligibility.filter((row) => row.question_id === "assessment.coverage")
     .every((row) => row.decision.tag === "eligible")).toBe(true);

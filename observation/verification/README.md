@@ -1,5 +1,15 @@
 # Live verification records
 
+The verified source run is `run-5ca31bc6c2414610`; `latest.json` locates its
+committed capture, original authority rows and HTTP readback report. Real
+TypeSafe execution `9bdc9b8d-9c7b-4065-b663-7b35a56adae6` answered
+`traceable` (confidence 0.88): probabilities 0.92 traceable, 0.04 unsupported,
+0.04 unclear_insufficient_evidence. The report retains the question, evidence,
+evaluator, execution, raw answer and provider attempt metadata obtained from
+authenticated HTTP response bodies. The provider returned no request ID;
+the stored attempt records that absence as null, alongside its actual local
+job ID, attempt, completed status and admitted cost estimate.
+
 `gated-review.json` records the actual role tool lists and the live server's
 HTTP 200 response to a deliberately invalid bearer. Role credentials cannot
 be issued by the checked-out server: it scopes sessions by endpoint path and
@@ -49,3 +59,25 @@ probabilities and records read from authenticated HTTP response bodies.
 Question versions use `GET /v1/questions/:id/versions/:version`; evidence
 sets use `GET /v1/evidence-sets/:id`. These routes require read authority and
 scope every lookup to its credential's producer and namespace.
+
+`--resume-database observation_jev_live_<16 hex digits>` resumes a retained
+verification database after a readback interruption. Every captured revision
+is compared to its stored HTTP response before selecting the exact provider
+evaluation identity. Re-enqueueing the same terminal job is idempotent and
+does not send a second provider request. Other human grades on the criterion
+remain visible. Execution timestamps are compared as UTC instants, retaining
+all other field comparisons.
+
+Regenerate the run slice only from a completed grade report for the exact
+capture, with an assessment included (`--through assessment`):
+
+```sh
+bun observation/scripts/regenerate-live-fixtures.ts \
+  --capture observation/verification/<directory>/capture.json \
+  --rows observation/verification/<directory>/authority-rows.json \
+  --grade observation/verification/<directory>/grade.json
+```
+
+The command replaces published bodies without editing them, retains the
+original v2 provenance, re-derives the nine hand-written failure-case
+references and records the source run and execution in `PROVENANCE.md`.
