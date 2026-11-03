@@ -56,11 +56,7 @@ interface CatalogEntry { readonly kind: string; readonly table_name: string; rea
 const compareCatalogEntries = (left: CatalogEntry, right: CatalogEntry): number =>
   left.kind.localeCompare(right.kind) || left.table_name.localeCompare(right.table_name) || left.name.localeCompare(right.name);
 
-integration("the single baseline preserves the historical catalog except for capture provenance", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await migrateEmptyDatabase(db);
-    const catalog = await sql.raw<CatalogEntry>(`SELECT 'table' AS kind, c.relname AS table_name, c.relname AS name, '' AS definition
+const observationCatalogQuery = sql.raw<CatalogEntry>(`SELECT 'table' AS kind, c.relname AS table_name, c.relname AS name, '' AS definition
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
 UNION ALL
 SELECT 'column', c.relname, a.attname, format_type(a.atttypid,a.atttypmod) || CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE ' NULL' END || ' DEFAULT ' || coalesce(pg_get_expr(d.adbin,d.adrelid),'') || ' GENERATED ' || a.attgenerated::text
@@ -71,7 +67,25 @@ UNION ALL
 SELECT 'index', t.relname, i.relname, pg_get_indexdef(i.oid) FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='observation'
 UNION ALL
 SELECT 'trigger', c.relname, t.tgname, pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND NOT t.tgisinternal
-ORDER BY kind,table_name,name`).execute(db);
+UNION ALL
+SELECT 'function', '', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='observation' AND p.prokind='f'
+UNION ALL
+SELECT 'policy', c.relname, p.polname, jsonb_build_object(
+  'command', p.polcmd::text, 'permissive', p.polpermissive,
+  'roles', ARRAY(SELECT CASE WHEN role_id=0 THEN 'public' ELSE pg_get_userbyid(role_id)::text END FROM unnest(p.polroles) AS roles(role_id) ORDER BY 1),
+  'using', pg_get_expr(p.polqual,p.polrelid), 'with_check', pg_get_expr(p.polwithcheck,p.polrelid))::text
+FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation'
+UNION ALL
+SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.relrowsecurity, 'forced', c.relforcerowsecurity)::text
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
+ORDER BY kind,table_name,name`);
+
+integration("the single baseline preserves the historical catalog except for capture provenance", async () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    const catalog = await observationCatalogQuery.execute(db);
     const retiredColumns = ["definition", "bundle"].join("_");
     const expected = historicalCatalog.filter((entry) => !(entry.kind === "column" && entry.table_name === "source_revision"
       && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name)));
@@ -79,6 +93,26 @@ ORDER BY kind,table_name,name`).execute(db);
     expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
   } finally { await db.destroy(); }
 }));
+
+interface CatalogProtectionChange { readonly description: string; readonly statement: string }
+const protectionChanges: readonly CatalogProtectionChange[] = [
+  { description: "a weakened export guard function", statement: "CREATE OR REPLACE FUNCTION observation.reject_export_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END $$" },
+  { description: "a weakened tenant policy", statement: "ALTER POLICY source_revision_tenant ON observation.source_revision USING (true)" },
+  { description: "disabled row-level security", statement: "ALTER TABLE observation.source_revision DISABLE ROW LEVEL SECURITY" },
+  { description: "unforced row-level security", statement: "ALTER TABLE observation.source_revision NO FORCE ROW LEVEL SECURITY" },
+];
+for (const change of protectionChanges) {
+  integration(`catalog comparison detects ${change.description}`, async () => scratch(async (url) => {
+    const db = openDatabase(url);
+    try {
+      await migrateEmptyDatabase(db);
+      const before = await observationCatalogQuery.execute(db);
+      await sql.raw(change.statement).execute(db);
+      const after = await observationCatalogQuery.execute(db);
+      expect(after.rows.sort(compareCatalogEntries)).not.toEqual(before.rows.sort(compareCatalogEntries));
+    } finally { await db.destroy(); }
+  }));
+}
 
 test("only the consolidated observation SQL baseline is committed", async () => {
   const names = await readdir(new URL("../src/storage/migrations", import.meta.url));
