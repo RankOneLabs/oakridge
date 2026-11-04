@@ -9,9 +9,14 @@
  * these tests notices until an operator clicks it.
  *
  * "The" vocabulary is really several: an agent's ids can move between
- * `session/new` calls as entitlements change (see the fixture). Picker entries
- * resolve against each recorded variant, except the explicitly checked
- * entitlement-dependent gpt-6.1-sol option.
+ * `session/new` calls as entitlements change (see the fixture). Every picker
+ * entry must resolve against every recorded variant.
+ *
+ * `gpt-6.1-sol` used to be carved out of that rule as entitlement-dependent.
+ * It was not: codex-acp fetches its model list remotely, so the id was always
+ * advertised, while the stale bundled codex binary could not actually select
+ * it. Driving the installed CLI removed the discrepancy and the carve-out
+ * with it — a picker entry that cannot resolve is now always a failure.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -67,17 +72,34 @@ const RUNTIME_IDS: readonly RuntimeId[] = Object.keys(
  * `opus[1m]` are the same pick; variants disagree on the spelling, never on
  * whether opus is available.
  *
- * Models only *some* variants advertise (the legacy 4.x ids that surface when
- * the 1M entitlement is absent) are deliberately not required of the picker:
- * offering a model that disappears for hours is the failure this whole file
- * exists to prevent.
+ * Models only *some* variants advertise are deliberately not required of the
+ * picker: offering a model that disappears for hours is the failure this
+ * whole file exists to prevent.
+ *
+ * Codex has no alias/explicit split — every id it advertises is a model an
+ * operator would pick — so for that runtime this is the whole advertised
+ * list.
+ *
+ * Generation-pinned ids are excluded too, and that exclusion does the real
+ * work now that claude-code records a single variant. The Claude CLI
+ * advertises a family alias (`opus`, `sonnet`) beside explicit ids naming one
+ * generation of that family (`claude-opus-5`, `claude-sonnet-4-6`), and the
+ * picker deliberately carries only the aliases — see RUNTIME_MODELS. Without
+ * this filter the assertion would read the single variant as "every id is
+ * universally available" and demand the picker list Opus 4.6 and Sonnet 4.6
+ * alongside the current four.
  */
+function isGenerationPinnedId(value: string): boolean {
+  return value.startsWith("claude-");
+}
+
 function familiesInEveryVariant(vocabulary: AdvertisedAgentVocabulary): string[] {
   const perVariant = vocabulary.model_value_variants.map(
     (values) =>
       new Set(
         values
           .filter((value) => value !== "default")
+          .filter((value) => !isGenerationPinnedId(value))
           .map((value) => withoutContextHint(value.toLowerCase())),
       ),
   );
@@ -99,7 +121,6 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     test(`every generally offered model resolves against advertised variant ${index}`, () => {
       const unresolvable = RUNTIME_MODELS[runtimeId]
         .map((option) => option.value)
-        .filter((value) => value !== "gpt-6.1-sol")
         .filter((value) => !resolveRequestedOption(variant.options, "model", value).ok);
       expect(unresolvable).toEqual([]);
     });
@@ -125,18 +146,9 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     expect(unresolvable).toEqual([]);
   });
 
-  if (runtimeId === "codex") {
-    test("gpt-6.1-sol resolves when the agent advertises it", () => {
-      const offered = RUNTIME_MODELS.codex.some((option) => option.value === "gpt-6.1-sol");
-      const supported = variants.some((variant) =>
-        resolveRequestedOption(variant.options, "model", "gpt-6.1-sol").ok,
-      );
-      expect(offered && supported).toBe(true);
-    });
-  }
-
-  // Every universally available model belongs in the picker. Codex's
-  // gpt-6.1-sol is the one known option seen only with some entitlements.
+  // Every universally available family alias belongs in the picker. Claude's
+  // generation-pinned `claude-*` ids are offered by the agent but
+  // deliberately absent from it.
   test("the picker offers every model family all variants agree on", () => {
     const offered = RUNTIME_MODELS[runtimeId]
       .map((option) => withoutContextHint(option.value.toLowerCase()));
@@ -151,6 +163,66 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     expect(offered.sort()).toEqual(
       vocabulary.effort_values.filter((value) => value !== "default").sort(),
     );
+  });
+});
+
+/**
+ * The rule that keeps this file's other assertions from going stale: kbbl
+ * never persists a generation-pinned Claude id.
+ *
+ * The CLI advertises `opus` beside `claude-opus-5`, and both resolve. Picking
+ * the alias means a new generation reaches operators with no kbbl release;
+ * picking the explicit id pins kbbl to one generation until someone notices,
+ * which is exactly how `sonnet 5` and `haiku 4.5` sat in the picker while the
+ * account was entitled to 5.5. It also bounds the retired-id map: an id kbbl
+ * never writes cannot become a stale row when the vendor withdraws it.
+ *
+ * Codex is deliberately exempt — it advertises no alias/generation split, so
+ * every id it offers is one an operator would pick, and the per-variant
+ * assertions above are the whole guard there.
+ */
+test("the Claude picker carries no generation-pinned id", () => {
+  const pinned = RUNTIME_MODELS["claude-code"]
+    .map((option) => option.value)
+    .filter(isGenerationPinnedId);
+
+  expect(pinned).toEqual([]);
+});
+
+/**
+ * The regression greptile caught: a durable row outlives the picker.
+ *
+ * `epics.planner_model` and `acp_sessions.requested_model` hold free text
+ * written whenever the operator chose, and `applyRequestedConfig` forwards it
+ * verbatim on every respawn. A row holding an id the agent has since stopped
+ * advertising must land on the alias that replaced it, not kill the session.
+ */
+describe("a retired model id stored before the picker moved on", () => {
+  const claudeOptions = advertisedOptions(
+    ADVERTISED_AGENT_VOCABULARY["claude-code"],
+    ADVERTISED_AGENT_VOCABULARY["claude-code"].model_value_variants[0]!,
+  );
+
+  test("resolves to the family alias that replaced it", () => {
+    const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5-1");
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+  });
+
+  test("resolves when it also carries a context hint", () => {
+    const resolved = resolveRequestedOption(
+      claudeOptions,
+      "model",
+      "claude-fable-5-1[1m]",
+    );
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+  });
+
+  test("an advertised id still matches exactly, not through the alias map", () => {
+    const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5");
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("claude-fable-5");
   });
 });
 

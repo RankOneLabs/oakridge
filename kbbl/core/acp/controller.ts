@@ -6,7 +6,7 @@
 
 import type * as schema from "@agentclientprotocol/sdk";
 
-import { contextHintOf, withoutContextHint } from "../runtime";
+import { matchAdvertisedId, matchAdvertisedModel, type IdMatchKind } from "../runtime";
 import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient, selectGatedReviewAccess } from "./client";
@@ -66,19 +66,17 @@ export type RequestedSessionConfig = Pick<
 >;
 
 /**
- * How a request was satisfied. `exact` means the agent advertises the id (or
- * display name) that was asked for. `context_hint_ignored` means only the
- * same model in a different context window was on offer, so the hints differ
- * between what was asked for and what will run — the caller logs it, because
- * nothing else can tell the operator their window changed.
+ * How a request was satisfied — the shared `IdMatchKind` from core/runtime,
+ * re-exported under the name the ACP surface has always used.
+ *
+ * `exact` means the agent advertises the id (or display name) that was asked
+ * for. The other two mean it does not, and something other than the requested
+ * spelling will run: `context_hint_ignored` found the same model in a
+ * different context window, `retired_id_mapped` found the alias that replaced
+ * a withdrawn id. The caller logs both, because nothing else can tell the
+ * operator what changed.
  */
-export type OptionMatchKind =
-  | { kind: "exact" }
-  | {
-      kind: "context_hint_ignored";
-      readonly requestedHint: string | null;
-      readonly matchedHint: string | null;
-    };
+export type OptionMatchKind = IdMatchKind;
 
 export interface ResolvedOption {
   readonly configId: string;
@@ -140,41 +138,21 @@ export function matchRequestedOption(
       `agent exposes no select config option with category "${category}"`,
     );
   }
-  const normalized = requested.trim().toLowerCase();
   const flat = selector.options.flatMap((entry) =>
     "options" in entry ? entry.options : [entry],
   );
-  const exact = flat.find(
-    (item) =>
-      item.value === requested ||
-      item.value.toLowerCase() === normalized ||
-      item.name.trim().toLowerCase() === normalized,
-  );
-  if (exact) {
+  // Models carry a retirement history; effort and mode ids do not. Both paths
+  // are the shared transform in core/runtime — this function owns finding the
+  // selector and naming the error, nothing about what an id means.
+  const matched =
+    category === "model"
+      ? matchAdvertisedModel(requested, flat)
+      : matchAdvertisedId(requested, flat);
+  if (matched) {
     return ok({
       configId: selector.id,
-      valueId: exact.value,
-      match: { kind: "exact" },
-    });
-  }
-  // Same model, different window. Prefer the hintless id when the agent
-  // offers several, so the fallback is deterministic rather than dependent
-  // on advertised order.
-  const family = withoutContextHint(normalized);
-  const relatives = flat.filter(
-    (item) => withoutContextHint(item.value.toLowerCase()) === family,
-  );
-  const relative =
-    relatives.find((item) => contextHintOf(item.value) === null) ?? relatives[0];
-  if (relative) {
-    return ok({
-      configId: selector.id,
-      valueId: relative.value,
-      match: {
-        kind: "context_hint_ignored",
-        requestedHint: contextHintOf(normalized),
-        matchedHint: contextHintOf(relative.value),
-      },
+      valueId: matched.valueId,
+      match: matched.match,
     });
   }
   return err(
@@ -382,14 +360,21 @@ export class AcpSessionController {
       const resolved = resolveRequestedOption(this.configOptions, category, value);
       if (!resolved.ok) return resolved;
       if (resolved.value === null) continue;
+      // Any match that is not exact changed what will run, and nothing else
+      // can tell the operator: the picker showed one id and the session got
+      // another.
       const match = resolved.value.match;
+      const prefix =
+        `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
+        `resolved=${resolved.value.valueId} `;
       if (match.kind === "context_hint_ignored") {
         console.log(
-          `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
-            `resolved=${resolved.value.valueId} context_hint_ignored ` +
-            `requested_hint=${match.requestedHint ?? "none"} ` +
+          prefix +
+            `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} ` +
             `matched_hint=${match.matchedHint ?? "none"}`,
         );
+      } else if (match.kind === "retired_id_mapped") {
+        console.log(prefix + `retired_id_mapped retired_id=${match.retiredId}`);
       }
       const applied = await this.setConfigOption(
         resolved.value.configId,

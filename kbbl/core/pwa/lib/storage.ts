@@ -1,6 +1,6 @@
 import type { Theme } from "../types";
 import type { RuntimeDescriptor } from "../types";
-import { defaultModelForRuntime, withoutContextHint } from "../../runtime";
+import { defaultModelForRuntime, matchAdvertisedModel } from "../../runtime";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
 /**
@@ -17,26 +17,20 @@ export function newSessionModelKey(runtimeId: string): string {
  * offers nothing in that family. `""` means "no explicit model" and selects
  * itself.
  *
- * Exact match first, then match on family — ignoring the context-window hint,
- * the same canonicalization the ACP resolver applies when provisioning
- * (`core/acp/controller.ts`). Claude Code's advertised ids gain and lose the
- * `[1m]` suffix with the account's entitlement, so a browser that stored
- * `claude-fable-5-1[1m]` before the picker dropped the hint still means Fable.
- * Without this it matches nothing and falls all the way back to the runtime
- * default — silently launching Opus for an operator who chose Fable.
+ * Delegates to `matchAdvertisedModel`, the same transform ACP provisioning
+ * uses, so the picker and the launch agree on what a stored id means. Claude
+ * Code's advertised ids gain and lose the `[1m]` suffix with the account's
+ * entitlement, and the picker has replaced an explicit id with a family alias
+ * at least once, so a browser holding `claude-fable-5-1[1m]` still means
+ * Fable. Without this it matches nothing and falls all the way back to the
+ * runtime default — silently launching Opus for an operator who chose Fable.
  */
 export function matchStoredNewSessionModel(
   value: string,
   runtime: RuntimeDescriptor,
 ): string | null {
   if (value === "") return "";
-  const exact = runtime.models.find((option) => option.value === value);
-  if (exact) return exact.value;
-  const family = withoutContextHint(value);
-  const relative = runtime.models.find(
-    (option) => withoutContextHint(option.value) === family,
-  );
-  return relative?.value ?? null;
+  return matchAdvertisedModel(value, runtime.models)?.valueId ?? null;
 }
 
 export function defaultNewSessionModelForRuntime(runtime: RuntimeDescriptor): string {
