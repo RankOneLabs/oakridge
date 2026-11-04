@@ -112,29 +112,39 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
   codex: {
     package: "@agentclientprotocol/codex-acp",
     version: "1.13.0",
+    cli_version: "0.166.0",
     model_option_id: "model",
     effort_option_id: "reasoning_effort",
-    // Codex ids carry no context hint, so these lists drift by entitlement
-    // alone: gpt-6.1-sol appeared at the head of the list on 2026-09-29.
+    // Probed 2026-11-04 with CODEX_PATH pointing at the installed codex CLI,
+    // which is what the codex profile now drives. Codex ids carry no context
+    // hint, and this list comes from codex-acp's app server rather than a
+    // local catalog, so it tracks the account directly — `gpt-5.5` is absent
+    // because the server retired it, not because of a pin.
+    //
+    // The two variants recorded here before are replaced for the same reason
+    // as claude-code's: they came from the binary bundled in codex-acp's own
+    // pinned @openai/codex (0.155.1), which kbbl no longer launches. That
+    // binary's catalog had no `gpt-6.1-sol` entry, so the id was advertised
+    // (the list is remote) while a session on it exposed no
+    // `reasoning_effort` option at all and an explicit switch to it failed
+    // with `-32602 Invalid params`.
+    //
+    // **Effort is advertised per model, not per session.** `reasoning_effort`
+    // appears alongside whichever model is current, so a capture taken before
+    // any model is applied can miss it entirely. With the installed CLI every
+    // model carries it; with the stale bundled one the default model carried
+    // none, which is why `advertisedOptions` building the effort selector
+    // from `effort_values` must not be read as the agent always offering it.
     model_value_variants: [
       [
         "gpt-6.1-sol",
         "gpt-6-astra",
+        "gpt-6.1-terra",
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
-        "gpt-5.5",
-      ],
-      [
-        "gpt-6-astra",
-        "gpt-6-sol",
-        "gpt-6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
       ],
     ],
     effort_values: ["low", "medium", "high", "xhigh", "max", "ultra"],

@@ -9,9 +9,14 @@
  * these tests notices until an operator clicks it.
  *
  * "The" vocabulary is really several: an agent's ids can move between
- * `session/new` calls as entitlements change (see the fixture). Picker entries
- * resolve against each recorded variant, except the explicitly checked
- * entitlement-dependent gpt-6.1-sol option.
+ * `session/new` calls as entitlements change (see the fixture). Every picker
+ * entry must resolve against every recorded variant.
+ *
+ * `gpt-6.1-sol` used to be carved out of that rule as entitlement-dependent.
+ * It was not: codex-acp fetches its model list remotely, so the id was always
+ * advertised, while the stale bundled codex binary could not actually select
+ * it. Driving the installed CLI removed the discrepancy and the carve-out
+ * with it — a picker entry that cannot resolve is now always a failure.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -71,6 +76,10 @@ const RUNTIME_IDS: readonly RuntimeId[] = Object.keys(
  * picker: offering a model that disappears for hours is the failure this
  * whole file exists to prevent.
  *
+ * Codex has no alias/explicit split — every id it advertises is a model an
+ * operator would pick — so for that runtime this is the whole advertised
+ * list.
+ *
  * Generation-pinned ids are excluded too, and that exclusion does the real
  * work now that claude-code records a single variant. The Claude CLI
  * advertises a family alias (`opus`, `sonnet`) beside explicit ids naming one
@@ -112,7 +121,6 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     test(`every generally offered model resolves against advertised variant ${index}`, () => {
       const unresolvable = RUNTIME_MODELS[runtimeId]
         .map((option) => option.value)
-        .filter((value) => value !== "gpt-6.1-sol")
         .filter((value) => !resolveRequestedOption(variant.options, "model", value).ok);
       expect(unresolvable).toEqual([]);
     });
@@ -138,20 +146,9 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     expect(unresolvable).toEqual([]);
   });
 
-  if (runtimeId === "codex") {
-    test("gpt-6.1-sol resolves when the agent advertises it", () => {
-      const offered = RUNTIME_MODELS.codex.some((option) => option.value === "gpt-6.1-sol");
-      const supported = variants.some((variant) =>
-        resolveRequestedOption(variant.options, "model", "gpt-6.1-sol").ok,
-      );
-      expect(offered && supported).toBe(true);
-    });
-  }
-
-  // Every universally available family alias belongs in the picker. Codex's
-  // gpt-6.1-sol is the one known option seen only with some entitlements;
-  // Claude's generation-pinned `claude-*` ids are offered by the agent but
-  // deliberately absent from the picker.
+  // Every universally available family alias belongs in the picker. Claude's
+  // generation-pinned `claude-*` ids are offered by the agent but
+  // deliberately absent from it.
   test("the picker offers every model family all variants agree on", () => {
     const offered = RUNTIME_MODELS[runtimeId]
       .map((option) => withoutContextHint(option.value.toLowerCase()));
