@@ -55,26 +55,17 @@ integration("the service runs the deterministic coverage checker over local link
       question_id: question.question_id, question_version: question.question_version,
       evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "coverage" },
     context, runner: "coverage" }) });
-  expect(response.status).toBe(201);
-  expect((await response.json()).observation.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
+  expect(response.status).toBe(422);
+  expect((await response.json()).error.message).toContain("criterion-targeting");
 }));
 
-integration("queued coverage consumes the link view produced from captured evidence", async () => scratchGrading(async (db) => {
-  const { capturedCoverage } = await import("./grading-fixture");
-  const { workOneJob } = await import("../src/grading/jobs/worker");
-  const { gradingLimits } = await import("../src/grading/jobs/budget");
-  const { withTenant } = await import("../src/storage/database");
-  const { occurrence_id, question, evidence } = await capturedCoverage(db);
+integration("the retired coverage question is refused before queuing work", async () => scratchGrading(async (db, occurrence_id) => {
   const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: "grade" }] } });
-  const response = await app.request("/v1/evaluation-jobs", { method: "POST",
-    headers: { authorization: "Bearer grade", "content-type": "application/json" },
+  const question = OAKRIDGE_QUESTIONS["assessment.coverage"].definition;
+  const response = await app.request("/v1/evaluation-jobs", { method: "POST", headers: { authorization: "Bearer grade" },
     body: JSON.stringify({ identity: { subject_occurrence_id: occurrence_id, question_id: question.question_id,
-      question_version: question.question_version, evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "captured" },
+      question_version: question.question_version, evaluator_definition_id: "code", config_digest: "config-1", attempt_label: "retired" },
       context: { question, evaluator: evaluator("code") }, runner: "coverage" }) });
-  expect(response.status).toBe(201);
-  await workOneJob(db, tenant, gradingLimits(), "coverage-worker");
-  const observation = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grade_observation")
-    .selectAll().where("subject_occurrence_id", "=", occurrence_id).executeTakeFirstOrThrow());
-  expect(observation.evidence_set_id).toBe(evidence.evidence_set_id);
-  expect(observation.answer_payload).toEqual({ state: "answered", kind: "boolean", value: false });
+  expect(response.status).toBe(422);
+  expect((await response.json()).error.message).toContain("criterion-targeting");
 }));

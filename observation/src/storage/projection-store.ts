@@ -213,9 +213,11 @@ export interface OccurrenceAddress { readonly revision_id: string; readonly item
 export function lookupOccurrence(db: Database, tenant: TenantScope, address: OccurrenceAddress)
   : Promise<Selectable<ObservationItemOccurrence> | null> {
   return withTenant(db, tenant, async (trx) => {
+    const prefix = `${tenant.producer}:${tenant.namespace}:`;
+    const revision_id = address.revision_id.startsWith(prefix) ? address.revision_id.slice(prefix.length) : address.revision_id;
     const rows = await trx.selectFrom("observation.item_occurrence").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("revision_id", "=", address.revision_id).where("json_pointer", "=", address.item_path)
+      .where("revision_id", "=", revision_id).where("json_pointer", "=", address.item_path)
       .orderBy("extractor_version", "desc").limit(2).execute();
     if (rows.length > 1) throw new Error("ambiguous captured item path");
     return rows[0] ?? null;

@@ -7,9 +7,8 @@ import { registerGradingContext, registerQuestion, runGrade } from "../src/stora
 import { withTenant } from "../src/storage/database";
 import { enqueueJob } from "../src/storage/grading-job-store";
 import type { GradeRunner } from "../src/ports/grade-runner";
-import { tenant, question, evidence, evaluator, scratchGrading, capturedCoverage, captureProjectedFixture, pilotExpectations } from "./grading-fixture";
+import { tenant, question, evidence, evaluator, scratchGrading, capturedFinding, captureProjectedFixture, pilotExpectations } from "./grading-fixture";
 import { oakridgeQuestions } from "../src/grading/catalogue/oakridge-questions";
-import { createJevDirectRunner } from "../src/runners/jev-direct";
 import { instructionDigest } from "../src/grading/evaluator";
 import type { JsonValue } from "../src/domain/primitives";
 import type { QuestionDefinition } from "../src/grading/question";
@@ -22,7 +21,7 @@ const read = { ...tenant, token: "read-token" };
 const runner: GradeRunner = { kind: "model", async run() { return { ok: true,
   value: { answer: { state: "answered", kind: "boolean", value: true } } }; } };
 
-integration("queued plan and brief model requests contain the captured criteria and cited sources", async () => scratchGrading(async (db) => {
+integration("queued plan and brief criterion questions are refused for new work", async () => scratchGrading(async (db) => {
   const plan_criterion = { id: "criterion", text: "Preserve captured source", task_ids: ["task"], decision_ids: ["decision"] };
   const task = { id: "task", description: "Capture the source", requirement_ids: [] };
   const decision = { id: "decision", text: "Keep immutable evidence" };
@@ -35,7 +34,7 @@ integration("queued plan and brief model requests contain the captured criteria 
     cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [brief_criterion],
   } });
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
-  for (const [question_id, items, expected] of [
+  for (const [question_id, items] of [
     ["plan.criterion_traceability", plan, { "plan_criterion:criterion": plan_criterion, "plan_task:task": task, "plan_decision:decision": decision }],
     ["brief.source_fidelity", brief, { "plan_criterion:criterion": plan_criterion, "brief_criterion:criterion": brief_criterion }],
   ] as const) {
@@ -51,21 +50,8 @@ integration("queued plan and brief model requests contain the captured criteria 
         question_id, question_version: question.question_version, evaluator_definition_id: model.evaluator_definition_id,
         config_digest: model.config_digest, attempt_label: "captured-content" },
       context: { question, evaluator: model }, runner: "jev_direct", estimated_cost: 0.1 }) });
-    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
-    const requests: JsonValue[] = [];
-    const runner = createJevDirectRunner({ api_key: "key", base_url: "https://stub.invalid/v1", transport: async (_url, init) => {
-      const request = JSON.parse(String(init.body)) as { readonly state: JsonValue };
-      requests.push(request.state);
-      const choice = String(question.allowed_values![0]);
-      return Response.json({ model: "pinned-model", answers: { [question_id]: { type: "choice", choice,
-        probabilities: Object.fromEntries(Object.keys(criteria).map((value) => [value, value === choice ? 1 : 0])), confidence: 1 } },
-        usage: { input_tokens: 12, output_tokens: 3 } });
-    } });
-    expect((await workOneJob(db, tenant, gradingLimits(), "captured-model", runner)).kind).toBe("processed");
-    expect(requests).toEqual([expected]);
-    const job = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job").selectAll()
-      .where("question_id", "=", question_id).executeTakeFirstOrThrow());
-    expect(job).toMatchObject({ state: "terminal", terminal_cause: null });
+    expect(queued.status).toBe(422);
+    expect((await queued.json()).error.message).toContain("criterion");
   }
 }));
 
@@ -86,7 +72,7 @@ for (const { target, requires_repository_snapshot } of judge_scenarios) {
     await captureProjectedFixture(db, { revision_id: "judge-plan", artifact_kind: "plan", body: {
       cohorts: [{ id: "cohort", decisions: [], acceptance_criteria: [original] }], acceptance_criteria: [], risks: [],
     } });
-    const brief = await captureProjectedFixture(db, { revision_id: "judge-brief", artifact_kind: "brief", body: {
+    await captureProjectedFixture(db, { revision_id: "judge-brief", artifact_kind: "brief", body: {
       cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [revised],
     } });
     const code = "export const captured = true;";
@@ -96,12 +82,11 @@ for (const { target, requires_repository_snapshot } of judge_scenarios) {
     const finding = { criterion_id: "criterion", description: "Check source", evidence: [{ kind: "file", ref: repository_address }] };
     const assessment = await captureProjectedFixture(db, { revision_id: "judge-assessment", artifact_kind: "assessment",
       body: { head_sha: "reviewed-commit", verdict: "must stay hidden", findings: [finding] } });
-    const subject = target === "report" ? brief.find((item) => item.item_kind === "criterion")!
-      : assessment.find((item) => item.item_kind === "assessment_finding")!;
+    const subject = assessment.find((item) => item.item_kind === "assessment_finding")!;
     const address = `oakridge://revision/${subject.revision_id}#${subject.json_pointer}`;
     const expected: readonly JudgeEvidence[] = target === "report" ? [
       { ref: "oakridge://revision/judge-plan#/cohorts/0/acceptance_criteria/0", content: original },
-      { ref: address, content: revised },
+      { ref: address, content: finding },
     ] : [{ ref: address, content: finding }, { ref: repository_address, content: code }];
     const pinned: QuestionDefinition = { ...question, question_id: `judge-${target}` as QuestionId, question_version: "rubric-2026",
       target_item_kinds: [subject.item_kind], response_kind: "choice", allowed_values: ["faithful", "changed", "insufficient_evidence"],
@@ -176,16 +161,15 @@ for (const { target, requires_repository_snapshot } of judge_scenarios) {
 }
 
 integration("judge requests refuse evidence absent from the captured run without queuing work", async () => scratchGrading(async (db) => {
-  const brief_body = { cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
-    acceptance_criteria: [{ id: "criterion", text: "Keep captured evidence" }] };
-  const items = await captureProjectedFixture(db, { revision_id: "judge-local", artifact_kind: "brief", body: brief_body });
-  await captureProjectedFixture(db, { revision_id: "judge-other-run", run_id: "other-run", artifact_kind: "brief", body: brief_body });
-  const subject = items.find((item) => item.item_kind === "criterion")!;
+  const brief_body = { findings: [{ id: "finding", description: "Keep captured evidence", severity: "info" }], requirements: [], spec_updates: [] };
+  const items = await captureProjectedFixture(db, { revision_id: "judge-local", artifact_kind: "analysis", body: brief_body });
+  await captureProjectedFixture(db, { revision_id: "judge-other-run", run_id: "other-run", artifact_kind: "analysis", body: brief_body });
+  const subject = items.find((item) => item.item_kind === "finding")!;
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
   for (const [name, address] of [["absent", "oakridge://revision/absent#/acceptance_criteria/0"],
     ["other-run", "oakridge://revision/judge-other-run#/acceptance_criteria/0"]]) {
     const pinned: QuestionDefinition = { ...question, question_id: `judge-missing-${name}` as QuestionId, question_version: "rubric-2",
-      target_item_kinds: ["criterion"], response_kind: "choice", allowed_values: ["faithful", "insufficient_evidence"],
+      target_item_kinds: ["finding"], response_kind: "choice", allowed_values: ["faithful", "insufficient_evidence"],
       input_recipe: { judge: { rubric: "Judge captured evidence", target: "report", max_evidence_chars: 1000,
         evidence_refs: [`oakridge://revision/judge-local#${subject.json_pointer}`, address!] } } };
     const response = await app.request("/v1/evaluation-jobs", { method: "POST",
@@ -200,7 +184,7 @@ integration("judge requests refuse evidence absent from the captured run without
 }));
 
 integration("network runner requires the durable route and its pending job is readable", async () => scratchGrading(async (db) => {
-  const { occurrence_id, question, evidence } = await capturedCoverage(db);
+  const { occurrence_id, question, evidence } = await capturedFinding(db);
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] },
     gradingLimits: gradingLimits({ OBSERVATION_GRADING_RETRY_LIMIT: "7" }) });
   const identity = { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
@@ -301,9 +285,7 @@ integration("grade operator fences an abandoned manual execution and retries wit
 }));
 
 for (const recorded of [
-  { definition_id: "old-definition", artifact_schema_version: "1", field: "definition_id" },
   { definition_id: "definition-1", artifact_schema_version: "old-schema", field: "artifact_schema_version" },
-  { definition_id: null, artifact_schema_version: "1", field: "definition_id" },
   { definition_id: "definition-1", artifact_schema_version: null, field: "artifact_schema_version" },
 ]) {
   integration(`all four routes refuse unsupported ${recorded.field}=${recorded[recorded.field as "definition_id" | "artifact_schema_version"]} without grading rows`,
@@ -355,7 +337,7 @@ for (const recorded of [
 }
 
 integration("enqueue and assignment derive evidence and refuse a disagreeing caller id without creating work", async () => scratchGrading(async (db) => {
-  const { occurrence_id, question, evidence } = await capturedCoverage(db);
+  const { occurrence_id, question, evidence } = await capturedFinding(db);
   const app = createApp({ db, credentials: { ingest: [], read: [read], grade: [grade] } });
   const identity = { subject_occurrence_id: occurrence_id, question_id: question.question_id,
     question_version: question.question_version };

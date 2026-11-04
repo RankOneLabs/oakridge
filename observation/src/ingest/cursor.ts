@@ -38,6 +38,7 @@ function cursor(value: unknown): value is SourceEventCursor {
 }
 export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery | null {
   if (!record(value) || !cursor(value.previous) || !cursor(value.cursor) || !record(value.outcome)) return null;
+  if (!value.cursor.id) return null;
   const outcome = value.outcome;
   if (typeof outcome.kind !== "string" || typeof outcome.event_kind !== "string" || typeof outcome.run_id !== "string"
     || typeof outcome.event_id !== "string" || outcome.event_id !== value.cursor.id) return null;

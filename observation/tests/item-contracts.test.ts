@@ -17,6 +17,8 @@ integration("revision and path resolve the stored occurrence, with read authorit
   const app = createApp({ db, credentials });
   const path = `/v1/source-revisions/lookup/items?item_path=${encodeURIComponent(item.json_pointer!)}`;
   const looked = await app.request(path, { headers });
+  const qualified = await app.request(`/v1/source-revisions/${encodeURIComponent(`${tenant.producer}:${tenant.namespace}:lookup`)}/items?item_path=${encodeURIComponent(item.json_pointer!)}`, { headers });
+  expect(qualified.status).toBe(200);
   const direct = await app.request(`/v1/items/${encodeURIComponent(item.occurrence_id)}`, { headers });
   expect({ status: looked.status, row: await looked.json() }).toEqual({ status: 200, row: await direct.json() });
   expect((await app.request(path, { headers: { authorization: "Bearer ingest" } })).status).toBe(403);

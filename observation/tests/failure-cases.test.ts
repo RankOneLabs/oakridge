@@ -150,12 +150,12 @@ integration("duplicate ids, reorder, revision update, missing source and conflic
 integration("incomplete evidence, runner failure and human correction preserve grade history", async () => scratch(async (db) => {
   const app = createApp({ db, credentials });
   const cases = await failureCases();
-  expect((await ingest(app, "brief", "brief-1", await fixture("brief"), 1)).status).toBe(201);
+  expect((await ingest(app, "assessment", "assessment-grade", await fixture("assessment"), 1)).status).toBe(201);
   const subject = (await listRunItems(db, tenant, run_id, { limit: 100, offset: 0 })).items
-    .find((item) => item.item_kind === "criterion")!;
+    .find((item) => item.item_kind === "assessment_finding")!;
   const headers = { authorization: "Bearer grade-fixture", "content-type": "application/json" };
   const question = (id: string, expected: string | undefined, requires_repository_snapshot = false) => ({
-    question_id: id, question_version: "1", pinned_expectation: { definition_id: source.definition_id, artifact_schema_version: schemaVersion("brief") }, target_item_kinds: ["criterion"],
+    question_id: id, question_version: "1", pinned_expectation: { definition_id: source.definition_id, artifact_schema_version: schemaVersion("assessment") }, target_item_kinds: ["assessment_finding"],
     input_recipe: expected === undefined ? {} : { expected }, response_kind: "boolean", allowed_values: null,
     missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
     interpretation_caveats: "fixture", requires_repository_snapshot });

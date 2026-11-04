@@ -97,5 +97,5 @@ export interface SupportSubject extends RecordedProvenance { readonly item_kind:
 /** Schema compatibility never depends on the whole-workflow definition hash. */
 export function schemaProvenanceEligibility(expected: PinnedExpectation, recorded: RecordedProvenance): ProvenanceDecision {
   return recorded.artifact_schema_version === expected.artifact_schema_version ? { tag: "eligible" }
-    : { tag: "inapplicable", payload: { reason: `Unsupported artifact schema: recorded=${recorded.artifact_schema_version}, pinned=${expected.artifact_schema_version}` } };
+    : { tag: "inapplicable", payload: { reason: `Unsupported provenance: artifact_schema_version: recorded=${JSON.stringify(recorded.artifact_schema_version)}, pinned=${JSON.stringify(expected.artifact_schema_version)}` } };
 }

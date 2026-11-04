@@ -105,18 +105,16 @@ export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
 }
 
 /** A real captured subject for admission tests; callers send only question/evaluator context. */
-export async function capturedCoverage(db: Database) {
-  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
+export async function capturedFinding(db: Database) {
   const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
-  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
-    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
-    acceptance_criteria: [{ id: "criterion", text: "Works" }],
+  const items = await captureProjectedFixture(db, { revision_id: "captured-analysis", artifact_kind: "analysis", body: {
+    findings: [{ id: "finding", description: "A bounded authored finding", severity: "info" }], requirements: [], spec_updates: [],
   } });
-  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
-    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
-  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
-  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
-  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
-  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
-  return { occurrence_id, question, evidence: derived.value.evidence };
+  const occurrence_id = items.find((item) => item.item_kind === "finding")!.occurrence_id as ItemOccurrenceId;
+  const pinned: QuestionDefinition = { ...question, question_id: "fixture.finding_quality" as QuestionId, target_item_kinds: ["finding"],
+    input_recipe: { judge: { rubric: "Is this finding supported?", target: "report", max_evidence_chars: 1000,
+      evidence_refs: ["oakridge://revision/captured-analysis#/findings/0"] } } };
+  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question: pinned });
+  if (!derived.ok || !derived.value.evidence) throw new Error("captured finding fixture has no evidence");
+  return { occurrence_id, question: pinned, evidence: derived.value.evidence };
 }

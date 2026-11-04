@@ -38,9 +38,9 @@ export interface RunQuestionEvidence {
 
 /** Load the run's capture and build its packages for one immutable question pin. */
 export async function deriveRunQuestionEvidence(db: Database, tenant: TenantScope, run_id: string,
-  question: QuestionDefinition, provenance_policy: "legacy" | "schema" = "legacy"): Promise<Result<RunQuestionEvidence, CapturedEvidenceError>> {
+  question: QuestionDefinition, provenance_policy: "legacy" | "schema" = "legacy", as_of?: Date): Promise<Result<RunQuestionEvidence, CapturedEvidenceError>> {
   const fail = (detail: string) => err({ operation: "captured_evidence" as const, entity_id: run_id, detail });
-  const capture = await loadRunCapture(db, tenant, run_id);
+  const capture = await loadRunCapture(db, tenant, run_id, as_of);
   if (!capture.ok) return fail(capture.error.detail);
   const subjects = capture.value.flatMap((revision) => revision.items);
   const sources = new Map<ItemOccurrenceId, EvidenceSet>();
@@ -86,6 +86,7 @@ export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, 
 }
 
 export interface SubjectQuestionSelection {
+  readonly contract?: "legacy";
   readonly subject_occurrence_id: ItemOccurrenceId;
   readonly question_id: QuestionDefinition["question_id"];
   readonly question_version: string;

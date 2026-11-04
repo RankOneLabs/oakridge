@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { expect, test } from "bun:test";
 import { createApp } from "../src/http/app";
 import { schemaSupport } from "../src/grading/evidence-packages/recipe";
@@ -27,6 +28,11 @@ integration("supported findings stay visible with missing evidence, no criterion
       question_version: "v1", provenance: { definition_id: "definition-1", artifact_schema_version: "1" },
       support: { state: "supported" }, readiness: { state: "unready", reason: expect.stringContaining("excerpt") },
       execution: { state: "not_started" } }]) });
+  await withTenant(db, tenant, (trx) => sql`UPDATE observation.source_revision SET definition_id = 'changed-workflow'
+    WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND revision_id = 'support-analysis'`.execute(trx));
+  expect(await (await app.request("/v1/grading-support/v1?run_id=run-1", { headers: { authorization: "Bearer read" } })).json())
+    .toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ support: { state: "supported" },
+      provenance: { definition_id: "changed-workflow", artifact_schema_version: "1" } })]) });
   expect(await withTenant(db, tenant, (trx) => trx.selectFrom("observation.evaluation_eligibility").selectAll().execute())).toEqual([]);
   const other = { ...question, question_id: "unknown-schema" as typeof question.question_id, pinned_expectation: { definition_id: "irrelevant", artifact_schema_version: "absent" } };
   await withTenant(db, tenant, (trx) => trx.deleteFrom("observation.question_definition").where("question_id", "=", question.question_id).execute());

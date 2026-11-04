@@ -1,13 +1,13 @@
 import { sql, type Selectable } from "kysely";
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
-import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
+import { gradingSubjectRefusal, type PinnedExpectation, type QuestionDefinition } from "../grading/question";
 import { hasCapturedEvidenceRecipe, schemaSupport } from "../grading/evidence-packages/recipe";
 import { pinnedPilotRecipe } from "../grading/evidence-packages/pilot-recipe";
 import { deriveRunQuestionEvidence, deriveSubjectEvidence, subjectEvidenceFrom, type RunQuestionEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import { provenanceEligibility, type EligibilityRow, type ProvenanceDecision, type GradingSupportRow, type EvidenceReadiness, type GradingExecutionState } from "../grading/eligibility";
+import { schemaProvenanceEligibility, provenanceEligibility, type EligibilityRow, type ProvenanceDecision, type GradingSupportRow, type EvidenceReadiness, type GradingExecutionState } from "../grading/eligibility";
 import type { Page } from "./projection-store";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
@@ -79,6 +79,7 @@ export function questionFromRow(row: Selectable<ObservationQuestionDefinition>):
 }
 
 export interface ProvenanceSelection {
+  readonly contract?: "legacy";
   readonly subject_occurrence_id: ItemOccurrenceId;
   readonly question_id: QuestionId;
   readonly question_version: string;
@@ -92,10 +93,14 @@ export async function subjectProvenance(trx: DatabaseTransaction, tenant: Tenant
   const recorded = await trx.selectFrom("observation.item_occurrence as i")
     .innerJoin("observation.source_revision as r", (join) => join.onRef("r.revision_id", "=", "i.revision_id")
       .onRef("r.producer", "=", "i.producer").onRef("r.namespace", "=", "i.namespace"))
-    .select(["r.definition_id", "r.artifact_schema_version"])
+    .select(["r.definition_id", "r.artifact_schema_version", "i.item_kind"])
     .where("i.producer", "=", tenant.producer).where("i.namespace", "=", tenant.namespace)
     .where("i.occurrence_id", "=", input.subject_occurrence_id).executeTakeFirst();
   if (!recorded) return fail("subject occurrence does not exist in namespace");
+  if (input.contract !== "legacy") {
+    const refusal = gradingSubjectRefusal(recorded.item_kind, input.question_id, input.question_version);
+    if (refusal) return fail(refusal);
+  }
   let expected = input.pinned_expectation;
   if (!expected) {
     const question = await trx.selectFrom("observation.question_definition")
@@ -105,7 +110,7 @@ export async function subjectProvenance(trx: DatabaseTransaction, tenant: Tenant
     if (!question) return fail("question definition does not exist in namespace");
     expected = { definition_id: question.expected_definition_id, artifact_schema_version: question.expected_artifact_schema_version };
   }
-  return ok(provenanceEligibility(expected, recorded));
+  return ok((input.contract === "legacy" ? provenanceEligibility : schemaProvenanceEligibility)(expected, recorded));
 }
 
 /** Check supplied pins before registration, or use the already registered immutable question. */
@@ -172,7 +177,7 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
       decisions.set(subject.occurrence_id, row);
     } else if (page_derivation) {
       const derived = await deriveSubjectEvidence(db, tenant, { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId,
-        question_id: question.question_id, question_version, question, derived: page_derivation });
+        question_id: question.question_id, question_version, question, derived: page_derivation, contract: "legacy" });
       if (!derived.ok) throw new Error(derived.error.detail);
     }
   }
@@ -184,6 +189,7 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
 }
 
 export interface SupportSelection extends Page {
+  readonly as_of?: Date;
   readonly run_id: string;
   readonly question_id?: string | null;
   readonly question_version?: string | null;
@@ -202,7 +208,8 @@ export async function readGradingSupport(db: Database, tenant: TenantScope, sele
   const captured = await withTenant(db, tenant, async (trx) => {
     const revisions = await trx.selectFrom("observation.source_revision").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-      .where("run_id", "=", selection.run_id).execute();
+      .where("run_id", "=", selection.run_id).where("recorded_at", "<=", selection.as_of ?? new Date())
+      .where("captured_at", "<=", selection.as_of ?? new Date()).execute();
     const subjects = await trx.selectFrom("observation.item_occurrence").selectAll()
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("run_id", "=", selection.run_id).orderBy("occurrence_id").execute();
@@ -228,7 +235,7 @@ export async function readGradingSupport(db: Database, tenant: TenantScope, sele
     return revision.artifact_schema_version === question.pinned_expectation.artifact_schema_version
       && (!recipe || recipe.subject.artifact_kind === revision.artifact_kind);
   }));
-  const pairs = captured.subjects.flatMap((subject) => pins.map((question) => ({ subject, question })));
+  const pairs = captured.subjects.filter((subject) => revisionById.has(subject.revision_id)).flatMap((subject) => pins.map((question) => ({ subject, question })));
   const pagePairs = pairs.slice(selection.offset, selection.offset + selection.limit);
   const derivations = new Map<string, Result<RunQuestionEvidence, import("./captured-evidence-store").CapturedEvidenceError>>();
   const items: GradingSupportRow[] = [];
@@ -239,7 +246,7 @@ export async function readGradingSupport(db: Database, tenant: TenantScope, sele
     let readiness: EvidenceReadiness = { state: "not_applicable" };
     if (support.state === "supported") {
       const key = `${question.question_id}/${question.question_version}`;
-      if (!derivations.has(key)) derivations.set(key, await deriveRunQuestionEvidence(db, tenant, selection.run_id, question, "schema"));
+      if (!derivations.has(key)) derivations.set(key, await deriveRunQuestionEvidence(db, tenant, selection.run_id, question, "schema", selection.as_of));
       const derived = derivations.get(key)!;
       const evidence = derived.ok ? subjectEvidenceFrom(derived.value, question, subject.occurrence_id as ItemOccurrenceId) : derived;
       readiness = evidence.ok && evidence.value.evidence ? { state: "ready", evidence_set_id: evidence.value.evidence.evidence_set_id }
@@ -247,11 +254,11 @@ export async function readGradingSupport(db: Database, tenant: TenantScope, sele
     }
     const matches = (row: { subject_occurrence_id: string; question_id: string; question_version: string }) =>
       row.subject_occurrence_id === subject.occurrence_id && row.question_id === question.question_id && row.question_version === question.question_version;
-    const job = captured.jobs.find(matches);
-    const execution = captured.executions.find(matches);
-    const executionState: GradingExecutionState = job && ["queued", "claimed", "reclaimable"].includes(job.state)
+    const job = captured.jobs.find((row) => matches(row) && (!selection.as_of || row.created_at <= selection.as_of));
+    const execution = captured.executions.find((row) => matches(row) && (!selection.as_of || row.started_at <= selection.as_of));
+    const executionState: GradingExecutionState = job && (["queued", "claimed", "reclaimable"].includes(job.state) || Boolean(selection.as_of && job.updated_at > selection.as_of))
       ? { state: "pending", job_id: job.job_id, execution_id: execution?.execution_id ?? null }
-      : execution ? { state: execution.status === "completed" ? "completed" : execution.status === "failed" ? "failed" : "pending",
+      : execution ? { state: selection.as_of && (!execution.ended_at || execution.ended_at > selection.as_of) ? "pending" : execution.status === "completed" ? "completed" : execution.status === "failed" ? "failed" : "pending",
         job_id: job?.job_id ?? null, execution_id: execution.execution_id }
         : job ? { state: "failed", job_id: job.job_id, execution_id: null } : { state: "not_started" };
     items.push({ subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, question_id: question.question_id,

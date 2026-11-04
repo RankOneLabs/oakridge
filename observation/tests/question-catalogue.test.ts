@@ -68,3 +68,24 @@ test("the HTTP question contract requires its expectation", () => {
   const { pinned_expectation: _, ...unpinned } = OAKRIDGE_QUESTIONS["plan.criterion_traceability"].definition;
   expect(contextSchema.safeParse({ question: unpinned, evidence, evaluator: evaluator("code") }).success).toBe(false);
 });
+
+integration("identical catalogue registration is a no-op", () => scratchGrading(async (db) => {
+  const { registerQuestion } = await import("../src/storage/grading-store");
+  const entry = OAKRIDGE_QUESTIONS["analysis.finding_relevance"].definition;
+  expect((await registerQuestion(db, tenant, entry)).ok).toBe(true);
+  const rows = () => withTenant(db, tenant, (trx) => trx.selectFrom("observation.question_definition").selectAll().execute());
+  const before = await rows();
+  expect((await registerQuestion(db, tenant, entry)).ok).toBe(true);
+  expect(await rows()).toEqual(before);
+}));
+integration("changed content under the same version and retargeting across versions are refused explicitly", () => scratchGrading(async (db) => {
+  const { registerQuestion } = await import("../src/storage/grading-store");
+  const entry = OAKRIDGE_QUESTIONS["analysis.finding_relevance"].definition;
+  expect((await registerQuestion(db, tenant, entry)).ok).toBe(true);
+  expect(await registerQuestion(db, tenant, { ...entry, question_text: "Changed wording" }))
+    .toMatchObject({ ok: false, error: { detail: "question text conflict" } });
+  expect(await registerQuestion(db, tenant, { ...entry, unclear_semantics: "Changed semantics" }))
+    .toMatchObject({ ok: false, error: { detail: "question definition identity conflict" } });
+  expect(await registerQuestion(db, tenant, { ...entry, question_version: "v2", target_item_kinds: ["criterion_wrapper"] }))
+    .toMatchObject({ ok: false, error: { detail: expect.stringContaining("subject kind conflict") } });
+}));

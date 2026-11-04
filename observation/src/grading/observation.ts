@@ -53,6 +53,9 @@ export interface GradeObservationListing extends Omit<GradeObservation, "answer"
   readonly recorded_at: string;
 }
 export interface GradeListingItem {
+  readonly legacy_readback?: boolean;
+  readonly provenance?: { readonly definition_id: string; readonly artifact_schema_version: string; readonly run_id: string; readonly revision_id: string };
+  readonly criterion_references?: readonly { readonly occurrence_id: string; readonly revision_id: string; readonly relation_id: string }[];
   readonly observation: GradeObservationListing;
   readonly answer: GradeAnswer;
   readonly evaluator: EvaluatorDefinition & {

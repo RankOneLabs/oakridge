@@ -6,6 +6,7 @@ import type { GradeAnswer } from "../grading/observation";
 import type { GradingContext } from "../grading/runner";
 import { blindSubmissionIsValid } from "../grading/evaluator";
 import { acceptHumanGrade } from "../runners/human-intake";
+import { checkGradingProvenance } from "../storage/eligibility-store";
 import { deriveSubjectEvidence } from "../storage/captured-evidence-store";
 import { listGrades, registerGradingContext, type GradeDetails } from "../storage/grading-store";
 import type { SourceDependencies } from "./sources";
@@ -91,6 +92,9 @@ export function registerGradeRoutes(app: Hono, deps: SourceDependencies): void {
       return errorResponse(c, 400, "invalid_blind_grade", "blind submission requires a hidden assignment");
     if (identity.evaluator_definition_id === "oakridge-operator-human")
       return errorResponse(c, 400, "reserved_evaluator", "evaluator is reserved for its authenticated import path");
+    const admissible = await checkGradingProvenance(deps.db, credential, { ...identity,
+      pinned_expectation: parsed.data.context?.question.pinned_expectation });
+    if (!admissible.ok) return errorResponse(c, 422, "grade_refused", admissible.error.detail);
     if (parsed.data.context) {
       const context = parsed.data.context as unknown as GradingContext;
       if (!contextMatchesIdentity(context, identity)) return errorResponse(c, 400, "identity_mismatch", "context and identity differ");

@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { repositorySnapshotEligibility } from "../src/grading/eligibility";
 import type { EvidenceSet } from "../src/grading/evidence";
 import type { EvidenceSetId } from "../src/domain/identity";
-import { listGrades, readExecution, recordHumanGrade, registerGradingContext, runGrade } from "../src/storage/grading-store";
+import { listGrades, readExecution, recordHumanGrade, registerQuestion, registerGradingContext, runGrade } from "../src/storage/grading-store";
 import { tenant, question, evidence, evaluator, scratchGrading } from "./grading-fixture";
 import { createApp } from "../src/http/app";
 import { checkEvidenceIntegrity } from "../src/grading/evidence-integrity";
@@ -187,7 +187,7 @@ integration("production reader pins canonical references to captured source revi
   expect(await deriveCapturedEvidence(db, tenant, "run-1", selection)).toEqual(first);
 }));
 
-integration("legacy extractor identities remain gradeable alongside cohort-scoped captures and survive replay", async () => scratchGrading(async (db) => {
+integration("legacy extractor identities retain eligibility and lineage but refuse new grading alongside cohort-scoped captures", async () => scratchGrading(async (db) => {
   for (const [artifact_kind, extractor_id, body] of [
     ["plan", "plan.criteria", { cohorts: [{ id: "cohort", decisions: [{ id: "decision", text: "source" }],
       acceptance_criteria: [{ id: "criterion", text: "Original criterion", task_ids: [], decision_ids: ["decision"] }] }],
@@ -237,12 +237,13 @@ integration("legacy extractor identities remain gradeable alongside cohort-scope
     const subject = before.items.find((item) => item.revision_id === `legacy-${artifact_kind}` && item.item_kind === "criterion")!;
     expect(subject).toMatchObject({ item_id_or_path: "criterion:criterion", item_scope: "criterion", extractor_version: "1" });
     const question = questions[question_id].definition;
+    expect((await registerQuestion(db, tenant, question)).ok).toBe(true);
     const queued = await app.request("/v1/evaluation-jobs", { method: "POST",
       headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify({
         identity: { subject_occurrence_id: subject.occurrence_id, question_id, question_version: question.question_version,
           evaluator_definition_id: "model", config_digest: "config-1", attempt_label: "legacy" },
         context: { question, evaluator: evaluator("model") }, runner: "stub_model" }) });
-    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 201 });
+    expect({ status: queued.status, body: await queued.clone().text() }).toMatchObject({ status: 422 });
     const eligibility = await readEligibility(db, tenant, { run_id: "run-1", revision_id: subject.revision_id,
       question_id, question_version: question.question_version, limit: 20, offset: 0 });
     expect(eligibility.items).toMatchObject([{ subject_occurrence_id: subject.occurrence_id, tag: "eligible" }]);
@@ -251,7 +252,7 @@ integration("legacy extractor identities remain gradeable alongside cohort-scope
     const assigned = await app.request("/v1/blind-assignments", { method: "POST",
       headers: { authorization: "Bearer grade", "content-type": "application/json" }, body: JSON.stringify({
         subject_occurrence_id: subject.occurrence_id, question_id, question_version: question.question_version }) });
-    expect(assigned.status).toBe(201);
+    expect(assigned.status).toBe(409);
   }
   const current = await captureProjectedFixture(db, { revision_id: "current-brief", artifact_kind: "brief",
     recorded_at: "2026-11-01T01:00:00Z", body: { cohort_id: "cohort", decisions_made: [], approaches_rejected: [],

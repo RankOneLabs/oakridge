@@ -304,9 +304,8 @@ const live_capture = process.env.OAKRIDGE_LIVE_CAPTURE;
 const missing_live = missingLivePrerequisites(live_capture);
 const liveTest = missing_live.length === 0 ? test : test.skip;
 if (missing_live.length) console.warn(`SKIP: direct-provider live verification; missing ${missing_live.join(", ")}`);
-liveTest("a newly captured criterion is graded by TypeSafe and read back through authenticated APIs", async () => {
+liveTest("a newly captured criterion refuses evaluation before a TypeSafe provider call", async () => {
   if (!live_capture) throw new Error("OAKRIDGE_LIVE_CAPTURE disappeared");
-  const report = await verifyCapturedRun({ capture_path: live_capture,
-    question_id: "plan.criterion_traceability", estimated_cost: 0.01 });
-  expect(report.execution_id.length).toBeGreaterThan(0);
+  await expect(verifyCapturedRun({ capture_path: live_capture,
+    question_id: "plan.criterion_traceability", estimated_cost: 0.01 })).rejects.toThrow("criterion");
 }, 120_000);

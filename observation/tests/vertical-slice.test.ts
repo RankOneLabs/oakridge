@@ -182,7 +182,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       .some((edge) => edge.asserted_by === "human")).toBe(true);
 
     // (e) The shipped deterministic and stub-model runners grade the same pinned occurrence independently.
-    const question = { question_id: "criterion-check", question_version: "1", pinned_expectation: { definition_id: events.definition_id, artifact_schema_version: events.captures.find((capture) => capture.source.artifact_kind === "brief")!.source.artifact_schema_version }, target_item_kinds: ["criterion"],
+    const question = { question_id: "finding-check", question_version: "1", pinned_expectation: { definition_id: events.definition_id, artifact_schema_version: events.captures.find((capture) => capture.source.artifact_kind === "assessment")!.source.artifact_schema_version }, target_item_kinds: ["assessment_finding"],
       input_recipe: { expected: "matching evidence" }, response_kind: "boolean", allowed_values: null,
       missing_evidence_policy: "fail", abstain_semantics: "insufficient", unclear_semantics: "ambiguous",
       interpretation_caveats: "fixture check", requires_repository_snapshot: false };
@@ -193,7 +193,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
       instruction_text: "fixture-prompt", prompt_digest: instructionDigest("fixture-prompt"), config_digest: "fixture-config", runtime_revision: "1",
       cost_metadata: null, seed: null, attempt_controls: kind === "model"
         ? { answer: { state: "answered", kind: "boolean", value: false } } : null });
-    const identity = { subject_occurrence_id: briefCriterion.occurrence_id, evidence_set_id: evidence.evidence_set_id,
+    const identity = { subject_occurrence_id: finding.occurrence_id, evidence_set_id: evidence.evidence_set_id,
       question_id: question.question_id, question_version: question.question_version,
       config_digest: "fixture-config", attempt_label: "first" };
     const evaluate = async (kind: "code" | "model", runner: "deterministic" | "stub_model") => {
@@ -239,8 +239,8 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     expect((await sourceGrades.json()).items.some((grade: { decision_id: string }) =>
       grade.decision_id === decision.decision_id)).toBe(true);
 
-    // (g) Per-criterion history retains each evaluator's result.
-    const history = await app.request(`/v1/items/${encodeURIComponent(briefCriterion.occurrence_id)}/grades`,
+    // (g) Per-finding history retains each evaluator's result.
+    const history = await app.request(`/v1/items/${encodeURIComponent(finding.occurrence_id)}/grades`,
       { headers: readHeaders });
     expect(history.status).toBe(200);
     const grades = await history.json() as { total: number; items: { evaluator: { kind: string } }[] };
@@ -259,7 +259,7 @@ integration("an Oakridge revision flows through ingest, selection, lineage, inde
     expect(manifest.format_version).toBe("assay-jsonl/v1");
     expect(membershipDigest(manifest.membership)).toEqual({ ok: true, value: manifest.membership_digest });
     expect(manifest.file_hashes["candidates.jsonl"]).toBe(`sha256:${createHash("sha256").update(data).digest("hex")}`);
-    expect(records.some((record) => record.occurrence.occurrence_id === briefCriterion.occurrence_id)).toBe(true);
+    expect(records.some((record) => record.occurrence.occurrence_id === finding.occurrence_id)).toBe(true);
     expect(records.some((record) => record.occurrence.occurrence_id === planCriterion.occurrence_id
       && record.evaluator.kind === "human")).toBe(true);
     for (const record of records) {

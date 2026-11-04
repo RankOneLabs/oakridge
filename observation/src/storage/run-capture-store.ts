@@ -13,14 +13,15 @@ function occurrenceKey(revision_id: string, extractor_id: string, extractor_vers
 
 /** Re-select captured items and pair them with their stored occurrences. Conditional links exist
  * only when projection recorded the relation; an absent link stays absent in evidence derivation. */
-export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: string)
+export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: string, as_of?: Date)
   : Promise<Result<readonly CapturedRevision[], RunCaptureError>> {
   try {
     return await withTenant(db, tenant, async (trx) => {
       const revisions = await trx.selectFrom("observation.source_revision")
         .select(["revision_id", "unit_id", "artifact_kind", "artifact_schema_version", "definition_id", "body", "recorded_at", "predecessor_id"])
         .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-        .where("run_id", "=", run_id).orderBy("recorded_at").orderBy("revision_id").execute();
+        .where("run_id", "=", run_id).where("recorded_at", "<=", as_of ?? new Date())
+        .where("captured_at", "<=", as_of ?? new Date()).orderBy("recorded_at").orderBy("revision_id").execute();
       if (revisions.length === 0) return err({ operation: "run_capture", entity_id: run_id, detail: "no captured revisions for run" });
       const occurrences = await trx.selectFrom("observation.item_occurrence")
         .select(["occurrence_id", "revision_id", "extractor_id", "extractor_version", "item_selector", "item_id_or_path"])
@@ -31,7 +32,7 @@ export async function loadRunCapture(db: Database, tenant: TenantScope, run_id: 
           .onRef("source.namespace", "=", "relation.namespace").onRef("source.occurrence_id", "=", "relation.source_occurrence_id"))
         .select(["relation.source_occurrence_id", "relation.type", "relation.evidence_ref"])
         .where("relation.producer", "=", tenant.producer).where("relation.namespace", "=", tenant.namespace)
-        .where("source.run_id", "=", run_id).execute();
+        .where("source.run_id", "=", run_id).where("relation.recorded_at", "<=", as_of ?? new Date()).execute();
       const linked = new Set(relations.map((row) => `${row.source_occurrence_id}\u0000${row.type}\u0000${row.evidence_ref}`));
       const ids = new Map(occurrences.map((row) => [occurrenceKey(row.revision_id, row.extractor_id, row.extractor_version, row.item_selector,
         row.item_id_or_path), row.occurrence_id as ItemOccurrenceId]));

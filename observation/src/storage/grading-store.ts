@@ -3,7 +3,7 @@ import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import type { QuestionDefinition } from "../grading/question";
+import { gradingSubjectRefusal, type QuestionDefinition } from "../grading/question";
 import type { EvidenceSet } from "../grading/evidence";
 import { repositorySnapshotEligibility } from "../grading/eligibility";
 import { blindSubmissionIsValid, evaluatorIdentity, instructionDigest,
@@ -45,9 +45,15 @@ export async function registerQuestion(db: Database, tenant: TenantScope, questi
     return failure("register_context", question.question_id, "choice question requires allowed values");
   try {
     return await withTenant(db, tenant, async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([tenant.producer, tenant.namespace, question.question_id])}, 0))`.execute(trx);
+      const prior = await trx.selectFrom("observation.question_definition").select("target_item_kinds")
+        .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+        .where("question_id", "=", question.question_id).executeTakeFirst();
       const q = await trx.selectFrom("observation.question_definition").selectAll().where("producer", "=", tenant.producer)
         .where("namespace", "=", tenant.namespace).where("question_id", "=", question.question_id)
         .where("question_version", "=", question.question_version).executeTakeFirst();
+      if (!q && prior && !same(prior.target_item_kinds, question.target_item_kinds))
+        return failure("register_context", question.question_id, "question subject kind conflict: use a new question identity");
       if (q && !same([q.target_item_kinds, q.input_recipe, q.response_kind, q.allowed_values, q.missing_evidence_policy,
         q.abstain_semantics, q.unclear_semantics, q.interpretation_caveats, q.requires_repository_snapshot,
         q.expected_definition_id, q.expected_artifact_schema_version],
@@ -55,7 +61,7 @@ export async function registerQuestion(db: Database, tenant: TenantScope, questi
           question.abstain_semantics, question.unclear_semantics, question.interpretation_caveats, question.requires_repository_snapshot,
           question.pinned_expectation.definition_id, question.pinned_expectation.artifact_schema_version]))
         return failure("register_context", question.question_id, "question definition identity conflict");
-      if (q && q.question_text !== null && q.question_text !== question.question_text)
+      if (q && q.question_text !== (question.question_text ?? null))
         return failure("register_context", question.question_id, "question text conflict");
       if (!q) await trx.insertInto("observation.question_definition").values({ ...scope(tenant),
         question_id: question.question_id, question_version: question.question_version,
@@ -507,7 +513,7 @@ export function readExecution(db: Database, tenant: TenantScope, execution_id: s
 }
 export function listGrades(db: Database, tenant: TenantScope, occurrence_id: string, page: Page): Promise<GradePage | null> {
   return withTenant(db, tenant, async (trx) => {
-    const item = await trx.selectFrom("observation.item_occurrence").select("occurrence_id")
+    const item = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "item_kind", "revision_id"])
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("occurrence_id", "=", occurrence_id).executeTakeFirst();
     if (!item) return null;
@@ -527,9 +533,23 @@ export function listGrades(db: Database, tenant: TenantScope, occurrence_id: str
       .where("g.producer", "=", tenant.producer).where("g.namespace", "=", tenant.namespace)
       .where("g.subject_occurrence_id", "=", occurrence_id)
       .orderBy("g.recorded_at", "asc").orderBy("g.observation_id", "asc").limit(page.limit).offset(page.offset).execute();
+    const revision = await trx.selectFrom("observation.source_revision").select(["definition_id", "artifact_schema_version", "run_id", "revision_id"])
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("revision_id", "=", item.revision_id).executeTakeFirstOrThrow();
+    const references = await trx.selectFrom("observation.item_relation as rel")
+      .innerJoin("observation.item_occurrence as criterion", (join) => join.onRef("criterion.producer", "=", "rel.producer")
+        .onRef("criterion.namespace", "=", "rel.namespace").onRef("criterion.occurrence_id", "=", "rel.target_occurrence_id"))
+      .select(["criterion.occurrence_id", "criterion.revision_id", "rel.relation_id"])
+      .where("rel.producer", "=", tenant.producer).where("rel.namespace", "=", tenant.namespace)
+      .where("rel.source_occurrence_id", "=", occurrence_id).where("criterion.item_kind", "in", ["criterion", "plan_wide_criterion"])
+      .where("rel.asserted_by", "in", ["producer_explicit", "human"]).where("rel.type", "in", ["assesses", "derived_from"])
+      .orderBy("rel.relation_id").execute();
     const items: GradeListingItem[] = rows.map(({ observation, execution, evaluator }) => ({
       observation,
       answer: observation.answer_payload, evaluator, execution,
+      legacy_readback: gradingSubjectRefusal(item.item_kind, observation.question_id, observation.question_version) !== null,
+      provenance: revision, criterion_references: references,
+
     }));
     return { items, total: Number(count.count), ...page };
   });

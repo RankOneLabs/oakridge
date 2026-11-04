@@ -179,7 +179,7 @@ integration("missing and cross-namespace references refuse grades without partia
 for (const path of ["/v1/evaluations", "/v1/evaluation-jobs"]) {
   integration(`${path} refuses unsupported provenance before registering supplied context`, async () => scratchGrading(async (db, occurrence_id) => {
     const app = createApp({ db, credentials: { ingest: [], read: [], grade: [{ ...tenant, token: gradeToken }] } });
-    const unsupported = { ...question, pinned_expectation: { ...question.pinned_expectation, definition_id: "different-definition" } };
+    const unsupported = { ...question, pinned_expectation: { ...question.pinned_expectation, artifact_schema_version: "different-schema" } };
     const response = await app.request(path, { method: "POST", headers, body: JSON.stringify({
       identity: { subject_occurrence_id: occurrence_id, evidence_set_id: evidence.evidence_set_id,
         question_id: question.question_id, question_version: question.question_version,
@@ -187,7 +187,7 @@ for (const path of ["/v1/evaluations", "/v1/evaluation-jobs"]) {
       context: { question: unsupported, evidence, evaluator: evaluator("code") }, runner: "deterministic",
     }) });
     expect(response.status).toBe(422);
-    expect((await response.json()).error.message).toContain('definition_id: recorded="definition-1", pinned="different-definition"');
+    expect((await response.json()).error.message).toContain('artifact_schema_version: recorded="1", pinned="different-schema"');
     const rows = await withTenant(db, tenant, async (trx) => ({
       questions: await trx.selectFrom("observation.question_definition").selectAll().execute(),
       evidence: await trx.selectFrom("observation.evidence_set").selectAll().execute(),
@@ -213,11 +213,11 @@ integration("the direct grading boundary never invokes the runner for unsupporte
 }));
 
 integration("later captures preserve execution, blind-assignment and grade evidence on their original revision", async () => scratchGrading(async (db) => {
-  const first = await captureProjectedFixture(db, { revision_id: "brief-original", artifact_kind: "brief", body: {
-    cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "stable", text: "original" }],
+  const first = await captureProjectedFixture(db, { revision_id: "brief-original", artifact_kind: "analysis", body: {
+    findings: [{ id: "stable", description: "original", severity: "info" }], requirements: [], spec_updates: [],
   } });
-  const subject = first.find((item) => item.item_kind === "criterion")!;
-  const selected = { ...question, target_item_kinds: ["criterion"] };
+  const subject = first.find((item) => item.item_kind === "finding")!;
+  const selected = { ...question, target_item_kinds: ["finding"] };
   expect((await registerGradingContext(db, tenant, { question: selected, evidence, evaluator: evaluator("code") })).ok).toBe(true);
   const frozen = { subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, evidence_set_id: evidence.evidence_set_id,
     question_id: selected.question_id, question_version: selected.question_version };
@@ -238,10 +238,10 @@ integration("later captures preserve execution, blind-assignment and grade evide
   const before = await snapshot();
   const before_grades = await listGrades(db, tenant, subject.occurrence_id, { limit: 10, offset: 0 });
   const later = await captureProjectedFixture(db, { revision_id: "brief-later", predecessor_id: "brief-original",
-    artifact_kind: "brief", recorded_at: "2026-11-01T02:00:00Z", body: {
-      cohort_id: "cohort", decisions_made: [], approaches_rejected: [], acceptance_criteria: [{ id: "stable", text: "changed" }],
+    artifact_kind: "analysis", recorded_at: "2026-11-01T02:00:00Z", body: {
+      findings: [{ id: "stable", description: "changed", severity: "info" }], requirements: [], spec_updates: [],
     } });
-  const newer = later.find((item) => item.item_kind === "criterion")!;
+  const newer = later.find((item) => item.item_kind === "finding")!;
   expect(newer.occurrence_id).not.toBe(subject.occurrence_id);
   expect(newer.logical_item_id).toBe(subject.logical_item_id);
   expect((await recordEligibility(db, tenant, { ...tenant, ...frozen, subject_occurrence_id: newer.occurrence_id as ItemOccurrenceId,

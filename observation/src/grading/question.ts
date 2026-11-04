@@ -24,9 +24,13 @@ export interface QuestionDefinition {
   readonly requires_repository_snapshot: boolean;
 }
 
+export function isCriterionItemKind(item_kind: string): boolean {
+  return ["criterion", "plan_wide_criterion"].includes(item_kind);
+}
+
 /** Retired questions remain registered for immutable historical readback. */
 export function gradingSubjectRefusal(item_kind: string, question_id: string, question_version: string): string | null {
-  if (item_kind === "criterion") return "criterion is an obligation/reference entity, not a grading subject";
+  if (isCriterionItemKind(item_kind)) return "criterion is an obligation/reference entity, not a grading subject";
   if (question_version === "v1" && ["plan.criterion_traceability", "brief.source_fidelity", "assessment.coverage"].includes(question_id))
     return "legacy criterion-targeting question is excluded from new grading";
   return null;
