@@ -164,6 +164,18 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
         feedback: jsonText(outcome.feedback as JsonValue) })
         .onConflict((conflict) => conflict.columns(["producer", "namespace", "event_id"]).doNothing()).execute();
     }
+    if (outcome.kind === "run_metadata") {
+      await trx.insertInto("observation.run_metadata").values({ producer: tenant.producer, namespace: tenant.namespace, run_id: outcome.run_id,
+        metadata_version: outcome.metadata_version, grading_enabled: outcome.grading_settings.grading_enabled,
+        event_id: outcome.event_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
+        definition_id: outcome.definition_id, artifact_schema_version: outcome.artifact_schema_version,
+      }).onConflict((conflict) => conflict.columns(["producer", "namespace", "run_id"]).doUpdateSet({
+        metadata_version: outcome.metadata_version, grading_enabled: outcome.grading_settings.grading_enabled,
+        event_id: outcome.event_id, commit_txid: sql<number>`${delivery.cursor.commit_txid}::bigint`,
+        definition_id: outcome.definition_id, artifact_schema_version: outcome.artifact_schema_version,
+        recorded_at: sql<Date>`clock_timestamp()`,
+      })).execute();
+    }
     await sql`UPDATE observation.source_event_cursor SET commit_txid = ${delivery.cursor.commit_txid}::bigint, event_id = ${delivery.cursor.id}
       WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace}`.execute(trx);
     return { status: 200, body: { cursor: delivery.cursor } };
@@ -185,5 +197,24 @@ export function readSourceHumanGrades(db: Database, tenant: TenantScope): Promis
       .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
       .where("outcome_kind", "=", "human_grade").orderBy("commit_txid").orderBy("event_id").execute();
     return rows.map((row) => row.detail as unknown as SourceEventOutcome);
+  });
+}
+
+export type RunGradingConfiguration =
+  | { readonly state: "unknown"; readonly grading_enabled: false; readonly provenance: null }
+  | { readonly state: "declared"; readonly grading_enabled: boolean; readonly provenance: {
+      readonly metadata_version: string; readonly event_id: string; readonly cursor: SourceEventCursor;
+      readonly definition_id: string | null; readonly artifact_schema_version: string | null } };
+
+export function readRunGradingConfiguration(db: Database, tenant: TenantScope, run_id: string): Promise<RunGradingConfiguration> {
+  return withTenant(db, tenant, async (trx) => {
+    const row = await trx.selectFrom("observation.run_metadata").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", run_id).executeTakeFirst();
+    return row ? { state: "declared", grading_enabled: row.grading_enabled, provenance: {
+      metadata_version: row.metadata_version, event_id: row.event_id,
+      cursor: { commit_txid: String(row.commit_txid), id: row.event_id },
+      definition_id: row.definition_id, artifact_schema_version: row.artifact_schema_version,
+    } } : { state: "unknown", grading_enabled: false, provenance: null };
   });
 }

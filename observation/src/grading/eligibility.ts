@@ -74,3 +74,28 @@ export function provenanceEligibility(expected: PinnedExpectation, recorded: Rec
   return disagreements.length === 0 ? { tag: "eligible" }
     : { tag: "inapplicable", payload: { reason: `Unsupported provenance: ${disagreements.join("; ")}` } };
 }
+
+/** Additive support contract; the legacy eligibility decision above keeps its stored meaning. */
+export type SchemaSupport = { readonly state: "supported" }
+  | { readonly state: "unsupported"; readonly reason: string };
+export type EvidenceReadiness = { readonly state: "ready"; readonly evidence_set_id: string }
+  | { readonly state: "unready"; readonly reason: string }
+  | { readonly state: "not_applicable" };
+export type GradingExecutionState = { readonly state: "not_started" }
+  | { readonly state: "pending" | "failed" | "completed"; readonly job_id: string | null; readonly execution_id: string | null };
+export interface GradingSupportRow {
+  readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly question_id: QuestionId;
+  readonly question_version: string;
+  readonly provenance: RecordedProvenance;
+  readonly support: SchemaSupport;
+  readonly readiness: EvidenceReadiness;
+  readonly execution: GradingExecutionState;
+}
+export interface SupportSubject extends RecordedProvenance { readonly item_kind: string; readonly artifact_kind: string }
+
+/** Schema compatibility never depends on the whole-workflow definition hash. */
+export function schemaProvenanceEligibility(expected: PinnedExpectation, recorded: RecordedProvenance): ProvenanceDecision {
+  return recorded.artifact_schema_version === expected.artifact_schema_version ? { tag: "eligible" }
+    : { tag: "inapplicable", payload: { reason: `Unsupported artifact schema: recorded=${recorded.artifact_schema_version}, pinned=${expected.artifact_schema_version}` } };
+}

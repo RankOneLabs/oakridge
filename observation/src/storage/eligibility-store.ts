@@ -1,13 +1,13 @@
 import { sql, type Selectable } from "kysely";
 import type { ItemOccurrenceId, QuestionId } from "../domain/identity";
 import type { PinnedExpectation, QuestionDefinition } from "../grading/question";
-import { hasCapturedEvidenceRecipe } from "../grading/evidence-packages/recipe";
+import { hasCapturedEvidenceRecipe, schemaSupport } from "../grading/evidence-packages/recipe";
 import { pinnedPilotRecipe } from "../grading/evidence-packages/pilot-recipe";
-import { deriveRunQuestionEvidence, deriveSubjectEvidence, type RunQuestionEvidence } from "./captured-evidence-store";
+import { deriveRunQuestionEvidence, deriveSubjectEvidence, subjectEvidenceFrom, type RunQuestionEvidence } from "./captured-evidence-store";
 import type { ObservationQuestionDefinition } from "./db-types";
 import type { JsonValue, Result } from "../domain/primitives";
 import { err, ok } from "../domain/primitives";
-import { provenanceEligibility, type EligibilityRow, type ProvenanceDecision } from "../grading/eligibility";
+import { provenanceEligibility, type EligibilityRow, type ProvenanceDecision, type GradingSupportRow, type EvidenceReadiness, type GradingExecutionState } from "../grading/eligibility";
 import type { Page } from "./projection-store";
 import { withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 
@@ -181,4 +181,83 @@ export async function readEligibility(db: Database, tenant: TenantScope, selecti
   const rows = await storedEligibility(db, tenant, selection, subject_ids);
   return { ...page, total: population.total, items: rows.map((row) => decisions.get(row.subject_occurrence_id)?.tag === "inapplicable"
     ? decisions.get(row.subject_occurrence_id)! : row) };
+}
+
+export interface SupportSelection extends Page {
+  readonly run_id: string;
+  readonly question_id?: string | null;
+  readonly question_version?: string | null;
+}
+export interface GradingSupportPage extends Page {
+  readonly query_version: "grading-support/v1";
+  readonly run_id: string;
+  readonly run_state: "no_captured_artifacts" | "no_applicable_question_pins" | "applicable_question_pins";
+  readonly items: readonly GradingSupportRow[];
+  readonly total: number;
+}
+
+/** Read-side contract: no writes to legacy eligibility or human coverage. Unsupported and
+ * unready subjects stay in the population. Packages are derived once per question per run. */
+export async function readGradingSupport(db: Database, tenant: TenantScope, selection: SupportSelection): Promise<GradingSupportPage> {
+  const captured = await withTenant(db, tenant, async (trx) => {
+    const revisions = await trx.selectFrom("observation.source_revision").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", selection.run_id).execute();
+    const subjects = await trx.selectFrom("observation.item_occurrence").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", selection.run_id).orderBy("occurrence_id").execute();
+    const questions = await trx.selectFrom("observation.question_definition").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .orderBy("question_id").orderBy("question_version").execute();
+    const jobs = await trx.selectFrom("observation.grading_job").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("run_id", "=", selection.run_id).orderBy("created_at", "desc").orderBy("job_id", "desc").execute();
+    const executions = await trx.selectFrom("observation.evaluation_execution as x")
+      .innerJoin("observation.item_occurrence as i", (join) => join.onRef("i.producer", "=", "x.producer")
+        .onRef("i.namespace", "=", "x.namespace").onRef("i.occurrence_id", "=", "x.subject_occurrence_id"))
+      .selectAll("x").where("x.producer", "=", tenant.producer).where("x.namespace", "=", tenant.namespace)
+      .where("i.run_id", "=", selection.run_id).orderBy("x.started_at", "desc").orderBy("x.execution_id", "desc").execute();
+    return { revisions, subjects, questions: questions.map(questionFromRow), jobs, executions };
+  });
+  const pins = captured.questions.filter((question) => !selection.question_id
+    || (question.question_id === selection.question_id && question.question_version === selection.question_version));
+  const revisionById = new Map(captured.revisions.map((row) => [row.revision_id, row]));
+  // This run-level diagnostic describes all registered pins, independently of the selected page.
+  const hasApplicablePin = captured.revisions.some((revision) => captured.questions.some((question) => {
+    const recipe = pinnedPilotRecipe(question);
+    return revision.artifact_schema_version === question.pinned_expectation.artifact_schema_version
+      && (!recipe || recipe.subject.artifact_kind === revision.artifact_kind);
+  }));
+  const pairs = captured.subjects.flatMap((subject) => pins.map((question) => ({ subject, question })));
+  const pagePairs = pairs.slice(selection.offset, selection.offset + selection.limit);
+  const derivations = new Map<string, Result<RunQuestionEvidence, import("./captured-evidence-store").CapturedEvidenceError>>();
+  const items: GradingSupportRow[] = [];
+  for (const { subject, question } of pagePairs) {
+    const revision = revisionById.get(subject.revision_id)!;
+    const provenance = { definition_id: revision.definition_id, artifact_schema_version: revision.artifact_schema_version };
+    const support = schemaSupport(question, { ...provenance, item_kind: subject.item_kind, artifact_kind: subject.artifact_kind });
+    let readiness: EvidenceReadiness = { state: "not_applicable" };
+    if (support.state === "supported") {
+      const key = `${question.question_id}/${question.question_version}`;
+      if (!derivations.has(key)) derivations.set(key, await deriveRunQuestionEvidence(db, tenant, selection.run_id, question, "schema"));
+      const derived = derivations.get(key)!;
+      const evidence = derived.ok ? subjectEvidenceFrom(derived.value, question, subject.occurrence_id as ItemOccurrenceId) : derived;
+      readiness = evidence.ok && evidence.value.evidence ? { state: "ready", evidence_set_id: evidence.value.evidence.evidence_set_id }
+        : { state: "unready", reason: evidence.ok ? JSON.stringify(evidence.value.decision) : evidence.error.detail };
+    }
+    const matches = (row: { subject_occurrence_id: string; question_id: string; question_version: string }) =>
+      row.subject_occurrence_id === subject.occurrence_id && row.question_id === question.question_id && row.question_version === question.question_version;
+    const job = captured.jobs.find(matches);
+    const execution = captured.executions.find(matches);
+    const executionState: GradingExecutionState = job && ["queued", "claimed", "reclaimable"].includes(job.state)
+      ? { state: "pending", job_id: job.job_id, execution_id: execution?.execution_id ?? null }
+      : execution ? { state: execution.status === "completed" ? "completed" : execution.status === "failed" ? "failed" : "pending",
+        job_id: job?.job_id ?? null, execution_id: execution.execution_id }
+        : job ? { state: "failed", job_id: job.job_id, execution_id: null } : { state: "not_started" };
+    items.push({ subject_occurrence_id: subject.occurrence_id as ItemOccurrenceId, question_id: question.question_id,
+      question_version: question.question_version, provenance, support, readiness, execution: executionState });
+  }
+  return { query_version: "grading-support/v1", run_id: selection.run_id,
+    run_state: captured.revisions.length === 0 ? "no_captured_artifacts" : hasApplicablePin ? "applicable_question_pins" : "no_applicable_question_pins",
+    items, total: pairs.length, limit: selection.limit, offset: selection.offset };
 }

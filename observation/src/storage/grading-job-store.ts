@@ -161,8 +161,18 @@ export async function readJob(db: Database, tenant: TenantScope, job_id: string)
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("job_id", "=", job_id).executeTakeFirst());
 }
-export async function listJobs(db: Database, tenant: TenantScope, occurrence_id: string): Promise<GradingJob[]> {
-  return withTenant(db, tenant, (trx) => trx.selectFrom("observation.grading_job").selectAll()
-    .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
-    .where("subject_occurrence_id", "=", occurrence_id).orderBy("created_at", "desc").execute());
+export interface JobsPage { readonly items: readonly GradingJob[]; readonly total: number;
+  readonly limit: number; readonly offset: number }
+export async function listJobs(db: Database, tenant: TenantScope, occurrence_id: string,
+  page: { readonly limit: number; readonly offset: number }): Promise<JobsPage> {
+  return withTenant(db, tenant, async (trx) => {
+    const query = trx.selectFrom("observation.grading_job")
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("subject_occurrence_id", "=", occurrence_id);
+    const count = await query.select((eb) => eb.fn.countAll<string>().as("total")).executeTakeFirstOrThrow();
+    // Oldest first keeps prior offsets stable when new jobs arrive. The id breaks timestamp ties.
+    const items = await query.selectAll().orderBy("created_at", "asc").orderBy("job_id", "asc")
+      .limit(page.limit).offset(page.offset).execute();
+    return { ...page, items, total: Number(count.total) };
+  });
 }

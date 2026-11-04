@@ -48,3 +48,12 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 });
+
+test("future kinds become unmapped only after the envelope and cursor validate", () => {
+  const delivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "future" },
+    outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+      kind: "future_kind", event_kind: "future_event", run_id: "run-1", event_id: "future" } };
+  expect(decodeSourceEventDelivery(delivery)?.outcome).toMatchObject({ kind: "unmapped", reason: "future_kind" });
+  expect(decodeSourceEventDelivery({ ...delivery, cursor: { ...delivery.cursor, commit_txid: "-1" } })).toBeNull();
+  expect(decodeSourceEventDelivery({ ...delivery, outcome: { ...delivery.outcome, format: "wrong" } })).toBeNull();
+});

@@ -208,6 +208,20 @@ export function listRunItems(db: Database, tenant: TenantScope, run_id: string, 
   });
 }
 
+export interface OccurrenceAddress { readonly revision_id: string; readonly item_path: string }
+
+export function lookupOccurrence(db: Database, tenant: TenantScope, address: OccurrenceAddress)
+  : Promise<Selectable<ObservationItemOccurrence> | null> {
+  return withTenant(db, tenant, async (trx) => {
+    const rows = await trx.selectFrom("observation.item_occurrence").selectAll()
+      .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
+      .where("revision_id", "=", address.revision_id).where("json_pointer", "=", address.item_path)
+      .orderBy("extractor_version", "desc").limit(2).execute();
+    if (rows.length > 1) throw new Error("ambiguous captured item path");
+    return rows[0] ?? null;
+  });
+}
+
 export function readItem(db: Database, tenant: TenantScope, occurrence_id: string): Promise<Selectable<ObservationItemOccurrence> | null> {
   return withTenant(db, tenant, async (trx) => (await trx.selectFrom("observation.item_occurrence").selectAll()
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)

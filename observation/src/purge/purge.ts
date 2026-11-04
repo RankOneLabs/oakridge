@@ -111,6 +111,8 @@ export async function purgeRun(db: Database, request: PurgeRequest, hooks: Purge
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       await sql`DELETE FROM observation.source_human_grade
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
+      await sql`DELETE FROM observation.run_metadata
+        WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       await sql`DELETE FROM observation.source_event_outcome
         WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} AND run_id = ${run_id}`.execute(trx);
       const counts: PurgeCounts = {

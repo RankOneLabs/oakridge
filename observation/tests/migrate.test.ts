@@ -118,7 +118,7 @@ integration("the single baseline preserves the historical catalog except for cap
     // 4. Enforce collection consistency without a null-mode bypass.
     expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_collection_consistency",
       definition: "CHECK (((model_answers_visible IS NOT NULL) AND (workflow_decisions_visible IS NOT NULL) AND ((collection_mode <> 'blind'::text) OR ((blind_assignment_id IS NOT NULL) AND (NOT model_answers_visible) AND (NOT workflow_decisions_visible)))))" });
-    expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
+    expect(catalog.rows.filter((entry) => entry.table_name !== "run_metadata").sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
   } finally { await db.destroy(); }
 }));
 

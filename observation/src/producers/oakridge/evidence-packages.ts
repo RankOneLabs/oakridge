@@ -5,7 +5,7 @@ import type { EvidenceReference, EvidenceSet } from "../../grading/evidence";
 import { collectReferences, capturedReference, packagedEvidenceSet, type EvidencePackageError } from "../../grading/evidence-packages/references";
 import { declaredLinks, linkedItems, selectCapturedRevisions, type CapturedItem, type CapturedRevision, type RevisionSelection } from "../../grading/evidence-packages/capture";
 import { evidenceKindForCapturedPath } from "./classification";
-import { provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
+import { schemaProvenanceEligibility, provenanceEligibility, repositorySnapshotEligibility, type EligibilityDecision, type ExclusionReason } from "../../grading/eligibility";
 import { pinnedPilotRecipe, recipeSlots, unsatisfiedSlots, type EvidenceBuild, type EvidenceSlot,
   type PilotEvidenceRecipe, type SlotSource, type SubjectBinding } from "../../grading/evidence-packages/pilot-recipe";
 import { hasJudgeRecipe, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
@@ -245,10 +245,10 @@ interface SubjectSelection {
 /** Revisions whose recorded provenance matches the pin, and an inapplicable decision for every
  * targeted item in the ones that do not. The subject's artifact kind comes from the pin. */
 function selectSubjects(revisions: readonly CapturedRevision[], question: QuestionDefinition,
-  recipe: PilotEvidenceRecipe): SubjectSelection {
+  recipe: PilotEvidenceRecipe, provenance_policy: "legacy" | "schema"): SubjectSelection {
   const candidates = revisions.filter((revision) => revision.artifact_kind === recipe.subject.artifact_kind);
   const decisions = candidates.map((revision) => ({ revision,
-    decision: provenanceEligibility(question.pinned_expectation, revision) }));
+    decision: (provenance_policy === "schema" ? schemaProvenanceEligibility : provenanceEligibility)(question.pinned_expectation, revision) }));
   return {
     revisions: decisions.filter(({ decision }) => decision.tag === "eligible").map(({ revision }) => revision),
     eligibility: decisions.flatMap(({ revision, decision }) => decision.tag === "inapplicable"
@@ -262,10 +262,11 @@ interface JudgeSources {
   readonly question: QuestionDefinition;
   readonly recipe: JudgeRecipe;
   readonly repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet>;
+  readonly provenance_policy: "legacy" | "schema";
 }
 
 /** Judge allowlists name exact captured addresses, never request-body evidence or similar prose. */
-function judgePackages({ revisions, question, recipe, repository_sources }: JudgeSources): Result<PackageBatch, RunPackageError> {
+function judgePackages({ revisions, question, recipe, repository_sources, provenance_policy }: JudgeSources): Result<PackageBatch, RunPackageError> {
   const packages: PilotPackage[] = [];
   const eligibility: PackageDecision[] = [];
   const available: EvidenceReference[] = [];
@@ -278,7 +279,7 @@ function judgePackages({ revisions, question, recipe, repository_sources }: Judg
     if (ref.deep_link && ref.kind === "repository_content") available.push({ ...ref, kind: ref.kind, ref: ref.deep_link });
   }
   for (const revision of revisions) for (const subject of revision.items.filter((item) => question.target_item_kinds.includes(item.item_kind))) {
-    const provenance = provenanceEligibility(question.pinned_expectation, revision);
+    const provenance = (provenance_policy === "schema" ? schemaProvenanceEligibility : provenanceEligibility)(question.pinned_expectation, revision);
     if (provenance.tag !== "eligible") {
       eligibility.push({ question_id: question.question_id, occurrence_id: subject.occurrence_id, decision: provenance });
       continue;
@@ -305,7 +306,7 @@ function judgePackages({ revisions, question, recipe, repository_sources }: Judg
 }
 
 export function runPackages(revisions: readonly CapturedRevision[], questions: RunQuestionSelection, policy: RevisionSelection["policy"] = "live_all_revisions",
-  repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet> = new Map())
+  repository_sources: ReadonlyMap<ItemOccurrenceId, EvidenceSet> = new Map(), provenance_policy: "legacy" | "schema" = "legacy")
   : Result<RunPackages, RunPackageError> {
   for (const [question_id, question] of Object.entries(questions)) {
     if (!question) continue;
@@ -321,7 +322,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
     if (!question) continue;
     const recipe = pinnedPilotRecipe(question.definition);
     if (!recipe) continue;
-    const selection = selectSubjects(selected.revisions, question.definition, recipe);
+    const selection = selectSubjects(selected.revisions, question.definition, recipe, provenance_policy);
     const input: BuilderInput = { revisions: selected.revisions, subjects: selection.revisions,
       question: question.definition, recipe };
     const built = recipe.build.kind === "linked_sources" ? linkedSourcePackages(input, recipe.build)
@@ -378,7 +379,7 @@ export function runPackages(revisions: readonly CapturedRevision[], questions: R
     if (!question) continue;
     const recipe = judgeRecipeSchema.safeParse(question.definition.input_recipe);
     if (!recipe.success) continue;
-    const judged = judgePackages({ revisions: selected.revisions, question: question.definition, recipe: recipe.data, repository_sources });
+    const judged = judgePackages({ revisions: selected.revisions, question: question.definition, recipe: recipe.data, repository_sources, provenance_policy });
     if (!judged.ok) return judged;
     packages.push(...judged.value.packages);
     eligibility.push(...judged.value.eligibility);

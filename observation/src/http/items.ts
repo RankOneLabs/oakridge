@@ -1,8 +1,9 @@
 import type { Hono } from "hono";
-import { listRunItems, readItem, readLineage, type Page } from "../storage/projection-store";
+import { lookupOccurrence, listRunItems, readItem, readLineage, type Page } from "../storage/projection-store";
 import type { SourceDependencies } from "./sources";
 import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
+import { readRunGradingConfiguration } from "../storage/capture-store";
 import { readCoverage } from "../storage/coverage-store";
 
 export function pagination(url: string): Page | null {
@@ -14,6 +15,19 @@ export function pagination(url: string): Page | null {
 }
 
 export function registerItemRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/source-revisions/:revision_id/items", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const item_path = new URL(c.req.url).searchParams.get("item_path");
+    if (!item_path) return errorResponse(c, 400, "invalid_selection", "item_path required");
+    const item = await lookupOccurrence(deps.db, credential, { revision_id: c.req.param("revision_id"), item_path });
+    return item ? c.json(item) : errorResponse(c, 404, "not_found", "item not found");
+  });
+  app.get("/v1/runs/:run_id/grading-configuration", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    return c.json(await readRunGradingConfiguration(deps.db, credential, c.req.param("run_id")));
+  });
   app.get("/v1/runs/:run_id/coverage", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");

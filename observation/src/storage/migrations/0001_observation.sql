@@ -821,3 +821,24 @@ ALTER TABLE observation.blind_assignment FORCE ROW LEVEL SECURITY;
 CREATE POLICY blind_assignment_tenant ON observation.blind_assignment
   USING (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true))
   WITH CHECK (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true));
+
+-- Launch settings are independent of workflow input and schema identity.
+CREATE TABLE observation.run_metadata (
+  producer text NOT NULL,
+  namespace text NOT NULL,
+  run_id text NOT NULL,
+  metadata_version text NOT NULL,
+  grading_enabled boolean NOT NULL,
+  event_id text NOT NULL,
+  commit_txid bigint NOT NULL,
+  definition_id text,
+  artifact_schema_version text,
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (producer, namespace, run_id),
+  FOREIGN KEY (producer, namespace, event_id) REFERENCES observation.source_event_outcome(producer, namespace, event_id)
+);
+ALTER TABLE observation.run_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE observation.run_metadata FORCE ROW LEVEL SECURITY;
+CREATE POLICY run_metadata_tenant ON observation.run_metadata
+  USING (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true))
+  WITH CHECK (producer = current_setting('observation.producer', true) AND namespace = current_setting('observation.namespace', true));

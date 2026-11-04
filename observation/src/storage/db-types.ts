@@ -392,6 +392,19 @@ export interface ObservationBlindAssignment {
   created_at: Generated<Date>;
 }
 
+export interface ObservationRunMetadata {
+  producer: string;
+  namespace: string;
+  run_id: string;
+  metadata_version: string;
+  grading_enabled: boolean;
+  event_id: string;
+  commit_txid: number;
+  definition_id: string | null;
+  artifact_schema_version: string | null;
+  recorded_at: Generated<Date>;
+}
+
 export interface DB {
   "observation.schema_baseline": ObservationSchemaBaseline;
   "observation.source_revision": ObservationSourceRevision;
@@ -419,4 +432,5 @@ export interface DB {
   "observation.grading_job": ObservationGradingJob;
   "observation.grading_provider_attempt": ObservationGradingProviderAttempt;
   "observation.blind_assignment": ObservationBlindAssignment;
+  "observation.run_metadata": ObservationRunMetadata;
 }

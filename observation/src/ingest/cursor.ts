@@ -18,6 +18,8 @@ export type SourceEventOutcome = SourceEventProvenance & (
       readonly context: { readonly title: string; readonly anchor: string | null };
       readonly messages: readonly { readonly id: string; readonly body: { readonly text: string; readonly author: string };
         readonly created_at: string }[] }
+  | { readonly kind: "run_metadata"; readonly event_kind: string; readonly run_id: string; readonly event_id: string;
+      readonly metadata_version: string; readonly grading_settings: { readonly grading_enabled: boolean } }
   | { readonly kind: "run_input"; readonly event_kind: "launched"; readonly run_id: string; readonly event_id: string; readonly input: unknown;
       readonly input_schema_version: string }
   | { readonly kind: "ignored"; readonly event_kind: "worker_started" | "worker_ended" | "retry_requested" | "cancel_requested";
@@ -45,6 +47,14 @@ export function decodeSourceEventDelivery(value: unknown): SourceEventDelivery |
   if (outcome.kind === "human_grade" && (!record(outcome.evaluator) || outcome.evaluator.kind !== "human" || typeof outcome.target !== "string"
     || !(outcome.decision_id === null || typeof outcome.decision_id === "string"))) return null;
   if (outcome.kind === "unmapped" && typeof outcome.reason !== "string") return null;
-  if (!["artifact_revision", "human_grade", "run_input", "ignored", "unmapped"].includes(outcome.kind)) return null;
+  if (outcome.kind === "run_metadata" && (typeof outcome.metadata_version !== "string" || !outcome.metadata_version
+    || !record(outcome.grading_settings) || typeof outcome.grading_settings.grading_enabled !== "boolean")) return null;
+  if (!["artifact_revision", "human_grade", "run_input", "run_metadata", "ignored", "unmapped"].includes(outcome.kind)) {
+    return { previous: value.previous, cursor: value.cursor, outcome: {
+      format: "observation.source-event/v1", definition_id: outcome.definition_id,
+      artifact_schema_version: outcome.artifact_schema_version, event_kind: outcome.event_kind,
+      run_id: outcome.run_id, event_id: outcome.event_id, kind: "unmapped", reason: outcome.kind,
+    } };
+  }
   return value as unknown as SourceEventDelivery;
 }

@@ -7,7 +7,7 @@ import { recoverManualExecution, registerGradingContext, runGrade } from "../sto
 import { deriveSubjectEvidence } from "../storage/captured-evidence-store";
 import { withTenant } from "../storage/database";
 import { enqueueJob, listJobs, readJob } from "../storage/grading-job-store";
-import { checkGradingProvenance, readEligibility } from "../storage/eligibility-store";
+import { checkGradingProvenance, readEligibility, readGradingSupport } from "../storage/eligibility-store";
 import { gradingLimits } from "../grading/jobs/budget";
 import type { SourceDependencies } from "./sources";
 import { credentialFor } from "./ingest-auth";
@@ -47,6 +47,17 @@ export function contextMatchesIdentity(context: GradingContext, identity: Evalua
 }
 
 export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): void {
+  app.get("/v1/grading-support/v1", async (c) => {
+    const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
+    if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
+    const params = new URL(c.req.url).searchParams;
+    const run_id = params.get("run_id"), question_id = params.get("question_id"), question_version = params.get("question_version");
+    if (!run_id || Boolean(question_id) !== Boolean(question_version))
+      return errorResponse(c, 400, "invalid_selection", "run required; question id and version must be supplied together");
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await readGradingSupport(deps.db, credential, { run_id, question_id, question_version, ...page }));
+  });
   app.get("/v1/evaluation-eligibility", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), deps.credentials.read);
     if (!credential) return errorResponse(c, 403, "forbidden", "read credential required");
@@ -146,7 +157,9 @@ export function registerEvaluationRoutes(app: Hono, deps: SourceDependencies): v
   app.get("/v1/items/:id/evaluation-jobs", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), [...deps.credentials.read, ...(deps.credentials.grade ?? [])]);
     if (!credential) return errorResponse(c, 403, "forbidden", "read or grade credential required");
-    return c.json({ items: await listJobs(deps.db, credential, c.req.param("id")) });
+    const page = pagination(c.req.url);
+    if (!page) return errorResponse(c, 400, "invalid_pagination", "limit must be 1..200 and offset nonnegative");
+    return c.json(await listJobs(deps.db, credential, c.req.param("id"), page));
   });
   app.get("/v1/evaluation-executions/:id", async (c) => {
     const credential = credentialFor(c.req.header("authorization"), [...deps.credentials.read, ...(deps.credentials.grade ?? [])]);

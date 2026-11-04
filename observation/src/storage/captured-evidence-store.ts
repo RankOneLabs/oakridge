@@ -38,7 +38,7 @@ export interface RunQuestionEvidence {
 
 /** Load the run's capture and build its packages for one immutable question pin. */
 export async function deriveRunQuestionEvidence(db: Database, tenant: TenantScope, run_id: string,
-  question: QuestionDefinition): Promise<Result<RunQuestionEvidence, CapturedEvidenceError>> {
+  question: QuestionDefinition, provenance_policy: "legacy" | "schema" = "legacy"): Promise<Result<RunQuestionEvidence, CapturedEvidenceError>> {
   const fail = (detail: string) => err({ operation: "captured_evidence" as const, entity_id: run_id, detail });
   const capture = await loadRunCapture(db, tenant, run_id);
   if (!capture.ok) return fail(capture.error.detail);
@@ -54,7 +54,7 @@ export async function deriveRunQuestionEvidence(db: Database, tenant: TenantScop
     } catch (cause) { return fail(String(cause)); }
   }
   const manifest = runPackages(capture.value, { [question.question_id]: { definition: question, text: question.question_text ?? "" } },
-    "live_all_revisions", sources);
+    "live_all_revisions", sources, provenance_policy);
   if (!manifest.ok) return fail(manifest.error.detail);
   return ok({ subjects, packages: manifest.value });
 }
@@ -79,7 +79,7 @@ export function subjectEvidenceFrom(derived: RunQuestionEvidence, question: Ques
 /** One live capture-to-package path for a specific subject and immutable question pin. */
 export async function deriveCapturedEvidence(db: Database, tenant: TenantScope, run_id: string,
   selection: CapturedEvidenceSelection): Promise<Result<CapturedEvidence, CapturedEvidenceError>> {
-  const derived = await deriveRunQuestionEvidence(db, tenant, run_id, selection.question);
+  const derived = await deriveRunQuestionEvidence(db, tenant, run_id, selection.question, "schema");
   if (!derived.ok) return err({ operation: "captured_evidence", entity_id: selection.subject_occurrence_id,
     detail: derived.error.detail });
   return subjectEvidenceFrom(derived.value, selection.question, selection.subject_occurrence_id);
