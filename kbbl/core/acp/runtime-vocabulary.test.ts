@@ -167,6 +167,29 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
 });
 
 /**
+ * The rule that keeps this file's other assertions from going stale: kbbl
+ * never persists a generation-pinned Claude id.
+ *
+ * The CLI advertises `opus` beside `claude-opus-5`, and both resolve. Picking
+ * the alias means a new generation reaches operators with no kbbl release;
+ * picking the explicit id pins kbbl to one generation until someone notices,
+ * which is exactly how `sonnet 5` and `haiku 4.5` sat in the picker while the
+ * account was entitled to 5.5. It also bounds the retired-id map: an id kbbl
+ * never writes cannot become a stale row when the vendor withdraws it.
+ *
+ * Codex is deliberately exempt — it advertises no alias/generation split, so
+ * every id it offers is one an operator would pick, and the per-variant
+ * assertions above are the whole guard there.
+ */
+test("the Claude picker carries no generation-pinned id", () => {
+  const pinned = RUNTIME_MODELS["claude-code"]
+    .map((option) => option.value)
+    .filter(isGenerationPinnedId);
+
+  expect(pinned).toEqual([]);
+});
+
+/**
  * The regression greptile caught: a durable row outlives the picker.
  *
  * `epics.planner_model` and `acp_sessions.requested_model` hold free text

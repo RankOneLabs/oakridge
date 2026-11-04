@@ -177,23 +177,112 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
  * Explicit ids the picker used to carry, mapped to the family alias that now
  * names the same model.
  *
- * A stored selection is forwarded to ACP verbatim, so an id the agent stopped
- * advertising provisions straight into `requested_model_unsupported`. Context
- * hints are already handled by `withoutContextHint`; this covers the other
- * drift, where an explicit id is replaced by an alias rather than respelled.
+ * **This is a browser-compatibility shim with an expiry, not a vocabulary.**
+ * Neither database holds a retired id — `acp_sessions.requested_model` and
+ * `authority.run.config` were both checked and carry only family aliases and
+ * currently advertised codex ids, and no pinned workflow definition declares
+ * a model at all. The one store that cannot be migrated is `localStorage`,
+ * where a browser that picked Fable before the picker moved to the `fable`
+ * alias still holds `claude-fable-5-1`. When no such browser can plausibly
+ * remain, delete this map and `matchAdvertisedModel` with it.
  *
  * Only same-model renames belong here. `claude-opus-5` is **not** an alias of
  * `opus` — the CLI advertises both, and they are different generations, so
  * mapping one to the other would silently change an operator's model.
  */
-const LEGACY_MODEL_ALIASES: Readonly<Record<string, string>> = {
+const RETIRED_MODEL_IDS: Readonly<Record<string, string>> = {
   "claude-fable-5-1": "fable",
 };
 
-/** The id a stored model selection should be requested as today. */
-export function canonicalModelValue(value: string): string {
-  const family = withoutContextHint(value.trim().toLowerCase());
-  return LEGACY_MODEL_ALIASES[family] ?? family;
+/** An id as an agent advertises it, with its display name where there is one. */
+export interface AdvertisedOption {
+  readonly value: string;
+  readonly name?: string;
+}
+
+/** How a requested id was matched to an advertised one. */
+export type IdMatchKind =
+  | { readonly kind: "exact" }
+  | {
+      readonly kind: "context_hint_ignored";
+      readonly requestedHint: string | null;
+      readonly matchedHint: string | null;
+    }
+  | { readonly kind: "retired_id_mapped"; readonly retiredId: string };
+
+export interface AdvertisedMatch {
+  readonly valueId: string;
+  readonly match: IdMatchKind;
+}
+
+/**
+ * The advertised id a requested one means, or null when none of them does.
+ *
+ * **This is the single answer to that question.** It used to be three: the ACP
+ * resolver, the PWA's stored-model matcher and the role-selection staleness
+ * check each reimplemented it, they drifted, and a retired id that two of them
+ * mapped killed sessions through the third. Every caller goes through here or
+ * through `matchAdvertisedModel`.
+ *
+ * Exact id wins, then exact display name — agents spell the same model as an
+ * id in one place and a label in another. Failing both, the context-window
+ * hint is dropped and the same family accepted: `opus[1m]` and `opus` are one
+ * pick that agents advertise interchangeably as an entitlement comes and
+ * goes. The hintless spelling is preferred when several are on offer, so the
+ * result does not depend on advertised order.
+ */
+export function matchAdvertisedId(
+  requested: string,
+  candidates: readonly AdvertisedOption[],
+): AdvertisedMatch | null {
+  const normalized = requested.trim().toLowerCase();
+  const exact = candidates.find(
+    (candidate) =>
+      candidate.value === requested ||
+      candidate.value.toLowerCase() === normalized ||
+      candidate.name?.trim().toLowerCase() === normalized,
+  );
+  if (exact) return { valueId: exact.value, match: { kind: "exact" } };
+
+  const family = withoutContextHint(normalized);
+  const relatives = candidates.filter(
+    (candidate) => withoutContextHint(candidate.value.toLowerCase()) === family,
+  );
+  const relative =
+    relatives.find((candidate) => contextHintOf(candidate.value) === null) ??
+    relatives[0];
+  if (!relative) return null;
+  return {
+    valueId: relative.value,
+    match: {
+      kind: "context_hint_ignored",
+      requestedHint: contextHintOf(normalized),
+      matchedHint: contextHintOf(relative.value),
+    },
+  };
+}
+
+/**
+ * As `matchAdvertisedId`, plus one last resort for models: an id the vendor
+ * has retired in favour of the alias that replaced it.
+ *
+ * Deliberately last. The map is consulted only once a requested id matches
+ * nothing advertised, so it can never shadow a live id — including the
+ * generation-pinned ones the agent still offers beside its aliases. Effort and
+ * mode ids have no retirement history and do not come through here.
+ */
+export function matchAdvertisedModel(
+  requested: string,
+  candidates: readonly AdvertisedOption[],
+): AdvertisedMatch | null {
+  const direct = matchAdvertisedId(requested, candidates);
+  if (direct) return direct;
+  const retiredId = requested.trim();
+  const replacement = RETIRED_MODEL_IDS[withoutContextHint(retiredId.toLowerCase())];
+  if (replacement === undefined) return null;
+  const mapped = matchAdvertisedId(replacement, candidates);
+  if (!mapped) return null;
+  return { valueId: mapped.valueId, match: { kind: "retired_id_mapped", retiredId } };
 }
 
 /**
@@ -205,17 +294,16 @@ export function canonicalModelValue(value: string): string {
  * `requested_model_unsupported`. The picker lists are the vocabulary the
  * agent accepts, so a selection outside them is one no dispatch can honour.
  *
- * Context hints are compared the way `resolveRequestedOption` compares them —
- * ignored — so a row still holding `opus[1m]` counts as current. It is: the
- * resolver will land it on whichever opus the agent is advertising.
+ * Matching goes through `matchAdvertisedModel`, the same transform the ACP
+ * resolver uses, so this answers exactly what provisioning will answer — a
+ * row holding `opus[1m]` or a retired id counts as current precisely when the
+ * resolver would land it on something.
  */
 export function isCurrentRuntimeSelection(
   selection: RuntimeModelSelection,
 ): boolean {
-  const selectedModel = canonicalModelValue(selection.model);
-  const offersModel = RUNTIME_MODELS[selection.runtime].some(
-    (option) => canonicalModelValue(option.value) === selectedModel,
-  );
+  const offersModel =
+    matchAdvertisedModel(selection.model, RUNTIME_MODELS[selection.runtime]) !== null;
   const effort = selection.effort;
   const offersEffort =
     effort === undefined ||

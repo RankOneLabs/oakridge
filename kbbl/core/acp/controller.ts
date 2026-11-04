@@ -6,7 +6,7 @@
 
 import type * as schema from "@agentclientprotocol/sdk";
 
-import { canonicalModelValue, contextHintOf, withoutContextHint } from "../runtime";
+import { matchAdvertisedId, matchAdvertisedModel, type IdMatchKind } from "../runtime";
 import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient, selectGatedReviewAccess } from "./client";
@@ -66,19 +66,17 @@ export type RequestedSessionConfig = Pick<
 >;
 
 /**
- * How a request was satisfied. `exact` means the agent advertises the id (or
- * display name) that was asked for. `context_hint_ignored` means only the
- * same model in a different context window was on offer, so the hints differ
- * between what was asked for and what will run — the caller logs it, because
- * nothing else can tell the operator their window changed.
+ * How a request was satisfied — the shared `IdMatchKind` from core/runtime,
+ * re-exported under the name the ACP surface has always used.
+ *
+ * `exact` means the agent advertises the id (or display name) that was asked
+ * for. The other two mean it does not, and something other than the requested
+ * spelling will run: `context_hint_ignored` found the same model in a
+ * different context window, `retired_id_mapped` found the alias that replaced
+ * a withdrawn id. The caller logs both, because nothing else can tell the
+ * operator what changed.
  */
-export type OptionMatchKind =
-  | { kind: "exact" }
-  | {
-      kind: "context_hint_ignored";
-      readonly requestedHint: string | null;
-      readonly matchedHint: string | null;
-    };
+export type OptionMatchKind = IdMatchKind;
 
 export interface ResolvedOption {
   readonly configId: string;
@@ -140,47 +138,21 @@ export function matchRequestedOption(
       `agent exposes no select config option with category "${category}"`,
     );
   }
-  const normalized = requested.trim().toLowerCase();
   const flat = selector.options.flatMap((entry) =>
     "options" in entry ? entry.options : [entry],
   );
-  const exact = flat.find(
-    (item) =>
-      item.value === requested ||
-      item.value.toLowerCase() === normalized ||
-      item.name.trim().toLowerCase() === normalized,
-  );
-  if (exact) {
-    return ok({
-      configId: selector.id,
-      valueId: exact.value,
-      match: { kind: "exact" },
-    });
-  }
-  // Same model, different spelling. Two kinds of drift land here: a context
-  // window (`opus[1m]` vs `opus`), and a vendor id the agent has stopped
-  // advertising in favour of the family alias that replaced it
-  // (`claude-fable-5-1` vs `fable`). A stored request is forwarded verbatim
-  // from a durable row, so both can arrive long after the picker moved on,
-  // and rejecting either kills a session that has a perfectly good model to
-  // run on. Models only: effort and mode ids have no alias history.
-  const canonical = (value: string): string =>
+  // Models carry a retirement history; effort and mode ids do not. Both paths
+  // are the shared transform in core/runtime — this function owns finding the
+  // selector and naming the error, nothing about what an id means.
+  const matched =
     category === "model"
-      ? canonicalModelValue(value)
-      : withoutContextHint(value.trim().toLowerCase());
-  const family = canonical(normalized);
-  const relatives = flat.filter((item) => canonical(item.value) === family);
-  const relative =
-    relatives.find((item) => contextHintOf(item.value) === null) ?? relatives[0];
-  if (relative) {
+      ? matchAdvertisedModel(requested, flat)
+      : matchAdvertisedId(requested, flat);
+  if (matched) {
     return ok({
       configId: selector.id,
-      valueId: relative.value,
-      match: {
-        kind: "context_hint_ignored",
-        requestedHint: contextHintOf(normalized),
-        matchedHint: contextHintOf(relative.value),
-      },
+      valueId: matched.valueId,
+      match: matched.match,
     });
   }
   return err(
@@ -388,14 +360,21 @@ export class AcpSessionController {
       const resolved = resolveRequestedOption(this.configOptions, category, value);
       if (!resolved.ok) return resolved;
       if (resolved.value === null) continue;
+      // Any match that is not exact changed what will run, and nothing else
+      // can tell the operator: the picker showed one id and the session got
+      // another.
       const match = resolved.value.match;
+      const prefix =
+        `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
+        `resolved=${resolved.value.valueId} `;
       if (match.kind === "context_hint_ignored") {
         console.log(
-          `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
-            `resolved=${resolved.value.valueId} context_hint_ignored ` +
-            `requested_hint=${match.requestedHint ?? "none"} ` +
+          prefix +
+            `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} ` +
             `matched_hint=${match.matchedHint ?? "none"}`,
         );
+      } else if (match.kind === "retired_id_mapped") {
+        console.log(prefix + `retired_id_mapped retired_id=${match.retiredId}`);
       }
       const applied = await this.setConfigOption(
         resolved.value.configId,
