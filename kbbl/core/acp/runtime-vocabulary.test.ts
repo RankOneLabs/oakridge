@@ -166,6 +166,43 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
   });
 });
 
+/**
+ * The regression greptile caught: a durable row outlives the picker.
+ *
+ * `epics.planner_model` and `acp_sessions.requested_model` hold free text
+ * written whenever the operator chose, and `applyRequestedConfig` forwards it
+ * verbatim on every respawn. A row holding an id the agent has since stopped
+ * advertising must land on the alias that replaced it, not kill the session.
+ */
+describe("a retired model id stored before the picker moved on", () => {
+  const claudeOptions = advertisedOptions(
+    ADVERTISED_AGENT_VOCABULARY["claude-code"],
+    ADVERTISED_AGENT_VOCABULARY["claude-code"].model_value_variants[0]!,
+  );
+
+  test("resolves to the family alias that replaced it", () => {
+    const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5-1");
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+  });
+
+  test("resolves when it also carries a context hint", () => {
+    const resolved = resolveRequestedOption(
+      claudeOptions,
+      "model",
+      "claude-fable-5-1[1m]",
+    );
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("fable");
+  });
+
+  test("an advertised id still matches exactly, not through the alias map", () => {
+    const resolved = resolveRequestedOption(claudeOptions, "model", "claude-fable-5");
+
+    expect(resolved.ok && resolved.value?.valueId).toBe("claude-fable-5");
+  });
+});
+
 test("a model the agent does not advertise is rejected, not silently ignored", () => {
   // The regression itself: kbbl offered gpt-6-astra while the pinned
   // codex-acp (1.7.0) knew nothing about it.

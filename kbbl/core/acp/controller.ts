@@ -6,7 +6,7 @@
 
 import type * as schema from "@agentclientprotocol/sdk";
 
-import { contextHintOf, withoutContextHint } from "../runtime";
+import { canonicalModelValue, contextHintOf, withoutContextHint } from "../runtime";
 import { resolveExternalGitDir } from "../session/worktree";
 import type { AgentProfile } from "./agent-profile";
 import { AcpClient, selectGatedReviewAccess } from "./client";
@@ -157,13 +157,19 @@ export function matchRequestedOption(
       match: { kind: "exact" },
     });
   }
-  // Same model, different window. Prefer the hintless id when the agent
-  // offers several, so the fallback is deterministic rather than dependent
-  // on advertised order.
-  const family = withoutContextHint(normalized);
-  const relatives = flat.filter(
-    (item) => withoutContextHint(item.value.toLowerCase()) === family,
-  );
+  // Same model, different spelling. Two kinds of drift land here: a context
+  // window (`opus[1m]` vs `opus`), and a vendor id the agent has stopped
+  // advertising in favour of the family alias that replaced it
+  // (`claude-fable-5-1` vs `fable`). A stored request is forwarded verbatim
+  // from a durable row, so both can arrive long after the picker moved on,
+  // and rejecting either kills a session that has a perfectly good model to
+  // run on. Models only: effort and mode ids have no alias history.
+  const canonical = (value: string): string =>
+    category === "model"
+      ? canonicalModelValue(value)
+      : withoutContextHint(value.trim().toLowerCase());
+  const family = canonical(normalized);
+  const relatives = flat.filter((item) => canonical(item.value) === family);
   const relative =
     relatives.find((item) => contextHintOf(item.value) === null) ?? relatives[0];
   if (relative) {
