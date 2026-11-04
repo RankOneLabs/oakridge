@@ -18,7 +18,8 @@ interface DevelopmentInput {
 
 /** Maps the development input and validates session choices against the pinned definition. */
 export function developmentLaunch(body: CreateRunRequest, definition: OperatorDefinitionDetail, requestId: string): AdapterResult<OperatorLaunchRequest> {
-  if (body.context.repositories.length !== 1) return fail("create run", "Development runs require exactly one repository");
+  // The development workflow prepares and integrates each repository; the first row is primary.
+  if (body.context.repositories.length === 0) return fail("create run", "Development runs require at least one repository");
   const repositories: DevelopmentRepository[] = [];
   for (const repository of body.context.repositories) {
     const configured = body.epic_profile.repositories.find((item) => item.repository_key === repository.key);

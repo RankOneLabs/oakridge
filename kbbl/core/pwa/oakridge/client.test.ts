@@ -123,6 +123,34 @@ describe("v2 Oakridge client", () => {
     ]);
   });
 
+  it("launches every selected repository with the first as primary", async () => {
+    const fetch = calls((path) => path.includes("/api/definitions/") ? definition
+      : path.endsWith("/api/runs") ? { kind: "committed", run_id: runId, event_id: "event-multi" }
+      : path.includes("/units") ? sample.units : sample.run);
+    const request = createRunRequest();
+    await createRun({ ...request,
+      context: { ...request.context, repositories: [...request.context.repositories,
+        { key: "web" as RepositoryKey, path: "/web", integration_branch: "develop" }] },
+      epic_profile: { ...request.epic_profile, repositories: [...request.epic_profile.repositories,
+        { repository_key: "web" as RepositoryKey, repository_path: "/web", integration_branch: "develop",
+          forge_repository: { provider: "github", owner: "acme", name: "web" } }] } }, "launch-multi");
+    const launch = fetch.mock.calls.find(([path]) => String(path).endsWith("/api/runs"));
+    const input = JSON.parse(String(launch?.[1]?.body)).input;
+    expect([input.primary_repository_key, input.repositories]).toEqual(["api", [
+      { key: "api", preparation: { repository_path: "/repo", expected_head: null },
+        forge: { owner: "acme", name: "api", build_base: "epic/x", final_base: "main" } },
+      { key: "web", preparation: { repository_path: "/web", expected_head: null },
+        forge: { owner: "acme", name: "web", build_base: "epic/x", final_base: "develop" } },
+    ]]);
+  });
+
+  it("refuses a launch with no repository", async () => {
+    calls((path) => path.includes("/api/definitions/") ? definition : sample.run);
+    const request = createRunRequest();
+    await expect(createRun({ ...request, context: { ...request.context, repositories: [] } }, "launch-none"))
+      .rejects.toThrow("Development runs require at least one repository");
+  });
+
   it("accepts settings for an agent declared through a worker template", async () => {
     const templated = {
       ...definition,
