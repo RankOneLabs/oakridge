@@ -98,7 +98,7 @@ describe("GET /config", () => {
       label: "Claude Code (ACP)",
     });
     expect(body.runtimes[0]?.models).toContainEqual({
-      value: "claude-fable-5-1",
+      value: "fable",
       label: "fable 5.1",
     });
     expect(body.runtimes[0]?.efforts).toContainEqual({ value: "max", label: "max" });

@@ -1,6 +1,6 @@
 import type { Theme } from "../types";
 import type { RuntimeDescriptor } from "../types";
-import { defaultModelForRuntime, withoutContextHint } from "../../runtime";
+import { canonicalModelValue, defaultModelForRuntime } from "../../runtime";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
 /**
@@ -22,8 +22,10 @@ export function newSessionModelKey(runtimeId: string): string {
  * (`core/acp/controller.ts`). Claude Code's advertised ids gain and lose the
  * `[1m]` suffix with the account's entitlement, so a browser that stored
  * `claude-fable-5-1[1m]` before the picker dropped the hint still means Fable.
- * Without this it matches nothing and falls all the way back to the runtime
- * default — silently launching Opus for an operator who chose Fable.
+ * `canonicalModelValue` also maps an explicit id the picker has since replaced
+ * with a family alias, so a browser holding `claude-fable-5-1` lands on
+ * `fable`. Without this it matches nothing and falls all the way back to the
+ * runtime default — silently launching Opus for an operator who chose Fable.
  */
 export function matchStoredNewSessionModel(
   value: string,
@@ -32,9 +34,9 @@ export function matchStoredNewSessionModel(
   if (value === "") return "";
   const exact = runtime.models.find((option) => option.value === value);
   if (exact) return exact.value;
-  const family = withoutContextHint(value);
+  const family = canonicalModelValue(value);
   const relative = runtime.models.find(
-    (option) => withoutContextHint(option.value) === family,
+    (option) => canonicalModelValue(option.value) === family,
   );
   return relative?.value ?? null;
 }

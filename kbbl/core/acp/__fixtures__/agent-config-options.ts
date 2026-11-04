@@ -1,6 +1,12 @@
-// What the pinned ACP agents actually advertise as selectable models and
-// reasoning efforts (§12 config options), captured from the binaries in
-// kbbl/node_modules/.bin at the versions kbbl/package.json pins.
+// What the ACP agents kbbl launches actually advertise as selectable models
+// and reasoning efforts (§12 config options), captured by handshaking the
+// real binaries.
+//
+// For codex that binary is the one in kbbl/node_modules/.bin at the version
+// kbbl/package.json pins. For claude-code it is not: claude-agent-acp runs
+// whatever `CLAUDE_CODE_EXECUTABLE` names, which the claude-code profile
+// sets to the operator's installed CLI, so `cli_version` is as much part of
+// the capture as `version` (see default-profiles.ts for why).
 //
 // This exists because `resolveRequestedOption` matches a requested model or
 // effort against these ids, and a miss kills the session during provisioning
@@ -13,10 +19,10 @@
 // ids are not a property of the pinned package: the same binary answers
 // `session/new` with different ids as the 1M context entitlement comes and
 // goes, and 0.76.0 and 0.81.1 probed back-to-back returned identical lists at
-// each point in time while both drifted together across ~40 minutes. All four
-// variants below came from one afternoon on one machine. `opus[1m]` and
-// `opus` are each sometimes the only opus advertised, which is why the
-// resolver treats a context hint as droppable rather than defining.
+// each point in time while both drifted together across ~40 minutes.
+// `opus[1m]` and `opus` were each sometimes the only opus advertised, which
+// is why the resolver treats a context hint as droppable rather than
+// defining — keep that tolerance even while only one variant is recorded.
 //
 // Two tests hang off this file, and together they chain the picker to the
 // installed binary:
@@ -25,12 +31,16 @@
 //   - real-agent.smoke.test.ts (opt-in, needs the real agents and real auth)
 //     checks that what the binary advertises right now is one of them.
 //
-// Bumping an `@agentclientprotocol/*` pin means running the smoke test and
-// updating this file and core/runtime.ts together. The ids do drift on their
-// own too: claude-agent-acp 0.70.0's `claude-fable-5[1m]` became 0.76.0's
-// `claude-fable-5-1[1m]`, which would silently break every Fable launch. A
-// smoke run that reports a list matching no variant is new drift — add it
-// here rather than replacing what is already recorded.
+// Bumping an `@agentclientprotocol/*` pin — or the installed CLI, for
+// claude-code — means running the smoke test and updating this file and
+// core/runtime.ts together. The ids do drift on their own too:
+// claude-agent-acp 0.70.0's `claude-fable-5[1m]` became 0.76.0's
+// `claude-fable-5-1[1m]`, which would silently break every Fable launch.
+//
+// A smoke run reporting a list that matches no variant is new drift: add it
+// here rather than replacing what is recorded. Replace only when the old
+// variants came from a process kbbl has stopped launching at all — the one
+// time that has happened is noted on claude-code's variants below.
 
 import type { RuntimeId } from "../../runtime";
 
@@ -38,6 +48,13 @@ export interface AdvertisedAgentVocabulary {
   /** The npm package whose pinned version this was captured from. */
   readonly package: string;
   readonly version: string;
+  /**
+   * For claude-code, the `claude` CLI the ACP agent was driving when this was
+   * captured. The ACP package version alone does not fix the vocabulary: the
+   * agent runs whatever `CLAUDE_CODE_EXECUTABLE` names, and that binary's own
+   * catalog decides the model ids (see default-profiles.ts).
+   */
+  readonly cli_version?: string;
   /** Config option id carrying `category: "model"`. */
   readonly model_option_id: string;
   /** Config option id carrying `category: "thought_level"`. */
@@ -60,36 +77,28 @@ export const ADVERTISED_AGENT_VOCABULARY: Readonly<
   "claude-code": {
     package: "@agentclientprotocol/claude-agent-acp",
     version: "0.76.0",
+    cli_version: "2.1.318",
     model_option_id: "model",
     effort_option_id: "effort",
+    // Probed 2026-11-04 against the installed CLI (2.1.318), which is what
+    // the claude-code profile now drives via CLAUDE_CODE_EXECUTABLE. The
+    // four variants recorded here before that change came from the binary
+    // bundled in claude-agent-acp's own pinned SDK (0.3.257) and were
+    // *replaced*, not appended: they describe a process kbbl no longer
+    // launches, and keeping them would have required every picker entry to
+    // satisfy two disjoint vocabularies at once (the bundled binary offers
+    // `claude-fable-5-1` and no `fable`; this one the reverse). The
+    // add-don't-replace rule above is about entitlement drift within one
+    // binary — changing which binary runs is a different thing.
     model_value_variants: [
-      // 1M entitlement present, legacy models withheld.
-      ["default", "opus[1m]", "claude-fable-5-1[1m]", "sonnet", "haiku"],
-      // As above, plus the hintless opus alias.
-      ["default", "opus[1m]", "claude-fable-5-1[1m]", "sonnet", "haiku", "opus"],
-      // 1M entitlement absent: hintless current ids, legacy models exposed,
-      // `opus[1m]` demoted to the end of the list.
       [
         "default",
         "opus",
-        "claude-fable-5-1",
+        "fable",
         "sonnet",
         "haiku",
-        "claude-opus-5",
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-        "opus[1m]",
-      ],
-      // As above with no `opus[1m]` on offer at all.
-      [
-        "default",
-        "opus",
-        "claude-fable-5-1",
-        "sonnet",
-        "haiku",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-5",
         "claude-opus-5",
         "claude-fable-5",
         "claude-opus-4-8",

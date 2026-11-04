@@ -67,6 +67,21 @@ export interface RuntimeOption {
  * picker entry the pinned agent does not advertise is therefore not a
  * cosmetic nicety, it is a launch button that always fails.
  *
+ * **The Claude entries are family aliases, and that is deliberate.** The
+ * installed CLI advertises `opus`/`fable`/`sonnet`/`haiku` as the current
+ * member of each family alongside explicit older ids (`claude-opus-5`,
+ * `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `claude-fable-5`). Picking
+ * the alias means a model generation that ships upstream reaches operators
+ * without a kbbl release; picking the explicit id would pin kbbl to a
+ * specific generation forever, which is how `sonnet 5`/`haiku 4.5` sat in
+ * this list after the account was already entitled to 5.5. The labels name
+ * what the alias resolves to today, so they are expected to move with the
+ * ids rather than stay fixed.
+ *
+ * `claude-fable-5-1` is gone from this list because the installed CLI does
+ * not advertise it — `fable` is the only route to Fable 5.1 there. Rows and
+ * browsers still holding it are mapped forward by LEGACY_MODEL_ALIASES.
+ *
  * The Claude ids here are deliberately hintless (`opus`, not `opus[1m]`).
  * The agent advertises the two interchangeably depending on whether the 1M
  * context entitlement is live, so the resolver treats a context hint as
@@ -90,9 +105,9 @@ export const RUNTIME_MODELS: Readonly<Record<RuntimeId, readonly RuntimeOption[]
   // @agentclientprotocol/claude-agent-acp 0.76.0, config option `model`.
   "claude-code": [
     { value: "opus", label: "opus 5.5" },
-    { value: "claude-fable-5-1", label: "fable 5.1" },
-    { value: "sonnet", label: "sonnet 5" },
-    { value: "haiku", label: "haiku 4.5" },
+    { value: "fable", label: "fable 5.1" },
+    { value: "sonnet", label: "sonnet 5.5" },
+    { value: "haiku", label: "haiku 5.5" },
   ],
   // @agentclientprotocol/codex-acp 1.13.0, config option `model`.
   codex: [
@@ -156,6 +171,29 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
 }
 
 /**
+ * Explicit ids the picker used to carry, mapped to the family alias that now
+ * names the same model.
+ *
+ * A stored selection is forwarded to ACP verbatim, so an id the agent stopped
+ * advertising provisions straight into `requested_model_unsupported`. Context
+ * hints are already handled by `withoutContextHint`; this covers the other
+ * drift, where an explicit id is replaced by an alias rather than respelled.
+ *
+ * Only same-model renames belong here. `claude-opus-5` is **not** an alias of
+ * `opus` — the CLI advertises both, and they are different generations, so
+ * mapping one to the other would silently change an operator's model.
+ */
+const LEGACY_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  "claude-fable-5-1": "fable",
+};
+
+/** The id a stored model selection should be requested as today. */
+export function canonicalModelValue(value: string): string {
+  const family = withoutContextHint(value.trim().toLowerCase());
+  return LEGACY_MODEL_ALIASES[family] ?? family;
+}
+
+/**
  * Whether a stored selection still names options the pinned agent advertises.
  *
  * A role selection is persisted as free text (`epics.planner_model` and
@@ -171,9 +209,9 @@ export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
 export function isCurrentRuntimeSelection(
   selection: RuntimeModelSelection,
 ): boolean {
-  const selectedModel = withoutContextHint(selection.model.trim().toLowerCase());
+  const selectedModel = canonicalModelValue(selection.model);
   const offersModel = RUNTIME_MODELS[selection.runtime].some(
-    (option) => withoutContextHint(option.value.toLowerCase()) === selectedModel,
+    (option) => canonicalModelValue(option.value) === selectedModel,
   );
   const effort = selection.effort;
   const offersEffort =

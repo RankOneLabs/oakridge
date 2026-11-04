@@ -99,8 +99,8 @@ describe("new session model storage", () => {
       claudeRuntime,
     );
 
-    expect(normalized).toBe("claude-fable-5-1");
-    expect(readStoredNewSessionModel(claudeRuntime)).toBe("claude-fable-5-1");
+    expect(normalized).toBe("fable");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("fable");
   });
 
   test("reads a context-hinted stored value back as its picker entry", () => {
@@ -111,7 +111,7 @@ describe("new session model storage", () => {
       "claude-fable-5-1[1m]",
     );
 
-    expect(readStoredNewSessionModel(claudeRuntime)).toBe("claude-fable-5-1");
+    expect(readStoredNewSessionModel(claudeRuntime)).toBe("fable");
   });
 
   test("coerces a stored context-hinted default-family model to its picker entry", () => {

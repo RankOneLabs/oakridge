@@ -67,17 +67,30 @@ const RUNTIME_IDS: readonly RuntimeId[] = Object.keys(
  * `opus[1m]` are the same pick; variants disagree on the spelling, never on
  * whether opus is available.
  *
- * Models only *some* variants advertise (the legacy 4.x ids that surface when
- * the 1M entitlement is absent) are deliberately not required of the picker:
- * offering a model that disappears for hours is the failure this whole file
- * exists to prevent.
+ * Models only *some* variants advertise are deliberately not required of the
+ * picker: offering a model that disappears for hours is the failure this
+ * whole file exists to prevent.
+ *
+ * Generation-pinned ids are excluded too, and that exclusion does the real
+ * work now that claude-code records a single variant. The Claude CLI
+ * advertises a family alias (`opus`, `sonnet`) beside explicit ids naming one
+ * generation of that family (`claude-opus-5`, `claude-sonnet-4-6`), and the
+ * picker deliberately carries only the aliases — see RUNTIME_MODELS. Without
+ * this filter the assertion would read the single variant as "every id is
+ * universally available" and demand the picker list Opus 4.6 and Sonnet 4.6
+ * alongside the current four.
  */
+function isGenerationPinnedId(value: string): boolean {
+  return value.startsWith("claude-");
+}
+
 function familiesInEveryVariant(vocabulary: AdvertisedAgentVocabulary): string[] {
   const perVariant = vocabulary.model_value_variants.map(
     (values) =>
       new Set(
         values
           .filter((value) => value !== "default")
+          .filter((value) => !isGenerationPinnedId(value))
           .map((value) => withoutContextHint(value.toLowerCase())),
       ),
   );
@@ -135,8 +148,10 @@ for (const runtimeId of RUNTIME_IDS) describe(`${runtimeId} launch picker`, () =
     });
   }
 
-  // Every universally available model belongs in the picker. Codex's
-  // gpt-6.1-sol is the one known option seen only with some entitlements.
+  // Every universally available family alias belongs in the picker. Codex's
+  // gpt-6.1-sol is the one known option seen only with some entitlements;
+  // Claude's generation-pinned `claude-*` ids are offered by the agent but
+  // deliberately absent from the picker.
   test("the picker offers every model family all variants agree on", () => {
     const offered = RUNTIME_MODELS[runtimeId]
       .map((option) => withoutContextHint(option.value.toLowerCase()));

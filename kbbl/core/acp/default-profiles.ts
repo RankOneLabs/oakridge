@@ -36,16 +36,49 @@ function installedBin(kbblRoot: string, binName: string): string {
  */
 const OAKRIDGE_VARIABLES = "OAKRIDGE_*";
 
+/**
+ * The `claude` executable the Claude Code ACP agent should drive.
+ *
+ * `claude-agent-acp` prefers `CLAUDE_CODE_EXECUTABLE` and otherwise runs the
+ * `claude` binary bundled inside its own pinned
+ * `@anthropic-ai/claude-agent-sdk`. That bundled binary carries its own model
+ * catalog, so the ACP pin — not the operator's account — decides which models
+ * a session can select, and it decides it silently. The SDK 0.3.257 that
+ * claude-agent-acp 0.76.0 depends on resolves `opus`/`sonnet`/`haiku` to Opus
+ * 5, Sonnet 5 and Haiku 4.5 and answers the explicit `claude-*-5-5` ids with
+ * `unrecognized_model`, while the operator's installed CLI resolves the same
+ * three aliases to Opus 5.5, Sonnet 5.5 and Haiku 5.5. Left unset, every kbbl
+ * session runs a model generation behind the one the account is entitled to.
+ *
+ * So kbbl points the agent at the installed CLI. An explicit
+ * `CLAUDE_CODE_EXECUTABLE` already in kbbl's environment wins — pinning a
+ * specific binary is a deliberate act. Finding no `claude` on PATH leaves the
+ * variable unset and the agent falls back to its bundled binary, whose
+ * vocabulary is the older one RUNTIME_MODELS no longer describes: the Fable
+ * entry fails to resolve there. A machine running the claude-code profile is
+ * expected to have the CLI installed.
+ */
+function installedClaudeCli(): string | null {
+  const explicit = process.env.CLAUDE_CODE_EXECUTABLE;
+  if (explicit !== undefined && explicit.trim() !== "") return explicit;
+  return Bun.which("claude");
+}
+
 export function builtinAgentProfiles(
   kbblRoot: string,
 ): Map<AgentProfileId, AgentProfile> {
   const profiles = new Map<AgentProfileId, AgentProfile>();
+  const claudeCli = installedClaudeCli();
   profiles.set("claude-code", {
     id: "claude-code",
     label: "Claude Code (ACP)",
     command: installedBin(kbblRoot, "claude-agent-acp"),
     args: [],
-    env_policy: { inherit: true, exclude: ["ANTHROPIC_API_KEY", OAKRIDGE_VARIABLES] },
+    env_policy: {
+      inherit: true,
+      exclude: ["ANTHROPIC_API_KEY", OAKRIDGE_VARIABLES],
+      set: claudeCli === null ? undefined : { CLAUDE_CODE_EXECUTABLE: claudeCli },
+    },
     enabled: true,
     requireLoadSession: true,
     sessionMode: "auto",
