@@ -629,8 +629,7 @@
         "builder": {
           "kind": "agent",
           "gated_review": {
-            "kind": "restricted",
-            "role": "builder"
+            "kind": "unscoped"
           },
           "prompts": {
             "initial": "development/build.md",
@@ -650,8 +649,7 @@
         "assessor": {
           "kind": "agent",
           "gated_review": {
-            "kind": "restricted",
-            "role": "assessor"
+            "kind": "unscoped"
           },
           "prompts": {
             "review": "development/assess.md",
@@ -785,8 +783,7 @@
         "integrator": {
           "kind": "agent",
           "gated_review": {
-            "kind": "restricted",
-            "role": "builder"
+            "kind": "unscoped"
           },
           "prompts": {
             "initial": "development/integrate.md",

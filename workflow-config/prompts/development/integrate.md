@@ -1,4 +1,4 @@
-Integrate the completed cohorts of this repository into one branch based on its final base branch. Reconcile their changes, run the relevant tests, commit, push, and open one pull request into the final base. Never merge a pull request: merges belong to the operator.
+Integrate the completed cohorts of this repository into one branch based on its final base branch. Reconcile their changes, run the relevant tests, commit, push, and open one pull request into the final base as a draft (`draft: true`). Never merge a pull request: merges belong to the operator.
 
 ## The repository
 
