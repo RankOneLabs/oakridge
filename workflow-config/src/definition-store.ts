@@ -6,8 +6,8 @@ import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-ident
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
-/** Removed workflow contract fields: no retained definition may carry one, at any depth. */
-export const DISCARDED_DEFINITION_FIELDS: readonly string[] = ["gated_review"];
+/** Removed worker contract fields: no retained definition may declare one on a worker. */
+export const DISCARDED_WORKER_FIELDS: readonly string[] = ["gated_review"];
 type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable";
 interface FailureContext {
   readonly operation: StoreOperation;
@@ -25,6 +25,7 @@ type ReadContext = Pick<FailureContext, "operation" | "identifier">;
 interface ObjectRead extends ReadContext { readonly path: string }
 /** Unknown JSON exists only while validating objects at the IO boundary. */
 interface JsonObject { readonly [key: string]: unknown }
+interface LocatedValue { readonly pointer: string; readonly value: unknown }
 
 function failure(kind: DefinitionStoreFailure["kind"], context: ReadContext, detail: string): Result<never, DefinitionStoreFailure> {
   return { ok: false, error: { kind, operation: context.operation, identifier: context.identifier, detail } };
@@ -38,14 +39,29 @@ function hasOnlyKeys(value: JsonObject, keys: readonly string[]): boolean {
 export function isPromptPath(path: string): boolean {
   return !path.includes("\\") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
-/** The discarded fields a parsed definition carries, as JSON pointers. */
-export function selectDiscardedFields(value: unknown, pointer = ""): readonly string[] {
-  if (Array.isArray(value)) return value.flatMap((item, index) => selectDiscardedFields(item, `${pointer}/${index}`));
-  if (!isObject(value)) return [];
-  return Object.entries(value).flatMap(([key, field]) => [
-    ...(DISCARDED_DEFINITION_FIELDS.includes(key) ? [`${pointer}/${key}`] : []),
-    ...selectDiscardedFields(field, `${pointer}/${key}`),
-  ]);
+function selectMember({ pointer, value }: LocatedValue, key: string): LocatedValue {
+  return { pointer: `${pointer}/${key}`, value: isObject(value) ? value[key] : undefined };
+}
+function selectMembers(located: LocatedValue): readonly LocatedValue[] {
+  return isObject(located.value) ? Object.keys(located.value).map((key) => selectMember(located, key)) : [];
+}
+/** A worker declares its contract directly, or through the overrides of a template use. */
+function selectWorkerContracts(workers: LocatedValue): readonly LocatedValue[] {
+  return selectMembers(workers).flatMap((worker) => [worker, selectMember(worker, "overrides")]);
+}
+/**
+ * The discarded fields a parsed definition carries, as JSON pointers. Only the
+ * worker positions are scanned: inputs, schemas, artifacts, stages and workers
+ * may all be authored under a name that matches a removed field.
+ */
+export function selectDiscardedFields(definition: unknown): readonly string[] {
+  const source = selectMember({ pointer: "", value: definition }, "source");
+  const stages = selectMembers(selectMember(source, "stages"));
+  return [selectMember(source, "workers"), ...stages.map((stage) => selectMember(stage, "workers"))]
+    .flatMap(selectWorkerContracts)
+    .flatMap((contract) => DISCARDED_WORKER_FIELDS.map((field) => selectMember(contract, field)))
+    .filter(({ value }) => value !== undefined)
+    .map(({ pointer }) => pointer);
 }
 function matchesNames(value: unknown, names: readonly string[]): value is readonly string[] {
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length

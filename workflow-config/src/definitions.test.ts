@@ -476,9 +476,29 @@ function plantDiscardedDefinition(store: string): string {
   return path;
 }
 
-test("the discarded-field scan finds a grant at any depth", () => {
-  expect(selectDiscardedFields({ source: { stages: { a: { workers: { w: { gated_review: null } } } } }, list: [{ gated_review: 1 }] }))
-    .toEqual(["/source/stages/a/workers/w/gated_review", "/list/0/gated_review"]);
+test("the discarded-field scan finds a grant at every worker position", () => {
+  const grant = { kind: "unscoped" };
+  const definition = { source: { workers: { template: { gated_review: grant } },
+    stages: { a: { workers: { direct: { gated_review: grant }, used: { template: "template", overrides: { gated_review: grant } } } } } } };
+  expect(selectDiscardedFields(definition)).toEqual(["/source/workers/template/gated_review",
+    "/source/stages/a/workers/direct/gated_review", "/source/stages/a/workers/used/overrides/gated_review"]);
+});
+
+test("the discarded-field scan keeps authored names that match the removed field", () => {
+  const worker = { kind: "agent", inputs: { gated_review: "input.gated_review" }, gated_review_note: "kept" };
+  const definition = { source: { input: { gated_review: "text" }, schemas: { gated_review: { gated_review: "text" } },
+    workers: { gated_review: worker }, stages: { gated_review: { input: { gated_review: "text" }, artifacts: { gated_review: { schema: "text" } },
+      workers: { gated_review: worker } } } } };
+  expect(selectDiscardedFields(definition)).toEqual([]);
+});
+
+test("generation keeps a launchable definition with an input named like the removed field", () => {
+  const root = generatorFixture();
+  const source = resolve(root, WORKFLOW_SOURCES["review-loop"]);
+  writeFileSync(source, readFileSync(source, "utf8").replace("input: { topic: text }\nrun:", "input: { topic: text, gated_review: text }\nrun:"));
+  expect(runGenerator(root).exitCode).toBe(0);
+  const resolved = unwrap(resolveLaunchableDefinition("review-loop", resolve(root, "workflow-config/definitions")));
+  expect({ input: resolved.source.input, check: runGenerator(root, true).exitCode }).toEqual({ input: { topic: "text", gated_review: "text" }, check: 0 });
 });
 
 test("the committed store's complete inventory resolves and carries no discarded field", () => {
