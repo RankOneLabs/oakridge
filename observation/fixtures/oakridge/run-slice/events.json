@@ -554,9 +554,6 @@
     "conflicting_duplicate": {
       "revision_id": "plan-1",
       "summary": "Conflicting plan."
-    },
-    "repeated_delivery": {
-      "event_id": "repeat-event"
     }
   }
 }

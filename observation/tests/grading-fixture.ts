@@ -74,7 +74,7 @@ export async function captureProjectedFixture(db: Database, input: CapturedFixtu
   const run_id = input.run_id ?? "run-1";
   const digest = canonicalDigest(input.body);
   if (!digest.ok) throw new Error(digest.error.detail);
-  const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
+  const captured = await captureDelivery(db, { local_revision_id: input.revision_id,
     envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, definition_id: "1".repeat(64), artifact_schema_version: "fixture-v1",
       revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.unit_id ?? (input.artifact_kind === "assessment" ? "implementation/cohort" : input.artifact_kind),
       artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },

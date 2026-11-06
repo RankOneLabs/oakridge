@@ -31,7 +31,6 @@ interface FailureCases {
   readonly revision_update: { readonly id: string; readonly text: string };
   readonly missing_source_ref: string;
   readonly conflicting_duplicate: { readonly revision_id: string; readonly summary: string };
-  readonly repeated_delivery: { readonly event_id: string };
 }
 const failureCases = async (): Promise<FailureCases> => (await Bun.file(new URL(
   "../fixtures/oakridge/run-slice/events.json", import.meta.url)).json() as { failure_cases: FailureCases }).failure_cases;
@@ -54,14 +53,14 @@ async function scratch(work: (db: Database) => Promise<void>): Promise<void> {
   } finally { await admin.end(); }
 }
 async function ingest(db: Database, kind: string, revision: string, body: JsonValue, at: number,
-  predecessor: string | null = null, key = revision): Promise<Response> {
+  predecessor: string | null = null): Promise<Response> {
   const decoded = decodeCapture({ format: "observation.artifact-revision/v2", source: { ...tenant,
     revision_id: `${tenant.producer}:${tenant.namespace}:${revision}`, run_id,
     unit_id: kind === "plan" ? `${run_id}/planning` : kind === "brief" ? `${run_id}/briefs/slice` : `${run_id}/implementation/slice`,
     artifact_kind: kind, artifact_schema_version: schemaVersion(kind),
     definition_id: source.definition_id,
     predecessor_id: predecessor ? `${tenant.producer}:${tenant.namespace}:${predecessor}` : null, subject_id: null },
-    recorded_at: `2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`, body, body_digest: digest(body) }, key);
+    recorded_at: `2026-10-28T00:00:${String(at).padStart(2, "0")}.000Z`, body, body_digest: digest(body) });
   if (!decoded.ok) throw new Error(decoded.error.detail);
   const result = await captureDelivery(db, decoded.value);
   if (result.status === 201) await projectRevision(db, tenant, revision);
@@ -72,8 +71,7 @@ integration("duplicate ids, reorder, revision update, missing source and conflic
   const app = createApp({ db, credentials });
   const cases = await failureCases();
   const plan = await fixture("plan") as unknown as PlanBody;
-  const firstDelivery = await ingest(db, "plan", "plan-1", plan as unknown as JsonValue, 1,
-    null, cases.repeated_delivery.event_id);
+  const firstDelivery = await ingest(db, "plan", "plan-1", plan as unknown as JsonValue, 1);
   expect(firstDelivery.status).toBe(201);
   const firstAck = await firstDelivery.json();
   const original = (await listRunItems(db, tenant, run_id, { limit: 100, offset: 0 })).items
@@ -128,13 +126,12 @@ integration("duplicate ids, reorder, revision update, missing source and conflic
   expect(lineage?.edges.some((edge) => edge.type === "assesses" && edge.target_occurrence_id !== null)).toBe(false);
 
   // A repeated delivery reuses one revision. A different body under that identity is refused.
-  const repeated = await ingest(db, "plan", "plan-1", plan as unknown as JsonValue, 1,
-    null, cases.repeated_delivery.event_id);
+  const repeated = await ingest(db, "plan", "plan-1", plan as unknown as JsonValue, 1);
   expect(repeated.status).toBe(201);
   expect(await repeated.json()).toEqual(firstAck);
   const conflictingBody = { ...plan, summary: cases.conflicting_duplicate.summary };
   const conflict = await ingest(db, "plan", cases.conflicting_duplicate.revision_id,
-    conflictingBody as unknown as JsonValue, 1, null, "conflicting-delivery");
+    conflictingBody as unknown as JsonValue, 1);
   expect(conflict.status).toBe(409);
   expect((await conflict.json()).error.code).toBe("revision_identity_conflict");
   const revisionCount = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
@@ -157,7 +154,7 @@ integration("invalid capture versions and absent provenance are refused without 
       ({ ...valid, source: { ...valid.source, [field]: value } }))),
   ];
   const statuses = await Promise.all(invalid.map(async (input) => (await app.request("/v1/sources/oakridge/events", {
-    method: "POST", headers: { authorization: "Bearer ingest-fixture", "idempotency-key": crypto.randomUUID(),
+    method: "POST", headers: { authorization: "Bearer ingest-fixture",
       "content-type": "application/json" }, body: JSON.stringify({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: "invalid" },
       outcome: { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published", event_id: "invalid", run_id,
         definition_id: source.definition_id, artifact_schema_version: "schema-1", revision: input } }) })).status));

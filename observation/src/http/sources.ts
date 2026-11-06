@@ -21,7 +21,7 @@ export function registerSourceRoutes(app: Hono, deps: SourceDependencies): void 
     const delivery = decodeSourceEventDelivery(input);
     if (!delivery) return errorResponse(c, 400, "invalid_event", "valid source event delivery required");
     if (delivery.outcome.kind === "artifact_revision") {
-      const decoded = decodeCapture(delivery.outcome.revision, delivery.outcome.event_id);
+      const decoded = decodeCapture(delivery.outcome.revision);
       if (!decoded.ok) return errorResponse(c, 400, "invalid_capture", decoded.error.detail);
       if (decoded.value.envelope.source.producer !== credential.producer || decoded.value.envelope.source.namespace !== credential.namespace)
         return errorResponse(c, 403, "forbidden", "credential cannot ingest this source");

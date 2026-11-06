@@ -129,7 +129,7 @@ export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: 
       const source = outcome.revision.source;
       if (source.producer !== tenant.producer || source.namespace !== tenant.namespace || source.run_id !== outcome.run_id)
         return { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
-      const result = await captureInTransaction(trx, { request_key: outcome.event_id, envelope: outcome.revision,
+      const result = await captureInTransaction(trx, { envelope: outcome.revision,
         local_revision_id: source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length) });
       if (result.status === 409) return result;
       await projectRevisionInTransaction(trx, tenant, source.revision_id.slice(`${tenant.producer}:${tenant.namespace}:`.length));

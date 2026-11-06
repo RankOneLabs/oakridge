@@ -8,7 +8,7 @@ import { scratchGrading, tenant } from "./grading-fixture";
 function delivery(): CaptureDelivery {
   const digest = canonicalDigest({ text: "captured" });
   if (!digest.ok) throw new Error(digest.error.detail);
-  return { request_key: "event-1", local_revision_id: "revision-1", envelope: {
+  return { local_revision_id: "revision-1", envelope: {
     format: "observation.artifact-revision/v2", source: { ...tenant, revision_id: `oakridge:${tenant.namespace}:revision-1`,
       run_id: "run-1", unit_id: "analysis", artifact_kind: "analysis", artifact_schema_version: "fixture-v1",
       definition_id: "1".repeat(64), predecessor_id: null, subject_id: null },
@@ -17,7 +17,7 @@ function delivery(): CaptureDelivery {
 test("redelivery with the same digest, predecessor and subject is a no-op", () => scratchGrading(async (db) => {
   const input = delivery();
   const first = await captureDelivery(db, input);
-  const replay = await captureDelivery(db, { ...input, request_key: "another-event" });
+  const replay = await captureDelivery(db, input);
   const revisions = await withTenant(db, tenant, (trx) => trx.selectFrom("observation.source_revision")
     .select("revision_id").where("revision_id", "=", "revision-1").execute());
   expect({ first, replay, revisions }).toEqual({ first, replay: first, revisions: [{ revision_id: "revision-1" }] });
@@ -49,7 +49,7 @@ test("capture requires v2 provenance and a matching canonical digest", () => {
     { ...input.envelope, source: { ...input.envelope.source, definition_id: "" } },
     { ...input.envelope, source: { ...input.envelope.source, artifact_schema_version: "" } },
     { ...input.envelope, body: "different" }];
-  expect([decodeCapture(input.envelope, "key").ok, ...invalid.map((value) => decodeCapture(value, "key").ok)])
+  expect([decodeCapture(input.envelope).ok, ...invalid.map((value) => decodeCapture(value).ok)])
     .toEqual([true, false, false, false, false]);
 });
 
