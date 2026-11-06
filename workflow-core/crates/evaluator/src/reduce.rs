@@ -367,6 +367,11 @@ fn reduce_event(
             if is_decided_by(&state, unit, review, target) {
                 return Err(rejected("review already decided on latest revision"));
             }
+            if decision_definition.effect == DeclaredDecisionEffect::Approve
+                && has_failed_validation(&state, target)
+            {
+                return Err(rejected("target revision failed validation"));
+            }
             if let Some(ty) = &decision_definition.payload {
                 if !check_type(ty, payload) {
                     return Err(rejected("decision payload fails schema"));

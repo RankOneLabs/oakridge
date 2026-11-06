@@ -343,6 +343,14 @@ pub(super) fn is_decided_by(
             if decided_unit == unit && decided_review == review && decided_target == target)
     })
 }
+/// Whether a revision's declared artifact validation failed on publication.
+/// The failure belongs to that revision alone: a corrected revision is judged
+/// on its own publication, and an earlier failure stays as history.
+pub(super) fn has_failed_validation(state: &StepSnapshot, revision: &RevisionId) -> bool {
+    state.decisions.iter().any(|decision| {
+        matches!(decision, DecisionState::Validation { target, .. } if target == revision)
+    })
+}
 pub(super) fn open_decisions(
     state: &StepSnapshot,
     unit: &UnitId,
@@ -354,9 +362,13 @@ pub(super) fn open_decisions(
         .iter()
         .filter_map(|(key, decision)| {
             let target = latest(state, unit, decided_artifact(of, &decision.on))?;
-            (!is_decided_by(state, unit, review, &target.id)).then(|| ResolvedDecision {
-                decision: SymbolKey::from(key.as_str()),
-                target: target.id.clone(),
+            let is_refused = decision.effect == DeclaredDecisionEffect::Approve
+                && has_failed_validation(state, &target.id);
+            (!is_refused && !is_decided_by(state, unit, review, &target.id)).then(|| {
+                ResolvedDecision {
+                    decision: SymbolKey::from(key.as_str()),
+                    target: target.id.clone(),
+                }
             })
         })
         .collect()

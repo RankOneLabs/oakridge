@@ -2883,8 +2883,9 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         // canonical-key-order digest; w6_projection restores its old shape.
         // A second review of a newer subject resolves `previous` and
         // `feedback`, which a review left null before. Validation failures
-        // also remain in revise feedback with their check messages.
-        "641f80a7799e3559c5ae1bcbc984346b510458ed2bf0d4aef62f6880059e50e3"
+        // also remain in revise feedback with their check messages, and an
+        // approval is not offered on a revision that failed validation.
+        "e492c3ffc799b13c6c8cba5b69071ebc61b624baf50756e12e49657821e609d6"
     );
 }
 
@@ -2999,4 +3000,50 @@ fn unique_holds_only_when_no_two_items_are_equal() {
         list_check_holds(check, serde_json::json!([["a", "b", "a"]])),
         Ok(false)
     );
+}
+
+fn failed_draft() -> (CheckedWorkflow, StepResult) {
+    let program = sample("review-loop");
+    let failed = step_specs(
+        &program,
+        &snapshot(),
+        &[
+            serde_json::json!({"op":"launch","input":{"topic":"Oakridge"}}),
+            serde_json::json!({"op":"started","unit":"run/document","worker":"writer"}),
+            serde_json::json!({"op":"publish","unit":"run/document","worker":"writer",
+                "artifact":"draft","body":{"title":"Empty","body":""}}),
+        ],
+    );
+    (program, failed)
+}
+
+#[test]
+fn approving_a_revision_that_failed_validation_is_refused() {
+    let (program, failed) = failed_draft();
+    let accept = incoming(
+        Event::OperatorDecided {
+            unit: UnitId::from("run/document"),
+            review: SymbolKey::from("editor"),
+            decision: SymbolKey::from("approve"),
+            target: RevisionId::from("run/document:draft:1"),
+            payload: serde_json::json!({}),
+        },
+        "approve",
+    );
+    assert!(matches!(
+        step(&program, &failed.snapshot, &accept),
+        Err(StepError::Rejected { reason, .. }) if reason == "target revision failed validation"
+    ));
+}
+
+#[test]
+fn a_revision_that_failed_validation_offers_only_request_changes() {
+    let (_, failed) = failed_draft();
+    let offered: Vec<&str> = failed
+        .reviews
+        .iter()
+        .flat_map(|review| &review.decisions)
+        .map(|decision| decision.decision.0.as_str())
+        .collect();
+    assert_eq!(offered, ["request_changes"]);
 }
