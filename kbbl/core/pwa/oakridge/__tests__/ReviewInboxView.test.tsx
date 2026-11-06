@@ -46,7 +46,7 @@ function v2InboxFetch(items: readonly typeof sample.inbox.items[number][], after
     const path = String(input);
     if (init?.method === "POST") { afterDecision?.(); return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
     if (path.endsWith(`/units/${encodeURIComponent(v2Unit.unit_id)}`)) return json(v2Unit);
-    if (path.endsWith("/units")) return json([v2Unit]);
+    if (path.includes("/units?")) return json([v2Unit]);
     if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items }] });
     if (path.includes("/api/runs?")) return json({ items: [v2Run], next_cursor: null });
     return json({ items: [] });
@@ -61,7 +61,7 @@ describe("ReviewInboxView", () => {
       const path = String(input);
       if (path.includes("/api/runs?")) return json({ items: [sample.run], next_cursor: null });
       if (path.includes("/run-inboxes")) return json({ items: [sample.inbox] });
-      if (path.endsWith("/units")) return json(sample.units);
+      if (path.includes("/units?")) return json(sample.units);
       throw new Error(`unexpected v2 request: ${path}`);
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -69,7 +69,7 @@ describe("ReviewInboxView", () => {
     expect(await screen.findByTestId("or-review-inbox")).toBeTruthy();
     expect(screen.queryByTestId("or-decision-request_build_changes")).toBeNull();
     expect(screen.getByTestId("or-decision-approve")).toBeTruthy();
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/units"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/units?"))).toHaveLength(1);
   });
 
   it("puts actionable work first without duplicating it in progress", async () => {
@@ -226,7 +226,7 @@ describe("ReviewInboxView", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (init?.method === "POST") { decided = true; return json({ kind: "committed", run_id: runId, event_id: "event-decided" }); }
-      if (path.endsWith("/units")) return json(units);
+      if (path.includes("/units?")) return json(units);
       if (path.includes("/run-inboxes")) return json({ items: [{ run_id: runId, items: (decided ? [briefB, assessment] : [briefA, briefB]).map((item) => ({
         kind: "decision", run_id: runId, unit_id: item.unit_id, key: "approve", label: "Approve", prompt: null,
         submit: { kind: "review", review: "assessment_review", decision: "approve", effect: "approve", target_revision_id: item.artifact_revision_id },

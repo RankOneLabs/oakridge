@@ -183,6 +183,17 @@ describe("each read model carries exactly its contract's fields", () => {
     holds("DecisionDefinition", view.decisions[0]);
   });
 
+  test("the unit list narrows each input to the fields the caller names", async () => {
+    const { run_id, unit } = await drafted();
+    const whole = await get<UnitView>(unitPath(run_id, unit));
+    const input = whole.input as Record<string, unknown>;
+    const field = Object.keys(input)[0];
+    if (field === undefined) throw new Error("the drafted unit has no input fields");
+    const batch = await get<readonly UnitView[]>(`/api/runs/${segment(run_id)}/units?input_fields=${field}`);
+    const narrowed = batch.find((candidate) => candidate.unit_id === unit);
+    expect(narrowed?.input as unknown).toEqual({ [field]: input[field] });
+  });
+
   test("the inbox and each kind of item", async () => {
     await drafted();
     await stalled();

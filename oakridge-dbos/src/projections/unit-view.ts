@@ -193,6 +193,14 @@ export function selectAvailableDecisions(read: RunSummaryRead, unit: UnitSummary
 /** Decisions that ask for the operator: everything but the run's own cancel (part 2: counts come from asks). */
 export const isAsk = (decision: DecisionDefinition): boolean => decision.submit.kind !== "cancel";
 
+/** Narrow a unit's input to the named top-level fields. A list read repeats each
+ * unit's resolved upstream artifacts, so callers name the fields they use. */
+export function selectUnitInputFields(unit: UnitView, fields: readonly string[]): UnitView {
+  const { input } = unit;
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return unit;
+  return { ...unit, input: Object.fromEntries(Object.entries(input).filter(([field]) => fields.includes(field))) };
+}
+
 export function selectUnitView(read: RunRead, unit: UnitRecord, attention: UnitAttention): UnitView {
   const tree = selectUnitTree(read.units, read.definition.workflow);
   return { unit_id: unit.id, run_id: unit.run_id, unit_key: selectUnitKey(unit), label: selectUnitLabel(unit, tree),

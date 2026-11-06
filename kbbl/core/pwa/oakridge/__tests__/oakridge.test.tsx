@@ -409,7 +409,7 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/units")) return json([unit]);
+      if (url.includes("/units?")) return json([unit]);
       if (url.endsWith("/workers/builder/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-1" }, 201);
       if (url.includes("/gates")) return json([]);
       return json(detail);
@@ -484,7 +484,7 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/units")) return json([unit]);
+      if (url.includes("/units?")) return json([unit]);
       if (url.endsWith("/workers/author/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-author" }, 201);
       if (url.includes("/gates")) return json([]);
       return json(detail);
@@ -516,7 +516,7 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/units")) return json([unit]);
+      if (url.includes("/units?")) return json([unit]);
       if (url.endsWith("/workers/builder/retry")) return json({ kind: "committed", run_id: "run-1", event_id: "retry-brief-writer" }, 201);
       if (url.includes("/gates")) return json([]);
       return json(detail);
@@ -621,7 +621,7 @@ describe("RunDetail stage list", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/units")) return json([integrationUnit]);
+      if (url.includes("/units?")) return json([integrationUnit]);
       if (url.endsWith("/reviews/merge_confirmation/decide")) {
         expect(init?.method).toBe("POST");
         return json({ kind: "committed", run_id: "run-1", event_id: "merge-confirmed" }, 201);

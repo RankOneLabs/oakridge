@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 
 import { makeAcpTestService, type AcpTestHarness } from "../../acp/test-harness";
-import type { PwaSessionSnapshot } from "../../acp/pwa-wire";
+import type { PwaSessionChanges, PwaSessionSnapshot } from "../../acp/pwa-wire";
 import { acpInboxHandler, listPwaSessions } from "./acp-inbox";
 
 let tmpRoot: string | null = null;
@@ -31,12 +31,13 @@ interface SnapshotFrame {
   sessions: PwaSessionSnapshot[];
 }
 
-/** Reads SSE frames until a `snapshot` event satisfying `predicate`. */
-async function readSnapshotUntil(
+/** Reads SSE frames until an `event` frame satisfying `predicate`. */
+async function readFrameUntil<Frame>(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  predicate: (frame: SnapshotFrame) => boolean,
+  event: "snapshot" | "changes",
+  predicate: (frame: Frame) => boolean,
   timeoutMs = 5000,
-): Promise<SnapshotFrame> {
+): Promise<Frame> {
   const decoder = new TextDecoder();
   let buf = "";
   const deadline = Date.now() + timeoutMs;
@@ -54,16 +55,16 @@ async function readSnapshotUntil(
     if (result.done) break;
     buf += decoder.decode(result.value, { stream: true });
     for (const block of buf.split("\n\n")) {
-      if (!block.includes("event: snapshot")) continue;
+      if (!block.includes(`event: ${event}`)) continue;
       const dataLine = block
         .split("\n")
         .find((line) => line.startsWith("data: "));
       if (!dataLine) continue;
-      const frame = JSON.parse(dataLine.slice("data: ".length)) as SnapshotFrame;
+      const frame = JSON.parse(dataLine.slice("data: ".length)) as Frame;
       if (predicate(frame)) return frame;
     }
   }
-  throw new Error(`no matching snapshot frame. Buffered: ${JSON.stringify(buf)}`);
+  throw new Error(`no matching ${event} frame. Buffered: ${JSON.stringify(buf)}`);
 }
 
 describe("GET /inbox (ACP)", () => {
@@ -128,7 +129,7 @@ describe("GET /inbox (ACP)", () => {
     expect(res.status).toBe(200);
     const reader = res.body!.getReader();
     try {
-      const frame = await readSnapshotUntil(reader, (f) => f.sessions.length === 1);
+      const frame = await readFrameUntil<SnapshotFrame>(reader, "snapshot", (f) => f.sessions.length === 1);
       const snapshot = frame.sessions[0]!;
       expect(snapshot.name).toBe("inbox-one");
       expect(snapshot.agentProfile).toBe("claude-code");
@@ -141,7 +142,7 @@ describe("GET /inbox (ACP)", () => {
     }
   }, 15000);
 
-  test("a session change pushes a fresh snapshot to a connected client", async () => {
+  test("after the snapshot, a connected client gets only what changed", async () => {
     const h = makeHarness();
     const app = new Hono();
     app.get("/inbox", acpInboxHandler(h.service));
@@ -151,7 +152,7 @@ describe("GET /inbox (ACP)", () => {
     );
     const reader = res.body!.getReader();
     try {
-      await readSnapshotUntil(reader, (f) => f.sessions.length === 0);
+      await readFrameUntil<SnapshotFrame>(reader, "snapshot", (f) => f.sessions.length === 0);
       const created = await h.service.createSession({
         initial_prompt: "",
         workdir: tmpRoot!,
@@ -159,15 +160,17 @@ describe("GET /inbox (ACP)", () => {
         name: "late-arrival",
       });
       expect(created.ok).toBe(true);
-      const frame = await readSnapshotUntil(
+      const frame = await readFrameUntil<PwaSessionChanges>(
         reader,
-        (f) => f.sessions.length === 1,
+        "changes",
+        (f) => f.sessions.some((s) => s.name === "late-arrival"),
       );
-      expect(frame.sessions[0]!.name).toBe("late-arrival");
+      expect(frame.removedSids).toEqual([]);
 
       if (created.ok) await h.service.closeSession(created.value.sid);
-      const closedFrame = await readSnapshotUntil(
+      const closedFrame = await readFrameUntil<PwaSessionChanges>(
         reader,
+        "changes",
         (f) => f.sessions[0]?.status === "ended",
       );
       expect(closedFrame.sessions[0]!.endReason).toBe("user_closed");

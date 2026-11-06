@@ -35,7 +35,6 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", EventSourceStub);
   useStore.setState(useStore.getInitialState());
   localStorage.clear();
-  useStore.getState().seedSessions([]);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     const body = url.endsWith("/sessions") ? attempts : url.endsWith("/gates") ? [] : run;
@@ -82,14 +81,6 @@ it("does not infer deletion before inventory arrives, then reconciles the first 
   expect(visibleSessions()).toEqual(["deleted", "existing"]);
   act(() => { useStore.getState().applySnapshot([existing]); });
   await waitFor(() => expect(visibleSessions()).toEqual(["existing"]));
-});
-
-it("an empty server inventory remains authoritative over a late seed response", async () => {
-  useStore.getState().applySnapshot([]);
-  useStore.getState().seedSessions([existing]);
-  renderRun();
-  await screen.findByTestId("or-run-workspace");
-  expect(visibleSessions()).toEqual([]);
 });
 
 it("removes sessions deleted by another client after the page has loaded", async () => {

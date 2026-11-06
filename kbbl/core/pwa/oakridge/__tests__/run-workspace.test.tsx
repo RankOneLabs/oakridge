@@ -131,7 +131,7 @@ const makeFetchWithout = (failingPath: string): FetchHandler => {
   failedRead = failingPath === "/sessions" ? "sessions" : "gates";
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.endsWith("/units")) return json({ error: "backend unavailable" }, 500);
+    if (url.includes("/units?")) return json({ error: "backend unavailable" }, 500);
     if (url.includes("/gates")) return json(GATES);
     if (url.includes("/sessions")) return json(SESSIONS);
     if (url.includes("/runs/")) return json(RUN);
@@ -299,7 +299,7 @@ describe("legacy deep links converge on the workspace URL", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/runs?")) return json({ items: [{ ...sample.run, run_id: "run-1" }], next_cursor: null });
-      if (url.endsWith("/units")) return json([unit]);
+      if (url.includes("/units?")) return json([unit]);
       throw new Error(`unexpected v2 request ${url}`);
     });
 
@@ -399,7 +399,7 @@ describe("a read the workspace cannot complete", () => {
       attempt.kbbl_session_id ? { ...attempt, kbbl_session_id: "sid-c1" } : attempt) };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/units")) return sessionsAnswer ? json([recoveredUnit]) : json({ error: "backend unavailable" }, 500);
+      if (url.includes("/units?")) return sessionsAnswer ? json([recoveredUnit]) : json({ error: "backend unavailable" }, 500);
       return json([]);
     });
 

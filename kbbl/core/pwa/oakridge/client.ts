@@ -25,6 +25,8 @@ interface CachedUnits {
 const UNIT_CACHE_FRESH_MS = 5_000;
 const unitCache = new Map<string, CachedUnits>();
 const runPath = (runId: string): string => `${OPERATOR}/runs/${encodeURIComponent(runId)}`;
+/** Every unit input field the adapters read; the rest repeats upstream artifacts in each unit. */
+const UNIT_INPUT_FIELDS = ["brief", "cohort", "repositories", "repository", "repository_key", "title", "workspace"];
 const unitPath = (runId: string, unitId: string): string => `${runPath(runId)}/units/${encodeURIComponent(unitId)}`;
 async function resolveArtifactId(id: string): Promise<CompositeId> {
   const parsed = parseCompositeId(id, "artifact");
@@ -41,7 +43,7 @@ async function resolveArtifactId(id: string): Promise<CompositeId> {
 const readUnits = (runId: string): Promise<readonly OperatorUnitView[]> => {
   const cached = unitCache.get(runId);
   if (cached && (cached.isLoading || cached.expiresAt > Date.now())) return cached.promise;
-  const path = `${runPath(runId)}/units`;
+  const path = `${runPath(runId)}/units?input_fields=${UNIT_INPUT_FIELDS.join(",")}`;
   const entry: CachedUnits = {
     expiresAt: 0,
     isLoading: true,

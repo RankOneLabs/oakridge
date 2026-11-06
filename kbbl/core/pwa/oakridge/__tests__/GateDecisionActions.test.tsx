@@ -54,7 +54,7 @@ function mockV2(units: readonly ReturnType<typeof unitFor>[], post: (init?: Requ
     const path = String(input);
     if (init?.method === "POST") return post(init);
     if (path.includes("/api/runs?")) return json({ items: [{ ...sample.run, run_id: "run-1" }], next_cursor: null });
-    if (path.endsWith("/units")) return json(units);
+    if (path.includes("/units?")) return json(units);
     const unit = units.find((candidate) => path.endsWith(`/units/${candidate.unit_id}`));
     if (unit) return json(unit);
     throw new Error(`unexpected v2 request ${path}`);

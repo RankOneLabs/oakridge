@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import type { PwaSessionChanges } from "../../acp/pwa-wire";
 import { useStore } from "../state/store";
 import type { SessionSnapshot } from "../types";
 import { selectPendingPermissionToasts, useToastStore } from "./useToast";
@@ -10,10 +11,9 @@ interface SessionsListResponse {
 }
 
 // Mounts the inbox subscription: a logical /inbox subscription on the page's
-// shared feed whose `snapshot` frames replace the session list in the
-// Zustand store wholesale. The server pushes a fresh snapshot on every
-// session change — there are no deltas to fold, and a reconnect needs no
-// replay reasoning because the next frame is always authoritative.
+// shared feed. Each connection opens with a `snapshot` frame that replaces the
+// session list in the Zustand store wholesale, so a reconnect needs no replay
+// reasoning; `changes` frames then fold in only what differs.
 //
 // Live data flows SSE → store, NOT through React Query.
 //
@@ -25,6 +25,7 @@ interface SessionsListResponse {
 // resetting that backoff and hammering the server.
 export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): void {
   const applySnapshot = useStore((s) => s.applySnapshot);
+  const applyChanges = useStore((s) => s.applyChanges);
   const setInboxStatus = useStore((s) => s.setInboxStatus);
 
   // Mirror the callback into a ref so the EventSource handler (set up once)
@@ -74,6 +75,21 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
           markStaleAndReconnect();
         }
       });
+
+      es.addEventListener("changes", (e) => {
+        try {
+          const changes = JSON.parse((e as MessageEvent).data) as PwaSessionChanges;
+          const permissionToasts = selectPendingPermissionToasts(
+            [...useStore.getState().sessions.values()],
+            changes.sessions,
+          );
+          const removed = applyChanges(changes);
+          for (const toast of permissionToasts) useToastStore.getState().pushToast(toast);
+          for (const sid of removed) onSessionRemovedRef.current?.(sid);
+        } catch {
+          markStaleAndReconnect();
+        }
+      });
     };
 
     function markStaleAndReconnect() {
@@ -106,5 +122,5 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       current?.close();
     };
-  }, [applySnapshot, setInboxStatus]);
+  }, [applySnapshot, applyChanges, setInboxStatus]);
 }
