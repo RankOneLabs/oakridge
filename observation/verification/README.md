@@ -22,6 +22,22 @@ response and timestamp. The agent tool list excludes `merge_pr` and
 with `OAKRIDGE_GATED_REVIEW_URL` set and `bun run test:acp:gated-review:real`
 in kbbl. The explicit live command fails if the endpoint is unset or unreachable.
 
+For cohort `workflow-gated-review`, AC09's requirement that `flatten` and
+`distinct` exist in the generated contracts is vacuous: those contracts carry
+expression source as strings and contain no expression builtin variants.
+`workflow-core/crates/contracts/src/lib.rs` generates the core and source
+contracts from the protocol and authored workflow schemas; the operator
+contracts likewise expose expression strings. The builtin behavior is proved
+by the Rust compiler tests in `r5_constructs.rs` and evaluator tests in
+`collections.rs`. Contract generation checks prove the generated files remain
+in sync with their source schemas.
+
+If AC09 is reused, use: "`flatten` and `distinct` exist in the Rust model,
+compiler and evaluator. Compiler tests cover wrong argument types, including
+`flatten` on a list that is not a list of lists. Evaluator tests cover nested,
+empty and duplicate lists, and show `distinct` keeps first-occurrence order.
+Generated contract checks report no drift."
+
 Launch an isolated source run with the installed Codex ACP agent's ordinary
 authentication and `OAKRIDGE_TEST_DATABASE_URL`:
 
