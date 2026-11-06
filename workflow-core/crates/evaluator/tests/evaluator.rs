@@ -2887,3 +2887,116 @@ fn frozen_trace_replay_matches_after_w6_projection() {
         "641f80a7799e3559c5ae1bcbc984346b510458ed2bf0d4aef62f6880059e50e3"
     );
 }
+
+/// A stage validating its draft with one declared check over `input.groups`.
+fn list_check_program(check: &str) -> CheckedWorkflow {
+    let source: Workflow = serde_json::from_value(serde_json::json!({
+        "workflow": "list_check", "input": {"groups": "list(list(text))"},
+        "run": {"units": {"document": {"stage": "document", "input": {"groups": "input.groups"}}},
+                "outcome": {}},
+        "stages": {"document": {
+            "input": {"groups": "list(list(text))"},
+            "artifacts": {"draft": {"schema": "text", "validate": [{"check": check, "message": "failed"}]}},
+            "workers": {"writer": {"kind": "agent", "prompts": {"initial": "write.md", "revise": "write.md"},
+                                   "inputs": {}, "creates": ["draft"]}},
+            "done_when": "published(draft)", "outcome": {}
+        }}
+    }))
+    .unwrap();
+    let prompts = [("write.md".to_owned(), String::new())]
+        .into_iter()
+        .collect();
+    compile_workflow(&source, &[], &prompts).unwrap()
+}
+
+fn list_check_holds(check: &str, groups: Value) -> Result<bool, StepError> {
+    let program = list_check_program(check);
+    let launched = step(
+        &program,
+        &snapshot(),
+        &incoming(
+            Event::Launched {
+                input: serde_json::json!({"groups": groups}),
+            },
+            "launch",
+        ),
+    )?;
+    let action = launched.snapshot.attempts[0].action_id.clone();
+    let published = step_with_limits(
+        &program,
+        &launched.snapshot,
+        &incoming(
+            Event::RevisionPublished {
+                unit: UnitId::from("run/document"),
+                artifact: SymbolKey::from("draft"),
+                body: serde_json::json!("body"),
+                predecessor: None,
+                subject: None,
+                by: Some(action),
+            },
+            "publish",
+        ),
+        &ResourceLimits {
+            max_list_items: 3,
+            ..ResourceLimits::default()
+        },
+    )?;
+    Ok(!published
+        .snapshot
+        .decisions
+        .iter()
+        .any(|decision| matches!(decision, DecisionState::Validation { .. })))
+}
+
+#[test]
+fn flatten_keeps_every_item_of_every_list_in_order() {
+    let literal = |value: Value| Expression::Literal {
+        schema: SchemaId::from("list"),
+        value,
+    };
+    let unit = UnitState {
+        id: UnitId::from("run"),
+        parent: None,
+        declaration: SymbolKey::from("run"),
+        kind: UnitKind::Group,
+        collection_key: None,
+        status: UnitStatus::Active,
+        input: None,
+        after: vec![],
+        pool: None,
+    };
+    let limits = ResourceLimits::default();
+    let flattened = eval_expression(
+        &Expression::Flatten {
+            value: Box::new(literal(serde_json::json!([["a"], [], ["b", "a"]]))),
+        },
+        &unit,
+        &snapshot(),
+        None,
+        None,
+        &mut EvaluationContext::new(&limits),
+    );
+    assert_eq!(flattened, Ok(Some(serde_json::json!(["a", "b", "a"]))));
+}
+
+#[test]
+fn flatten_is_held_to_the_list_limit_on_its_joined_length() {
+    let check = "len(flatten(input.groups)) > 0";
+    assert!(matches!(
+        list_check_holds(check, serde_json::json!([["a", "b"], ["c", "d"]])),
+        Err(StepError::Rejected { reason, .. }) if reason == "max_list_items exceeded"
+    ));
+}
+
+#[test]
+fn unique_holds_only_when_no_two_items_are_equal() {
+    let check = "every(input.groups, unique(item))";
+    assert_eq!(
+        list_check_holds(check, serde_json::json!([["a", "b"], [], ["a"]])),
+        Ok(true)
+    );
+    assert_eq!(
+        list_check_holds(check, serde_json::json!([["a", "b", "a"]])),
+        Ok(false)
+    );
+}
