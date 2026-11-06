@@ -15,7 +15,7 @@ tables name none of a producer's concepts. The Oakridge profile lives in
 
 The empty-database baseline `observation/src/storage/migrations/0001_observation.sql` holds exactly
 fifteen tables. `observation/tests/target-schema.ts` is the independently written inventory of every
-table, column, key, trigger, function and index that the schema test compares against a fresh
+table, column, key, CHECK predicate, trigger, function and index that the schema test compares against a fresh
 database.
 
 | Type | Table | What it is |
