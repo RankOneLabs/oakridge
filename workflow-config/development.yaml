@@ -66,7 +66,7 @@ schemas:
     decisions: list(plan_decision)
     acceptance_criteria: list(plan_criterion)
   plan_decision: { id: ident, text: text }
-  plan_criterion: { id: ident, text: text, task_ids: list(ident), decision_ids: list(ident) }
+  plan_criterion: { id: ident, text: text, decision_ids: list(ident) }
 
   brief_body:
     cohort_id: ident
@@ -106,7 +106,7 @@ schemas:
     recommended_next_actions: list(next_action)
   next_action: { id: "uuid(generated)", text: text }
   assessment_finding:
-    criterion_id: optional(ident)
+    task_ids: list(ident)
     criterion: optional(text)
     status: optional(enum(met, not_met, partial))
     evidence: list(evidence_ref)

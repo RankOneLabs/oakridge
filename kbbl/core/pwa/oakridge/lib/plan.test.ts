@@ -39,8 +39,8 @@ describe("parsePlan", () => {
   test("reads linked decisions and criteria, including empty link lists", () => {
     const linked = parsed(linkedPlan).cohorts[0];
     expect(linked?.decisions[0]).toEqual({ id: "decision-layout", text: "Keep the existing layout." });
-    expect(linked?.acceptance_criteria[0]).toEqual({ id: "criterion-plan", text: "The plan is readable.", task_ids: ["task-plan"], decision_ids: ["decision-layout"] });
-    expect(linked?.acceptance_criteria[1]).toEqual({ id: "criterion-brief", text: "The brief is readable.", task_ids: [], decision_ids: [] });
+    expect(linked?.acceptance_criteria[0]).toEqual({ id: "criterion-plan", text: "The plan is readable.", decision_ids: ["decision-layout"] });
+    expect(linked?.acceptance_criteria[1]).toEqual({ id: "criterion-brief", text: "The brief is readable.", decision_ids: [] });
   });
 
   test.each(["decisions", "acceptance_criteria"] as const)("rejects a mixed %s list at the offending entry", (field) => {

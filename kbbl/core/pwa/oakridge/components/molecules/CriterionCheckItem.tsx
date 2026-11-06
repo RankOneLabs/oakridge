@@ -24,7 +24,7 @@ export function CriterionCheckItem({ check, showBriefComparison = true }: { chec
           <span className="text-xs text-[var(--text-muted)]">{MATCH_LABEL[check.match]}</span>
         )}
         {showBriefComparison && check.kind === "assessment_only" && <span className="text-xs text-[var(--text-muted)]">Not one of the brief's criteria.</span>}
-        {check.kind === "assessment_only" && check.finding.criterion_id && <span className="text-xs text-[var(--text-muted)]">Unresolved criterion ID: <code>{check.finding.criterion_id}</code></span>}
+        {check.kind === "assessment_only" && check.unresolved_task_ids.length > 0 && <span className="text-xs text-[var(--text-muted)]">Unresolved task IDs: {check.unresolved_task_ids.map((id) => <code key={id} className="or-code mr-1">{id}</code>)}</span>}
         {check.finding?.evidence.kind === "legacy" && check.finding.evidence.text && (
           <>
             <div className={artifactLabelClass}>Evidence</div>

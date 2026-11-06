@@ -2,7 +2,7 @@
   "head_sha": "abc123def456",
   "verdict": "pass_with_notes",
   "findings": [{
-    "criterion_id": "criterion-brief",
+    "task_ids": ["criterion-brief"],
     "criterion": "The brief remains readable.",
     "status": "met",
     "evidence": [

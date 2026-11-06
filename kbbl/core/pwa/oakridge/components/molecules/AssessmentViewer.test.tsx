@@ -40,8 +40,8 @@ const assessment: Assessment = {
   head_sha: null,
   verdict: "fail",
   findings: [
-    { criterion_id: null, criterion: "The CLI prints JSON.", status: "met", evidence: { kind: "legacy", text: "Snapshot test passes." }, description: null },
-    { criterion_id: null, criterion: "Every fixture exists.", status: "not_met", evidence: { kind: "legacy", text: "B, E, F and G are missing." }, description: null },
+    { task_ids: [], criterion: "The CLI prints JSON.", status: "met", evidence: { kind: "legacy", text: "Snapshot test passes." }, description: null },
+    { task_ids: [], criterion: "Every fixture exists.", status: "not_met", evidence: { kind: "legacy", text: "B, E, F and G are missing." }, description: null },
   ],
   test_evidence: { passed: 1274, failed: 0, output: null, summary: "Independently re-run.", cargo_test_output: null },
   recommended_next_actions: [{ id: "00000000-0000-4000-8000-000000000001", text: "Supply the missing fixtures." }],

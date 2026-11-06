@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { canonicalDigest } from "canonical-json";
 import { occurrenceId } from "../src/projection/occurrence-id";
 
-const first = { producer: "oakridge", namespace: "local", revision_id: "r1", extractor_id: "plan.criteria",
+const first = { producer: "oakridge", namespace: "local", revision_id: "r1", extractor_id: "plan.acceptance_entries",
   extractor_version: "1", item_selector: "/cohorts/*/acceptance_criteria/*", item_id_or_path: "/cohorts/0/acceptance_criteria/0" };
 
 test("occurrence id is the canonical digest of the ordered seven-field tuple", () => {
-  const expected = canonicalDigest(["oakridge", "local", "r1", "plan.criteria", "1",
+  const expected = canonicalDigest(["oakridge", "local", "r1", "plan.acceptance_entries", "1",
     "/cohorts/*/acceptance_criteria/*", "/cohorts/0/acceptance_criteria/0"]);
   if (!expected.ok) throw new Error(expected.error.detail);
   const actual = occurrenceId(first);

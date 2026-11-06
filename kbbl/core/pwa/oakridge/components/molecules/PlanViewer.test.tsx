@@ -45,7 +45,6 @@ describe("PlanViewer", () => {
     expect(screen.queryByText(/not id-linked/i)).toBeNull();
     fireEvent.click(within(screen.getByTestId("or-plan-cohort")).getByRole("button", { name: /Details/ }));
     expect(screen.getByText("criterion-plan")).toBeTruthy();
-    expect(screen.getByText("task-plan")).toBeTruthy();
     expect(screen.getAllByText("decision-layout")).toHaveLength(2);
   });
 

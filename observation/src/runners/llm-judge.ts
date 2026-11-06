@@ -2,7 +2,6 @@ import { z } from "zod";
 import { err, ok } from "../domain/primitives";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
-import { judgeRecipeSchema } from "../grading/evidence-packages/judge-recipe";
 
 export const judgeAnswerSchema = z.object({ choice: z.string().min(1),
   probabilities: z.record(z.string(), z.number().finite().min(0).max(1)),
@@ -11,6 +10,10 @@ const completionSchema = z.object({ id: z.string().min(1), model: z.string().min
   choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1),
   usage: z.object({ prompt_tokens: z.number().int().nonnegative(),
     completion_tokens: z.number().int().nonnegative(), total_tokens: z.number().int().nonnegative() }).optional() });
+
+/** The judge's pinned rubric lives in its evaluator's instruction text, as JSON. */
+export const judgeInstructionSchema = z.object({ rubric: z.string().min(1),
+  max_evidence_chars: z.number().int().min(1).max(32_000) });
 
 export type JudgeTransport = (url: string, init: RequestInit) => Promise<Response>;
 export interface JudgeConfig { readonly api_key: string | undefined; readonly base_url: string;
@@ -21,7 +24,14 @@ function failure(context: GradingContext, detail: string, category: import("../g
     category, external_execution_id });
 }
 
-/** A single atomic, pinned rubric over an explicit, bounded evidence allowlist. */
+function parsedInstruction(text: string): z.infer<typeof judgeInstructionSchema> | null {
+  try {
+    const parsed = judgeInstructionSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+}
+
+/** A single atomic, pinned rubric over the frozen evidence, within a pinned size bound. */
 export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
   return { kind: "model", async run(context, onRequest) {
     if (!config.api_key) return failure(context, "judge credential is not configured", "unconfigured_credential");
@@ -29,21 +39,15 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
       return failure(context, "judge requires a pinned model and choice question", "invalid_request");
     const values = context.question.allowed_values;
     if (!values || !values.every((value): value is string => typeof value === "string")
-      || !values.includes("insufficient_evidence"))
-      return failure(context, "judge question requires explicit insufficient_evidence choice", "invalid_choice");
-    const recipe = judgeRecipeSchema.safeParse(context.question.input_recipe);
-    if (!recipe.success) return failure(context, "judge recipe is invalid", "invalid_request");
-    const references = recipe.data.judge.evidence_refs.map((ref) => context.evidence.references.find((item) => item.ref === ref));
-    if (references.some((ref) => !ref) || recipe.data.judge.evidence_refs.some((ref) =>
-      /(?:original|assessor).*(?:verdict|decision)|(?:verdict|decision).*(?:original|assessor)/i.test(ref)))
-      return failure(context, "judge evidence selection is missing or includes a hidden verdict", "invalid_request");
-    const selected = references.map((reference) => ({ ref: reference!.ref, content: reference!.content }));
-    const evidence = JSON.stringify(selected);
-    if (evidence.length > recipe.data.judge.max_evidence_chars)
+      || !values.includes("unclear"))
+      return failure(context, "judge question requires an explicit unclear choice", "invalid_choice");
+    const instruction = parsedInstruction(context.evaluator.instruction_text);
+    if (!instruction) return failure(context, "judge instruction is invalid", "invalid_request");
+    const evidence = JSON.stringify(context.evidence.references.map(({ ref, content }) => ({ ref, content })));
+    if (evidence.length > instruction.max_evidence_chars)
       return failure(context, "judge evidence exceeds its pinned bound", "invalid_request");
-    const prompt = { rubric: recipe.data.judge.rubric, target: recipe.data.judge.target,
-      allowed_values: values, evidence,
-      instruction: "Return JSON with choice, probabilities for every allowed value, confidence and optional explanation. Judge only the named target. Do not infer correctness from an explanation." };
+    const prompt = { rubric: instruction.rubric, allowed_values: values, evidence,
+      instruction: "Return JSON with choice, probabilities for every allowed value, confidence and optional explanation. Do not infer correctness from an explanation." };
     let response: Response;
     const started = Date.now();
     const deadline = AbortSignal.timeout(config.deadline_ms ?? 30_000);
@@ -70,11 +74,7 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
     if (!answer.success || !values.includes(answer.data.choice)
       || values.some((value) => !(value in answer.data.probabilities)))
       return failure(context, "judge answer does not match question choices", "invalid_response");
-    const is_insufficient = answer.data.choice === "insufficient_evidence";
-    const is_unclear = answer.data.choice === "unclear";
-    return ok({ answer: is_insufficient || is_unclear
-      ? { state: is_insufficient ? "abstain" : "unclear", kind: "choice", reason: answer.data.choice }
-      : { state: "answered", kind: "choice", value: answer.data.choice },
+    return ok({ answer: { state: "answered", kind: "choice", value: answer.data.choice },
       probabilities: answer.data.probabilities, confidence: answer.data.confidence,
       rationale: answer.data.explanation ?? null, model_usage: completion.data.usage ?? null,
       external_execution_id: completion.data.id,

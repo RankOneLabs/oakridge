@@ -1,24 +1,21 @@
 import { createApp } from "./http/app";
 import { credentialsFromEnv } from "./http/ingest-auth";
+import { oakridgeProfile } from "./producers/oakridge/profile";
 import { openDatabase } from "./storage/database";
 import { migrateEmptyDatabase } from "./storage/migrate";
-import { startGradingWorker } from "./grading/jobs/worker";
-import { gradingLimits } from "./grading/jobs/budget";
 
+/** The composition root: the one place that names a producer and hands it to generic code. */
 export async function startObservation(env: NodeJS.ProcessEnv = process.env): Promise<{
-  readonly port: number; stopWorker(): Promise<void>; stop(): Promise<void> }> {
+  readonly port: number; stop(): Promise<void> }> {
   if (!env.OBSERVATION_DATABASE_URL) throw new Error("OBSERVATION_DATABASE_URL is required");
   const credentials = credentialsFromEnv(env);
   const db = openDatabase(env.OBSERVATION_DATABASE_URL);
   try {
     await migrateEmptyDatabase(db);
-    const limits = gradingLimits(env);
-    const app = createApp({ db, credentials, gradingLimits: limits });
+    const app = createApp({ db, credentials, profile: oakridgeProfile });
     const server = Bun.serve({ fetch: app.fetch, hostname: env.OBSERVATION_HOST ?? "127.0.0.1", port: Number(env.OBSERVATION_PORT ?? 8791) });
-    const worker = startGradingWorker(db, credentials.grade ?? [], limits, env);
     return { port: server.port ?? Number(env.OBSERVATION_PORT ?? 8791),
-      stopWorker: () => worker.stop(),
-      stop: async () => { server.stop(); await worker.stop(); await db.destroy(); } };
+      stop: async () => { server.stop(); await db.destroy(); } };
   } catch (error) { await db.destroy(); throw error; }
 }
 

@@ -24,6 +24,7 @@ import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { openDatabase as openObservation } from "../../observation/src/storage/database";
 import { migrateEmptyDatabase as migrateObservation } from "../../observation/src/storage/migrate";
 import { createApp } from "../../observation/src/http/app";
+import { oakridgeProfile } from "../../observation/src/producers/oakridge/profile";
 import { decodeSourceEventDelivery, type SourceEventDelivery } from "../../observation/src/ingest/cursor";
 import { publishObservationOnce, type ObservationOptions } from "../src/adapters/observation";
 import { createOperationRunner } from "../src/operations/runner";
@@ -83,7 +84,7 @@ export async function captureSourceRun(options: SourceRunOptions): Promise<Sourc
   try {
     await migrateEmptyDatabase(db);
     await migrateObservation(captured_db);
-    const sink = createApp({ db: captured_db, credentials: { ingest: [{ ...tenant, token }], read: [] } });
+    const sink = createApp({ db: captured_db, credentials: { ingest: [{ ...tenant, token }], read: [] }, profile: oakridgeProfile });
     const capture_path = join(directory, "capture.json");
     const publisher: ObservationOptions = { url: "http://observation.live", namespace: tenant.namespace, token,
       fetcher: async (url, init) => {
