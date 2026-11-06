@@ -627,9 +627,6 @@
       "workers": {
         "builder": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "initial": "development/build.md",
             "revise": "development/build-revise.md"
@@ -647,9 +644,6 @@
         },
         "assessor": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "review": "development/assess.md",
             "revise": "development/assess-revise.md"
@@ -781,9 +775,6 @@
       "workers": {
         "integrator": {
           "kind": "agent",
-          "gated_review": {
-            "kind": "unscoped"
-          },
           "prompts": {
             "initial": "development/integrate.md",
             "revise": "development/integrate-revise.md"

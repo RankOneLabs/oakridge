@@ -166,22 +166,14 @@ fn worker_templates_and_decision_sets_expand_typed_overrides() {
 }
 
 #[test]
-fn a_worker_grant_override_replaces_the_tagged_variant() {
+fn a_worker_template_override_cannot_declare_the_removed_review_grant() {
     let mut value = fixture(&[]);
-    let mut template = value["stages"]["cohort"]["workers"]["builder"].take();
-    template["gated_review"] = json!({"kind":"restricted","role":"builder"});
+    let template = value["stages"]["cohort"]["workers"]["builder"].take();
     value["workers"] = json!({"builder_template": template});
     value["stages"]["cohort"]["workers"]["builder"] = json!({"template":"builder_template",
         "overrides":{"gated_review":{"kind":"unscoped"}}});
-    let source = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap();
-    let worker = &source.stages["cohort"].workers["builder"];
-    assert!(matches!(
-        worker,
-        Worker::Agent {
-            gated_review: Some(GatedReviewAccess::Unscoped),
-            ..
-        }
-    ));
+    let error = decode_workflow(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+    assert_eq!(&*error.path, "stages.cohort.workers.builder");
 }
 
 #[test]

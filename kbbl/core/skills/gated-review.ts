@@ -1,6 +1,5 @@
 import type { ArgSpec, Skill } from "./types";
 
-export const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
 export const GATED_REVIEW_SERVER_NAME = "gated-review";
 
 export type GatedReviewToolName =

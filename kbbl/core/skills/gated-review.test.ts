@@ -7,7 +7,7 @@ import {
 } from "./gated-review";
 
 describe("gated-review tool catalog", () => {
-  test("exposes every tool from the server schema with canonical names", () => {
+  test("curates rail tools under their canonical server names", () => {
     expect(GATED_REVIEW_TOOL_SPECS.map((tool) => tool.name)).toEqual([
       "review.get_state",
       "review.list_actions",
