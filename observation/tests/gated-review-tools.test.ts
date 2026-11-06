@@ -75,6 +75,13 @@ test("a JSON-RPC error is incomplete", async () => {
   expect({ status: report.status, kind: report.failure?.kind }).toEqual({ status: "incomplete", kind: "protocol_failure" });
 });
 
+test("an error response whose body cannot be read is incomplete", async () => {
+  const body = new ReadableStream({ start: (controller) => controller.error(new Error("connection reset")) });
+  const report = await check(mockServer(() => new Response(body, { status: 502 })));
+  expect({ status: report.status, kind: report.failure?.kind, operation: report.failure?.operation, detail: report.failure?.detail })
+    .toEqual({ status: "incomplete", kind: "protocol_failure", operation: "tools/list", detail: expect.stringContaining("HTTP 502") });
+});
+
 test("a repeated cursor is incomplete rather than a truncated pass", async () => {
   const report = await check(mockServer((_, id) => page(id, AGENT_TOOLS, "again")));
   expect({ status: report.status, kind: report.failure?.kind }).toEqual({ status: "incomplete", kind: "incomplete_list" });

@@ -107,8 +107,12 @@ async function listTools(endpoint: string, http: typeof fetch): Promise<ToolsLis
     try { response = await send("POST", body); } catch (cause) {
       throw protocolFailure("endpoint_unreachable", operation, String(cause));
     }
-    if (!response.ok) throw protocolFailure("protocol_failure", operation, `HTTP ${response.status}: ${await response.text()}`);
-    return response;
+    if (response.ok) return response;
+    let error_body: string;
+    try { error_body = await response.text(); } catch (cause) {
+      throw protocolFailure("protocol_failure", operation, `HTTP ${response.status}: unreadable body: ${String(cause)}`);
+    }
+    throw protocolFailure("protocol_failure", operation, `HTTP ${response.status}: ${error_body}`);
   };
   const request = async (id: number, method: string, params: unknown): Promise<{ readonly response: Response; readonly result: unknown }> => {
     const response = await post(method, { jsonrpc: "2.0", id, method, params });
