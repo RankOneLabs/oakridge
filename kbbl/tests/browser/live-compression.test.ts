@@ -12,6 +12,7 @@ beforeAll(async () => {
   const app = new Hono();
   app.use("/live", compressEventStream);
   app.get("/live", (c) => streamSSE(c, async (stream) => {
+    await stream.write(": ready\n\n");
     await stream.writeSSE({ event: "live", data: "first" });
     await new Promise<void>((resolve) => { setTimeout(resolve, 300); });
     await stream.writeSSE({ event: "live", data: "second" });

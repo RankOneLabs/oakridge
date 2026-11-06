@@ -9,27 +9,58 @@ import { constants, gunzipSync } from "node:zlib";
 import { makeAcpTestService } from "../acp/test-harness";
 import { KbblConfigSchema } from "../config";
 import { createApp } from "./app";
-import { compressEventStream, gzipEventStream } from "./event-stream-compression";
+import { acceptsGzip, compressEventStream, gzipEventStream } from "./event-stream-compression";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const concat = (chunks: readonly Uint8Array[]) => Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
 /** The stream carries no trailer, so decode what has arrived as a truncated gzip. */
 const decodeSoFar = (chunks: readonly Uint8Array[]) =>
   chunks.length === 0 ? "" : gunzipSync(concat(chunks), { finishFlush: constants.Z_SYNC_FLUSH }).toString();
+const readChunk = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<Uint8Array> => {
+  const { value } = await reader.read();
+  if (value === undefined) throw new Error("stream ended before the next chunk");
+  return value;
+};
+const bodyOf = (response: Response): ReadableStream<Uint8Array> => {
+  if (response.body === null) throw new Error("response has no body");
+  return response.body;
+};
+
+describe("acceptsGzip", () => {
+  test("accepts gzip listed without a weight", () => {
+    expect(acceptsGzip("br, gzip")).toBe(true);
+  });
+
+  test("accepts gzip listed with a non-zero weight", () => {
+    expect(acceptsGzip("gzip; q=0.5")).toBe(true);
+  });
+
+  test("refuses gzip listed with a zero weight", () => {
+    expect(acceptsGzip("gzip;q=0")).toBe(false);
+  });
+
+  test("refuses when gzip is not listed", () => {
+    expect(acceptsGzip("br, deflate")).toBe(false);
+  });
+
+  test("refuses when the header is absent", () => {
+    expect(acceptsGzip(undefined)).toBe(false);
+  });
+});
 
 describe("gzipEventStream", () => {
   test("each write decodes as soon as it arrives", async () => {
     const stream = gzipEventStream();
     const writer = stream.writable.getWriter();
     const reader = stream.readable.getReader();
-    const chunks: Uint8Array[] = [(await reader.read()).value!];
+    const chunks: Uint8Array[] = [await readChunk(reader)];
 
     void writer.write(encode("data: first\n\n"));
-    chunks.push((await reader.read()).value!);
+    chunks.push(await readChunk(reader));
     expect(decodeSoFar(chunks)).toBe("data: first\n\n");
 
     void writer.write(encode("data: second\n\n"));
-    chunks.push((await reader.read()).value!);
+    chunks.push(await readChunk(reader));
     expect(decodeSoFar(chunks)).toBe("data: first\n\ndata: second\n\n");
   });
 
@@ -40,7 +71,7 @@ describe("gzipEventStream", () => {
     await reader.read();
     const frame = encode(`data: ${'{"status":"ended"},'.repeat(10_000)}\n\n`);
     void writer.write(frame);
-    expect((await reader.read()).value!.length).toBeLessThan(frame.length / 10);
+    expect((await readChunk(reader)).length).toBeLessThan(frame.length / 10);
   });
 });
 
@@ -57,14 +88,20 @@ describe("compressEventStream", () => {
   test("leaves the stream plain for a client that does not accept gzip", async () => {
     const response = await app.request("/live");
     expect(response.headers.get("content-encoding")).toBeNull();
-    await response.body!.cancel();
+    await bodyOf(response).cancel();
+  });
+
+  test("leaves the stream plain for a client that refuses gzip", async () => {
+    const response = await app.request("/live", { headers: { "accept-encoding": "gzip;q=0" } });
+    expect(response.headers.get("content-encoding")).toBeNull();
+    await bodyOf(response).cancel();
   });
 
   test("a client that disconnects still reaches the stream's abort handler", async () => {
     wasCancelled = false;
     const response = await app.request("/live", { headers: { "accept-encoding": "gzip" } });
     expect(response.headers.get("content-encoding")).toBe("gzip");
-    const reader = response.body!.getReader();
+    const reader = bodyOf(response).getReader();
     await reader.read();
     await reader.cancel();
     await Bun.sleep(10);
@@ -81,9 +118,9 @@ test("the app's /live relays the inbox snapshot through gzip", async () => {
     const response = await app.fetch(new Request("http://kbbl.test/live?topic=/inbox", {
       headers: { "accept-encoding": "gzip" }, signal: controller.signal }));
     expect(response.headers.get("content-encoding")).toBe("gzip");
-    const reader = response.body!.getReader();
+    const reader = bodyOf(response).getReader();
     const chunks: Uint8Array[] = [];
-    while (!decodeSoFar(chunks).includes("snapshot")) chunks.push((await reader.read()).value!);
+    while (!decodeSoFar(chunks).includes("snapshot")) chunks.push(await readChunk(reader));
     expect(decodeSoFar(chunks)).toContain("event: live");
     await reader.cancel();
   } finally {

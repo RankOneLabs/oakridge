@@ -17,10 +17,25 @@ export const gzipEventStream = (): TransformStream<Uint8Array, Uint8Array> =>
     transform: (chunk, controller) => controller.enqueue(deflateRawSync(chunk, { finishFlush: constants.Z_SYNC_FLUSH })),
   });
 
+type AcceptedEncoding = { name: string; weight: number };
+
+const parseAcceptedEncoding = (entry: string): AcceptedEncoding => {
+  const [name = "", ...parameters] = entry.split(";").map((part) => part.trim().toLowerCase());
+  const quality = parameters.find((parameter) => parameter.startsWith("q="));
+  return { name, weight: quality === undefined ? 1 : Number(quality.slice(2)) };
+};
+
+/** A listed encoding is acceptable unless its weight is zero (RFC 9110 §12.5.3). */
+export const acceptsGzip = (acceptEncoding: string | undefined): boolean =>
+  (acceptEncoding ?? "")
+    .split(",")
+    .map(parseAcceptedEncoding)
+    .some(({ name, weight }) => name === "gzip" && weight > 0);
+
 export const compressEventStream: MiddlewareHandler = async (c, next) => {
   await next();
   const isEventStream = c.res.headers.get("content-type")?.startsWith("text/event-stream") ?? false;
-  if (!isEventStream || !c.res.body || !c.req.header("accept-encoding")?.includes("gzip")) return;
+  if (!isEventStream || !c.res.body || !acceptsGzip(c.req.header("accept-encoding"))) return;
   c.res = new Response(c.res.body.pipeThrough(gzipEventStream()), c.res);
   c.res.headers.set("content-encoding", "gzip");
   c.res.headers.append("vary", "accept-encoding");
