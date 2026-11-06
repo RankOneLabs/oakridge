@@ -481,8 +481,10 @@ fn flatten_enforces_the_output_list_resource_limit() {
         .iter()
         .find(|unit| unit.id.0 == "run")
         .unwrap();
-    let mut limits = ResourceLimits::default();
-    limits.max_list_items = 3;
+    let limits = ResourceLimits {
+        max_list_items: 3,
+        ..ResourceLimits::default()
+    };
     let expression = Expression::Flatten {
         value: list_literal(json!([[1, 2], [3, 4]])),
     };
