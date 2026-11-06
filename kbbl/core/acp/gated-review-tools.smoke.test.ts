@@ -64,7 +64,7 @@ if (process.env.KBBL_ACP_REAL_GATED_REVIEW === "1") {
         "reply_to_thread", "request_next_round", "resolve_thread", "review.get_state", "review.list_actions", "set_pr_draft",
       ].sort());
       const recording: GatedReviewToolRecording = { recorded_at: new Date().toISOString(), endpoint: endpoint.url, tool_names };
-      await Bun.write(new URL("../../../../observation/verification/gated-review.json", import.meta.url), `${JSON.stringify(recording, null, 2)}\n`);
+      await Bun.write(new URL("../../../observation/verification/gated-review.json", import.meta.url), `${JSON.stringify(recording, null, 2)}\n`);
       console.info(JSON.stringify(recording));
     } finally {
       if (session) {
