@@ -1,6 +1,6 @@
 import type { GradeRunner } from "../ports/grade-runner";
 import { createSystemOneRunner, type JevDirectConfig } from "./jev-direct";
-import { gradingLimits } from "../grading/jobs/budget";
+import { gradingLimits } from "../grading/limits";
 
 export const FASTINO_SYSTEM_ONE_BASE_URL = "https://api.fastino.ai/v1";
 

@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const baselinePath = resolve(import.meta.dir, "../src/storage/migrations/0001_observation.sql");
 const outputPath = resolve(import.meta.dir, "../src/storage/db-types.ts");
 const tables = [...readFileSync(baselinePath, "utf8").matchAll(/CREATE TABLE observation\.(\w+) \(\n([\s\S]*?)\n\);/g)];
-if (tables.length !== 26) throw new Error(`expected twenty-six observation tables, found ${tables.length}`);
+if (tables.length !== 15) throw new Error(`expected fifteen observation tables, found ${tables.length}`);
 const lines = [
   "// Generated from src/storage/migrations. Run bun observation/scripts/generate-storage-records.ts.",
   'import type { Generated } from "kysely";',

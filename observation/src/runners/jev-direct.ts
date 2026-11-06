@@ -2,7 +2,7 @@ import { z } from "zod";
 import { err, ok, type JsonValue } from "../domain/primitives";
 import type { GradingContext, GradingError, ProviderFailureCategory, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
-import { gradingLimits } from "../grading/jobs/budget";
+import { gradingLimits } from "../grading/limits";
 
 const probability = z.number().finite().min(0).max(1);
 const probabilities = z.record(z.string(), probability);

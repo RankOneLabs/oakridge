@@ -1,111 +1,38 @@
 {
-  "risks": [
-    {
-      "mitigation": "Use gated-review pr_status immediately before factual publication, record the PR head SHA and checked-out SHA separately, and report a gap rather than testing a different commit.",
-      "description": "PR #771 may advance, or the exact PR head may be unavailable as the audit checkout."
-    },
-    {
-      "mitigation": "Run only the named focused files and publish exact pass, failure, and skip counts with missing prerequisites; never infer a pass from a skip.",
-      "description": "Live database, gated-review role tokens, Codex authentication, or TypeSafe credentials may be absent."
-    },
-    {
-      "mitigation": "Record invalid-token acceptance as an open upstream gated-review finding and make no server change.",
-      "description": "The separately observed gated-review invalid-token behavior may fail the smoke check."
-    },
-    {
-      "mitigation": "Use only a newly produced production publisher capture; identify any inability to create it as a gap and never substitute checked-in observation fixtures.",
-      "description": "A real live capture may be unavailable within the isolated verification environment."
-    }
-  ],
-  "scope": {
-    "in_scope": [
-      "Read-only audit of the exact current head of existing PR #771 on cohort/live-verification/bc33be.",
-      "Inspection of the live source launcher, exact production publisher wire capture, current-definition v2 provenance validation, tenant-scoped question/evidence routes, and authenticated direct-provider response-body readback.",
-      "Only the gated-review tools smoke test, workflow-config definitions tests, and observation grading-records/direct-provider tests, with exact counts and gaps.",
-      "Publication of build_result before the existing PR artifact, followed by a factual assessment using criterion-lineage and criterion-export."
-    ],
-    "out_of_scope": [
-      "Code edits, commits, pushes, new pull requests, rebases, resets, merges, database resets, deployments, or repair of the prepared base branch.",
-      "Changes to the gated-review server or treating its invalid-token issue as authorized work.",
-      "Broad or substitute test suites, pre-existing observation fixture bodies, SQL readback in place of authenticated HTTP bodies, or invented passing/provider-grade evidence."
-    ]
-  },
+  "summary": "Capture and project a small run.",
   "cohorts": [
     {
       "id": "slice",
-      "scope": "Audit and verify the existing live-verification changes on PR #771 without mutating source or remote state; publish honest source-run evidence and assess it.",
-      "title": "Audit existing live-verification slice",
       "decisions": [
         {
-          "id": "decision-capture",
-          "text": "Preserve the production publisher wire payloads exactly in a newly produced capture and use authenticated HTTP response bodies for stored-record readback; do not substitute fixtures, direct SQL, or an unsupported claim that provider grading already occurred."
+          "id": "ordered-feed",
+          "text": "Use the ordered event feed."
         }
       ],
-      "depends_on": [],
-      "description": "A single oakridge cohort keeps the existing cross-package PR diff, focused checks, publication order, and assessment together as one coherent review unit; this is verification of an existing PR, not implementation.",
-      "files_in_scope": [
-        "kbbl/core/acp/gated-review-tools.smoke.test.ts",
-        "kbbl/package.json",
-        "oakridge-dbos/scripts/live-source-agent.ts",
-        "oakridge-dbos/scripts/live-source-git.ts",
-        "oakridge-dbos/scripts/live-source-run.ts",
-        "oakridge-dbos/tests/source-run.smoke.test.ts",
-        "observation/scripts/jev-live-walkthrough.ts",
-        "observation/src/http/app.ts",
-        "observation/src/http/grading-records.ts",
-        "observation/src/storage/grading-record-store.ts",
-        "observation/tests/grading-records.test.ts",
-        "observation/tests/jev-direct.test.ts",
-        "observation/verification/.gitignore",
-        "observation/verification/README.md",
-        "observation/verification/gated-review.json",
-        "observation/verification/source-input.json",
-        "workflow-config/src/definitions.test.ts"
-      ],
-      "repository_key": "oakridge",
       "acceptance_criteria": [
         {
-          "id": "criterion-lineage",
-          "text": "The complete brief and assessment retain criterion-lineage unchanged and link factual evidence from inspection of the live source launcher and current-definition v2 provenance validation: the artifact body is a newly produced capture of exact production publisher wire payloads, never a pre-existing observation fixture; the checked-out commit and gated-review-confirmed PR head are reported separately, and focused-check failures, skips, absent files, unavailable exact-head checkout, credentials, and other gaps are explicit.",
+          "id": "capture",
+          "text": "Capture a revision once.",
           "task_ids": [
-            "task-establish-slice-traceability",
-            "task-confirm-audit-target",
-            "task-audit-lineage",
-            "task-run-focused-checks",
-            "task-publish-builder-artifacts",
-            "task-assess-existing-code"
+            "capture"
           ],
           "decision_ids": [
-            "decision-capture"
+            "ordered-feed"
           ]
         },
         {
-          "id": "criterion-export",
-          "text": "The complete brief and assessment retain criterion-export unchanged and link factual evidence from inspection of authenticated tenant-scoped question/evidence routes and direct-provider readback through HTTP response bodies, distinguishing a production capture from any claim that provider grading occurred; exact focused-check counts and all checkout, file, credential, failure, and skip gaps are reported.",
+          "id": "project",
+          "text": "Project its selected items.",
           "task_ids": [
-            "task-establish-slice-traceability",
-            "task-confirm-audit-target",
-            "task-audit-export",
-            "task-run-focused-checks",
-            "task-publish-builder-artifacts",
-            "task-assess-existing-code"
+            "project"
           ],
           "decision_ids": [
-            "decision-capture"
+            "ordered-feed"
           ]
         }
       ]
     }
   ],
-  "summary": "One read-only oakridge cohort named slice audits the exact current head of existing PR #771, produces honest live-verification evidence, and preserves criterion-lineage, criterion-export, and decision-capture through the brief and assessment.",
-  "dependency_order": [
-    "slice"
-  ],
-  "acceptance_criteria": [
-    "Immediately before factual publication, gated-review confirms PR #771 status, branch cohort/live-verification/bc33be, and head SHA; the builder reports that head separately from the checked-out commit and does not substitute another snapshot.",
-    "The builder inspects the existing PR code, uses a newly produced production capture with no pre-existing observation fixture body, and does not claim provider grading unless it actually occurred.",
-    "Against the exact audited PR head, the builder runs only the gated-review tools smoke test, workflow-config definitions tests, and observation grading-records/direct-provider tests, publishing exact pass, failure, and skip counts plus every gap.",
-    "The builder publishes build_result first and then publishes existing PR #771 on cohort/live-verification/bc33be as the pr artifact, without edits, commits, pushes, new PRs, merges, resets, deployments, or server changes.",
-    "The assessor publishes factual findings for criterion-lineage and criterion-export using those unchanged IDs and the evidence actually produced."
-  ]
+  "acceptance_criteria": [],
+  "risks": []
 }

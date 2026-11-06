@@ -2,7 +2,10 @@ import { z } from "zod";
 import { err, ok } from "../domain/primitives";
 import type { GradingContext, RunnerResult } from "../grading/runner";
 import type { GradeRunner } from "../ports/grade-runner";
-import { judgeRecipeSchema } from "../grading/evidence-packages/judge-recipe";
+export const judgeRecipeSchema = z.object({ judge: z.object({
+  rubric: z.string().min(1), evidence_refs: z.array(z.string().min(1)).min(1),
+  max_evidence_chars: z.number().int().min(1).max(32_000), target: z.enum(["report", "code"]),
+}) });
 
 export const judgeAnswerSchema = z.object({ choice: z.string().min(1),
   probabilities: z.record(z.string(), z.number().finite().min(0).max(1)),
@@ -31,7 +34,10 @@ export function createLlmJudgeRunner(config: JudgeConfig): GradeRunner {
     if (!values || !values.every((value): value is string => typeof value === "string")
       || !values.includes("insufficient_evidence"))
       return failure(context, "judge question requires explicit insufficient_evidence choice", "invalid_choice");
-    const recipe = judgeRecipeSchema.safeParse(context.question.input_recipe);
+    let instructions: unknown;
+    try { instructions = JSON.parse(context.evaluator.instruction_text ?? ""); }
+    catch { return failure(context, "judge recipe is invalid", "invalid_request"); }
+    const recipe = judgeRecipeSchema.safeParse(instructions);
     if (!recipe.success) return failure(context, "judge recipe is invalid", "invalid_request");
     const references = recipe.data.judge.evidence_refs.map((ref) => context.evidence.references.find((item) => item.ref === ref));
     if (references.some((ref) => !ref) || recipe.data.judge.evidence_refs.some((ref) =>

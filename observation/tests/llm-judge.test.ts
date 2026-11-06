@@ -4,13 +4,12 @@ import type { GradingContext } from "../src/grading/runner";
 import { evidence, evaluator, question } from "./grading-fixture";
 
 const context: GradingContext = { question: { ...question, response_kind: "choice",
-  allowed_values: ["faithful", "changed", "insufficient_evidence"],
-  input_recipe: { judge: { rubric: "Does the brief preserve the criterion's meaning?",
-    evidence_refs: ["criterion"], max_evidence_chars: 500, target: "report" } } },
-  evidence: { ...evidence, references: [{ ref: "criterion", content: "Original and brief criterion excerpts", digest: null },
-    { ref: "original_assessor_verdict", content: "faithful", digest: null }] },
+  allowed_values: ["faithful", "changed", "insufficient_evidence"] },
+  evidence: { ...evidence, references: [{ ref: "criterion", content: "Original and brief criterion excerpts" },
+    { ref: "original_assessor_verdict", content: "faithful" }] },
   evaluator: { ...evaluator("model"), evaluator_definition_id: "judge", provider: "openai",
-    model: "pinned-judge", runtime_revision: "rubric-v1" } };
+    model: "pinned-judge", runtime_revision: "rubric-v1", instruction_text: JSON.stringify({ judge: {
+      rubric: "Does the brief preserve the criterion's meaning?", evidence_refs: ["criterion"], max_evidence_chars: 500, target: "report" } }) } };
 const answer = { choice: "changed", probabilities: { faithful: 0.12, changed: 0.68,
   insufficient_evidence: 0.2 }, confidence: 0.59 };
 function completion(value: unknown) { return Response.json({ id: "completion-1", model: "pinned-judge",
@@ -59,9 +58,9 @@ test("a low-confidence non-abstain choice stays answered", async () => {
 test("judge refuses an evidence recipe that exposes the original assessor verdict", async () => {
   const runner = createLlmJudgeRunner({ api_key: "key", base_url: "https://judge.example/v1",
     transport: async () => { throw new Error("should not call"); } });
-  const result = await runner.run({ ...context, question: { ...context.question,
-    input_recipe: { judge: { rubric: "Judge report", evidence_refs: ["original_assessor_verdict"],
-      max_evidence_chars: 500, target: "report" } } } });
+  const result = await runner.run({ ...context, evaluator: { ...context.evaluator,
+    instruction_text: JSON.stringify({ judge: { rubric: "Judge report", evidence_refs: ["original_assessor_verdict"],
+      max_evidence_chars: 500, target: "report" } }) } });
   expect(result).toMatchObject({ ok: false, error: { operation: "llm_judge" } });
 });
 

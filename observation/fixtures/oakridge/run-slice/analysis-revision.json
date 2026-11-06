@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "id": "capture-gap",
+      "description": "Captured items need stable identities.",
+      "severity": "warning"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "capture-items",
+      "description": "Capture and project items.",
+      "status": "unmet"
+    }
+  ],
+  "proposed_spec_updates": [],
+  "risks": []
+}

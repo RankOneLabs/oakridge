@@ -833,8 +833,8 @@ async function replayDevelopmentStream(start: SourceEventCursor): Promise<Replay
 }
 
 // Runs last, over every run above. Observation's tests use hand-written events,
-// so real artifact shapes (a markdown spec body) and a service started partway
-// through a run (a decision on a revision it never captured) are checked here.
+// so real artifact shapes (a markdown spec body) and ignored decisions after a
+// partway start are checked here, even when their target was never captured.
 test("every committed development event reaches observation, from the start and from partway through", async () => {
   const from_start = await replayDevelopmentStream(INITIAL_SOURCE_CURSOR);
   const decision = await db.selectFrom("authority.event").select(["id", "commit_txid"])

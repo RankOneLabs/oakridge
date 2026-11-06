@@ -25,15 +25,16 @@ function delivery(namespace: string, revision: string): object {
     recorded_at: "2026-10-28T10:00:00Z", body, body_digest: digest.value };
 }
 async function send(app: ReturnType<typeof createApp>, token: string, namespace: string, revision: string): Promise<Response> {
-  return await app.request("/v1/sources/oakridge/sync", { method: "POST", headers: { authorization: `Bearer ${token}`,
-    "idempotency-key": revision, "content-type": "application/json" }, body: JSON.stringify(delivery(namespace, revision)) });
+  return await app.request("/v1/sources/oakridge/events", { method: "POST", headers: { authorization: `Bearer ${token}`,
+    "idempotency-key": revision, "content-type": "application/json" }, body: JSON.stringify({ previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: revision },
+      outcome: { format: "observation.source-event/v1", kind: "artifact_revision", event_kind: "revision_published", run_id: "run-1", event_id: revision,
+        definition_id: "bundle-1", artifact_schema_version: "schema-1", revision: delivery(namespace, revision) } }) });
 }
 
 test("a token is configured for exactly one capability and tenant", () => {
   expect(() => credentialsFromEnv({ OBSERVATION_INGEST_CREDENTIALS: JSON.stringify(credentials.ingest),
     OBSERVATION_READ_CREDENTIALS: JSON.stringify([{ token: "alpha-ingest", producer: "oakridge", namespace: "alpha" }]) })).toThrow("unique");
-  expect(() => credentialsFromEnv({ OBSERVATION_READ_CREDENTIALS: JSON.stringify(credentials.read),
-    OBSERVATION_EXPORT_RAW_CREDENTIALS: JSON.stringify(credentials.read) })).toThrow("unique");
+
 });
 
 integration("ingest credential rejects another tenant and all read or grade routes without exposing data", async () => {
@@ -52,7 +53,7 @@ integration("ingest credential rejects another tenant and all read or grade rout
       const missing = await send(app, "alpha-ingest", "beta", "not-yet-present");
       const absentResponse = await missing.text();
       expect(missing.status).toBe(403);
-      expect((await send(app, "beta-ingest", "beta", "present")).status).toBe(201);
+      expect((await send(app, "beta-ingest", "beta", "present")).status).toBe(200);
       const existing = await send(app, "alpha-ingest", "beta", "present");
       expect(existing.status).toBe(403);
       expect(await existing.text()).toBe(absentResponse);

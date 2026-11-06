@@ -1,6 +1,6 @@
 # Initial Oakridge extraction catalogue
 
-The catalogue follows the selected items in [Spec 01](scoreable-artifact-inventory.md) and the producer links in [Spec 02](spec-02-handoff.md). Each definition is registered with the captured artifact's `artifact_schema_version`, extractor id and extractor version `1`. A definition reads only that revision's body. A shape mismatch records `extraction_failed`; an empty matching list records `no_matching_items`.
+The catalogue follows the selected items in [Spec 01](scoreable-artifact-inventory.md). Each definition is registered with the captured artifact's `artifact_schema_version`, extractor id and extractor version `1`. A definition reads only that revision's body. A shape mismatch records `extraction_failed`; an empty matching list records `no_matching_items`.
 
 | Artifact | Selected item | Address | Logical identity |
 | --- | --- | --- | --- |

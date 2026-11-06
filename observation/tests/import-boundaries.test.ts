@@ -55,7 +55,7 @@ test("running grading service imports only its declared local infrastructure pac
 });
 
 test("grading ports do not depend on storage modules", () => {
-  for (const name of ["grade-runner", "artifact-source", "experiment-exporter"]) {
+  for (const name of ["grade-runner"]) {
     const entry = resolve(import.meta.dir, `../src/ports/${name}.ts`);
     const portGraph = buildGraph([entry]);
     expect(reachable(portGraph, entry).some((node) => node.path.includes("/storage/"))).toBe(false);

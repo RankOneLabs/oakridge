@@ -48,3 +48,28 @@ integration("acknowledgement commits outcome and cursor together; stale delivery
     } finally { await db.destroy(); await dropScratchDatabase(admin, name); }
   } finally { await admin.end(); }
 });
+
+for (const decision of ["accept", "request_changes"]) {
+  test(`operator decision ${decision} advances the cursor with ignored outcome and no grading rows`, async () => {
+    const { scratchGrading } = await import("./grading-fixture");
+    const { sql } = await import("kysely");
+    await scratchGrading(async (db) => {
+      const app = createApp({ db, credentials });
+      const delivery = { previous: { commit_txid: "0", id: "" }, cursor: { commit_txid: "1", id: `operator-${decision}` },
+        outcome: { format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+          kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: `operator-${decision}` } };
+      const response = await app.request("/v1/sources/oakridge/events", { method: "POST",
+        headers: { authorization: "Bearer ingest-secret", "content-type": "application/json" }, body: JSON.stringify(delivery) });
+      const stored = await withTenant(db, tenant, async (trx) => ({
+        outcomes: await trx.selectFrom("observation.source_event_outcome").select(["event_kind", "outcome_kind"]).execute(),
+        cursor: await trx.selectFrom("observation.source_event_cursor").select([sql<string>`commit_txid::text`.as("commit_txid"), "event_id"]).executeTakeFirstOrThrow(),
+        grades: (await sql<{ count: number }>`SELECT (
+          (SELECT count(*) FROM observation.evaluation_execution) + (SELECT count(*) FROM observation.grade_observation) +
+          (SELECT count(*) FROM observation.grading_provider_attempt) + (SELECT count(*) FROM observation.evidence_set))::integer AS count`.execute(trx)).rows,
+      }));
+      expect({ status: response.status, ...stored }).toEqual({ status: 200,
+        outcomes: [{ event_kind: "operator_decided", outcome_kind: "ignored" }],
+        cursor: { commit_txid: "1", event_id: `operator-${decision}` }, grades: [{ count: 0 }] });
+    });
+  });
+}

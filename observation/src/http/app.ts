@@ -3,20 +3,16 @@ import { errorResponse } from "./errors";
 import { credentialFor } from "./ingest-auth";
 import { registerSourceRoutes } from "./sources";
 import { registerItemRoutes } from "./items";
-import { registerEvaluationRoutes } from "./evaluations";
 import { registerGradeRoutes } from "./grades";
 import { registerGradingRecordRoutes } from "./grading-records";
-import { registerExportRoutes } from "./exports";
 import type { SourceDependencies } from "./sources";
 
 export function createApp(deps: SourceDependencies): Hono {
   const app = new Hono();
   registerSourceRoutes(app, deps);
   registerItemRoutes(app, deps);
-  registerEvaluationRoutes(app, deps);
   registerGradeRoutes(app, deps);
   registerGradingRecordRoutes(app, deps);
-  registerExportRoutes(app, deps);
   app.notFound((c) => credentialFor(c.req.header("authorization"), deps.credentials.ingest)
     ? errorResponse(c, 403, "forbidden", "ingest credential cannot use this route")
     : errorResponse(c, 404, "not_found", "route not found"));

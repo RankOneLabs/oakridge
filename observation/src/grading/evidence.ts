@@ -1,34 +1,31 @@
 import { canonicalDigest } from "canonical-json";
-import type { CanonicalDigest, EvidenceSetId } from "../domain/identity";
-import { err, type JsonValue, type Result } from "../domain/primitives";
+import type { EvidenceSetId, ItemOccurrenceId, QuestionId } from "../domain/identity";
+import { ok } from "../domain/primitives";
+import type { CanonicalizationError } from "../domain/errors";
+import type { JsonValue, Result } from "../domain/primitives";
 
-export type EvidenceKind = "raw_build_output" | "raw_test_output" | "repository_content" | "public" | "internal";
 export interface EvidenceReference {
   readonly ref: string;
-  /** Classification at capture time; internal content is withheld on export. */
-  readonly kind: EvidenceKind;
   readonly content: JsonValue | null;
-  readonly digest: string | null;
   readonly deep_link?: string;
   readonly reviewed_commit?: string;
   readonly is_truncated?: boolean;
   readonly is_unreadable?: boolean;
   readonly incompleteness_reason?: string;
 }
-/** Stored references may predate capture-time classification. */
-export type StoredEvidenceReference = Omit<EvidenceReference, "kind"> & { readonly kind?: EvidenceKind };
-export interface EvidenceSet {
+export interface EvidenceIdentity {
+  readonly subject_occurrence_id: ItemOccurrenceId;
+  readonly question_id: QuestionId;
+  readonly question_version: string;
+}
+export interface EvidenceSet extends EvidenceIdentity {
   readonly evidence_set_id: EvidenceSetId;
-  readonly references: readonly StoredEvidenceReference[];
+  readonly references: readonly EvidenceReference[];
   readonly is_incomplete: boolean;
   readonly incompleteness_reason: string | null;
 }
-
-export interface EvidenceDigestError { readonly operation: "evidence_set_digest"; readonly entity_id: string; readonly detail: string }
-/** Mirrors the Assay export digest input, including the captured reference content. */
-export function evidenceSetDigest(evidence: EvidenceSet): Result<CanonicalDigest, EvidenceDigestError> {
-  const result = canonicalDigest({ evidence_refs: evidence.references, is_incomplete: evidence.is_incomplete,
-    incompleteness_reason: evidence.incompleteness_reason });
-  return result.ok ? result : err({ operation: "evidence_set_digest", entity_id: evidence.evidence_set_id,
-    detail: result.error.detail });
+/** Stable across readiness changes: content is frozen once the set is ready. */
+export function evidenceSetId(identity: EvidenceIdentity): Result<EvidenceSetId, CanonicalizationError> {
+  const digest = canonicalDigest([identity.subject_occurrence_id, identity.question_id, identity.question_version]);
+  return digest.ok ? ok(digest.value as unknown as EvidenceSetId) : digest;
 }

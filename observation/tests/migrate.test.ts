@@ -5,7 +5,6 @@ import { sql } from "kysely";
 import { openDatabase } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { readdir } from "node:fs/promises";
-import historicalCatalog from "./fixtures/preconsolidation-catalog.json";
 import { dropScratchDatabase } from "./database-fixture";
 
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
@@ -26,20 +25,6 @@ async function scratch(work: (url: string) => Promise<void>): Promise<void> {
 }
 
 
-integration("fresh schema has local grading tables and repeats without applying upgrades", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await migrateEmptyDatabase(db);
-    await migrateEmptyDatabase(db);
-    const result = await sql<{ jobs: string | null; attempts: string | null; forbidden: number; baselines: number }>`SELECT
-      to_regclass('observation.grading_job')::text AS jobs,
-      to_regclass('observation.grading_provider_attempt')::text AS attempts,
-      (SELECT count(*)::integer FROM pg_tables WHERE schemaname = 'observation' AND tablename LIKE 'langfuse%') AS forbidden,
-      (SELECT count(*)::integer FROM observation.schema_baseline) AS baselines`.execute(db);
-    expect(result.rows[0]).toEqual({ jobs: "observation.grading_job", attempts: "observation.grading_provider_attempt", forbidden: 0, baselines: 1 });
-  } finally { await db.destroy(); }
-}));
-
 integration("an incompatible schema is refused instead of adopted", async () => scratch(async (url) => {
   const db = openDatabase(url);
   try {
@@ -48,99 +33,6 @@ integration("an incompatible schema is refused instead of adopted", async () => 
     await expect(migrateEmptyDatabase(db)).rejects.toThrow("baseline digest mismatch");
   } finally { await db.destroy(); }
 }));
-
-// Captured from the thirteen-file sequence at 01c8b605, before consolidation.
-// Column ordinals are deliberately absent: moving ADD COLUMN into CREATE TABLE
-// changes ordinals without changing the schema contract.
-interface CatalogEntry { readonly kind: string; readonly table_name: string; readonly name: string; readonly definition: string }
-const compareCatalogEntries = (left: CatalogEntry, right: CatalogEntry): number =>
-  left.kind.localeCompare(right.kind) || left.table_name.localeCompare(right.table_name) || left.name.localeCompare(right.name);
-
-const observationCatalogQuery = sql.raw<CatalogEntry>(`SELECT 'table' AS kind, c.relname AS table_name, c.relname AS name, '' AS definition
-FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
-UNION ALL
-SELECT 'column', c.relname, a.attname, format_type(a.atttypid,a.atttypmod) || CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE ' NULL' END || ' DEFAULT ' || coalesce(pg_get_expr(d.adbin,d.adrelid),'') || ' GENERATED ' || a.attgenerated::text
-FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE n.nspname='observation' AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped
-UNION ALL
-SELECT 'constraint', c.relname, con.conname, pg_get_constraintdef(con.oid) FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation'
-UNION ALL
-SELECT 'index', t.relname, i.relname, pg_get_indexdef(i.oid) FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='observation'
-UNION ALL
-SELECT 'trigger', c.relname, t.tgname, pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND NOT t.tgisinternal
-UNION ALL
-SELECT 'function', '', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
-FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='observation' AND p.prokind='f'
-UNION ALL
-SELECT 'policy', c.relname, p.polname, jsonb_build_object(
-  'command', p.polcmd::text, 'permissive', p.polpermissive,
-  'roles', ARRAY(SELECT CASE WHEN role_id=0 THEN 'public' ELSE pg_get_userbyid(role_id)::text END FROM unnest(p.polroles) AS roles(role_id) ORDER BY 1),
-  'using', pg_get_expr(p.polqual,p.polrelid), 'with_check', pg_get_expr(p.polwithcheck,p.polrelid))::text
-FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation'
-UNION ALL
-SELECT 'row_security', c.relname, c.relname, jsonb_build_object('enabled', c.relrowsecurity, 'forced', c.relforcerowsecurity)::text
-FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='observation' AND c.relkind='r'
-ORDER BY kind,table_name,name`);
-
-integration("the single baseline preserves the historical catalog except for capture provenance and required question pins and derived eligibility caching and explicit grading records", async () => scratch(async (url) => {
-  const db = openDatabase(url);
-  try {
-    await migrateEmptyDatabase(db);
-    const catalog = await observationCatalogQuery.execute(db);
-    const retiredColumns = ["definition", "bundle"].join("_");
-    const expected = historicalCatalog.filter((entry) => !((entry.kind === "column" && (
-      (entry.table_name === "source_revision" && [retiredColumns + "_id", retiredColumns + "_digest"].includes(entry.name))
-      || (entry.table_name === "question_definition" && entry.name === "evidence_recipe_provenance")
-      // Retire the outbound refusal record and replace inferred/optional grading facts.
-      || (entry.table_name === "grading_job" && entry.name === "disclosure")
-      || (entry.table_name === "grade_observation" && ["label_origin", "collection_mode"].includes(entry.name))))
-      || (entry.kind === "constraint" && (
-        (entry.table_name === "grading_job" && entry.name === "grading_job_terminal_cause_check")
-        || (entry.table_name === "grade_observation" && entry.name === "grade_collection_consistency")))
-      // Eligibility is derived, so its row is a refreshable cache rather than an append-only decision.
-      || (entry.kind === "trigger" && entry.table_name === "evaluation_eligibility"
-        && entry.name === "evaluation_eligibility_append_only")));
-    for (const name of ["expected_definition_id", "expected_artifact_schema_version"])
-      expected.push({ kind: "column", table_name: "question_definition", name, definition: "text NOT NULL DEFAULT  GENERATED " });
-    expected.push({ kind: "column", table_name: "source_revision", name: "definition_id", definition: "text NOT NULL DEFAULT  GENERATED " });
-    expected.push({ kind: "constraint", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
-      definition: "UNIQUE (producer, namespace, subject_occurrence_id, question_id, question_version)" });
-    expected.push({ kind: "index", table_name: "evaluation_eligibility", name: "evaluation_eligibility_subject_question_key",
-      definition: "CREATE UNIQUE INDEX evaluation_eligibility_subject_question_key ON observation.evaluation_eligibility USING btree (producer, namespace, subject_occurrence_id, question_id, question_version)" });
-    // 1. Remove the outbound refusal column and its terminal cause.
-    expected.push({ kind: "constraint", table_name: "grading_job", name: "grading_job_terminal_cause_check",
-      definition: "CHECK (((terminal_cause IS NULL) OR (terminal_cause = ANY (ARRAY['retry_exhausted'::text, 'runner_failed'::text, 'invalid_outcome'::text, 'ineligible'::text, 'budget_exceeded'::text]))))" });
-    // 2. Replace the generated label with an explicit, closed origin.
-    expected.push({ kind: "column", table_name: "grade_observation", name: "origin", definition: "text NOT NULL DEFAULT  GENERATED " });
-    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_observation_origin_check",
-      definition: "CHECK ((origin = ANY (ARRAY['human_rubric_answer'::text, 'workflow_approval'::text, 'automated_evaluation'::text])))" });
-    // 3. Require a recorded collection mode.
-    expected.push({ kind: "column", table_name: "grade_observation", name: "collection_mode", definition: "text NOT NULL DEFAULT  GENERATED " });
-    // 4. Enforce collection consistency without a null-mode bypass.
-    expected.push({ kind: "constraint", table_name: "grade_observation", name: "grade_collection_consistency",
-      definition: "CHECK (((model_answers_visible IS NOT NULL) AND (workflow_decisions_visible IS NOT NULL) AND ((collection_mode <> 'blind'::text) OR ((blind_assignment_id IS NOT NULL) AND (NOT model_answers_visible) AND (NOT workflow_decisions_visible)))))" });
-    expect(catalog.rows.sort(compareCatalogEntries)).toEqual(expected.sort(compareCatalogEntries));
-  } finally { await db.destroy(); }
-}));
-
-interface CatalogProtectionChange { readonly description: string; readonly statement: string }
-const protectionChanges: readonly CatalogProtectionChange[] = [
-  { description: "a weakened export guard function", statement: "CREATE OR REPLACE FUNCTION observation.reject_export_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END $$" },
-  { description: "a weakened tenant policy", statement: "ALTER POLICY source_revision_tenant ON observation.source_revision USING (true)" },
-  { description: "disabled row-level security", statement: "ALTER TABLE observation.source_revision DISABLE ROW LEVEL SECURITY" },
-  { description: "unforced row-level security", statement: "ALTER TABLE observation.source_revision NO FORCE ROW LEVEL SECURITY" },
-];
-for (const change of protectionChanges) {
-  integration(`catalog comparison detects ${change.description}`, async () => scratch(async (url) => {
-    const db = openDatabase(url);
-    try {
-      await migrateEmptyDatabase(db);
-      const before = await observationCatalogQuery.execute(db);
-      await sql.raw(change.statement).execute(db);
-      const after = await observationCatalogQuery.execute(db);
-      expect(after.rows.sort(compareCatalogEntries)).not.toEqual(before.rows.sort(compareCatalogEntries));
-    } finally { await db.destroy(); }
-  }));
-}
 
 test("only the consolidated observation SQL baseline is committed", async () => {
   const names = await readdir(new URL("../src/storage/migrations", import.meta.url));
@@ -176,5 +68,42 @@ integration("PostgreSQL versions below 15 are refused before DDL", async () => s
     await expect(migrateEmptyDatabase(olderServer)).rejects.toThrow("PostgreSQL 15+ is required for the observation baseline");
     const schema = await sql<{ name: string | null }>`SELECT to_regnamespace('observation')::text AS name`.execute(db);
     expect(schema.rows).toEqual([{ name: null }]);
+  } finally { await db.destroy(); }
+}));
+
+interface TableColumns { readonly table_name: string; readonly columns: readonly string[] }
+const targetColumns: readonly TableColumns[] = [
+  { table_name: "schema_baseline", columns: ["id", "digest", "applied_at"] },
+  { table_name: "source_revision", columns: ["producer", "namespace", "revision_id", "run_id", "unit_id", "artifact_kind", "artifact_schema_version", "definition_id", "body", "body_digest", "recorded_at", "captured_at", "predecessor_id", "subject_id"] },
+  { table_name: "extractor_definition", columns: ["producer", "namespace", "artifact_kind", "schema_version", "extractor_id", "extractor_version", "item_kind", "item_selector"] },
+  { table_name: "logical_item", columns: ["producer", "namespace", "logical_item_id", "run_id", "scope", "producer_local_id"] },
+  { table_name: "item_occurrence", columns: ["producer", "namespace", "occurrence_id", "revision_id", "run_id", "artifact_kind", "schema_version", "extractor_id", "extractor_version", "item_kind", "item_selector", "item_id_or_path", "item_scope", "producer_local_id", "selected_value", "logical_item_id", "json_pointer"] },
+  { table_name: "item_relation", columns: ["producer", "namespace", "relation_id", "source_occurrence_id", "source_logical_item_id", "target_occurrence_id", "target_logical_item_id", "unresolved_target_ref", "type", "asserted_by", "evidence_ref", "algorithm", "algorithm_version", "recorded_at"] },
+  { table_name: "extraction_issue", columns: ["producer", "namespace", "issue_id", "revision_id", "extractor_id", "extractor_version", "item_selector", "kind", "detail", "is_retriable", "recorded_at"] },
+  { table_name: "question_definition", columns: ["producer", "namespace", "question_id", "question_version", "item_kind", "response_kind", "allowed_values", "missing_evidence_policy", "abstain_semantics", "unclear_semantics", "interpretation_caveats", "question_text"] },
+  { table_name: "evidence_set", columns: ["producer", "namespace", "evidence_set_id", "subject_occurrence_id", "question_id", "question_version", "evidence_refs", "is_incomplete", "incompleteness_reason", "created_at"] },
+  { table_name: "evaluator_definition", columns: ["producer", "namespace", "evaluator_definition_id", "kind", "backend_kind", "provider", "model", "prompt_digest", "config_digest", "runtime_revision", "cost_metadata", "seed", "attempt_controls", "identity_digest", "instruction_text"] },
+  { table_name: "evaluation_execution", columns: ["producer", "namespace", "execution_id", "subject_occurrence_id", "evidence_set_id", "question_id", "question_version", "evaluator_definition_id", "attempt_label", "idempotency_digest", "run_id", "runner_name", "estimated_cost", "lease_owner", "lease_expires_at", "retry_limit", "next_attempt_at", "created_at", "updated_at", "attempts", "started_at", "ended_at", "status", "error", "model_usage", "cost", "external_execution_id", "provider_link", "reproducibility_metadata"] },
+  { table_name: "grading_provider_attempt", columns: ["producer", "namespace", "execution_id", "attempt", "run_id", "request_sent", "outcome", "charged_cost", "admitted_estimate", "cost_overage", "provider_request_id", "failure_category", "created_at", "updated_at"] },
+  { table_name: "grade_observation", columns: ["producer", "namespace", "observation_id", "execution_id", "answer_kind", "answer_state", "answer_payload", "probabilities", "confidence", "reviewer_id", "reviewer_details", "comments", "rationale", "quality_flags", "supersedes_observation_id", "recorded_at"] },
+  { table_name: "source_event_cursor", columns: ["producer", "namespace", "commit_txid", "event_id"] },
+  { table_name: "source_event_outcome", columns: ["producer", "namespace", "event_id", "run_id", "commit_txid", "event_kind", "outcome_kind", "detail", "recorded_at"] },
+];
+
+integration("a freshly migrated database has exactly the fifteen target tables and every target column", () => scratch(async (url) => {
+  const db = openDatabase(url);
+  try {
+    await migrateEmptyDatabase(db);
+    await migrateEmptyDatabase(db);
+    const catalog = await sql<TableColumns>`SELECT table_name, array_agg(column_name::text ORDER BY ordinal_position) AS columns
+      FROM information_schema.columns WHERE table_schema = 'observation' GROUP BY table_name ORDER BY table_name`.execute(db);
+    expect(catalog.rows).toEqual([...targetColumns].sort((a, b) => a.table_name.localeCompare(b.table_name)));
+    const policies = await sql<{ table_name: string; enabled: boolean; forced: boolean; policy: string | null }>`
+      SELECT c.relname AS table_name, c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced, p.polname AS policy
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_policy p ON p.polrelid = c.oid
+      WHERE n.nspname = 'observation' AND c.relkind = 'r' AND c.relname <> 'schema_baseline' ORDER BY c.relname`.execute(db);
+    expect(policies.rows).toEqual(targetColumns.filter((table) => table.table_name !== "schema_baseline")
+      .map(({ table_name }) => ({ table_name, enabled: true, forced: true, policy: `${table_name}_tenant` }))
+      .sort((a, b) => a.table_name.localeCompare(b.table_name)));
   } finally { await db.destroy(); }
 }));

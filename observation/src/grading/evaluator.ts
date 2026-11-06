@@ -26,9 +26,3 @@ export function evaluatorIdentity(definition: EvaluatorDefinition): Result<strin
   return canonicalDigest([definition.kind, definition.backend_kind, definition.provider, definition.model,
     definition.prompt_digest, definition.config_digest, definition.runtime_revision]);
 }
-
-/** A blind grade hides model answers and workflow decisions and names its claimed assignment. */
-export function blindSubmissionIsValid(details: { readonly blind_assignment_id?: string | null;
-  readonly model_answers_visible: boolean; readonly workflow_decisions_visible: boolean }): boolean {
-  return !details.model_answers_visible && !details.workflow_decisions_visible && !!details.blind_assignment_id;
-}

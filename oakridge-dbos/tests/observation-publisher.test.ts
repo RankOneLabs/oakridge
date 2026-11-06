@@ -121,21 +121,14 @@ test("adapter, Oakridge and observation outages replay committed events from the
       .select(["event_id", "outcome_kind", "detail"]).execute());
     const afterRecovery = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_event_cursor").select("event_id").executeTakeFirstOrThrow());
     const unmapped = await app.request("/v1/sources/oakridge/unmapped", { headers: { authorization: "Bearer read" } });
-    const grades = await app.request("/v1/sources/oakridge/human-grades", { headers: { authorization: "Bearer read" } });
-    const gradeRows = await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_human_grade")
-      .select(["evaluator_kind", "unit_id", "review", "decision", "target_revision_id", "feedback"]).execute());
     expect({ ids: delivered.map((row) => row.event_id).sort(), committed: committed.map((row) => row.id).sort(),
       held: beforeRecovery.event_id !== afterRecovery.event_id,
       unmapped: (await unmapped.json() as { items: { event_id: string }[] }).items.map((item) => item.event_id).sort(),
-      human: delivered.find((row) => row.outcome_kind === "human_grade")?.detail })
+      decision: delivered.find((row) => (row.detail as { event_kind?: string }).event_kind === "operator_decided")?.detail })
       .toMatchObject({ ids: committed.map((row) => row.id).sort(), committed: committed.map((row) => row.id).sort(), held: true,
         unmapped: [unexpected, absentArtifact].sort(),
-        human: { evaluator: { kind: "human" }, target: `${unit}:draft:1`, review: "editor", decision: "request_changes",
-          feedback: { feedback: "shorter" } } });
+        decision: { kind: "ignored", event_kind: "operator_decided" } });
     expect((await withTenant(observation, tenant, (trx) => trx.selectFrom("observation.source_revision").select("revision_id").execute()))
       .map((row) => row.revision_id)).toEqual([`${unit}:draft:1`]);
-    expect({ status: grades.status, rows: gradeRows }).toMatchObject({ status: 200, rows: [{ evaluator_kind: "human",
-      unit_id: unit, review: "editor", decision: "request_changes", target_revision_id: `${unit}:draft:1`,
-      feedback: { feedback: "shorter" } }] });
   } finally { await observation.destroy(); await scratch.drop(); }
 });

@@ -4,9 +4,6 @@ import type { EvaluatorDefinition } from "./evaluator";
 import type { GradeAnswer } from "./observation";
 import type { QuestionDefinition } from "./question";
 import type { GradeRunner } from "../ports/grade-runner";
-import { deterministicChecker } from "../runners/deterministic-checker";
-import { coverageChecker } from "../runners/coverage-checker";
-import { stubModelRunner } from "../runners/stub-model";
 import { createJevDirectRunner } from "../runners/jev-direct";
 import { createFastinoGlideRunner, FASTINO_SYSTEM_ONE_BASE_URL } from "../runners/fastino-glide";
 import { createLlmJudgeRunner } from "../runners/llm-judge";
@@ -44,9 +41,6 @@ export interface RunnerRegistryEntry {
 }
 
 export const runnerRegistry = {
-  deterministic: { kind: "code", network: false, factory: () => deterministicChecker },
-  coverage: { kind: "code", network: false, factory: () => coverageChecker },
-  stub_model: { kind: "model", network: false, factory: () => stubModelRunner },
   jev_direct: { kind: "model", network: true, factory: (deadline_ms, env) => createJevDirectRunner({
     base_url: env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1", api_key: env.TYPESAFE_API_KEY, deadline_ms }) },
   fastino_glide: { kind: "model", network: true, factory: (deadline_ms, env) => createFastinoGlideRunner({

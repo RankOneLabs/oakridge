@@ -1,7 +1,7 @@
 import type { JsonValue } from "../domain/primitives";
 import type { ArtifactRevisionId, CanonicalDigest, EvidenceSetId, ExecutionId, GradeObservationId, ItemOccurrenceId, QuestionId, RelationId, RunId } from "../domain/identity";
 
-/** Wire shapes mirror the producer revision row and the item-address rules in docs/spec-02-handoff.md. */
+/** Wire shapes mirror the producer revision row and item addresses. */
 export interface RevisionAddress { readonly run_id: RunId; readonly revision_id: ArtifactRevisionId }
 export interface ItemAddress extends RevisionAddress { readonly item_id: string | null; readonly json_pointer: string | null }
 export interface RevisionFields extends RevisionAddress {
@@ -28,8 +28,8 @@ export type RelationEnvelope =
 
 export interface EvidenceReference { readonly kind: "file" | "test" | "output"; readonly ref: string; readonly detail: string | null }
 export type EvidenceSetEnvelope =
-  | { readonly format: "observation.evidence-set/v1"; readonly kind: "context"; readonly payload: { readonly evidence_set_id: EvidenceSetId; readonly digest: CanonicalDigest; readonly revisions: readonly RevisionAddress[]; readonly references: readonly EvidenceReference[] } }
-  | { readonly format: "observation.evidence-set/v1"; readonly kind: "repository"; readonly payload: { readonly evidence_set_id: EvidenceSetId; readonly digest: CanonicalDigest; readonly revisions: readonly RevisionAddress[]; readonly repository_key: string; readonly commit_sha: string; readonly references: readonly EvidenceReference[] } };
+  | { readonly format: "observation.evidence-set/v1"; readonly kind: "context"; readonly payload: { readonly evidence_set_id: EvidenceSetId; readonly revisions: readonly RevisionAddress[]; readonly references: readonly EvidenceReference[] } }
+  | { readonly format: "observation.evidence-set/v1"; readonly kind: "repository"; readonly payload: { readonly evidence_set_id: EvidenceSetId; readonly revisions: readonly RevisionAddress[]; readonly repository_key: string; readonly commit_sha: string; readonly references: readonly EvidenceReference[] } };
 
 export interface QuestionFields { readonly question_id: QuestionId; readonly item: ItemOccurrenceId; readonly prompt: string; readonly evidence_set_id: EvidenceSetId }
 export type QuestionEnvelope =

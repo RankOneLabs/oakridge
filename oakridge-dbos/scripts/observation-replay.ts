@@ -12,8 +12,8 @@
  *
  * It reads the live observation cursor and replays the backlog after it
  * (`--from-start` replays the whole history). The scratch database starts empty,
- * so a decision on a revision the live service captured takes the
- * uncaptured-target path here: this checks deliverability, not identical grading.
+ * decisions are ignored and advance the cursor without resolving their targets.
+ * This checks deliverability through the head of the stream.
  * Nothing is written to the live databases.
  */
 import { sql } from "kysely";

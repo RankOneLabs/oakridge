@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {
+      "id": "capture",
+      "description": "Capture source revisions.",
+      "requirement_ids": [
+        "capture-items"
+      ]
+    },
+    {
+      "id": "project",
+      "description": "Project selected items.",
+      "requirement_ids": [
+        "capture-items"
+      ]
+    }
+  ]
+}

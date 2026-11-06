@@ -7,7 +7,7 @@ import { evidence, evaluator, question } from "./grading-fixture";
 const recipe = { system_one: { type: "choice", instructions: "Does the claim match?", criteria: { yes: "matches", no: "differs", insufficient_evidence: "cannot tell" } } };
 const context: GradingContext = { question: { ...question, response_kind: "choice",
   allowed_values: ["yes", "no", "insufficient_evidence"],
-  input_recipe: { source: "selected_value" }, unclear_semantics: "Choose insufficient_evidence when unclear" },
+  unclear_semantics: "Choose insufficient_evidence when unclear" },
   evidence, evaluator: { ...evaluator("model"), evaluator_definition_id: "glide", provider: "fastino",
     model: "fastino/glide", instruction_text: JSON.stringify(recipe), prompt_digest: instructionDigest(JSON.stringify(recipe)) } };
 const answer = { type: "choice", choice: "no", probabilities: { yes: 0.2, no: 0.5,

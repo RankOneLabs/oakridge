@@ -1,9 +1,4 @@
-import type { GradeOrigin } from "../src/grading/observation";
-import type { GradeDetails } from "../src/storage/grading-store";
-import { captureDelivery } from "../src/storage/capture-store";
-import { projectRevision, listRunItems } from "../src/storage/projection-store";
 import type { JsonValue } from "../src/domain/primitives";
-import { instructionDigest } from "../src/grading/evaluator";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { sql } from "kysely";
@@ -12,27 +7,22 @@ import type { ItemOccurrenceId, QuestionId, EvidenceSetId } from "../src/domain/
 import type { QuestionDefinition } from "../src/grading/question";
 import type { EvidenceSet } from "../src/grading/evidence";
 import type { EvaluatorDefinition } from "../src/grading/evaluator";
+import { instructionDigest } from "../src/grading/evaluator";
+import { captureDelivery } from "../src/storage/capture-store";
+import { projectRevision, listRunItems } from "../src/storage/projection-store";
 import { openDatabase, withTenant, type Database } from "../src/storage/database";
 import { migrateEmptyDatabase } from "../src/storage/migrate";
 import { dropScratchDatabase } from "./database-fixture";
 const serverUrl = process.env.OAKRIDGE_TEST_DATABASE_URL;
 export const tenant = { producer: "oakridge", namespace: "grading-test" };
-export const pinnedExpectation = { definition_id: "definition-1", artifact_schema_version: "1" };
-export const pilotExpectations = {
-  "analysis.finding_relevance": pinnedExpectation,
-  "plan.criterion_traceability": pinnedExpectation,
-  "brief.source_fidelity": pinnedExpectation,
-  "assessment.coverage": pinnedExpectation,
-};
 export const question: QuestionDefinition = {
-  pinned_expectation: pinnedExpectation,
-  question_id: "relevance" as QuestionId, question_version: "1", target_item_kinds: ["cohort_criterion"],
-  input_recipe: { source: "selected_value" }, response_kind: "boolean", allowed_values: null,
-  missing_evidence_policy: "fail", abstain_semantics: "not enough evidence", unclear_semantics: "ambiguous",
-  interpretation_caveats: "relevance is not acceptance", requires_repository_snapshot: false,
+  question_id: "relevance" as QuestionId, question_version: "1", item_kind: "cohort_criterion",
+  response_kind: "boolean", allowed_values: null, missing_evidence_policy: "fail",
+  abstain_semantics: "not enough evidence", unclear_semantics: "ambiguous", interpretation_caveats: "relevance is not acceptance",
 };
 export const evidence: EvidenceSet = { evidence_set_id: "evidence-1" as EvidenceSetId,
-  references: [{ ref: "fixture", kind: "public", content: "sample", digest: null }], is_incomplete: false, incompleteness_reason: null };
+  subject_occurrence_id: "subject-1" as ItemOccurrenceId, question_id: question.question_id, question_version: "1",
+  references: [{ ref: "fixture", content: "sample" }], is_incomplete: false, incompleteness_reason: null };
 export function evaluator(kind: "code" | "model" | "human"): EvaluatorDefinition {
   return { evaluator_definition_id: kind, kind, backend_kind: "local", provider: `fixture-${kind}`,
     model: kind === "model" ? "pinned" : null, instruction_text: "prompt-1", prompt_digest: instructionDigest("prompt-1"), config_digest: "config-1",
@@ -85,7 +75,7 @@ export async function captureProjectedFixture(db: Database, input: CapturedFixtu
   const digest = canonicalDigest(input.body);
   if (!digest.ok) throw new Error(digest.error.detail);
   const captured = await captureDelivery(db, { local_revision_id: input.revision_id, request_key: input.revision_id,
-    envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, ...pinnedExpectation,
+    envelope: { format: "observation.artifact-revision/v2", source: { ...tenant, definition_id: "1".repeat(64), artifact_schema_version: "fixture-v1",
       revision_id: `${tenant.producer}:${tenant.namespace}:${input.revision_id}`, run_id, unit_id: input.unit_id ?? (input.artifact_kind === "assessment" ? "implementation/cohort" : input.artifact_kind),
       artifact_kind: input.artifact_kind, predecessor_id: input.predecessor_id ? `${tenant.producer}:${tenant.namespace}:${input.predecessor_id}` : null, subject_id: null },
       body: input.body, body_digest: digest.value, recorded_at: input.recorded_at ?? "2026-11-01T00:00:00Z" } });
@@ -93,30 +83,4 @@ export async function captureProjectedFixture(db: Database, input: CapturedFixtu
   await projectRevision(db, tenant, input.revision_id);
   const page = await listRunItems(db, tenant, run_id, { limit: 200, offset: 0 });
   return page.items.filter((item) => item.revision_id === input.revision_id);
-}
-
-/** Explicit facts supplied by a caller recording a human grade. */
-export function humanGradeDetails(origin: GradeOrigin): GradeDetails {
-  return { origin, answer: { state: "answered", kind: "boolean", value: true },
-    collection_mode: "in_context", model_answers_visible: false, workflow_decisions_visible: false,
-    probabilities: null, confidence: null, normalized_score: null, decision_policy_id: null,
-    decision_policy_version: null, reviewer_id: "reviewer", reviewer_details: null,
-    comments: null, rationale: null, quality_flags: [], supersedes_observation_id: null };
-}
-
-/** A real captured subject for admission tests; callers send only question/evaluator context. */
-export async function capturedCoverage(db: Database) {
-  const { oakridgeQuestions } = await import("../src/grading/catalogue/oakridge-questions");
-  const { deriveCapturedEvidence } = await import("../src/storage/captured-evidence-store");
-  const items = await captureProjectedFixture(db, { revision_id: "captured-brief", artifact_kind: "brief", body: {
-    cohort_id: "cohort", decisions_made: [], approaches_rejected: [],
-    acceptance_criteria: [{ id: "criterion", text: "Works" }],
-  } });
-  await captureProjectedFixture(db, { revision_id: "captured-assessment", artifact_kind: "assessment",
-    body: { head_sha: "commit-1", findings: [] }, recorded_at: "2026-11-01T01:00:00Z" });
-  const occurrence_id = items.find((item) => item.item_kind === "criterion")!.occurrence_id as ItemOccurrenceId;
-  const question = oakridgeQuestions(pilotExpectations)["assessment.coverage"].definition;
-  const derived = await deriveCapturedEvidence(db, tenant, "run-1", { subject_occurrence_id: occurrence_id, question });
-  if (!derived.ok || !derived.value.evidence) throw new Error("captured coverage fixture has no evidence");
-  return { occurrence_id, question, evidence: derived.value.evidence };
 }

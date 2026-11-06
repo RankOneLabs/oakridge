@@ -34,10 +34,11 @@ test("new variants and unknown artifact declarations become unmapped outcomes", 
   expect([unknown.kind, artifact.kind, unknown.event_id, artifact.run_id]).toEqual(["unmapped", "unmapped", "event-1", "run-1"]);
 });
 
-test("an operator decision carries human evaluator and intact feedback", () => {
-  const feedback = { note: "revise" };
-  const outcome = mapObservationEvent({ row: row({ kind: "operator_decided", unit: "run-1/writing", review: "editor",
-    decision: "request_changes", target: "rev-1", payload: feedback }), definition: null, namespace: "test", stage: null, revision_sequence: null });
-  expect(outcome).toMatchObject({ kind: "human_grade", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1",
-    evaluator: { kind: "human" }, unit: "run-1/writing", review: "editor", decision: "request_changes", target: "rev-1", feedback });
-});
+for (const decision of ["accept", "request_changes"]) {
+  test(`operator decision ${decision} is ignored`, () => {
+    const outcome = mapObservationEvent({ row: row({ kind: "operator_decided", unit: "run-1/writing", review: "editor",
+      decision, target: "rev-1", payload: { note: "feedback" } }), definition: null, namespace: "test", stage: null, revision_sequence: null });
+    expect(outcome).toEqual({ format: "observation.source-event/v1", definition_id: null, artifact_schema_version: null,
+      kind: "ignored", event_kind: "operator_decided", run_id: "run-1", event_id: "event-1" });
+  });
+}
