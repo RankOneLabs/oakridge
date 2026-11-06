@@ -5,7 +5,7 @@ import type { SourceEventAck, SourceEventCursor, SourceEventDelivery, SourceEven
 import { INITIAL_SOURCE_CURSOR } from "../ingest/cursor";
 import { jsonText, withTenant, type Database, type DatabaseTransaction, type TenantScope } from "./database";
 import type { ObservationSourceRevision } from "./db-types";
-import { projectRevisionInTransaction, type ProjectionContext } from "./projection-store";
+import { lockSourceCursor, projectRevisionInTransaction, type ProjectionContext } from "./projection-store";
 
 export interface SourceRevisionRead {
   readonly id: string;
@@ -93,11 +93,7 @@ const afterCursor = (left: SourceEventCursor, right: SourceEventCursor): boolean
 export function deliverSourceEvent(db: Database, tenant: TenantScope, delivery: SourceEventDelivery,
   context: ProjectionContext): Promise<SourceEventDeliveryResult> {
   return withTenant(db, tenant, async (trx) => {
-    await sql`INSERT INTO observation.source_event_cursor (producer, namespace) VALUES (${tenant.producer}, ${tenant.namespace})
-      ON CONFLICT DO NOTHING`.execute(trx);
-    const selected = await sql<SourceEventCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
-      FROM observation.source_event_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} FOR UPDATE`.execute(trx);
-    const current = selected.rows[0] ?? INITIAL_SOURCE_CURSOR;
+    const current = await lockSourceCursor(trx, tenant);
     const conflict: SourceEventDeliveryResult = { status: 409, body: { error: { code: "cursor_conflict", cursor: current } } };
     if (!sameCursor(current, delivery.previous) || !afterCursor(delivery.cursor, current)) return conflict;
     const outcome: SourceEventOutcome = delivery.outcome;

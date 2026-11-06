@@ -2,6 +2,7 @@ import { sql, type Selectable } from "kysely";
 import { canonicalJson } from "canonical-json";
 import type { ItemOccurrenceId } from "../domain/identity";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
+import { INITIAL_SOURCE_CURSOR, type SourceEventCursor } from "../ingest/cursor";
 import type { ExtractionProfile } from "../ports/producer-profile";
 import { selectRevision, type ExtractorDefinition, type LinkReference, type LogicalItemLink, type OccurrenceLink,
   type RelationType, type SelectedItem } from "../projection/extractor";
@@ -160,9 +161,19 @@ export interface RelationDeclaration {
 }
 export interface RelationDeclarationError { readonly operation: "declare_relation"; readonly entity_id: string; readonly detail: string }
 
+/** Serializes writers of one tenant's feed, so a target and an edge to it cannot miss each other. */
+export async function lockSourceCursor(trx: DatabaseTransaction, tenant: TenantScope): Promise<SourceEventCursor> {
+  await sql`INSERT INTO observation.source_event_cursor (producer, namespace) VALUES (${tenant.producer}, ${tenant.namespace})
+    ON CONFLICT DO NOTHING`.execute(trx);
+  const selected = await sql<SourceEventCursor>`SELECT commit_txid::text AS commit_txid, event_id AS id
+    FROM observation.source_event_cursor WHERE producer = ${tenant.producer} AND namespace = ${tenant.namespace} FOR UPDATE`.execute(trx);
+  return selected.rows[0] ?? INITIAL_SOURCE_CURSOR;
+}
+
 /** A late link only adds an edge: the occurrence, its pins, evidence and answers stay as they are. */
 export async function declareRelationInTransaction(trx: DatabaseTransaction, tenant: TenantScope, declaration: RelationDeclaration)
   : Promise<Result<string, RelationDeclarationError>> {
+  await lockSourceCursor(trx, tenant);
   const source = await trx.selectFrom("observation.item_occurrence").select(["occurrence_id", "run_id"])
     .where("producer", "=", tenant.producer).where("namespace", "=", tenant.namespace)
     .where("revision_id", "=", declaration.source_revision_id).where("json_pointer", "=", declaration.item_path).executeTakeFirst();

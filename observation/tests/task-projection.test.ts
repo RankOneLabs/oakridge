@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { sql } from "kysely";
 import type { JsonValue } from "../src/domain/primitives";
 import { selectRevision } from "../src/projection/extractor";
 import { logicalItemId, logicalReference } from "../src/projection/relations";
@@ -6,7 +7,7 @@ import { oakridgeCatalogue, TASK_SCOPE } from "../src/producers/oakridge/catalog
 import { readOccurrenceEvidence, type CaptureConfiguration } from "../src/storage/captured-evidence-store";
 import { withTenant, type Database } from "../src/storage/database";
 import { registerEvaluator, registerQuestion } from "../src/storage/grading-store";
-import { declareRelationInTransaction, listRelatedOccurrences, listRunItems } from "../src/storage/projection-store";
+import { declareRelationInTransaction, listRelatedOccurrences, listRunItems, lockSourceCursor } from "../src/storage/projection-store";
 import { oakridgeProfile } from "../src/producers/oakridge/profile";
 import { OAKRIDGE_QUESTIONS } from "../src/producers/oakridge/questions";
 import { createFeed, evaluator, evaluatorId, fixtureBody, integration, occurrenceIdOf, scratchDatabase, tenant, type Feed } from "./grading-fixture";
@@ -165,6 +166,38 @@ integration("a finding is captured and pinned before any task exists, and a late
   expect(executions).toEqual([]);
   const missing = await withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { ...declaration, item_path: "/findings/9" }));
   expect(missing).toMatchObject({ ok: false, error: { operation: "declare_relation", entity_id: "analysis-1" } });
+}));
+
+integration("a declaration racing the task's capture still resolves to the task", async () => scratchDatabase(async (db) => {
+  const feed = createFeed(db);
+  await feed.revision({ revision_id: "analysis-1", artifact_kind: "analysis", body: await fixtureBody("analysis") });
+  const [finding] = (await items(db)).filter((item) => item.item_kind === "finding");
+  let releaseDelivery = (): void => undefined;
+  const deliveryMayCommit = new Promise<void>((resolve) => { releaseDelivery = resolve; });
+  let markHolding = (): void => undefined;
+  const holding = new Promise<void>((resolve) => { markHolding = resolve; });
+  const delivery = withTenant(db, tenant, async (trx) => {
+    await lockSourceCursor(trx, tenant);
+    await trx.insertInto("observation.logical_item").values({ ...tenant, logical_item_id: taskId("T7"), run_id: "run-1",
+      scope: TASK_SCOPE, producer_local_id: "T7" }).execute();
+    markHolding();
+    await deliveryMayCommit;
+  });
+  await holding;
+  let settled = false;
+  const declared = withTenant(db, tenant, (trx) => declareRelationInTransaction(trx, tenant, { source_revision_id: "analysis-1",
+    item_path: finding!.json_pointer, link: { target: "logical_item", type: "assesses", target_scope: TASK_SCOPE, target_local_id: "T7",
+      evidence_ref: "declaration:race" } })).finally(() => { settled = true; });
+  for (let poll = 0; poll < 200 && !settled; poll += 1) {
+    const waiting = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(db);
+    if (waiting.rows[0]!.count > 0) break;
+    await Bun.sleep(10);
+  }
+  releaseDelivery();
+  await delivery;
+  expect((await declared).ok).toBe(true);
+  expect((await relations(db)).map((edge) => [edge.target_logical_item_id, edge.unresolved_target_ref])).toEqual([[taskId("T7"), null]]);
 }));
 
 integration("an assessment's subject links its build, and integration has none", async () => scratchDatabase(async (db) => {
