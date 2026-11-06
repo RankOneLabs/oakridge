@@ -52,6 +52,8 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 export async function captureSourceRun(options: SourceRunOptions): Promise<SourceRunReport> {
   const server_url = process.env.OAKRIDGE_TEST_DATABASE_URL;
   if (!server_url) throw new Error("OAKRIDGE_TEST_DATABASE_URL is required");
+  const gated_review_url = process.env.OAKRIDGE_GATED_REVIEW_URL;
+  if (!gated_review_url) throw new Error("OAKRIDGE_GATED_REVIEW_URL is required");
   const output = resolve(options.output);
   if (output === "/tmp" || output.startsWith("/tmp/")) throw new Error("capture output must be durable, outside /tmp");
   const input = inputSchema.parse(options.input);
@@ -67,7 +69,7 @@ export async function captureSourceRun(options: SourceRunOptions): Promise<Sourc
   // Deliberately never call drop(): both databases are completion evidence.
   const db = openDatabase(authority.url);
   const captured_db = openObservation(observation.url);
-  const git = new LiveSourceGit("http://otto:3555/mcp");
+  const git = new LiveSourceGit(gated_review_url);
   const agent = await openLiveSourceAgent(join(directory, "agents"), git);
   let handler: (request: Request) => Response | Promise<Response> = () => new Response("starting", { status: 503 });
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => handler(request) });
@@ -104,7 +106,7 @@ export async function captureSourceRun(options: SourceRunOptions): Promise<Sourc
       publish_base_url: base_url, default_workdir: input.repositories[0]!.preparation.repository_path });
     composition = await createProductionComposition({ database_url: authority.url, host: "127.0.0.1", control_token,
       effect_provider: provider, operation_runner: createOperationRunner({ git,
-        pull_requests: new GatedReviewPullRequestReader("http://otto:3555/mcp") }) });
+        pull_requests: new GatedReviewPullRequestReader(gated_review_url) }) });
     handler = composition.app.fetch;
     const request = async (path: string, body?: unknown): Promise<Response> => {
       const response = await composition!.app.request(path, { method: body === undefined ? "GET" : "POST",

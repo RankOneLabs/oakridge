@@ -67,34 +67,28 @@ afterEach(async () => {
 });
 
 describe("PUT /sessions/resumable/:key workflow member", () => {
-  test("builder, assessor, integrator and renamed worker grants reach their ACP role endpoints", async () => {
+  test("every agent class receives the configured gated-review URL unchanged", async () => {
     const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
-    process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
+    const url = "http://127.0.0.1:3555/mcp/";
+    process.env.OAKRIDGE_GATED_REVIEW_URL = url;
     try {
       const app = makeApp();
-      for (const [worker, role] of [["builder", "builder"], ["assessor", "assessor"],
-        ["integrator", "builder"], ["renamed-worker", "assessor"]] as const) {
-        const res = await ensureResumable(app, `restricted-${worker}`, { workflow: {
-          ...WORKFLOW, worker, gated_review: { kind: "restricted", role },
-        } });
+      for (const worker of ["author", "spec_editor", "planner", "writer", "builder", "assessor", "integrator", "renamed-worker"]) {
+        const res = await ensureResumable(app, `agent-${worker}`, { workflow: { ...WORKFLOW, worker } });
         expect(res.status).toBe(201);
         const sessions = await getSessions(app);
         const sid = sessions.find((session) => session.workflow?.worker === worker)?.sid as KbblSessionId;
         await harness.service.observeInitialTurn(sid, 8000);
-        const stored = harness.store.getSession(sid);
-        const agentSessionId = stored?.acp_session_id;
+        const agentSessionId = harness.store.getSession(sid)?.acp_session_id;
         if (!agentSessionId) throw new Error("agent session missing");
         const servers = JSON.parse(readFileSync(join(tmpRoot, "state", `${agentSessionId}.mcp-servers.json`), "utf8"));
-        expect({ grant: stored.workflow?.gated_review, servers }).toEqual({
-          grant: { kind: "restricted", role },
-          servers: [{ type: "http", name: "gated-review", url: `http://127.0.0.1:3555/mcp/${role}`, headers: [] }],
-        });
+        expect({ worker, servers }).toEqual({ worker, servers: [{ type: "http", name: "gated-review", url, headers: [] }] });
       }
     } finally {
       if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
       else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
     }
-  });
+  }, 60000);
 
   test("a supplied workflow round-trips through GET /sessions in camelCase", async () => {
     const app = makeApp();
@@ -104,28 +98,6 @@ describe("PUT /sessions/resumable/:key workflow member", () => {
     const sessions = await getSessions(app);
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.workflow).toEqual({ runId: "run-1", unitId: "run-1/cohort/a", worker: "builder" });
-  });
-
-  test("an invalid wire role persists no grant and supplies no MCP server", async () => {
-    const previous = process.env.OAKRIDGE_GATED_REVIEW_URL;
-    process.env.OAKRIDGE_GATED_REVIEW_URL = "http://127.0.0.1:3555/mcp";
-    try {
-      const app = makeApp();
-      const res = await ensureResumable(app, "invalid-role", { workflow: {
-        ...WORKFLOW, gated_review: { kind: "restricted", role: "administrator" },
-      } });
-      expect(res.status).toBe(201);
-      const sid = (await getSessions(app))[0]?.sid as KbblSessionId;
-      await harness.service.observeInitialTurn(sid, 8000);
-      const stored = harness.store.getSession(sid);
-      const agentSessionId = stored?.acp_session_id;
-      if (!agentSessionId) throw new Error("agent session missing");
-      const servers = JSON.parse(readFileSync(join(tmpRoot, "state", `${agentSessionId}.mcp-servers.json`), "utf8"));
-      expect({ grant: stored.workflow?.gated_review, servers }).toEqual({ grant: undefined, servers: [] });
-    } finally {
-      if (previous === undefined) delete process.env.OAKRIDGE_GATED_REVIEW_URL;
-      else process.env.OAKRIDGE_GATED_REVIEW_URL = previous;
-    }
   });
 
   test("no workflow member succeeds with a null workflow", async () => {
@@ -194,10 +166,7 @@ describe("parseWorkflowIdentity", () => {
     expect(parseWorkflowIdentity("nope")).toEqual({ error: "workflow must be an object" });
   });
 
-  test("unknown and extra grant fields fail closed", () => {
-    for (const gated_review of [{ kind: "restricted", role: "administrator" },
-      { kind: "unscoped", role: "builder" }, { kind: "restricted", role: "builder", extra: true }]) {
-      expect(parseWorkflowIdentity({ ...WORKFLOW, gated_review })).toEqual({ value: WORKFLOW });
-    }
+  test("a removed grant field on the wire is not part of the identity", () => {
+    expect(parseWorkflowIdentity({ ...WORKFLOW, gated_review: { kind: "unscoped" } })).toEqual({ value: WORKFLOW });
   });
 });

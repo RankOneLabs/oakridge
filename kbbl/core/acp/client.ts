@@ -20,7 +20,6 @@ import {
   ok,
   type AcpError,
   type AcpFailureCode,
-  type AcpSessionWorkflowIdentity,
   type KbblSessionId,
   type Result,
 } from "./types";
@@ -32,20 +31,14 @@ export interface AcpClientHandlers {
   ): Promise<schema.RequestPermissionResponse>;
 }
 
-/** The validated declaration stored with the workflow session. */
-export function selectGatedReviewAccess(workflow: AcpSessionWorkflowIdentity | null): AcpSessionWorkflowIdentity["gated_review"] {
-  const access = workflow?.gated_review;
-  if (access?.kind === "unscoped") return access;
-  if (access?.kind === "restricted" && (access.role === "builder" || access.role === "assessor")) return access;
-  return null;
-}
-
-/** The MCP server supplied by the launcher, using ACP's session setup contract. */
-export function selectMcpServers(gatedReviewUrl: string | undefined, access: AcpSessionWorkflowIdentity["gated_review"]): schema.McpServer[] {
-  if (!gatedReviewUrl || !access || (access.kind !== "unscoped" && (access.kind !== "restricted" || (access.role !== "builder" && access.role !== "assessor")))) return [];
-  const base = gatedReviewUrl.replace(/\/+$/, "");
-  const url = access.kind === "unscoped" ? base : `${base}/${access.role}`;
-  return [{ type: "http", name: "gated-review", url, headers: [] }];
+/**
+ * The MCP server every agent session receives, using ACP's session setup
+ * contract. The configured URL is supplied exactly as given: gated-review's
+ * endpoint decides the agent tool list, so no session attribute selects it.
+ */
+export function selectMcpServers(gatedReviewUrl: string | undefined): schema.McpServer[] {
+  if (!gatedReviewUrl) return [];
+  return [{ type: "http", name: "gated-review", url: gatedReviewUrl, headers: [] }];
 }
 
 export class AcpClient {
@@ -57,9 +50,11 @@ export class AcpClient {
     private readonly sid: KbblSessionId,
     child: AcpChildProcess,
     handlers: AcpClientHandlers,
-    access: AcpSessionWorkflowIdentity["gated_review"],
   ) {
-    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, access);
+    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL);
+    if (this.mcpServers.length === 0) {
+      console.warn(`[acp] sid=${sid} OAKRIDGE_GATED_REVIEW_URL is unset: gated-review is unavailable to this session`);
+    }
     this.connection = client({ name: `kbbl:${sid}` })
       .onNotification("session/update", (ctx) => {
         handlers.onSessionUpdate(ctx.params);

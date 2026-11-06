@@ -421,12 +421,12 @@ fn independent_group_input_errors_are_collected() {
 }
 
 #[test]
-fn invalid_gated_review_role_is_a_located_compile_fault() {
+fn a_worker_declaring_the_removed_review_grant_is_a_located_compile_fault() {
     let mut workflow: Value =
         serde_json::from_str(include_str!("../../../fixtures/bundles/review-loop.json")).unwrap();
     workflow["stages"]["document"]["workers"]["writer"]["gated_review"] =
-        serde_json::json!({"kind":"restricted","role":"administrator"});
+        serde_json::json!({"kind":"unscoped"});
     let errors = workflow_compiler::decode_workflow_value_detailed(workflow).unwrap_err();
     assert_eq!(errors[0].check, workflow_compiler::CheckKind::Schema);
-    assert!(errors[0].detail.contains("administrator"), "{errors:?}");
+    assert!(errors[0].detail.contains("gated_review"), "{errors:?}");
 }
