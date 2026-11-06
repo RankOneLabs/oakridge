@@ -18,4 +18,4 @@ The handoff lists the latest revisions of both `spec` and `tasks`. Use them to p
 
 {{approved_analysis}}
 
-Give each task a concrete description and an id unique in this run's task list. Cite approved analysis requirement ids in `requirement_ids` only when the task comes from them. An empty list means no link, never unknown; do not infer links from prose. An id names a logical task, not its bytes: a deliberately reworded task keeps its id and genuinely new work gets a new id.
+Tasks are code changes only: each one describes a change visible in the repository diff. Tests belong to the code task they cover. Do not list test runs, proof runs, deployment, cutover or other process steps as tasks; they stay in the spec. Give each task a concrete description and an id unique in this run's task list. Cite approved analysis requirement ids in `requirement_ids` only when the task comes from them. An empty list means no link, never unknown; do not infer links from prose. An id names a logical task, not its bytes: a deliberately reworded task keeps its id and genuinely new work gets a new id.
