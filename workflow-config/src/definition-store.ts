@@ -6,6 +6,8 @@ import { bytesIdentity, isIdentity, type DefinitionId } from "./definition-ident
 import { referencedPromptPaths, type CommittedDefinition, type LaunchableCatalog, type OperationRegistry, type ResolvedDefinition } from "./definition-objects";
 
 export const DEFINITION_STORE_ROOT = resolve(import.meta.dir, "../definitions");
+/** Removed workflow contract fields: no retained definition may carry one, at any depth. */
+export const DISCARDED_DEFINITION_FIELDS: readonly string[] = ["gated_review"];
 type StoreOperation = "read_definition" | "read_prompt" | "read_operation_registry" | "read_launchable";
 interface FailureContext {
   readonly operation: StoreOperation;
@@ -35,6 +37,15 @@ function hasOnlyKeys(value: JsonObject, keys: readonly string[]): boolean {
 }
 export function isPromptPath(path: string): boolean {
   return !path.includes("\\") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+/** The discarded fields a parsed definition carries, as JSON pointers. */
+export function selectDiscardedFields(value: unknown, pointer = ""): readonly string[] {
+  if (Array.isArray(value)) return value.flatMap((item, index) => selectDiscardedFields(item, `${pointer}/${index}`));
+  if (!isObject(value)) return [];
+  return Object.entries(value).flatMap(([key, field]) => [
+    ...(DISCARDED_DEFINITION_FIELDS.includes(key) ? [`${pointer}/${key}`] : []),
+    ...selectDiscardedFields(field, `${pointer}/${key}`),
+  ]);
 }
 function matchesNames(value: unknown, names: readonly string[]): value is readonly string[] {
   return Array.isArray(value) && value.length === names.length && new Set(value).size === names.length
